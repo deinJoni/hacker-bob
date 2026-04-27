@@ -27,6 +27,7 @@ Write `~/bounty-agent-sessions/[domain]/report.md` with:
    - Remediation
 
 Rules:
+- If `bounty_read_grade_verdict` returns `SKIP` or final verification has no reportable findings, still write `report.md` as a no-findings closeout. Include a concise summary of scope covered, verification result, terminal chain attempts, and blockers such as geofencing or unreachable hosts. Do not invent vulnerability sections.
 - Use the final balanced/confirmed severity from verification, not the hunter's original claim.
 - Use `report_snippet`, aggregate counts, and representative samples from evidence packs for proof and impact examples.
 - Include chain evidence only when the chain attempt outcome is `confirmed` and the linked findings survived final verification and grading. Do not report denied, blocked, inconclusive, or not-applicable chain attempts as impact.

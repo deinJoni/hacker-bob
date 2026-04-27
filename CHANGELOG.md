@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+- Changed `/bob-hunt` so zero-reportable VERIFY results still close through SKIP grading and a no-findings report instead of stopping at VERIFY.
+- Added hunter guardrails for repeated `INTERNAL_ERROR` host failures and explicit `chain_notes` length truncation before wave handoff writes.
+- Added required force-merge reasons to wave reconciliation and pipeline analytics so debug attribution survives without transcript context.
+
 ## [1.1.6] - 2026-04-27
 
 - Added bounded evidence pack visibility to `/bob-status` so operators can see whether final reportable findings have valid, missing/invalid, skipped, or unknown evidence readiness.

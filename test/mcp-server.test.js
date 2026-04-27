@@ -2933,10 +2933,12 @@ test("bounty_apply_wave_merge force-merges missing and invalid handoffs and comp
       target_domain: domain,
       wave_number: 2,
       force_merge: true,
+      force_merge_reason: "a1 handoff is malformed and a2 handoff is missing after agent termination; merge is safe because both surfaces are requeued.",
     }));
 
     assert.equal(result.status, "merged");
     assert.equal(result.force_merge, true);
+    assert.match(result.force_merge_reason, /a1 handoff is malformed/);
     assert.deepEqual(result.merge.invalid_agents, ["a1"]);
     assert.deepEqual(result.merge.missing_surface_ids, ["surface-b"]);
     assert.deepEqual(result.merge.partial_surface_ids, ["surface-c"]);
@@ -2947,10 +2949,37 @@ test("bounty_apply_wave_merge force-merges missing and invalid handoffs and comp
     const rows = readJsonl(pipelineEventsJsonlPath(domain));
     const mergeEvent = rows.find((row) => row.type === "wave_merged" && row.wave_number === 2);
     assert.equal(mergeEvent.force_merge, true);
+    assert.match(mergeEvent.force_merge_reason, /a2 handoff is missing/);
 
     const normalizedEvent = readPipelineEvents(domain).events
       .find((row) => row.type === "wave_merged" && row.wave_number === 2);
     assert.equal(normalizedEvent.force_merge, true);
+    assert.match(normalizedEvent.force_merge_reason, /merge is safe/);
+  });
+});
+
+test("bounty_apply_wave_merge requires a force_merge_reason for forced reconciliation", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedSessionState(domain, { phase: "HUNT", pending_wave: 1 });
+    seedAssignments(domain, 1, [
+      { agent: "a1", surface_id: "surface-a" },
+    ]);
+    seedAttackSurface(domain, ["surface-a"]);
+
+    assert.throws(
+      () => applyWaveMerge({ target_domain: domain, wave_number: 1, force_merge: true }),
+      /force_merge_reason is required/,
+    );
+    assert.throws(
+      () => applyWaveMerge({
+        target_domain: domain,
+        wave_number: 1,
+        force_merge: false,
+        force_merge_reason: "not used for normal pending checks",
+      }),
+      /force_merge_reason is only allowed/,
+    );
   });
 });
 

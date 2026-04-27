@@ -88,7 +88,7 @@ Use `bounty_read_state_summary.data` for routine decisions. Use `bounty_read_ses
 - `resume [domain]` accepts one optional non-flag token: `force-merge`.
 - First call `bounty_read_state_summary({ target_domain })` and use `result.data.state` for the resume decision.
 - If `state.pending_wave` is null, continue from `state.phase`.
-- If `state.pending_wave` is non-null, call `bounty_apply_wave_merge({ target_domain, wave_number: state.pending_wave, force_merge })` and use `result.data`.
+- If `state.pending_wave` is non-null, call `bounty_apply_wave_merge({ target_domain, wave_number: state.pending_wave, force_merge, force_merge_reason })` and use `result.data`. When `force_merge` is true, `force_merge_reason` must explain the missing/invalid handoffs and why reconciliation is safe.
 - If status is `"pending"`, report `Wave N pending: X/Y handoffs received. Resume again later, or run /bob-hunt resume [domain] force-merge to reconcile now.` Then stop.
 - If status is `"merged"`, continue with returned `state`, `readiness`, `merge`, and `findings`.
 - Pending-wave reconciliation happens only on explicit re-entry or after all background hunters complete, never in the same turn that launched hunters.
@@ -167,7 +167,7 @@ Launch-turn barrier:
 Wave reconciliation:
 1. First call `bounty_read_state_summary({ target_domain })` and use `result.data.state`.
 2. If `state.pending_wave` is null, skip merge and continue from the current phase; this is the expected result of a repeated resume or stale completion notice.
-3. If `state.pending_wave` is non-null, call `bounty_apply_wave_merge({ target_domain, wave_number: state.pending_wave, force_merge })` and use `result.data`.
+3. If `state.pending_wave` is non-null, call `bounty_apply_wave_merge({ target_domain, wave_number: state.pending_wave, force_merge, force_merge_reason })` and use `result.data`; include `force_merge_reason` when `force_merge` is true.
 4. If status is `"pending"`, report the pending count and stop.
 5. If status is `"merged"`, use returned `state`, `merge`, `findings`, and `readiness`.
 6. `bounty_apply_wave_merge` owns reconciliation-side state mutation.
@@ -209,7 +209,7 @@ Round 3:
 ```
 Agent(subagent_type: "final-verifier", name: "final-verify", prompt: "Session: ~/bounty-agent-sessions/[domain]. Call bounty_read_findings for [domain], call bounty_read_verification_round(round='balanced'), call bounty_list_auth_profiles before authenticated replays, re-run only reportable survivors with fresh requests, then write only through bounty_write_verification_round(round='final').")
 ```
-Read `bounty_read_verification_round(round='final').data`. If no result has `reportable: true`, report `No reportable vulnerabilities` with a short summary and stop. Otherwise spawn evidence before GRADE:
+Read `bounty_read_verification_round(round='final').data`. If no result has `reportable: true`, do not stop: call `bounty_read_evidence_packs({ target_domain: "[domain]" })` to confirm `skipped: true`, then continue through GRADE and REPORT so the session gets a durable SKIP grade and no-findings report. If final reportables exist, spawn evidence before GRADE:
 ```
 Agent(subagent_type: "evidence-agent", name: "evidence", prompt: "Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Call bounty_read_findings, bounty_read_verification_round(round='final'), bounty_read_http_audit, and bounty_list_auth_profiles; collect bounded redacted samples for every final reportable finding using bounty_http_scan with target_domain; write only through bounty_write_evidence_packs.")
 ```
@@ -220,12 +220,12 @@ Spawn:
 ```
 Agent(subagent_type: "grader", name: "grader", prompt: "Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Call bounty_read_findings, bounty_read_chain_attempts, bounty_read_verification_round(round='final'), and bounty_read_evidence_packs, score survivors, then write only through bounty_write_grade_verdict.")
 ```
-Read `bounty_read_grade_verdict.data`. On `SUBMIT`, transition to REPORT. On `HOLD`, transition to HUNT, include feedback in a targeted wave, and re-run CHAIN before VERIFY; escalate if `hold_count >= 2`. On `SKIP`, report no reportable vulnerabilities and stop.
+Read `bounty_read_grade_verdict.data`. On `SUBMIT` or `SKIP`, transition to REPORT. On `HOLD`, transition to HUNT, include feedback in a targeted wave, and re-run CHAIN before VERIFY; escalate if `hold_count >= 2`.
 
 ## PHASE 7: REPORT
 Spawn:
 ```
-Agent(subagent_type: "report-writer", name: "reporter", prompt: "Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Call bounty_read_findings, bounty_read_chain_attempts, bounty_read_verification_round(round='final'), bounty_read_evidence_packs, and bounty_read_grade_verdict, then write prose report.md with only confirmed chain evidence.")
+Agent(subagent_type: "report-writer", name: "reporter", prompt: "Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Call bounty_read_findings, bounty_read_chain_attempts, bounty_read_verification_round(round='final'), bounty_read_evidence_packs, and bounty_read_grade_verdict, then write report.md. For SUBMIT, include only confirmed chain evidence. For SKIP/no reportables, write a concise no-findings closeout with verification, chain-attempt, and blocker summary.")
 ```
 Present the report. If the user wants more hunting, transition to EXPLORE; otherwise stop.
 

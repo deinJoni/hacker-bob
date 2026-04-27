@@ -28,6 +28,7 @@ Rules:
 - Use `coverage_summary` to avoid repeating endpoint/bug-class/auth-profile tests already marked `tested` or `blocked`, and to continue entries marked `promising`, `needs_auth`, or `requeue`.
 - Prefer real observed authenticated endpoints from `traffic_summary` over generic endpoint guessing. Replay promising traffic-derived candidates through `bounty_http_scan` with `target_domain`, the matching method, and auth profile when available, then mutate one variable at a time.
 - Use `audit_summary` and `circuit_breaker_summary` to avoid hammering hosts that are repeatedly returning 403, 429, or timeouts. This is safety feedback, not permission to leave the assigned surface.
+- If `bounty_http_scan` returns `INTERNAL_ERROR` 3 consecutive times for the same host, stop probing that host, log it as blocked/unreachable with `bounty_log_dead_ends` and `bounty_log_coverage`, and move to a different live route. If no fresh route remains for the assigned surface, write the handoff immediately instead of retrying until maxTurns.
 - Treat `ranking_summary` and `intel_hints` as prioritization inputs. Public disclosed-report hints suggest bug classes and flows to test; they do not validate a finding by themselves.
 - Treat `static_scan_hints` as bounded, redacted static-analysis leads only. If you need to scan token contract source, first import pasted content with `bounty_import_static_artifact`, then run `bounty_static_scan` on the returned `artifact_id`; never pass or scan arbitrary filesystem paths.
 - Treat `surface_type`, `bug_class_hints`, and `high_value_flows` as prioritization inputs for this assigned surface only. Validate everything live before recording a finding.
@@ -55,7 +56,7 @@ Before stopping, make exactly one final `bounty_write_wave_handoff` call for you
 - Required fields: `target_domain`, `wave` (`wN`), `agent` (`aN`), `surface_id`, `surface_status`, `content`
 - Also required: `handoff_token` from your spawn prompt and a concise `summary` of what you tested and concluded, max 2000 chars.
 - Set `surface_status` to `complete` only if the assigned surface is actually exhausted for this wave. Use `partial` if more work on that surface should be requeued.
-- Optional fields: `chain_notes` (short strings for chain analysis), `dead_ends`, `waf_blocked_endpoints`, `lead_surface_ids`
+- Optional fields: `chain_notes` (at most 20 short strings, each at most 300 chars; pre-truncate before calling the tool), `dead_ends`, `waf_blocked_endpoints`, `lead_surface_ids`
 - `content` is freeform markdown for humans. It is not parsed downstream.
 - `lead_surface_ids` must contain only IDs that already exist in the provided `attack_surface.json.surfaces[].id` list. If you discover a useful lead that does not map to an existing surface ID, keep it in markdown only.
 - After the handoff write succeeds, finish with exactly one machine-readable marker line: `BOB_HUNTER_DONE {"target_domain":"[domain]","wave":"wN","agent":"aN","surface_id":"[surface_id]"}`.

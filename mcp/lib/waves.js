@@ -474,6 +474,15 @@ function applyWaveMerge(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   const waveNumber = parseWaveNumber(args.wave_number);
   const forceMerge = assertBoolean(args.force_merge, "force_merge");
+  const forceMergeReason = args.force_merge_reason == null
+    ? null
+    : assertNonEmptyString(args.force_merge_reason, "force_merge_reason");
+  if (forceMerge && (!forceMergeReason || forceMergeReason.length < 20)) {
+    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "force_merge_reason is required when force_merge is true and must be at least 20 characters");
+  }
+  if (!forceMerge && forceMergeReason != null) {
+    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "force_merge_reason is only allowed when force_merge is true");
+  }
 
   return withSessionLock(domain, () => {
     const { raw, state } = readSessionStateStrict(domain);
@@ -555,6 +564,7 @@ function applyWaveMerge(args) {
       phase: state.phase,
       wave_number: waveNumber,
       force_merge: forceMerge,
+      force_merge_reason: forceMergeReason,
       status: "merged",
       source: "bounty_apply_wave_merge",
       counts: {
@@ -573,6 +583,7 @@ function applyWaveMerge(args) {
       status: "merged",
       wave_number: waveNumber,
       force_merge: forceMerge,
+      force_merge_reason: forceMergeReason,
       readiness,
       merge: {
         received_agents: merge.received_agents,

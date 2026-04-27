@@ -284,6 +284,18 @@ test("bob-hunt spawns evidence before grade and validates evidence packs", () =>
   assert.match(orchestrator, /write only through bounty_write_evidence_packs/);
 });
 
+test("bob-hunt closes no-finding verification through SKIP grade and report", () => {
+  const orchestrator = readFile(".claude/skills/bob-hunt/SKILL.md");
+  const grader = readFile(".claude/agents/grader.md");
+  const reporter = readFile(".claude/agents/report-writer.md");
+
+  assert.doesNotMatch(orchestrator, /If no result has `reportable: true`, report `No reportable vulnerabilities`[\s\S]{0,80}stop/);
+  assert.match(orchestrator, /no result has `reportable: true`[\s\S]*continue through GRADE and REPORT/);
+  assert.match(orchestrator, /On `SUBMIT` or `SKIP`, transition to REPORT/);
+  assert.match(grader, /terminal SKIP verdict with `total_score: 0`, `findings: \[\]`/);
+  assert.match(reporter, /no-findings closeout/);
+});
+
 test("settings.json registers session-write-guard for Bash and Write", () => {
   const settings = JSON.parse(readFile(".claude/settings.json"));
   const preToolUse = settings.hooks.PreToolUse;
@@ -831,6 +843,8 @@ test("hunter and orchestrator prompts keep the structured handoff contract expli
   assert.match(hunterPrompt, /never write `coverage\.jsonl` through Bash/);
   assert.match(hunterPrompt, /Never create or backfill[\s\S]*http-audit\.jsonl[\s\S]*traffic\.jsonl[\s\S]*public-intel\.json[\s\S]*static-artifacts\.jsonl[\s\S]*static-scan-results\.jsonl/);
   assert.match(hunterPrompt, /status` \(`tested`, `blocked`, `promising`, `needs_auth`, or `requeue`\)/);
+  assert.match(hunterPrompt, /`INTERNAL_ERROR` 3 consecutive times/);
+  assert.match(hunterPrompt, /each at most 300 chars; pre-truncate/);
   assert.match(orchestratorPrompt, /MCP-owned JSON artifacts are authoritative for orchestration\./);
   assert.match(orchestratorPrompt, /must never call `bounty_write_wave_handoff`/);
   assert.match(orchestratorPrompt, /must never synthesize or repair authoritative handoff JSON from markdown or `SESSION_HANDOFF\.md`/);
