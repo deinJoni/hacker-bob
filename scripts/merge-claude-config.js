@@ -33,6 +33,11 @@ function hookKey(hook) {
   });
 }
 
+function hookScriptName(command) {
+  const match = String(command || "").match(/\.claude\/hooks\/([^"'\s]+)/);
+  return match ? match[1] : null;
+}
+
 function mergeHookEntries(existingHooks, bobHooks) {
   const byMatcher = new Map();
   for (const entry of [...(Array.isArray(existingHooks) ? existingHooks : [])]) {
@@ -45,12 +50,18 @@ function mergeHookEntries(existingHooks, bobHooks) {
 
   for (const bobEntry of bobHooks) {
     const current = byMatcher.get(bobEntry.matcher) || { matcher: bobEntry.matcher, hooks: [] };
-    const seen = new Set(current.hooks.map(hookKey));
     for (const hook of bobEntry.hooks || []) {
+      const scriptName = hookScriptName(hook.command);
+      if (scriptName) {
+        current.hooks = current.hooks.filter((existingHook) => (
+          hookScriptName(existingHook.command) !== scriptName ||
+          hookKey(existingHook) === hookKey(hook)
+        ));
+      }
+      const seen = new Set(current.hooks.map(hookKey));
       const key = hookKey(hook);
       if (seen.has(key)) continue;
       current.hooks.push({ ...hook });
-      seen.add(key);
     }
     byMatcher.set(bobEntry.matcher, current);
   }
@@ -132,6 +143,7 @@ if (require.main === module) {
 
 module.exports = {
   STALE_GLOBAL_MCP_PERMISSIONS,
+  hookScriptName,
   mergeMcp,
   mergeHookEntries,
   mergeHooks,

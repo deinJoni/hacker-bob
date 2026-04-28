@@ -693,6 +693,8 @@ test("installer and dev-sync copy and configure session-write-guard", () => {
   assert.match(hookText, /"matcher":"Write"[\s\S]*session-write-guard\.sh/);
   assert.match(JSON.stringify(defaultClaudeSettings().hooks.SubagentStop), /hunter-subagent-stop\.js/);
   assert.match(JSON.stringify(defaultClaudeSettings().hooks.SessionStart), /bob-check-update\.js/);
+  assert.match(JSON.stringify(defaultClaudeSettings()), /\$\{CLAUDE_PROJECT_DIR:-\$PWD\}/);
+  assert.doesNotMatch(JSON.stringify(defaultClaudeSettings()), /\$CLAUDE_PROJECT_DIR(?!:-)/);
 });
 
 test("verifier and grader examples use F-N finding IDs", () => {
