@@ -6,5 +6,6 @@ node_modules/
 .mcp.json
 !adapters/codex/hacker-bob/.mcp.json
 .codex/
+.agents/
 .hacker-bob/VERSION
 .hacker-bob/install.json

@@ -26,6 +26,9 @@ const {
   CODEX_SKILL_SPECS,
   renderCodexSkill,
 } = require("../scripts/lib/codex-role-renderer.js");
+const {
+  CODEX_ROLE_SPECS,
+} = require("../adapters/codex/role-specs.js");
 
 const ROOT = path.join(__dirname, "..");
 
@@ -199,8 +202,22 @@ test("Codex plugin manifest and direct skills expose portable Bob contracts", ()
   assert.equal(parseFrontmatter(status, "adapters/codex/skills/bob-status/SKILL.md").name, "bob-status");
   assert.equal(parseFrontmatter(debug, "adapters/codex/skills/bob-debug/SKILL.md").name, "bob-debug");
   assert.match(hunt, /bounty_finalize_hunter_run/);
-  assert.doesNotMatch(hunt + status + debug, /CLAUDE_PROJECT_DIR|mcp__bountyagent__|\/bob:/);
+  assert.match(hunt, /Codex Agent Mapping/);
+  assert.match(hunt, /Codex Worker Role Contracts/);
+  assert.match(hunt, /BEGIN recon CONTRACT/);
+  assert.match(hunt, /BEGIN hunter CONTRACT/);
+  assert.match(hunt, /spawn_agent/);
+  assert.match(hunt, /agent_type: "worker"/);
+  assert.match(hunt, /wait_agent/);
+  assert.match(hunt, /close_agent/);
+  assert.match(hunt, /host_agent_id -> w\[wave\]\/a\[agent\]\/surface_id/);
+  assert.doesNotMatch(hunt + status + debug, /CLAUDE_PROJECT_DIR|mcp__bountyagent__|\/bob:|\bClaude\b|Agent\(subagent_type|subagent_type|run_in_background|\bTask\b|SubagentStop/);
   assert.match(status, /mcp\/lib\/update-check\.js/);
+
+  for (const [roleId, spec] of Object.entries(CODEX_ROLE_SPECS)) {
+    assert.equal(spec.agent_type, "worker", `${roleId} must map to a Codex worker`);
+    assert.ok(spec.bob_role, `${roleId} must keep a Bob logical role name`);
+  }
 
   for (const commandId of codex.commandIds()) {
     const command = codex.renderCommand(commandId);
@@ -266,6 +283,23 @@ test("neutral role prompt bodies do not contain host-specific MCP permission syn
     assert.doesNotMatch(body, /CLAUDE_PROJECT_DIR/, `${role.prompt_body} contains Claude project env syntax`);
     assert.doesNotMatch(body, /^allowed-tools:|^tools:/m, `${role.prompt_body} contains adapter frontmatter`);
   }
+});
+
+test("shared orchestrator keeps launch mechanics adapter-owned", () => {
+  const body = readFile("prompts/roles/orchestrator.md");
+  for (const placeholder of [
+    "{{SPAWN_RECON_AGENT}}",
+    "{{SPAWN_HUNTER_AGENT}}",
+    "{{SPAWN_CHAIN_AGENT}}",
+    "{{SPAWN_BRUTALIST_VERIFIER}}",
+    "{{SPAWN_BALANCED_VERIFIER}}",
+    "{{SPAWN_FINAL_VERIFIER}}",
+    "{{SPAWN_GRADER_AGENT}}",
+    "{{SPAWN_REPORTER_AGENT}}",
+  ]) {
+    assert.match(body, new RegExp(placeholder.replace(/[{}]/g, "\\$&")));
+  }
+  assert.doesNotMatch(body, /Agent\(subagent_type|subagent_type|run_in_background|SubagentStop|Claude Code/);
 });
 
 test("hunter frontmatter excludes Write and still exposes wave handoff MCP tools", () => {
@@ -377,9 +411,83 @@ test("global rules stay small and keep scope plus MCP-owned artifact guardrails"
   }
 });
 
+test("hunter-evm-agent ships with the EVM tool surface and SC anti-stop rule", () => {
+  const document = readFile(".claude/agents/hunter-evm-agent.md");
+  const frontmatter = parseFrontmatter(document, "hunter-evm-agent.md");
+  const tools = frontmatter.tools.split(/\s*,\s*/).filter(Boolean);
+
+  assert.ok(tools.includes("Bash"));
+  assert.ok(tools.includes("Read"));
+  assert.ok(tools.includes("Write"), "hunter-evm needs Write to scaffold Foundry tests");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_evm_call"));
+  assert.ok(tools.includes("mcp__bountyagent__bounty_evm_storage_read"));
+  assert.ok(tools.includes("mcp__bountyagent__bounty_evm_fetch_source"));
+  assert.ok(tools.includes("mcp__bountyagent__bounty_evm_role_table"));
+  assert.ok(tools.includes("mcp__bountyagent__bounty_foundry_run"));
+  assert.ok(tools.includes("mcp__bountyagent__bounty_write_wave_handoff"));
+  assert.ok(tools.includes("mcp__bountyagent__bounty_finalize_hunter_run"));
+  assert.ok(tools.includes("mcp__bountyagent__bounty_record_finding"));
+
+  assert.match(document, /surface_type[^\n]*smart_contract/i);
+  assert.match(document, /bounty_evm_fetch_source/);
+  assert.match(document, /bounty_foundry_run/);
+  assert.match(document, /bypass_attempts/);
+  assert.match(document, /blocked_harness_runs/);
+  assert.match(document, /BOB_HUNTER_DONE/);
+});
+
+test("hunting rules and hunter prompt encode the smart_contract anti-stop rule", () => {
+  const huntingRules = readFile(".claude/rules/hunting.md");
+  assert.match(huntingRules, /smart_contract/i, "hunting.md missing smart_contract rule");
+  assert.match(huntingRules, /bypass_attempts/i, "hunting.md missing bypass_attempts requirement");
+
+  const hunterPrompt = readFile(".claude/agents/hunter-agent.md");
+  assert.match(hunterPrompt, /surface_type: smart_contract/, "hunter prompt missing smart_contract surface_type reference");
+  assert.match(hunterPrompt, /bypass_attempts/, "hunter prompt missing bypass_attempts reference");
+  assert.match(hunterPrompt, /blocked_harness_runs/, "hunter prompt missing blocked_harness_runs reference");
+  assert.match(
+    hunterPrompt,
+    /MCP server (also )?rejects `surface_status: complete`/i,
+    "hunter prompt missing server-side rejection guidance",
+  );
+});
+
+test("bob-spec loader is wired into the hunter brief", () => {
+  const briefSource = readFile("mcp/lib/hunter-brief.js");
+  assert.match(
+    briefSource,
+    /require\(['"]\.\/bob-spec(\.js)?['"]\)/,
+    "hunter-brief.js must import the bob-spec loader",
+  );
+  assert.match(briefSource, /summarizeBobSpecForBrief\(loadBobSpec\(domain\)/);
+
+  const { loadBobSpec, summarizeBobSpecForBrief } = require("../mcp/lib/bob-spec.js");
+  assert.equal(typeof loadBobSpec, "function");
+  assert.equal(typeof summarizeBobSpecForBrief, "function");
+
+  // Empty-state shape — when no bob-spec.json exists in a fresh domain, the
+  // brief still surfaces a present:false summary so the hunter prompt can
+  // branch instead of crashing.
+  const summary = summarizeBobSpecForBrief({ present: false, reason: "missing" }, "surface-a");
+  assert.equal(summary.present, false);
+  assert.equal(summary.reason, "missing");
+  assert.match(summary.message, /smart_contract/i);
+  assert.doesNotMatch(
+    summary.message,
+    /free-text condition string|use any string|fabricate/i,
+    "empty-state message must not invite freeform fabrication",
+  );
+});
+
 test("bountyagent skill stays orchestration-sized and preserves FSM shape", () => {
   const orchestrator = readFile(".claude/skills/bob-hunt/SKILL.md");
-  assert.ok(lineCount(".claude/skills/bob-hunt/SKILL.md") <= 240, "bountyagent skill is too large");
+  // Cap progression: 240 (Phase 0) → 280 (Phase 1, EVM spawn template) → 310
+  // (Phase 5, Move spawn template covering both Aptos and Sui) → 340 (Phase 6,
+  // Substrate + CosmWasm spawn templates). Phase 7+ MUST NOT bump this cap;
+  // instead, extract per-family spawn details to separate skill files
+  // (e.g., bob-spawn-substrate.md, bob-spawn-cosmwasm.md) and reference them
+  // from this orchestrator skill via @-includes or short cross-links.
+  assert.ok(lineCount(".claude/skills/bob-hunt/SKILL.md") <= 340, "bountyagent skill is too large");
   assert.match(orchestrator, /RECON\s*→\s*AUTH\s*→\s*HUNT\s*→\s*CHAIN\s*→\s*VERIFY\s*→\s*GRADE\s*→\s*REPORT/);
   for (const phase of ["RECON", "AUTH", "HUNT", "CHAIN", "VERIFY", "GRADE", "REPORT", "EXPLORE"]) {
     assert.match(orchestrator, new RegExp(`PHASE [0-9]+: ${phase}|${phase}`), `missing ${phase}`);
@@ -758,6 +866,514 @@ test("verifiers can read request audit summaries without direct file access", ()
     assert.match(document, /bounty_read_http_audit/);
     assert.doesNotMatch(document, /http-audit\.jsonl/);
   }
+});
+
+test("verifier role bundle has only one documented mutating tool (evm-fetch-source) and no orchestration mutators", () => {
+  // Phase 3a fix-up: the role-bundle expansion to give verifiers SC re-run
+  // primitives also happened to include bounty_evm_fetch_source, which writes
+  // to the per-session contracts cache (mutating:true). That one is an
+  // intentional, documented exception. NO mutator that advances orchestration
+  // (recordFinding, write_wave_handoff, finalize_hunter_run, log_coverage,
+  // log_dead_ends, write_grade_verdict) may slip into the verifier bundle.
+  const verifierBundleTools = TOOLS.filter((tool) => {
+    const meta = TOOL_MANIFEST[tool.name];
+    return meta && Array.isArray(meta.role_bundles) && meta.role_bundles.includes("verifier");
+  });
+  const mutatingInVerifier = verifierBundleTools.filter((tool) => TOOL_MANIFEST[tool.name].mutating === true);
+  assert.deepEqual(
+    mutatingInVerifier.map((tool) => tool.name).sort(),
+    [
+      "bounty_evm_fetch_source",       // SC source-cache populate during re-run
+      "bounty_http_scan",              // web PoC replay (existing baseline)
+      "bounty_write_verification_round" // the verifier's own write path
+    ].sort(),
+    "Only evm-fetch-source, http_scan, and write-verification-round may be mutating in the verifier bundle. New mutating tools must be reviewed before joining verifier role.",
+  );
+  const forbidden = ["bounty_record_finding", "bounty_write_wave_handoff", "bounty_finalize_hunter_run", "bounty_log_coverage", "bounty_log_dead_ends", "bounty_write_grade_verdict", "bounty_apply_wave_merge"];
+  for (const tool of forbidden) {
+    const meta = TOOL_MANIFEST[tool];
+    if (!meta) continue;
+    assert.ok(
+      !meta.role_bundles.includes("verifier"),
+      `${tool} must NOT be in the verifier role bundle — orchestration mutators stay hunter/orchestrator-only.`,
+    );
+  }
+});
+
+test("verifier agents expose EVM read-side and PoC-replay tools for SC findings", () => {
+  // Phase 3a: SC findings need bounty_foundry_run for re-run plus the read-side
+  // primitives (evm_call/storage/source/role_table/halmos) for trust-map
+  // checks. All six tools must appear in the rendered tools list.
+  const requiredTools = [
+    "bounty_foundry_run",
+    "bounty_halmos_run",
+    "bounty_evm_call",
+    "bounty_evm_storage_read",
+    "bounty_evm_fetch_source",
+    "bounty_evm_role_table",
+  ];
+  for (const agent of ["brutalist-verifier", "balanced-verifier", "final-verifier"]) {
+    const document = readFile(`.claude/agents/${agent}.md`);
+    const frontmatter = parseFrontmatter(document, `${agent}.md`);
+    for (const tool of requiredTools) {
+      assert.match(
+        frontmatter.tools,
+        new RegExp(`mcp__bountyagent__${tool}\\b`),
+        `${agent}.md frontmatter is missing ${tool}`,
+      );
+    }
+  }
+});
+
+test("chain-builder prompt enforces severity ladder, finding-id citations, and surface-match", () => {
+  const prompt = readFile("prompts/roles/chain.md");
+  // Disambiguation by surface_type
+  assert.match(prompt, /surface_type/, "chain.md must branch on surface_type");
+  assert.match(prompt, /smart_contract/, "chain.md must mention smart_contract");
+  // SC patterns
+  for (const pattern of ["oracle_manipulation", "governance_bypass", "signature_replay", "role_compromise", "flash_loan_callable_entry", "hook_callback_abuse"]) {
+    assert.match(prompt, new RegExp(pattern), `chain.md missing SC pattern: ${pattern}`);
+  }
+  // Cross-family chain reasoning
+  assert.match(prompt, /Cross-family/i, "chain.md must mention cross-family chains");
+  assert.match(prompt, /subdomain_takeover/, "chain.md missing canonical web→SC pivot");
+  // SEVERITY LADDER: enforce no jumping rungs and no LOW+LOW elevation. Phase 3b
+  // round 1 fix-up: brutalist found "LOW+LOW concatenation forbidden" left a
+  // LOW+LOW→MEDIUM loophole. Test the ladder explicitly so the loophole closes.
+  assert.match(prompt, /LOW\s*\+\s*LOW.*at most LOW/i, "chain.md must cap LOW+LOW at LOW");
+  assert.match(prompt, /LOW\s*\+\s*MEDIUM.*at most MEDIUM/i, "chain.md must cap LOW+MEDIUM at MEDIUM");
+  assert.match(prompt, /severity-elevation rationale/i, "chain.md must require an explicit elevation rationale for any composition that claims a higher severity than the worst input link");
+  assert.match(prompt, /jump-the-rung|jump the rung/i, "chain.md must forbid jump-the-rung escalations");
+  // PROOF: chain_notes is hint, not proof. Every link MUST cite a finding_id.
+  assert.match(prompt, /finding_id.*MUST|MUST cite a `finding_id`|MUST cite.*finding_id/i, "chain.md must require finding_id citation per link");
+  assert.match(prompt, /chain_notes.*hint|hint.*chain_notes|chain_notes.*not proof/i, "chain.md must clarify chain_notes is hint, not proof");
+  // SURFACE MATCH: SC link must cite surface_type=smart_contract finding with sc_evidence
+  assert.match(prompt, /surface_type:\s*"smart_contract"/, "chain.md must require SC link to cite surface_type=smart_contract finding");
+  assert.match(prompt, /sc_evidence/, "chain.md must reference sc_evidence requirement on SC link");
+});
+
+test("report-writer prompt gates on reportable, never invents blocks, and severity-DESC executive summary", () => {
+  const prompt = readFile("prompts/roles/reporter.md");
+  // Surface routing
+  assert.match(prompt, /surface_type/, "reporter.md must branch on surface_type");
+  assert.match(prompt, /smart_contract/, "reporter.md must mention smart_contract");
+  // SC section anatomy
+  for (const required of ["Chain \\+ Address", "Affected Function", "On-chain effect", "Verified at", "Remediation"]) {
+    assert.match(prompt, new RegExp(required), `reporter.md missing SC section: ${required}`);
+  }
+  // REPORTABILITY GATE: only render reportable: true findings (Phase 3b round 1 fix)
+  assert.match(prompt, /reportable.*true|REPORTABILITY GATE/i, "reporter.md must gate rendering on final-verifier reportable: true");
+  assert.match(prompt, /\bskip\b/i, "reporter.md must say to skip non-reportable findings");
+  // BLOCK FABRICATION: polarity flipped — render block ONLY when reasoning has
+  // the literal substring; default is "block reference unavailable"
+  assert.match(prompt, /block reference unavailable/, "reporter.md must teach the never-invent-a-block convention");
+  assert.match(prompt, /Never derive.*sc_evidence\.fork_block|never derive.*fork_block|do NOT.*sc_evidence\.fork_block/i, "reporter.md must forbid deriving verification block from sc_evidence.fork_block");
+  // SEVERITY-DESC executive summary
+  assert.match(prompt, /severity DESC|severity DESCENDING|sorted by severity/i, "reporter.md must specify severity-DESC executive summary across families");
+  // CWE map corrections
+  assert.match(prompt, /CWE-294/, "reporter.md must use CWE-294 for signature replay (not CWE-352)");
+  assert.match(prompt, /CWE-1284|CWE-829/, "reporter.md must use CWE-1284/CWE-829 for oracle staleness (not CWE-672)");
+  // TVL fail-soft mirrors block fail-soft
+  assert.match(prompt, /TVL context unavailable/, "reporter.md must declare TVL fail-soft text");
+  assert.match(prompt, /Never infer dollar impact/i, "reporter.md must forbid TVL inference from PoC content");
+  // Severity precedence: final-verifier authoritative; grader is verdict-only
+  assert.match(prompt, /grader.*verdict|verdict.*grader|grader.*not.*severity/i, "reporter.md must clarify grader is verdict-only, not severity");
+  // Chain reading
+  assert.match(prompt, /chains\.md/, "reporter.md must declare chains.md as a read input");
+});
+
+test("report-writer agent has Read tool exposure for chains.md", () => {
+  const document = readFile(".claude/agents/report-writer.md");
+  const frontmatter = parseFrontmatter(document, "report-writer.md");
+  assert.match(frontmatter.tools, /\bRead\b/, "report-writer must expose Read tool to consume chains.md");
+});
+
+test("verifier prompts route SC findings to bounty_foundry_run with the test-pass convention", () => {
+  // Phase 3a: each verifier prompt body must teach surface_type routing AND
+  // the polarity convention (exploit-test PASS = bug reproduced). A polarity
+  // bug here would silently invert every SC verification.
+  for (const role of ["brutalist-verifier", "balanced-verifier", "final-verifier"]) {
+    const prompt = readFile(`prompts/roles/${role}.md`);
+    assert.match(prompt, /surface_type/, `${role}.md does not mention surface_type`);
+    assert.match(prompt, /sc_evidence/, `${role}.md does not mention sc_evidence`);
+    assert.match(prompt, /bounty_foundry_run/, `${role}.md does not call bounty_foundry_run`);
+    assert.match(prompt, /smart_contract/, `${role}.md does not branch on smart_contract`);
+    // Polarity convention must be explicit in at least one of the verifier
+    // prompts (brutalist defines it; balanced/final reference). We assert each
+    // mentions Pass + reproduce semantics so a partial edit can't drift.
+    assert.match(
+      prompt,
+      /Pass.*reproduce|reproduce.*Pass|assert(s|ed)?\s+the\s+bug|exploit harness|exploit-test/i,
+      `${role}.md does not document the test-pass = bug-reproduced convention`,
+    );
+    assert.match(
+      prompt,
+      /forge_not_in_path|fork-blocked|cannot re-run/i,
+      `${role}.md does not document SC fail-closed behavior`,
+    );
+  }
+});
+
+test("verifier prompts dispatch by chain_family to bounty_foundry_run (evm) and bounty_anchor_run (svm)", () => {
+  // Phase 4c: chain_family dispatch is what keeps EVM verifications from
+  // running against an SVM PoC and vice versa. Each verifier prompt must
+  // mention both runners and the chain_family discriminator.
+  for (const role of ["brutalist-verifier", "balanced-verifier", "final-verifier"]) {
+    const prompt = readFile(`prompts/roles/${role}.md`);
+    assert.match(prompt, /chain_family/, `${role}.md does not branch on chain_family`);
+    assert.match(prompt, /bounty_foundry_run/, `${role}.md does not call bounty_foundry_run for EVM`);
+    assert.match(prompt, /bounty_anchor_run/, `${role}.md does not call bounty_anchor_run for SVM`);
+    assert.match(prompt, /anchor_not_in_path|anchor unavailable/i, `${role}.md does not document anchor missing-tooling fallback`);
+  }
+});
+
+test("hunter-svm-agent ships with the SVM tool surface", () => {
+  const document = readFile(".claude/agents/hunter-svm-agent.md");
+  const frontmatter = parseFrontmatter(document, "hunter-svm-agent.md");
+  const tools = frontmatter.tools.split(",").map((tool) => tool.trim());
+  assert.ok(tools.includes("mcp__bountyagent__bounty_svm_fetch_account"), "hunter-svm needs svm_fetch_account");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_svm_fetch_program"), "hunter-svm needs svm_fetch_program for upgrade authority");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_anchor_run"), "hunter-svm needs anchor_run for PoCs");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_record_finding"), "hunter-svm needs record_finding");
+  assert.ok(tools.includes("Write"), "hunter-svm needs Write to scaffold Anchor tests");
+});
+
+test("hunter-svm prompt encodes the chain_family=svm anti-stop rule and sc_evidence shape", () => {
+  const prompt = readFile("prompts/roles/hunter-svm.md");
+  // Chain-family confirmation pattern
+  assert.match(prompt, /chain_family.*svm|svm.*chain_family/i, "hunter-svm must confirm chain_family is svm");
+  // sc_evidence shape — must teach the SVM-specific contract_address (program_id) + cluster
+  assert.match(prompt, /chain_family.*"svm"/i, "hunter-svm must instruct chain_family: svm in sc_evidence");
+  assert.match(prompt, /base58/i, "hunter-svm must teach base58 program_id encoding");
+  assert.match(prompt, /cluster/i, "hunter-svm must teach cluster as chain_id");
+  // Anchor harness primitive
+  assert.match(prompt, /bounty_anchor_run/, "hunter-svm must document bounty_anchor_run");
+});
+
+test("orchestrator dispatches by chain_family to hunter-evm or hunter-svm", () => {
+  const prompt = readFile("prompts/roles/orchestrator.md");
+  assert.match(prompt, /SPAWN_HUNTER_EVM_AGENT/, "orchestrator must reference EVM hunter spawn");
+  assert.match(prompt, /SPAWN_HUNTER_SVM_AGENT/, "orchestrator must reference SVM hunter spawn");
+  assert.match(prompt, /chain_family.*evm|evm.*chain_family/i, "orchestrator must dispatch on chain_family for EVM");
+  assert.match(prompt, /chain_family.*svm|svm.*chain_family/i, "orchestrator must dispatch on chain_family for SVM");
+});
+
+test("chain-builder prompt enumerates SVM patterns and enforces svm-cite-finding", () => {
+  const prompt = readFile("prompts/roles/chain.md");
+  assert.match(prompt, /SC SVM patterns|chain_family.*svm/i, "chain.md must enumerate SVM patterns");
+  assert.match(prompt, /missing_signer|cpi_privilege_escalation|upgrade_authority_compromise/, "chain.md must list SVM bug-class pivots");
+  assert.match(prompt, /chain_family.*evm|evm.*chain_family/, "chain.md must enforce evm-side cite");
+  assert.match(prompt, /chain_family.*svm|svm.*chain_family/, "chain.md must enforce svm-side cite");
+});
+
+test("report-writer prompt renders SVM cluster + program_id + cwe map", () => {
+  const prompt = readFile("prompts/roles/reporter.md");
+  // SVM Chain + Address line
+  assert.match(prompt, /cluster.*program_id|program_id.*cluster/, "reporter.md must render SVM cluster + program_id");
+  // SVM CWE map entries
+  assert.match(prompt, /CWE-862/, "reporter.md must map missing_signer to CWE-862");
+  assert.match(prompt, /CWE-345/, "reporter.md must map account validation/sysvar to CWE-345");
+  // Phase 4 fix-up: cpi_privilege_escalation moved CWE-269 → CWE-863 (incorrect authorization).
+  // CWE-269 is privilege management; signer extension via CPI is an authorization-decision bug.
+  assert.match(prompt, /CWE-863/, "reporter.md must map cpi_privilege_escalation to CWE-863 (post fix-up)");
+  assert.doesNotMatch(prompt, /cpi_privilege_escalation.*CWE-269/, "reporter.md must NOT map cpi_privilege_escalation to CWE-269");
+  // SVM remediation
+  assert.match(prompt, /Anchor|#\[account\(signer\)\]|require_keys_eq/, "reporter.md must offer Anchor remediation snippets");
+  // Gas-render fence: gas only for EVM, never for SVM
+  assert.match(prompt, /Gas cost.*EVM only|never render a gas line for SVM/i, "reporter.md must restrict gas rendering to EVM");
+  // Phase 4 fix-up: SVM block-reference rendering uses Solana vocabulary. The
+  // verifier matcher stays uniform, but the reporter branches by chain_family.
+  assert.match(prompt, /slot .*<N>.*on cluster .*<X>/i, "reporter.md must render 'slot N on cluster X' for SVM findings");
+  assert.match(prompt, /slot reference unavailable/i, "reporter.md must use 'slot reference unavailable' for SVM");
+});
+
+test("verifier prompts handle anchor_dependency_missing and anchor_test_runner_unknown reasons", () => {
+  // Phase 4 fix-up: anchor_not_in_path only fires on ENOENT for the anchor
+  // binary itself. When cargo / solana / solana-test-validator / yarn / jest /
+  // ts-mocha cause the failure, we surface anchor_dependency_missing or
+  // anchor_test_runner_unknown — verifier prompts must fail-closed on those.
+  for (const role of ["brutalist-verifier", "balanced-verifier", "final-verifier"]) {
+    const prompt = readFile(`prompts/roles/${role}.md`);
+    assert.match(prompt, /anchor_dependency_missing/, `${role}.md must handle anchor_dependency_missing`);
+    assert.match(prompt, /anchor_test_runner_unknown/, `${role}.md must handle anchor_test_runner_unknown`);
+  }
+});
+
+// ----------------------------------------------------------------------
+// Phase 5c: Move (Aptos + Sui) prompt contracts
+// ----------------------------------------------------------------------
+
+test("verifier prompts dispatch by chain_family to bounty_aptos_run (aptos) and bounty_sui_run (sui)", () => {
+  for (const role of ["brutalist-verifier", "balanced-verifier", "final-verifier"]) {
+    const prompt = readFile(`prompts/roles/${role}.md`);
+    assert.match(prompt, /bounty_aptos_run/, `${role}.md does not call bounty_aptos_run for Aptos`);
+    assert.match(prompt, /bounty_sui_run/, `${role}.md does not call bounty_sui_run for Sui`);
+    assert.match(prompt, /aptos_not_in_path|aptos unavailable/i, `${role}.md does not document aptos missing-tooling fallback`);
+    assert.match(prompt, /sui_not_in_path|sui unavailable/i, `${role}.md does not document sui missing-tooling fallback`);
+    assert.match(prompt, /move_compile_failed/, `${role}.md must handle move_compile_failed reason`);
+  }
+});
+
+test("hunter-move-agent ships with the Move tool surface", () => {
+  const document = readFile(".claude/agents/hunter-move-agent.md");
+  const frontmatter = parseFrontmatter(document, "hunter-move-agent.md");
+  const tools = frontmatter.tools.split(",").map((tool) => tool.trim());
+  assert.ok(tools.includes("mcp__bountyagent__bounty_aptos_fetch_resource"), "hunter-move needs aptos_fetch_resource");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_aptos_fetch_module"), "hunter-move needs aptos_fetch_module");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_aptos_run"), "hunter-move needs aptos_run for PoCs");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_sui_fetch_object"), "hunter-move needs sui_fetch_object");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_sui_fetch_package"), "hunter-move needs sui_fetch_package");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_sui_run"), "hunter-move needs sui_run for PoCs");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_record_finding"), "hunter-move needs record_finding");
+  assert.ok(tools.includes("Write"), "hunter-move needs Write to scaffold Move tests");
+});
+
+test("hunter-move prompt encodes the chain_family={aptos,sui} branching and sc_evidence shape", () => {
+  const prompt = readFile("prompts/roles/hunter-move.md");
+  // Family confirmation pattern — both aptos and sui must be named
+  assert.match(prompt, /chain_family.*aptos|aptos.*chain_family/i, "hunter-move must confirm chain_family aptos");
+  assert.match(prompt, /chain_family.*sui|sui.*chain_family/i, "hunter-move must confirm chain_family sui");
+  // sc_evidence shape: chain_family enum
+  assert.match(prompt, /chain_family.*"aptos"/i, "hunter-move must instruct chain_family: aptos in sc_evidence");
+  assert.match(prompt, /chain_family.*"sui"/i, "hunter-move must instruct chain_family: sui in sc_evidence");
+  // Move test primitives
+  assert.match(prompt, /bounty_aptos_run/, "hunter-move must document bounty_aptos_run");
+  assert.match(prompt, /bounty_sui_run/, "hunter-move must document bounty_sui_run");
+  // Bug class catalog
+  assert.match(prompt, /capability_leakage/, "hunter-move must list capability_leakage bug class");
+  assert.match(prompt, /object_ownership_violation/, "hunter-move must list Sui object_ownership_violation bug class");
+  assert.match(prompt, /package_upgrade_authority/, "hunter-move must list package_upgrade_authority bug class");
+});
+
+test("orchestrator dispatches by chain_family to hunter-move (covers aptos + sui)", () => {
+  const prompt = readFile("prompts/roles/orchestrator.md");
+  assert.match(prompt, /SPAWN_HUNTER_MOVE_AGENT/, "orchestrator must reference Move hunter spawn");
+  assert.match(prompt, /chain_family.*aptos|aptos.*chain_family/i, "orchestrator must dispatch on chain_family for Aptos");
+  assert.match(prompt, /chain_family.*sui|sui.*chain_family/i, "orchestrator must dispatch on chain_family for Sui");
+});
+
+test("chain-builder prompt enumerates Aptos + Sui patterns and enforces aptos/sui-cite-finding", () => {
+  const prompt = readFile("prompts/roles/chain.md");
+  assert.match(prompt, /SC Aptos patterns|chain_family.*aptos/i, "chain.md must enumerate Aptos patterns");
+  assert.match(prompt, /SC Sui patterns|chain_family.*sui/i, "chain.md must enumerate Sui patterns");
+  assert.match(prompt, /capability_leakage|signer_capability_leak/, "chain.md must list Move capability bug-class pivots");
+  assert.match(prompt, /object_ownership_violation|dynamic_field_unauthorized_remove/, "chain.md must list Sui-specific bug-class pivots");
+  assert.match(prompt, /chain_family.*aptos|aptos.*chain_family/, "chain.md must enforce aptos-side cite");
+  assert.match(prompt, /chain_family.*sui|sui.*chain_family/, "chain.md must enforce sui-side cite");
+});
+
+test("verifier prompts require read-side disambiguation for Aptos/Sui (Phase 5 fix-up #2)", () => {
+  // Phase 5 fix-up: Aptos and Sui share 0x+64-hex address space. A hunter
+  // could record chain_family=aptos with a Sui package_id (or vice versa);
+  // the runner alone cannot detect this. Verifier prompts must REQUIRE a
+  // read-side check that resolves the address on the claimed network.
+  const brutalist = readFile("prompts/roles/brutalist-verifier.md");
+  assert.match(brutalist, /REQUIRED read-side disambiguation/i, "brutalist must require read-side checks for Move families");
+  assert.match(brutalist, /chain_family\/chain_id mismatch suspected/i, "brutalist must call out family/chain_id mismatch on no-resolve");
+  assert.match(brutalist, /bounty_aptos_fetch_module/, "brutalist must name bounty_aptos_fetch_module for Aptos disambiguation");
+  assert.match(brutalist, /bounty_sui_fetch_package/, "brutalist must name bounty_sui_fetch_package for Sui disambiguation");
+});
+
+test("balanced-verifier carries Move severity heuristics (Phase 5 fix-up #9)", () => {
+  const balanced = readFile("prompts/roles/balanced-verifier.md");
+  assert.match(balanced, /Move severity heuristics/i, "balanced must include Move severity heuristics block");
+  assert.match(balanced, /TreasuryCap.*MintCap.*BurnCap.*UpgradeCap|TreasuryCap.*HIGH/i, "balanced must enumerate financial caps as HIGH");
+  assert.match(balanced, /read-only.*LOW|configuration-only.*LOW/i, "balanced must classify read-only caps as LOW");
+});
+
+test("report-writer prompt renders Aptos network + module_address + Sui network + package_id + Move CWE map", () => {
+  const prompt = readFile("prompts/roles/reporter.md");
+  // Aptos Chain + Address line
+  assert.match(prompt, /network.*module_address|module_address.*network/, "reporter.md must render Aptos network + module_address");
+  // Sui Chain + Address line
+  assert.match(prompt, /network.*package_id|package_id.*network/, "reporter.md must render Sui network + package_id");
+  // Move CWE map entries
+  assert.match(prompt, /signer_capability_leak.*CWE-862|CWE-862.*signer_capability_leak/, "reporter.md must map Aptos signer_capability_leak to CWE-862");
+  assert.match(prompt, /capability_leakage.*CWE-863|CWE-863.*capability_leakage/, "reporter.md must map Move capability_leakage to CWE-863");
+  assert.match(prompt, /generic_type_confusion.*CWE-843|CWE-843.*generic_type_confusion/i, "reporter.md must map generic_type_confusion to CWE-843");
+  // Aptos remediation
+  assert.match(prompt, /Aptos.*Move|move_to|signer::address_of/i, "reporter.md must offer Aptos Move remediation snippets");
+  // Sui remediation
+  assert.match(prompt, /Sui.*Move|tx_context::sender|object::owner|UpgradeCap/i, "reporter.md must offer Sui Move remediation snippets");
+  // Aptos verified-at vocabulary: version on network
+  assert.match(prompt, /version .*<N>.*on network .*<X>/i, "reporter.md must render 'version N on network X' for Aptos findings");
+  assert.match(prompt, /version reference unavailable/i, "reporter.md must use 'version reference unavailable' for Aptos");
+  // Sui verified-at vocabulary: checkpoint on network
+  assert.match(prompt, /checkpoint .*<N>.*on network .*<X>/i, "reporter.md must render 'checkpoint N on network X' for Sui findings");
+  assert.match(prompt, /checkpoint reference unavailable/i, "reporter.md must use 'checkpoint reference unavailable' for Sui");
+  // Gas-render fence: never for Move (deterministic VM, no realistic mainnet gas)
+  assert.match(prompt, /never render a gas line for (Aptos|Sui|Move)/i, "reporter.md must restrict gas rendering away from Move families");
+  // Phase 5 fix-up #8: missing CWE entries
+  assert.match(prompt, /key_drop_resource_theft.*CWE-664|CWE-664.*key_drop_resource_theft/i, "reporter.md must map key_drop_resource_theft to CWE-664");
+  assert.match(prompt, /store_phantom_drop.*CWE-664|CWE-664.*store_phantom_drop/i, "reporter.md must map store_phantom_drop to CWE-664");
+  assert.match(prompt, /key_rotation_replay.*CWE-294|CWE-294.*key_rotation_replay/i, "reporter.md must map key_rotation_replay to CWE-294");
+  // Phase 5 fix-up #7: Sui owner field shape rendering rule
+  assert.match(prompt, /Sui owner-field rendering|AddressOwner\(0x/i, "reporter.md must specify how to flatten Sui owner JSON shapes into prose");
+});
+
+test("hunter-substrate-agent ships with the Substrate / ink! tool surface (Phase 6c)", () => {
+  const document = readFile(".claude/agents/hunter-substrate-agent.md");
+  const frontmatter = parseFrontmatter(document, "hunter-substrate-agent.md");
+  const tools = frontmatter.tools.split(",").map((tool) => tool.trim());
+  assert.ok(tools.includes("mcp__bountyagent__bounty_substrate_run"), "hunter-substrate needs substrate_run for PoCs");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_substrate_fetch_storage"), "hunter-substrate needs substrate_fetch_storage");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_substrate_fetch_runtime"), "hunter-substrate needs substrate_fetch_runtime");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_record_finding"), "hunter-substrate needs record_finding");
+  assert.ok(tools.includes("Write"), "hunter-substrate needs Write to scaffold ink! tests");
+});
+
+test("hunter-cosmwasm-agent ships with the CosmWasm tool surface (Phase 6c)", () => {
+  const document = readFile(".claude/agents/hunter-cosmwasm-agent.md");
+  const frontmatter = parseFrontmatter(document, "hunter-cosmwasm-agent.md");
+  const tools = frontmatter.tools.split(",").map((tool) => tool.trim());
+  assert.ok(tools.includes("mcp__bountyagent__bounty_cosmwasm_run"), "hunter-cosmwasm needs cosmwasm_run for PoCs");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_cosmwasm_fetch_contract"), "hunter-cosmwasm needs cosmwasm_fetch_contract");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_cosmwasm_smart_query"), "hunter-cosmwasm needs cosmwasm_smart_query");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_record_finding"), "hunter-cosmwasm needs record_finding");
+  assert.ok(tools.includes("Write"), "hunter-cosmwasm needs Write to scaffold cw-multi-test integration tests");
+});
+
+test("hunter-substrate prompt encodes chain_family=substrate branching, sc_evidence shape, and bug class catalog (Phase 6c)", () => {
+  const prompt = readFile("prompts/roles/hunter-substrate.md");
+  assert.match(prompt, /chain_family.*"substrate"|chain_family.*: substrate|substrate.*chain_family/i, "hunter-substrate must reference chain_family substrate");
+  assert.match(prompt, /chain_family: "substrate"/, "hunter-substrate must instruct chain_family: \"substrate\" in sc_evidence");
+  assert.match(prompt, /bounty_substrate_run/, "hunter-substrate must document bounty_substrate_run");
+  assert.match(prompt, /bounty_substrate_fetch_storage/, "hunter-substrate must document bounty_substrate_fetch_storage");
+  // Bug class catalog
+  assert.match(prompt, /set_code_hash_unauthorized/, "hunter-substrate must list set_code_hash_unauthorized");
+  assert.match(prompt, /caller_spoof/, "hunter-substrate must list caller_spoof");
+  assert.match(prompt, /reentrancy_cross_contract/, "hunter-substrate must list reentrancy_cross_contract");
+  assert.match(prompt, /SS58/, "hunter-substrate must reference SS58 address format");
+});
+
+test("hunter-cosmwasm prompt encodes chain_family=cosmwasm branching, sc_evidence shape, and bug class catalog (Phase 6c)", () => {
+  const prompt = readFile("prompts/roles/hunter-cosmwasm.md");
+  assert.match(prompt, /chain_family.*"cosmwasm"|chain_family.*: cosmwasm|cosmwasm.*chain_family/i, "hunter-cosmwasm must reference chain_family cosmwasm");
+  assert.match(prompt, /chain_family: "cosmwasm"/, "hunter-cosmwasm must instruct chain_family: \"cosmwasm\" in sc_evidence");
+  assert.match(prompt, /bounty_cosmwasm_run/, "hunter-cosmwasm must document bounty_cosmwasm_run");
+  assert.match(prompt, /bounty_cosmwasm_fetch_contract/, "hunter-cosmwasm must document bounty_cosmwasm_fetch_contract");
+  assert.match(prompt, /bounty_cosmwasm_smart_query/, "hunter-cosmwasm must document bounty_cosmwasm_smart_query");
+  // Bug class catalog
+  assert.match(prompt, /migrate_msg_open|migrate.*open/i, "hunter-cosmwasm must list migrate_msg_open");
+  assert.match(prompt, /submessage_reply_misuse/, "hunter-cosmwasm must list submessage_reply_misuse");
+  assert.match(prompt, /non_payable_check_missing|non_payable/i, "hunter-cosmwasm must list non_payable_check_missing");
+  assert.match(prompt, /bech32/i, "hunter-cosmwasm must reference bech32 address format");
+});
+
+test("orchestrator dispatches by chain_family to hunter-substrate and hunter-cosmwasm (Phase 6c)", () => {
+  const prompt = readFile("prompts/roles/orchestrator.md");
+  assert.match(prompt, /SPAWN_HUNTER_SUBSTRATE_AGENT/, "orchestrator must reference Substrate hunter spawn");
+  assert.match(prompt, /SPAWN_HUNTER_COSMWASM_AGENT/, "orchestrator must reference CosmWasm hunter spawn");
+  assert.match(prompt, /chain_family.*"substrate"/, "orchestrator must dispatch on chain_family for substrate");
+  assert.match(prompt, /chain_family.*"cosmwasm"/, "orchestrator must dispatch on chain_family for cosmwasm");
+});
+
+test("brutalist-verifier dispatches Substrate + CosmWasm with REQUIRED read-side disambiguation for both (Phase 6c + fix-up #1)", () => {
+  const brutalist = readFile("prompts/roles/brutalist-verifier.md");
+  // Substrate dispatch
+  assert.match(brutalist, /Substrate.*chain_family.*"substrate"/i, "brutalist must have a Substrate dispatch block");
+  assert.match(brutalist, /bounty_substrate_run/, "brutalist must call bounty_substrate_run for substrate findings");
+  assert.match(brutalist, /substrate_not_in_path/, "brutalist must handle substrate_not_in_path fail-mode");
+  assert.match(brutalist, /substrate_dependency_missing/, "brutalist must handle substrate_dependency_missing fail-mode");
+  assert.match(brutalist, /cargo_compile_failed/, "brutalist must handle cargo_compile_failed fail-mode");
+  // Substrate REQUIRED disambiguation (Phase 6 fix-up #1): SS58 prefix byte not
+  // checksum-verified, so kusama-prefix SS58 against chain_id="polkadot" must
+  // be caught by an on-chain read.
+  assert.match(brutalist, /REQUIRED read-side disambiguation: SS58/, "brutalist must REQUIRE substrate read-side disambiguation post-fix-up");
+  assert.match(brutalist, /address does not resolve on the claimed Substrate network/, "brutalist must deny on substrate address-network mismatch");
+  assert.match(brutalist, /bounty_substrate_fetch_storage/, "brutalist must use substrate_fetch_storage for the disambiguation read");
+  // CosmWasm dispatch
+  assert.match(brutalist, /CosmWasm.*chain_family.*"cosmwasm"/i, "brutalist must have a CosmWasm dispatch block");
+  assert.match(brutalist, /bounty_cosmwasm_run/, "brutalist must call bounty_cosmwasm_run for cosmwasm findings");
+  assert.match(brutalist, /cosmwasm_not_in_path/, "brutalist must handle cosmwasm_not_in_path fail-mode");
+  assert.match(brutalist, /cosmwasm_dependency_missing/, "brutalist must handle cosmwasm_dependency_missing fail-mode");
+  // CosmWasm REQUIRED disambiguation (bech32 HRP can mislead network claim)
+  assert.match(brutalist, /REQUIRED read-side disambiguation/, "brutalist must REQUIRE cosmwasm read-side disambiguation");
+  assert.match(brutalist, /bounty_cosmwasm_fetch_contract/, "brutalist must use cosmwasm_fetch_contract for the disambiguation read");
+});
+
+test("balanced-verifier carries Substrate + CosmWasm severity heuristics (Phase 6c)", () => {
+  const balanced = readFile("prompts/roles/balanced-verifier.md");
+  assert.match(balanced, /Substrate.*severity heuristics/i, "balanced must include Substrate severity heuristics block");
+  assert.match(balanced, /set_code_hash_unauthorized.*HIGH|HIGH.*set_code_hash_unauthorized/i, "balanced must classify set_code_hash_unauthorized as HIGH/CRITICAL");
+  assert.match(balanced, /CosmWasm severity heuristics/i, "balanced must include CosmWasm severity heuristics block");
+  assert.match(balanced, /migrate_msg_open.*CRITICAL|CRITICAL.*migrate_msg_open/i, "balanced must classify migrate_msg_open as CRITICAL");
+  assert.match(balanced, /cw_multi_test_only_passes/i, "balanced must caveat cw-multi-test-only findings");
+});
+
+test("final-verifier carries Substrate + CosmWasm dispatch for fresh-fork re-runs (Phase 6c)", () => {
+  const final = readFile("prompts/roles/final-verifier.md");
+  // Dispatch lines look like: `- `substrate`: re-run via `bounty_substrate_run`...`
+  assert.match(final, /`substrate`:\s*re-run via `bounty_substrate_run`/i, "final must branch on chain_family substrate");
+  assert.match(final, /`cosmwasm`:\s*re-run via `bounty_cosmwasm_run`/i, "final must branch on chain_family cosmwasm");
+  assert.match(final, /substrate_not_in_path|substrate_dependency_missing/, "final must handle substrate fail-modes");
+  assert.match(final, /cosmwasm_not_in_path|cosmwasm_dependency_missing/, "final must handle cosmwasm fail-modes");
+});
+
+test("chain-builder enumerates Substrate + CosmWasm patterns and enforces family-cite (Phase 6c)", () => {
+  const prompt = readFile("prompts/roles/chain.md");
+  assert.match(prompt, /SC Substrate patterns|chain_family.*substrate/i, "chain.md must enumerate Substrate patterns");
+  assert.match(prompt, /SC CosmWasm patterns|chain_family.*cosmwasm/i, "chain.md must enumerate CosmWasm patterns");
+  assert.match(prompt, /set_code_hash_unauthorized.*contract_takeover|migrate_msg_open.*contract_takeover/i, "chain.md must list takeover-pattern pivots for the new families");
+  assert.match(prompt, /Substrate-family SC pattern MUST cite.*"substrate"/, "chain.md must enforce substrate-family cite");
+  assert.match(prompt, /CosmWasm-family SC pattern MUST cite.*"cosmwasm"/, "chain.md must enforce cosmwasm-family cite");
+});
+
+test("report-writer renders Substrate + CosmWasm address shape, CWE map, and verified-at lines (Phase 6c)", () => {
+  const prompt = readFile("prompts/roles/reporter.md");
+  // Substrate Chain + Address line
+  assert.match(prompt, /Substrate.*ss58_address|ss58_address.*network/i, "reporter.md must render Substrate network + ss58_address");
+  // CosmWasm Chain + Address line
+  assert.match(prompt, /CosmWasm.*contract_address|contract_address.*network/i, "reporter.md must render CosmWasm network + contract_address");
+  // Substrate verified-at
+  assert.match(prompt, /Substrate.*block <N>.*on network <X>/i, "reporter.md must render 'block N on network X' for Substrate findings");
+  // CosmWasm verified-at
+  assert.match(prompt, /CosmWasm.*block <N>.*on chain <X>/i, "reporter.md must render 'block N on chain X' for CosmWasm findings");
+  // CWE map entries
+  assert.match(prompt, /set_code_hash_unauthorized.*CWE-284|CWE-284.*set_code_hash_unauthorized/i, "reporter.md must map set_code_hash_unauthorized to CWE-284");
+  assert.match(prompt, /migrate_msg_open.*CWE-284|CWE-284.*migrate_msg_open/i, "reporter.md must map migrate_msg_open to CWE-284");
+  assert.match(prompt, /reentrancy_cross_contract.*CWE-841|CWE-841.*reentrancy_cross_contract/i, "reporter.md must map reentrancy_cross_contract to CWE-841");
+  assert.match(prompt, /submessage_reply_misuse.*CWE-841|CWE-841.*submessage_reply_misuse/i, "reporter.md must map submessage_reply_misuse to CWE-841");
+  // Substrate remediation
+  assert.match(prompt, /Substrate.*ink|set_code_hash|CallFlags::default|self\.admin/i, "reporter.md must offer Substrate / ink! remediation snippets");
+  // CosmWasm remediation
+  assert.match(prompt, /CosmWasm.*Migrate|nonpayable|info\.funds|cw_utils/i, "reporter.md must offer CosmWasm remediation snippets");
+  // Gas-render fence covers Substrate + CosmWasm
+  assert.match(prompt, /never render a gas line for.*Substrate.*CosmWasm|never render a gas line for.*CosmWasm/i, "reporter.md must restrict gas rendering away from Substrate / CosmWasm");
+});
+
+test("bounty_record_finding inputSchema requires sc_evidence sub-fields for SC findings", () => {
+  // Phase 3a: the schema is the contract verifiers depend on. Missing or
+  // optional required sub-fields would force verifiers to free-text-parse the
+  // PoC, which is exactly the failure mode the structured field exists to
+  // prevent.
+  const tool = TOOLS.find((entry) => entry.name === "bounty_record_finding");
+  assert.ok(tool, "bounty_record_finding tool not registered");
+  const sc = tool.inputSchema.properties.sc_evidence;
+  assert.equal(sc.type, "object", "sc_evidence must be an object schema");
+  assert.deepEqual(
+    [...sc.required].sort(),
+    ["chain_id", "contract_address", "harness_path", "match_test"].sort(),
+    "sc_evidence required sub-fields drifted from contract",
+  );
+  // Phase 6a: chain_family enumerates evm, svm, aptos, sui, substrate, cosmwasm.
+  assert.deepEqual(
+    [...sc.properties.chain_family.enum].sort(),
+    ["aptos", "cosmwasm", "evm", "substrate", "sui", "svm"],
+    "chain_family must enumerate supported families",
+  );
+  // chain_id is polymorphic (integer for EVM, string cluster for SVM). Validate
+  // the schema enumerates both shapes via oneOf.
+  assert.ok(
+    Array.isArray(sc.properties.chain_id.oneOf) && sc.properties.chain_id.oneOf.length === 2,
+    "chain_id must be polymorphic via oneOf",
+  );
+  assert.equal(sc.properties.chain_id.oneOf[0].type, "integer");
+  assert.equal(sc.properties.chain_id.oneOf[1].type, "string");
+  // contract_address polymorphism: free string with length cap. Family-specific
+  // regex enforcement runs at normalizeScEvidence time, not in JSON schema.
+  assert.equal(sc.properties.contract_address.type, "string");
+  assert.equal(sc.properties.match_test.type, "string");
 });
 
 test("orchestrator documents --no-auth flag and skips AUTH when set", () => {
