@@ -155,6 +155,94 @@ Final: call bounty_write_wave_handoff exactly once with target_domain, wave, age
 ")
 ```
 
+For smart-contract surfaces (`surface_type: "smart_contract"` in `attack_surface.json` and on the `bounty_start_wave` assignment), branch by `surface.chain_family`:
+
+When `chain_family: "evm"`, spawn the EVM hunter family:
+```
+Agent(subagent_type: "hunter-evm-agent", name: "hunter-evm-w[wave]-a[agent]", run_in_background: true, prompt: "
+Domain: [domain]
+Wave: w[wave]
+Agent: a[agent]
+Handoff token: [only this agent's handoff_token from bounty_start_wave.data.assignments]
+First action: call bounty_read_hunter_brief({ target_domain: '[domain]', wave: 'w[wave]', agent: 'a[agent]' }) and use .data.
+Confirm surface_type is smart_contract; surface.chain_family and surface.chain_id are required.
+Use bob_spec_status for trust_assumptions, invariants, known_issues, and severity_system metadata. Use rpc_pool.endpoints for non-MCP reads.
+Workflow: bounty_evm_fetch_source -> read sources via Read -> bounty_evm_role_table to map the trust boundary -> scaffold a Foundry test under harness_path/test/ via Write -> bounty_foundry_run with chain_id and pinned fork_block -> record bypass_attempts[] entries citing the actual harness path + test name in attempt_summary.
+If forge is not in PATH or all fork_attempts fail, set surface_status: partial and record blocked_harness_runs[] with kind: foundry_fork or rpc_endpoint.
+Checkpoint mode: [normal|paranoid|yolo].
+Final: call bounty_write_wave_handoff exactly once with target_domain, wave, agent, surface_id, surface_status, handoff_token, summary, content, optional bypass_attempts, blocked_harness_runs, chain_notes, dead_ends, lead_surface_ids. Then call bounty_finalize_hunter_run. If finalization fails, fix the handoff and retry. After finalization succeeds, emit `BOB_HUNTER_DONE {"target_domain":"[domain]","wave":"w[wave]","agent":"a[agent]","surface_id":"[surface_id]"}` for Claude compatibility.
+")
+```
+
+When `chain_family: "svm"`, spawn the SVM hunter family:
+```
+Agent(subagent_type: "hunter-svm-agent", name: "hunter-svm-w[wave]-a[agent]", run_in_background: true, prompt: "
+Domain: [domain]
+Wave: w[wave]
+Agent: a[agent]
+Handoff token: [only this agent's handoff_token from bounty_start_wave.data.assignments]
+First action: call bounty_read_hunter_brief({ target_domain: '[domain]', wave: 'w[wave]', agent: 'a[agent]' }) and use .data.
+Confirm surface_type is smart_contract AND surface.chain_family is svm; surface.chain_id is the Solana cluster.
+Use bob_spec_status for trust_assumptions, invariants, known_issues, and severity_system metadata. Use rpc_pool.endpoints for non-MCP reads.
+Workflow: bounty_svm_fetch_program (confirm upgrade authority) -> bounty_svm_fetch_account (read multisig + state accounts) -> scaffold an Anchor test under harness_path/tests/ via Write -> bounty_anchor_run with cluster and optional pinned fork_slot -> record bypass_attempts[] entries citing the actual harness path + test description in attempt_summary.
+If anchor is not in PATH or all fork_attempts fail, set surface_status: partial and record blocked_harness_runs[] with kind: anchor_fork.
+Checkpoint mode: [normal|paranoid|yolo].
+Final: call bounty_write_wave_handoff exactly once with target_domain, wave, agent, surface_id, surface_status, handoff_token, summary, content, optional bypass_attempts, blocked_harness_runs, chain_notes, dead_ends, lead_surface_ids. Then call bounty_finalize_hunter_run. If finalization fails, fix the handoff and retry. After finalization succeeds, emit `BOB_HUNTER_DONE {"target_domain":"[domain]","wave":"w[wave]","agent":"a[agent]","surface_id":"[surface_id]"}` for Claude compatibility.
+")
+```
+
+When `chain_family: "aptos"` or `chain_family: "sui"`, spawn the Move hunter family (one role handles both Aptos and Sui — the hunter dispatches by `surface.chain_family` internally to pick `bounty_aptos_*` vs `bounty_sui_*` tools):
+```
+Agent(subagent_type: "hunter-move-agent", name: "hunter-move-w[wave]-a[agent]", run_in_background: true, prompt: "
+Domain: [domain]
+Wave: w[wave]
+Agent: a[agent]
+Handoff token: [only this agent's handoff_token from bounty_start_wave.data.assignments]
+First action: call bounty_read_hunter_brief({ target_domain: '[domain]', wave: 'w[wave]', agent: 'a[agent]' }) and use .data.
+Confirm surface_type is smart_contract AND surface.chain_family is one of {aptos, sui}. surface.chain_id is the network name (Aptos: mainnet/testnet/devnet; Sui: mainnet/testnet/devnet/localnet).
+Use bob_spec_status for trust_assumptions, invariants, known_issues, and severity_system metadata. Use rpc_pool.endpoints for non-MCP reads.
+Aptos workflow: bounty_aptos_fetch_module (enumerate exposed_functions, structs, friends) -> bounty_aptos_fetch_resource (read capability tokens, ownership records, treasury balances) -> scaffold an `aptos move test` harness under harness_path/sources/ via Write -> bounty_aptos_run with network and optional pinned fork_version -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary.
+Sui workflow: bounty_sui_fetch_package (enumerate entry functions and friend relationships) -> bounty_sui_fetch_object (inspect Owner=Immutable/Shared/AddressOwner/ObjectOwner, Move type, capability fields) -> scaffold a `sui move test` harness under harness_path/sources/ via Write -> bounty_sui_run with network and optional pinned fork_checkpoint -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary.
+If aptos / sui CLI is not in PATH or all fork_attempts fail, set surface_status: partial and record blocked_harness_runs[] with kind: aptos_fork or sui_fork.
+Checkpoint mode: [normal|paranoid|yolo].
+Final: call bounty_write_wave_handoff exactly once with target_domain, wave, agent, surface_id, surface_status, handoff_token, summary, content, optional bypass_attempts, blocked_harness_runs, chain_notes, dead_ends, lead_surface_ids. Then call bounty_finalize_hunter_run. If finalization fails, fix the handoff and retry. After finalization succeeds, emit `BOB_HUNTER_DONE {"target_domain":"[domain]","wave":"w[wave]","agent":"a[agent]","surface_id":"[surface_id]"}` for Claude compatibility.
+")
+```
+
+When `chain_family: "substrate"`, spawn the Substrate / ink! hunter family:
+```
+Agent(subagent_type: "hunter-substrate-agent", name: "hunter-substrate-w[wave]-a[agent]", run_in_background: true, prompt: "
+Domain: [domain]
+Wave: w[wave]
+Agent: a[agent]
+Handoff token: [only this agent's handoff_token from bounty_start_wave.data.assignments]
+First action: call bounty_read_hunter_brief({ target_domain: '[domain]', wave: 'w[wave]', agent: 'a[agent]' }) and use .data.
+Confirm surface_type is smart_contract AND surface.chain_family is substrate. surface.chain_id is the network name (polkadot/kusama/astar/shiden/rococo/westend/localnet).
+Use bob_spec_status for trust_assumptions, invariants, known_issues, and severity_system metadata. Use rpc_pool.endpoints for non-MCP reads.
+Workflow: bounty_substrate_fetch_runtime (confirm chain identity + spec_version) -> bounty_substrate_fetch_storage (read pallet_contracts.ContractInfoOf for code_hash and admin) -> scaffold an ink! `cargo test` harness under harness_path/ via Write (uses #[ink::test] for unit or #[ink_e2e::test] for E2E) -> bounty_substrate_run with network and optional pinned fork_block -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary.
+If cargo or substrate-contracts-node is not in PATH or all fork_attempts fail, set surface_status: partial and record blocked_harness_runs[] with kind: substrate_fork.
+Checkpoint mode: [normal|paranoid|yolo].
+Final: call bounty_write_wave_handoff exactly once with target_domain, wave, agent, surface_id, surface_status, handoff_token, summary, content, optional bypass_attempts, blocked_harness_runs, chain_notes, dead_ends, lead_surface_ids. Then call bounty_finalize_hunter_run. If finalization fails, fix the handoff and retry. After finalization succeeds, emit `BOB_HUNTER_DONE {"target_domain":"[domain]","wave":"w[wave]","agent":"a[agent]","surface_id":"[surface_id]"}` for Claude compatibility.
+")
+```
+
+When `chain_family: "cosmwasm"`, spawn the CosmWasm hunter family:
+```
+Agent(subagent_type: "hunter-cosmwasm-agent", name: "hunter-cosmwasm-w[wave]-a[agent]", run_in_background: true, prompt: "
+Domain: [domain]
+Wave: w[wave]
+Agent: a[agent]
+Handoff token: [only this agent's handoff_token from bounty_start_wave.data.assignments]
+First action: call bounty_read_hunter_brief({ target_domain: '[domain]', wave: 'w[wave]', agent: 'a[agent]' }) and use .data.
+Confirm surface_type is smart_contract AND surface.chain_family is cosmwasm. surface.chain_id is the network name (osmosis/juno/neutron/archway/sei/stargaze/terra/kava/localnet).
+Use bob_spec_status for trust_assumptions, invariants, known_issues, and severity_system metadata. Use rpc_pool.endpoints for non-MCP reads.
+Workflow: bounty_cosmwasm_fetch_contract (confirm contract exists, capture code_id + admin) -> bounty_cosmwasm_smart_query (inspect public Config / Owner / Balance entrypoints) -> scaffold a cw-multi-test integration test under harness_path/tests/ via Write -> bounty_cosmwasm_run with network and optional pinned fork_block -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary.
+If cargo is not in PATH or all fork_attempts fail, set surface_status: partial and record blocked_harness_runs[] with kind: cosmwasm_fork.
+Checkpoint mode: [normal|paranoid|yolo].
+Final: call bounty_write_wave_handoff exactly once with target_domain, wave, agent, surface_id, surface_status, handoff_token, summary, content, optional bypass_attempts, blocked_harness_runs, chain_notes, dead_ends, lead_surface_ids. Then call bounty_finalize_hunter_run. If finalization fails, fix the handoff and retry. After finalization succeeds, emit `BOB_HUNTER_DONE {"target_domain":"[domain]","wave":"w[wave]","agent":"a[agent]","surface_id":"[surface_id]"}` for Claude compatibility.
+")
+```
+
 Launch-turn barrier:
 1. After spawning hunters, report wave number, agent count, and assignments.
 2. Never call `bounty_apply_wave_merge`, `bounty_wave_status`, `bounty_wave_handoff_status`, or `bounty_merge_wave_handoffs` in the same turn that spawned hunters.

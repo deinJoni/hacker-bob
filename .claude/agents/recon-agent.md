@@ -98,7 +98,8 @@ Use this backward-compatible schema:
       "interesting_params": ["id", "token", "redirect"],
       "nuclei_hits": ["..."],
       "priority": "CRITICAL|HIGH|MEDIUM|LOW",
-      "surface_type": "api|auth|cms|upload|billing|graphql|admin|mobile_api|js_endpoint|secrets|ci_cd|static|unknown",
+      "surface_type": "api|auth|cms|upload|billing|graphql|admin|mobile_api|js_endpoint|secrets|ci_cd|static|smart_contract|unknown",
+      "chain_family": "evm|svm|move|substrate|cosmwasm",
       "bug_class_hints": ["idor", "authz", "ssrf", "xss", "upload", "business_logic", "jwt_oauth", "graphql"],
       "high_value_flows": ["billing", "exports", "invites", "password reset", "admin", "uploads"],
       "evidence": ["live host shows 200 title Dashboard", "archived /api/v1/users?account_id=", "JS references Bearer token"],
@@ -114,7 +115,8 @@ Use this backward-compatible schema:
 ```
 Rules for `attack_surface.json`:
 - Required per-surface fields remain: `id`, `hosts`, `tech_stack`, `endpoints`, `interesting_params`, `nuclei_hits`, and `priority`.
-- Optional enrichment fields are additive: `surface_type`, `bug_class_hints`, `high_value_flows`, `evidence`, and `ranking`. Omit an optional field only when there is no support for it.
+- Optional enrichment fields are additive: `surface_type`, `chain_family`, `bug_class_hints`, `high_value_flows`, `evidence`, and `ranking`. Omit an optional field only when there is no support for it.
+- Set `chain_family` only when `surface_type` is `smart_contract`. The web recon path produced by this role does not classify smart-contract surfaces; family-specific recon agents (for example `recon-evm-agent`) populate `smart_contract` surfaces in later waves and write the `chain_family` and the program's `bob-spec.yaml` (see `docs/SMART_CONTRACTS_SPEC.md`).
 - Group by application/property, not only subdomain.
 - Include first-party sibling or parent properties when the target links or redirects to them and they look org-owned. Capture third-party SaaS and CDNs that the target depends on as their own surfaces too — hunters are allowed to pivot through them when chaining impact.
 - Pull endpoints from archived URLs and JS extraction so hunters do not rediscover them.
@@ -128,8 +130,11 @@ Rules for `attack_surface.json`:
   - WordPress/CMS: `wp-json`, `wp-admin`, `wp-content`, `xmlrpc.php`, plugin/theme paths, CMS admin.
   - JS-disclosed endpoint or secret/token surface: API roots, internal paths, Bearer/API key/client secret hints found in JS.
   - Static/dead/CDN/WAF-only: static assets, parked pages, CDN-only hosts, WAF block pages, no dynamic endpoints.
+  - Smart contract / blockchain runtime: deployed contract addresses, controllers, bridges/messaging (CCTP, LayerZero, Wormhole), AMMs and pools, vaults/strategies, oracles, modules/adapters, governors. Populated by family-specific recon (`recon-evm-agent` and peers) in later phases — this web recon role does not classify them.
 - Populate `bug_class_hints` from evidence, not guesses. Examples: object IDs and account params -> `idor`/`authz`; URL fetch/import/image params -> `ssrf`; upload/file paths -> `upload`; checkout/refund/coupon/plan flows -> `business_logic`; token/OAuth/JWKS/callback paths -> `jwt_oauth`; GraphQL endpoints -> `graphql`; reflected or stored content paths -> `xss`.
+- For `surface_type: smart_contract` (set by family-specific recon, not this role), the bug-class taxonomy is: `reentrancy`, `donation_round`, `precision_loss`, `oracle_manipulation`, `signature_replay`, `init_upgrade`, `role_compromise`, `erc20_weirdness`, `hook_callback`, `bridge_invariant`, `rate_limit_normalization`, `stale_module_allowlist`, `delegatecall`, `arbitrary_external_call`, `selector_collision`, `relayer_compromise`, `flash_loan_chain`.
 - Populate `high_value_flows` with short hunter-first workflow names: billing, exports, invites, password reset, admin, uploads, refunds, checkout, team management, API keys, webhooks, imports, reports.
+- For `surface_type: smart_contract`, `high_value_flows` examples: minting, redemption, withdrawal, swap, cross-chain transfer, governance proposal, role grant/revoke, rate limit consumption, oracle update, hook execution, vault deposit, liquidation, fee accrual.
 - Populate `evidence` with short strings that explain priority and source. Prefer concrete clues from live hosts, archived URLs, nuclei hits, JS endpoints, and JS secret hints. Keep each item short; do not paste huge responses.
 - Prioritize auth flows, object IDs, admin/debug paths, uploads, GraphQL, payments, mobile/API backends, and JS-disclosed secrets/endpoints. Bob MCP computes runtime ranking with request traffic and public intel for briefs/status; keep your recon evidence fields concrete so ranking has useful signals.
 - Mark static/CDN-only/parked/WAF-only surfaces `LOW`.

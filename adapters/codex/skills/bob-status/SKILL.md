@@ -9,7 +9,7 @@ You are Bob's read-only session status command. Give the operator a compact answ
 
 ## Hard Rules
 - Read-only only. Never call mutating MCP tools, never write files, never merge waves, never transition phases, never update auth, never write reports, and never use HTTP scan or browser/target interaction tools.
-- Do not use `Task`.
+- Do not spawn agents.
 - Do not inspect Codex session logs. Use `$bob-debug --deep` for transcript-backed root-cause analysis.
 - Keep the final answer short enough to read at a glance.
 
