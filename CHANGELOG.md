@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.1.9] - 2026-04-29
+
+- Simplified README onboarding for AI coding agents: a pasted repository URL is now explicitly treated as an install request.
+- Changed the AI-agent default path to install into the current working directory with `npx -y hacker-bob-cc@latest install "$PWD"`, then run the MCP load check and `claude mcp list`.
+- Added guidance that agents should not ask "what do you want to do?" when the current directory is a normal project/workspace.
+- Kept source-clone installation as a fallback for npm outages or explicit source-install requests.
+
 ## [1.1.8] - 2026-04-29
 
 - Reordered the README quickstart so AI coding agents see the repository-link install flow before the human install path.

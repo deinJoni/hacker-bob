@@ -20,31 +20,32 @@ Bob is an autonomous bug bounty hunting framework for Claude Code. You install i
 
 ### For AI Coding Agents
 
-If a user pastes this repository URL and asks you to install Bob, treat this repo as the **install source**, not automatically as the hunting workspace. Install Bob into the Claude Code project directory the user will run `claude` from.
+If a user pastes this repository URL into an AI coding agent, treat that as an install request. Install Bob into the current working directory by default; that is the Claude Code project the user is already in.
 
-Use this flow:
+Run this first:
 
 ```bash
-git clone https://github.com/vmihalis/hacker-bob.git /tmp/hacker-bob
-cd /tmp/hacker-bob
-./install.sh /absolute/path/to/target-project
-cd /absolute/path/to/target-project
+npx -y hacker-bob-cc@latest install "$PWD"
 node -e "require('./mcp/server.js'); console.log('MCP ok')"
 claude mcp list
 ```
 
-`claude mcp list` should show `bountyagent` connected. That name is expected: it is Bob's internal MCP server namespace. The user-facing commands are `/bob-hunt`, `/bob-status`, `/bob-debug`, `/bob-update`, and `/bob-egress`.
+Do not ask "what do you want to do?" when the current directory is a normal project/workspace. Ask only if the current directory is clearly the Hacker Bob source checkout itself, a home/root directory, or the user gave an explicit different target path.
 
-After install, tell the user to fully restart Claude Code from `/absolute/path/to/target-project`, then run:
+`claude mcp list` should show `bountyagent` connected. That name is expected: it is Bob's internal MCP server namespace, not a legacy user command. The user-facing commands are `/bob-hunt`, `/bob-status`, `/bob-debug`, `/bob-update`, and `/bob-egress`.
+
+After install, tell the user to fully restart Claude Code from this directory, then run:
 
 ```
 /bob-hunt target.com
 ```
 
-If npm access is available and the user does not specifically need a source checkout, the equivalent install command is:
+Use the source checkout only as a fallback when npm is unavailable or the user explicitly asks to install from source:
 
 ```bash
-npx -y hacker-bob-cc@latest install /absolute/path/to/target-project
+git clone https://github.com/vmihalis/hacker-bob.git /tmp/hacker-bob
+cd /tmp/hacker-bob
+./install.sh /absolute/path/to/target-project
 ```
 
 ### For Humans
