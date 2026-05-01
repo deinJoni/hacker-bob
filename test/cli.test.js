@@ -82,6 +82,14 @@ test("CLI installs and doctors the Codex adapter without Claude files", () => {
     });
 
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".codex-plugin", "plugin.json")));
+    // Plugin .mcp.json must register both bountyagent and the optional brutalist server.
+    // The bundled source file ships both; this assertion catches mergeConfig regressions
+    // that would silently overwrite the bundled file with a bountyagent-only template
+    // during install.
+    const codexMcp = JSON.parse(fs.readFileSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".mcp.json"), "utf8"));
+    assert.ok(codexMcp.mcpServers.bountyagent, "Codex plugin .mcp.json must keep bountyagent");
+    assert.ok(codexMcp.mcpServers.brutalist, "Codex plugin .mcp.json must register the optional brutalist MCP server post-install");
+    assert.deepEqual(codexMcp.mcpServers.brutalist.args, ["-y", "@brutalist/mcp@latest"]);
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-hunt", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-status", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-debug", "SKILL.md")));
