@@ -333,10 +333,7 @@ counts = {
     "surface_leads": len(leads),
 }
 summary = {
-    "version": 1,
-    "mode": "deep",
     "counts": counts,
-    "top_endpoint_clusters": lines("js_endpoint_clusters.txt", 20),
     "takeover_candidates": takeovers[:20],
     "tech_cve_hints": cve_hints[:20],
     "lead_titles": [lead["title"] for lead in leads[:12]],

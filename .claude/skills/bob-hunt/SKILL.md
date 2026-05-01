@@ -90,11 +90,11 @@ Use `bounty_read_state_summary.data` for routine decisions. Use `bounty_read_ses
 Call `bounty_init_session({ target_domain, target_url, deep_mode })`.
 
 Spawn exactly one recon agent by resolved `deep_mode`, then wait:
-```
+```text
 deep_mode false: Agent(subagent_type: "recon-agent", name: "recon", prompt: "DOMAIN=[domain] SESSION=~/bounty-agent-sessions/[domain]")
 deep_mode true: Agent(subagent_type: "deep-recon-agent", name: "deep-recon", prompt: "DOMAIN=[domain] SESSION=~/bounty-agent-sessions/[domain]")
 ```
-After recon, read `attack_surface.json`. If missing or empty, tell the user `Recon found no attack surfaces for [domain]` and stop. In deep mode, call `bounty_promote_surface_leads({ target_domain, limit: 8, min_score: 60 })`, then `bounty_read_surface_leads({ target_domain, limit: 20 })`. Then call `bounty_transition_phase({ target_domain, to_phase: "AUTH" })`.
+After recon, in deep mode call `bounty_promote_surface_leads({ target_domain, limit: 8, min_score: 60 })`, then `bounty_read_surface_leads({ target_domain, limit: 20 })`. Then read `attack_surface.json`; if missing or empty, tell the user `Recon found no attack surfaces for [domain]` and stop. Then call `bounty_transition_phase({ target_domain, to_phase: "AUTH" })`.
 
 ## PHASE 2: AUTH
 If `--no-auth` is set: skip all signup logic, call `bounty_transition_phase({ target_domain, to_phase: "HUNT", auth_status: "unauthenticated" })`, and proceed to HUNT.
