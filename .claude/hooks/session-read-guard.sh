@@ -60,7 +60,27 @@ BLOCKED_PATTERNS = [
 ]
 
 RISKY_PATH_RE = re.compile(r"(?:^|[._/\-])(raw|proof|poc|dump|body|exploit)(?:[._/\-]|$)", re.I)
-READ_COMMANDS = {"cat", "head", "tail", "jq"}
+PATH_FRAGMENT_RE = re.compile(r"(~|\$\{?SESSION\}?|\$\{?HOME\}?|/)[^\s'\";|&)<>,]*")
+READ_COMMANDS = {
+    "awk",
+    "cat",
+    "grep",
+    "head",
+    "jq",
+    "less",
+    "more",
+    "nl",
+    "node",
+    "nodejs",
+    "python",
+    "python3",
+    "rg",
+    "sed",
+    "strings",
+    "tail",
+    "wc",
+}
+RECURSIVE_READ_COMMANDS = {"grep", "rg"}
 
 
 def resolve_path(raw_path):
@@ -83,10 +103,20 @@ def is_in_session_dir(resolved):
         return False
 
 
-def check_file(raw_path):
+def check_file(raw_path, *, block_session_dirs=False):
     resolved = resolve_path(raw_path)
     if not is_in_session_dir(resolved):
         return None
+
+    try:
+        session_relative_parts = resolved.resolve(strict=False).relative_to(
+            SESSIONS_ROOT.resolve(strict=False)
+        ).parts
+    except (ValueError, OSError):
+        session_relative_parts = ()
+
+    if block_session_dirs and len(session_relative_parts) <= 1:
+        return resolved.name or "session directory"
 
     filename = resolved.name
     if filename in ALLOWED_EXACT:
@@ -129,6 +159,15 @@ def looks_like_path(token):
     )
 
 
+def candidate_paths(token):
+    if looks_like_path(token):
+        yield token
+    for match in PATH_FRAGMENT_RE.finditer(token):
+        fragment = match.group(0)
+        if fragment:
+            yield fragment
+
+
 def check_bash_command(command):
     try:
         tokens = shlex.split(command, posix=True)
@@ -138,14 +177,14 @@ def check_bash_command(command):
         command_name = pathlib.PurePosixPath(token).name
         if command_name not in READ_COMMANDS:
             continue
+        block_session_dirs = command_name in RECURSIVE_READ_COMMANDS
         for candidate in tokens[index + 1:]:
             if candidate in {"|", ";", "&&", "||"}:
                 break
-            if not looks_like_path(candidate):
-                continue
-            blocked = check_file(candidate)
-            if blocked:
-                block(blocked)
+            for path_candidate in candidate_paths(candidate):
+                blocked = check_file(path_candidate, block_session_dirs=block_session_dirs)
+                if blocked:
+                    block(blocked)
 
 
 payload = {}
