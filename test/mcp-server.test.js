@@ -723,12 +723,32 @@ test("MCP per-tool modules preserve representative tool behavior", () => {
   assert.equal(TOOL_MANIFEST.bounty_read_pipeline_analytics.global_preapproval, false);
   assert.deepEqual(TOOL_MANIFEST.bounty_read_pipeline_analytics.role_bundles, ["orchestrator"]);
   assert.deepEqual(TOOL_MANIFEST.bounty_record_surface_leads.role_bundles, ["hunter", "orchestrator"]);
+  assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.mutating, true);
   assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.global_preapproval, true);
+  assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.network_access, false);
+  assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.browser_access, false);
+  assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.scope_required, false);
+  assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.sensitive_output, false);
+  assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.hook_required, false);
+  assert.deepEqual(TOOL_MANIFEST.bounty_record_surface_leads.session_artifacts_written, ["surface-leads.json"]);
   assert.deepEqual(TOOL_MANIFEST.bounty_read_surface_leads.role_bundles, ["hunter", "orchestrator"]);
   assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.mutating, false);
+  assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.global_preapproval, true);
+  assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.network_access, false);
+  assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.browser_access, false);
+  assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.scope_required, false);
+  assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.sensitive_output, false);
+  assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.hook_required, false);
+  assert.deepEqual(TOOL_MANIFEST.bounty_read_surface_leads.session_artifacts_written, []);
   assert.deepEqual(TOOL_MANIFEST.bounty_promote_surface_leads.role_bundles, ["orchestrator"]);
   assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.mutating, true);
   assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.global_preapproval, false);
+  assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.network_access, false);
+  assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.browser_access, false);
+  assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.scope_required, false);
+  assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.sensitive_output, false);
+  assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.hook_required, false);
+  assert.deepEqual(TOOL_MANIFEST.bounty_promote_surface_leads.session_artifacts_written, ["surface-leads.json", "attack_surface.json", "state.json"]);
 });
 
 test("MCP tool registry validation rejects incomplete or inconsistent entries", () => {
@@ -3002,6 +3022,7 @@ test("bounty_write_wave_handoff persists hunter surface_leads through the sessio
       release();
     }
     assert.ok(!fs.existsSync(path.join(sessionDir(domain), "handoff-w1-a1.json")));
+    assert.equal(fs.existsSync(surfaceLeadsPath(domain)), false);
 
     const first = JSON.parse(writeWaveHandoff({
       target_domain: domain,
