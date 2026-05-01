@@ -35,6 +35,21 @@
 - Added `test/adapter-detection.test.js` with 14 unit tests covering all four detection layers and precedence.
 - Added 7 new CLI integration tests covering: fresh-install default fallback, project-artifact-driven codex selection, reinstall preservation, multi-adapter no-flag uninstall, multi-adapter no-flag doctor, no-flag update preserving prior adapters, and generic-mcp `.mcp.json` presence after install.
 
+## [1.1.9] - 2026-04-29
+
+- Simplified README onboarding for AI coding agents: a pasted repository URL is now explicitly treated as an install request.
+- Changed the AI-agent default path to install into the current working directory with `npx -y hacker-bob-cc@latest install "$PWD"`, then run the MCP load check and `claude mcp list`.
+- Added guidance that agents should not ask "what do you want to do?" when the current directory is a normal project/workspace.
+- Kept source-clone installation as a fallback for npm outages or explicit source-install requests.
+
+## [1.1.8] - 2026-04-29
+
+- Reordered the README quickstart so AI coding agents see the repository-link install flow before the human install path.
+- Clarified that the cloned Hacker Bob repository is normally the install source and that Bob must be installed into the Claude Code project where `/bob-hunt` will run.
+- Documented that `bountyagent` is the expected internal MCP server namespace behind Bob's `bounty_*` tools, while `/bob-*` commands remain the user-facing surface.
+- Added MCP troubleshooting for stale or incomplete installs that fail with `Cannot find module './tools/index.js'`.
+- Ignored local `.claude/bob/` install metadata so source checkouts used for packaging do not accidentally include machine-specific install state.
+
 ## [1.1.7] - 2026-04-28
 
 - Added operator-controlled egress profiles under `.claude/bob/`, including a safe example config, installer-preserved operator config, and `/bob-egress` management commands for listing, adding, testing, enabling, disabling, and removing profiles.
