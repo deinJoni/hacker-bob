@@ -7963,7 +7963,7 @@ test("bounty_read_findings, bounty_list_findings, and bounty_wave_status return 
         recent: [],
       },
       traffic: { total: 0, shown: 0, omitted: 0, cap: 0, authenticated_count: 0, by_status_class: { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, other: 0 }, recent: [] },
-      circuit_breaker: { threshold: 3, tripped_hosts: [], tripped_count: 0, note: null },
+      circuit_breaker: { threshold: 3, tripped_hosts: [], tripped_count: 0, near_threshold_hosts: [], near_threshold_count: 0, note: null },
       surface_leads: { total: 0, high_confidence_unpromoted: 0, promoted: 0 },
       findings_summary: [],
     });
@@ -8058,7 +8058,7 @@ test("bounty_list_findings and bounty_wave_status keep their external shapes whi
         recent: [],
       },
       traffic: { total: 0, shown: 0, omitted: 0, cap: 0, authenticated_count: 0, by_status_class: { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, other: 0 }, recent: [] },
-      circuit_breaker: { threshold: 3, tripped_hosts: [], tripped_count: 0, note: null },
+      circuit_breaker: { threshold: 3, tripped_hosts: [], tripped_count: 0, near_threshold_hosts: [], near_threshold_count: 0, note: null },
       surface_leads: { total: 0, high_confidence_unpromoted: 0, promoted: 0 },
       findings_summary: [
         {
@@ -10274,6 +10274,97 @@ test("circuit breaker summary marks repeated failures per host without blocking 
     assert.equal(brief.circuit_breaker_summary.tripped_hosts[0].host, `api.${domain}`);
     assert.doesNotMatch(JSON.stringify(brief.circuit_breaker_summary), new RegExp(`app\\.${domain}`));
   });
+});
+
+test("buildCircuitBreakerSummary surfaces below-threshold per-host failures in near_threshold_hosts", () => {
+  // The veda.tech regression: 2 internal errors + 2 network-unreachable
+  // events on the same host produced no tripped breaker (below the
+  // ≥3-per-host threshold) and no near-threshold visibility either.
+  // Operators looking at a session with errors but no warnings could not
+  // tell whether the threshold was reached and suppressed or never crossed.
+  // near_threshold_hosts surfaces that data without false escalation.
+  const records = [
+    {
+      version: 1,
+      ts: "2026-05-02T00:00:00.000Z",
+      target_domain: "example.com",
+      method: "GET",
+      url: "https://api.example.com/x",
+      host: "api.example.com",
+      status: 200,
+      error: null,
+      scope_decision: "allowed",
+    },
+    {
+      version: 1,
+      ts: "2026-05-02T00:00:01.000Z",
+      target_domain: "example.com",
+      method: "GET",
+      url: "https://api.example.com/x",
+      host: "api.example.com",
+      status: 403,
+      error: null,
+      scope_decision: "allowed",
+    },
+    {
+      version: 1,
+      ts: "2026-05-02T00:00:02.000Z",
+      target_domain: "example.com",
+      method: "GET",
+      url: "https://api.example.com/y",
+      host: "api.example.com",
+      status: null,
+      error: "timeout after 5000ms",
+      scope_decision: "request_error",
+    },
+    // A host with 3 failures — crosses the threshold and should appear in
+    // tripped_hosts, NOT in near_threshold_hosts.
+    {
+      version: 1,
+      ts: "2026-05-02T00:00:03.000Z",
+      target_domain: "example.com",
+      method: "GET",
+      url: "https://hot.example.com/z",
+      host: "hot.example.com",
+      status: 429,
+      error: null,
+      scope_decision: "allowed",
+    },
+    {
+      version: 1,
+      ts: "2026-05-02T00:00:04.000Z",
+      target_domain: "example.com",
+      method: "GET",
+      url: "https://hot.example.com/z",
+      host: "hot.example.com",
+      status: 429,
+      error: null,
+      scope_decision: "allowed",
+    },
+    {
+      version: 1,
+      ts: "2026-05-02T00:00:05.000Z",
+      target_domain: "example.com",
+      method: "GET",
+      url: "https://hot.example.com/z",
+      host: "hot.example.com",
+      status: 403,
+      error: null,
+      scope_decision: "allowed",
+    },
+  ];
+
+  const summary = buildCircuitBreakerSummary(records);
+  assert.equal(summary.tripped_count, 1);
+  assert.equal(summary.tripped_hosts[0].host, "hot.example.com");
+  assert.equal(summary.near_threshold_count, 1);
+  assert.equal(summary.near_threshold_hosts[0].host, "api.example.com");
+  assert.equal(summary.near_threshold_hosts[0].failures, 2);
+  // No host appears in both lists.
+  assert.equal(
+    summary.near_threshold_hosts.some((item) => item.host === "hot.example.com"),
+    false,
+  );
 });
 
 test("pipeline analytics surfaces egress and geofence warnings from HTTP audit", () => {
