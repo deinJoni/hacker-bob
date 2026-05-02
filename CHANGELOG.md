@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Capability-pack tightening — Phase C: persist routing on findings
+
+- `bounty_record_finding` now persists `capability_pack`, `hunter_agent`, and `brief_profile` onto every finding, derived from the assigned wave's route metadata. Findings.jsonl rows carry the routed pack triple so verifier/grader/reporter can dispatch on it directly in Phase D instead of re-deriving from `surface_type` + `sc_evidence.chain_family`.
+- `findings.md` mirror gained a `Capability Pack:` line so triage shows the routed pack and hunter agent alongside surface and auth profile.
+- Read-side backfill: `normalizeFindingRecord` reconstructs the pack triple from `surface_type` + `sc_evidence.chain_family` for any pre-Phase-C row that lacks the metadata. Added `capabilityPackForLegacyFinding` to `mcp/lib/capability-packs.js` for that path. Phase D consumers never see null — the read shim removes the fallback chain everyone would otherwise have to re-implement.
+- Brutalist roast fed back four real hazards, all fixed in this commit:
+  - **All-null shortcut on assignment route metadata silently produced web defaults.** A smart-contract assignment with the route triple dropped (forged file, half-rolled-back upgrade) was rubber-stamped as a web hunter. `normalizeAssignmentRouteMetadata` now throws when `surface_type === "smart_contract"` and the triple is absent.
+  - **Surface router fell back to the web pack for `smart_contract` surfaces with missing/unsupported `chain_family`.** That produced `surface_type=smart_contract` + `capability_pack=web` in the routes file — two truths fighting. `classifySurfaceCapability` now throws so the operator either fixes the surface or registers the missing pack.
+  - **No-wave path hardcoded the web pack triple.** Correctness depended on a non-local invariant (the `sc_evidence`-on-non-SC reject in the normalizer). Added a local assert: `recordFinding` rejects `sc_evidence` when wave/agent are absent.
+  - **Legacy null reads recreated the dispatch fallback Phase C is meant to remove.** Read-side backfill eliminates that.
+- Test infrastructure: `seedAssignments` now mirrors production by classifying each surface through `classifySurfaceCapability` to derive route metadata, so SC test setups get the correct pack triple instead of the dangerous all-null state.
+- Tests added (+9, 321 mcp-server total): web round-trip with web pack, EVM round-trip with `smart_contract_evm` pack, Substrate round-trip, legacy web row backfill, legacy SC row backfill (EVM + SVM), no-wave SC reject, classifier-throws-on-missing/unsupported chain_family, normalizer-throws-on-SC-assignment-without-triple, findings.md mirror exposes the routed pack.
+
 ### Capability-pack tightening — Phase B: profile-shaped hunter briefs
 
 - `bounty_read_hunter_brief` now dispatches by `routeMetadata.brief_profile` to one of two builders. Web profile carries HTTP-flavored intel (`bypass_table`, `techniques`, `payload_hints`, `knowledge_summary`, `traffic_summary`, `audit_summary`, `circuit_breaker_summary`, `intel_hints`, `static_scan_hints`, `auth_profiles_hint`). Smart-contract profiles carry on-chain context (`bob_spec_status` filtered to the assigned surface, `rpc_pool` for the surface's `chain_family`/`chain_id`). Cross-cutting fields stay in both.

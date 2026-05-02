@@ -52,6 +52,9 @@ const {
   validateAssignedWaveAgentSurface,
 } = require("./assignments.js");
 const {
+  capabilityPackForLegacyFinding,
+} = require("./capability-packs.js");
+const {
   safeAppendPipelineEventDirect,
 } = require("./pipeline-analytics.js");
 
@@ -526,10 +529,35 @@ function normalizeFindingRecord(record, { expectedDomain = null, lineNumber = nu
       agent: record.agent == null ? null : parseAgentId(record.agent),
       surface_id: normalizeOptionalText(record.surface_id, "surface_id"),
       surface_type: normalizeSurfaceType(record.surface_type),
+      // Routing metadata (Phase C). Optional on disk so pre-Phase-C rows in
+      // findings.jsonl normalize without failure; required on write because
+      // recordFinding always derives them from the assignment. We backfill
+      // from surface_type + sc_evidence.chain_family below so Phase D
+      // consumers never see null and don't have to re-implement the
+      // surface_type→pack mapping each.
+      capability_pack: normalizeOptionalText(record.capability_pack, "capability_pack"),
+      hunter_agent: normalizeOptionalText(record.hunter_agent, "hunter_agent"),
+      brief_profile: normalizeOptionalText(record.brief_profile, "brief_profile"),
       sc_evidence: normalizeScEvidence(record.sc_evidence),
       auth_profile: normalizeOptionalText(record.auth_profile, "auth_profile"),
       dedupe_key: normalizeOptionalText(record.dedupe_key, "dedupe_key"),
     };
+    // Read-side backfill for legacy rows. If at least one of the three fields
+    // is missing, derive the triple from surface_type + sc_evidence.chain_family.
+    // Rows written by Phase C onward already carry the triple; this is a
+    // one-way upgrade for old persisted findings.
+    const missingRouting = !finding.capability_pack || !finding.hunter_agent || !finding.brief_profile;
+    if (missingRouting) {
+      const backfill = capabilityPackForLegacyFinding({
+        surface_type: finding.surface_type,
+        sc_evidence: finding.sc_evidence,
+      });
+      if (backfill) {
+        if (!finding.capability_pack) finding.capability_pack = backfill.capability_pack;
+        if (!finding.hunter_agent) finding.hunter_agent = backfill.hunter_agent;
+        if (!finding.brief_profile) finding.brief_profile = backfill.brief_profile;
+      }
+    }
     if (finding.surface_type === "smart_contract" && !finding.sc_evidence) {
       throw new Error("smart-contract findings must include sc_evidence");
     }
@@ -601,6 +629,9 @@ function renderFindingMarkdownEntry(finding) {
     ? `${finding.surface_id}${finding.surface_type ? ` (${finding.surface_type})` : ""}`
     : (finding.surface_type ? `(${finding.surface_type})` : "");
   const surface = surfaceLabel ? `\n- **Surface:** ${surfaceLabel}` : "";
+  const routing = finding.capability_pack
+    ? `\n- **Capability Pack:** ${finding.capability_pack}${finding.hunter_agent ? ` (${finding.hunter_agent})` : ""}`
+    : "";
   const authProfile = finding.auth_profile ? `\n- **Auth Profile:** ${finding.auth_profile}` : "";
   let scBlock = "";
   if (finding.sc_evidence) {
@@ -658,6 +689,7 @@ function renderFindingMarkdownEntry(finding) {
     `- **Impact:** ${finding.impact || "N/A"}`,
     waveAgent,
     surface,
+    routing,
     authProfile,
     scBlock,
     "---\n\n",
@@ -676,6 +708,9 @@ function recordFinding(args) {
   let agent = null;
   let surfaceId = null;
   let surfaceType = null;
+  let capabilityPack = null;
+  let hunterAgent = null;
+  let briefProfile = null;
   if (hasWave) {
     wave = parseWaveId(args.wave);
     agent = parseAgentId(args.agent);
@@ -688,11 +723,29 @@ function recordFinding(args) {
     // surface-completion gate via waves.js — that logic uses the raw value.
     const rawSurfaceType = assignment && assignment.surface_type ? assignment.surface_type : null;
     surfaceType = rawSurfaceType === "smart_contract" ? "smart_contract" : "web";
+    // The assignment file (loaded via loadWaveAssignments → normalizeAssignmentRouteMetadata)
+    // already validated capability_pack / hunter_agent / brief_profile against
+    // the pack registry. Persisting them on the finding lets verifier/grader/
+    // reporter dispatch on the routed decision rather than re-deriving from
+    // surface_type and chain_family.
+    capabilityPack = assignment.capability_pack || null;
+    hunterAgent = assignment.hunter_agent || null;
+    briefProfile = assignment.brief_profile || null;
   } else {
     surfaceId = args.surface_id == null ? null : assertNonEmptyString(args.surface_id, "surface_id");
-    // No wave/agent context (orchestrator-direct or legacy): treat as web.
-    // Smart-contract findings always come from a hunter wave.
+    // No wave/agent context (orchestrator-direct or legacy). The web defaults
+    // are correct only because smart-contract findings always come from a
+    // hunter wave; assert that locally rather than relying on the
+    // surface_type/sc_evidence guard further down to keep us honest. If a
+    // future caller passes sc_evidence here, the routed pack would silently
+    // be web and the finding would mis-route in Phase D.
+    if (args.sc_evidence != null) {
+      throw new Error("sc_evidence findings must be recorded with wave and agent so the routed capability pack is captured from the assignment");
+    }
     surfaceType = "web";
+    capabilityPack = "web";
+    hunterAgent = "hunter-agent";
+    briefProfile = "web";
   }
 
   return withSessionLock(domain, () => {
@@ -716,6 +769,9 @@ function recordFinding(args) {
       agent,
       surface_id: surfaceId,
       surface_type: surfaceType,
+      capability_pack: capabilityPack,
+      hunter_agent: hunterAgent,
+      brief_profile: briefProfile,
       sc_evidence: args.sc_evidence,
       dedupe_key: args.dedupe_key,
       auth_profile: args.auth_profile,

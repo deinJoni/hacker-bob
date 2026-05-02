@@ -136,19 +136,17 @@ function classifySurfaceCapability(surface) {
           reasons,
         };
       }
-      reasons.push(`chain_family:unsupported:${normalizedChainFamily}`);
-    } else {
-      reasons.push("chain_family:missing");
+      // Smart-contract surface with an unrecognised chain_family. Falling
+      // back to the web pack would create a contradiction (surface_type=smart_contract
+      // routed to a hunter that has no on-chain tools); fail loudly so the
+      // operator either fixes the surface or registers the missing pack.
+      throw new Error(
+        `smart_contract surface ${surface && surface.id ? surface.id : "(unknown)"} has unsupported chain_family ${normalizedChainFamily}; register a capability pack or correct the surface`,
+      );
     }
-    reasons.push("fallback:web");
-    return {
-      surface_type: surfaceType,
-      capability_pack: WEB_CAPABILITY_PACK.id,
-      hunter_agent: WEB_CAPABILITY_PACK.hunter_agent,
-      brief_profile: WEB_CAPABILITY_PACK.brief_profile,
-      confidence: "low",
-      reasons,
-    };
+    throw new Error(
+      `smart_contract surface ${surface && surface.id ? surface.id : "(unknown)"} is missing chain_family; capability routing requires it`,
+    );
   }
 
   const knownWebType = normalizedType == null || WEB_SURFACE_TYPE_SET.has(surfaceType);
@@ -184,6 +182,19 @@ function normalizeAssignmentRouteMetadata(assignment) {
     assignment.brief_profile != null
   );
   if (!hasRouteMetadata) {
+    // Legacy assignment files (pre-router) carry no route metadata. Default
+    // to the web pack — but ONLY if the captured surface_type is non-SC. A
+    // smart_contract assignment with no route triple would otherwise be
+    // silently stamped as a web hunter; that contradicts surface_type and
+    // sends Phase D consumers into the wrong pipeline.
+    const surfaceType = assignment && typeof assignment === "object"
+      ? assignment.surface_type
+      : null;
+    if (surfaceType === "smart_contract") {
+      throw new Error(
+        "assignment with surface_type=smart_contract is missing capability_pack/hunter_agent/brief_profile; route the surface via bounty_route_surfaces before starting the wave",
+      );
+    }
     return defaultWebRouteMetadata();
   }
 
@@ -208,9 +219,37 @@ function normalizeAssignmentRouteMetadata(assignment) {
   };
 }
 
+// Read-side backfill for legacy findings.jsonl rows written before Phase C.
+// Pre-Phase-C rows carry surface_type and (for SC findings) sc_evidence.chain_family
+// but no capability_pack/hunter_agent/brief_profile. Reconstructing the pack triple
+// at read time keeps Phase D consumers from each having to implement the same
+// fallback. Returns null when the record carries no usable signal.
+function capabilityPackForLegacyFinding({ surface_type: surfaceType, sc_evidence: scEvidence } = {}) {
+  if (surfaceType === "smart_contract") {
+    const chainFamily = scEvidence && typeof scEvidence === "object" ? scEvidence.chain_family : null;
+    const normalized = normalizeSurfaceType(chainFamily);
+    if (normalized) {
+      const pack = SMART_CONTRACT_CHAIN_FAMILY_TO_PACK[normalized];
+      if (pack) {
+        return {
+          capability_pack: pack.id,
+          hunter_agent: pack.hunter_agent,
+          brief_profile: pack.brief_profile,
+        };
+      }
+    }
+    // SC row whose chain_family no longer maps to a registered pack.
+    // Caller decides whether to leave nulls or treat as malformed.
+    return null;
+  }
+  // Any non-SC legacy row maps to the web pack.
+  return defaultWebRouteMetadata();
+}
+
 module.exports = {
   CAPABILITY_PACKS,
   WEB_SURFACE_TYPES,
+  capabilityPackForLegacyFinding,
   classifySurfaceCapability,
   defaultWebRouteMetadata,
   getCapabilityPack,

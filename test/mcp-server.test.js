@@ -371,18 +371,42 @@ function seedAssignments(domain, waveNumber, assignments) {
   // Mirror production startWave: capture surface_type from attack_surface.json
   // into the immutable assignment file. Tests that seed an SC surface get the
   // same enforcement path the runtime takes.
-  const surfaceTypeById = new Map();
+  const surfaceById = new Map();
   try {
     const surfaceDoc = JSON.parse(fs.readFileSync(surfacePath, "utf8"));
     for (const surface of surfaceDoc.surfaces || []) {
       if (!surface || typeof surface !== "object") continue;
-      const surfaceTypeRaw = typeof surface.surface_type === "string" ? surface.surface_type.trim() : "";
-      surfaceTypeById.set(surface.id, surfaceTypeRaw !== "" ? surfaceTypeRaw : null);
+      surfaceById.set(surface.id, surface);
     }
   } catch {}
+  // Also mirror startWave's call to routeSurfacesInternal: classify each
+  // surface to derive capability_pack/hunter_agent/brief_profile so the
+  // assignment file is shaped exactly as production writes it. Without
+  // this, normalizeAssignmentRouteMetadata throws on any SC assignment.
+  // Test cases that explicitly want to forge alternate route metadata
+  // pass it directly on the assignment and we preserve it.
+  const { classifySurfaceCapability } = require("../mcp/lib/capability-packs.js");
   const persistedAssignments = assignments.map((assignment) => {
-    const surfaceType = surfaceTypeById.get(assignment.surface_id) || null;
-    return surfaceType ? { ...assignment, surface_type: surfaceType } : { ...assignment };
+    const surface = surfaceById.get(assignment.surface_id);
+    const surfaceTypeRaw = surface && typeof surface.surface_type === "string"
+      ? surface.surface_type.trim()
+      : "";
+    const surfaceType = surfaceTypeRaw !== "" ? surfaceTypeRaw : null;
+    const persisted = { ...assignment };
+    if (surfaceType && persisted.surface_type == null) {
+      persisted.surface_type = surfaceType;
+    }
+    if (surface
+      && persisted.capability_pack == null
+      && persisted.hunter_agent == null
+      && persisted.brief_profile == null
+    ) {
+      const route = classifySurfaceCapability(surface);
+      persisted.capability_pack = route.capability_pack;
+      persisted.hunter_agent = route.hunter_agent;
+      persisted.brief_profile = route.brief_profile;
+    }
+    return persisted;
   });
   writeFileAtomic(path.join(dir, `wave-${waveNumber}-assignments.json`), `${JSON.stringify({
     wave_number: waveNumber,
@@ -5463,6 +5487,9 @@ test("bounty_record_finding appends findings.jsonl and bounty_read_findings pres
           agent: "a1",
           surface_id: "surface-a",
           surface_type: "web",
+          capability_pack: "web",
+          hunter_agent: "hunter-agent",
+          brief_profile: "web",
           sc_evidence: null,
           auth_profile: null,
         },
@@ -5482,6 +5509,9 @@ test("bounty_record_finding appends findings.jsonl and bounty_read_findings pres
           agent: "a2",
           surface_id: "surface-a",
           surface_type: "web",
+          capability_pack: "web",
+          hunter_agent: "hunter-agent",
+          brief_profile: "web",
           sc_evidence: null,
           auth_profile: null,
         },
@@ -5607,6 +5637,326 @@ test("bounty_record_finding stamps surface_type from the assignment and treats S
     // contract_address normalized to lowercase
     assert.equal(scFinding.sc_evidence.contract_address, "0x" + "ab".repeat(20));
     assert.equal(scFinding.sc_evidence.fork_block, 19_000_000);
+  });
+});
+
+test("bounty_record_finding persists capability_pack metadata from the assignment (Phase C)", () => {
+  // Web hunter: the assignment carries the web pack triple and recordFinding
+  // must persist all three fields verbatim into findings.jsonl.
+  withTempHome(() => {
+    const domain = "example.com";
+    seedAttackSurfaces(domain, [
+      { id: "surface-web", hosts: [`https://${domain}`], surface_type: "api" },
+    ]);
+    seedAssignments(domain, 1, [{
+      agent: "a1",
+      surface_id: "surface-web",
+      capability_pack: "web",
+      hunter_agent: "hunter-agent",
+      brief_profile: "web",
+    }]);
+    JSON.parse(recordFinding({
+      target_domain: domain,
+      title: "IDOR on account export",
+      severity: "high",
+      cwe: "CWE-639",
+      endpoint: "/api/export",
+      description: "Cross-account export.",
+      proof_of_concept: "curl ...",
+      response_evidence: "{}",
+      impact: "PII.",
+      validated: true,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-web",
+    }));
+    const finding = JSON.parse(readFindings({ target_domain: domain })).findings[0];
+    assert.equal(finding.capability_pack, "web");
+    assert.equal(finding.hunter_agent, "hunter-agent");
+    assert.equal(finding.brief_profile, "web");
+    assert.equal(finding.surface_type, "web");
+  });
+});
+
+test("bounty_record_finding persists smart_contract_evm pack metadata for an EVM hunter wave (Phase C)", () => {
+  // SC hunter: the routed pack is smart_contract_evm. Persisting it on the
+  // finding lets verifier/grader/reporter dispatch on the routed decision
+  // rather than re-deriving from sc_evidence.chain_family.
+  withTempHome(() => {
+    const domain = "example.com";
+    seedAttackSurfaces(domain, [
+      { id: "surface-evm", hosts: [`https://${domain}`], surface_type: "smart_contract", chain_family: "evm" },
+    ]);
+    seedAssignments(domain, 1, [{
+      agent: "a1",
+      surface_id: "surface-evm",
+      capability_pack: "smart_contract_evm",
+      hunter_agent: "hunter-evm-agent",
+      brief_profile: "smart_contract_evm",
+    }]);
+    JSON.parse(recordFinding({
+      target_domain: domain,
+      title: "Reentrancy in Vault.borrow",
+      severity: "high",
+      cwe: "CWE-841",
+      endpoint: "0x" + "11".repeat(20) + ":borrow(uint256)",
+      description: "Reentrancy via callback before balance update.",
+      proof_of_concept: "See harness test",
+      response_evidence: "Drained 1000 ETH",
+      impact: "Loss of vault funds.",
+      validated: true,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-evm",
+      sc_evidence: {
+        chain_family: "evm",
+        chain_id: 1,
+        contract_address: "0x" + "11".repeat(20),
+        harness_path: os.homedir(),
+        match_test: "test_borrow_reentrancy",
+      },
+    }));
+    const finding = JSON.parse(readFindings({ target_domain: domain })).findings[0];
+    assert.equal(finding.capability_pack, "smart_contract_evm");
+    assert.equal(finding.hunter_agent, "hunter-evm-agent");
+    assert.equal(finding.brief_profile, "smart_contract_evm");
+    assert.equal(finding.surface_type, "smart_contract");
+  });
+});
+
+test("bounty_record_finding persists smart_contract_substrate pack metadata for a Substrate hunter wave (Phase C)", () => {
+  // Sanity that non-EVM SC packs round-trip too.
+  withTempHome(() => {
+    const domain = "example.com";
+    seedAttackSurfaces(domain, [
+      { id: "surface-sub", hosts: [`https://${domain}`], surface_type: "smart_contract", chain_family: "substrate" },
+    ]);
+    seedAssignments(domain, 1, [{
+      agent: "a1",
+      surface_id: "surface-sub",
+      capability_pack: "smart_contract_substrate",
+      hunter_agent: "hunter-substrate-agent",
+      brief_profile: "smart_contract_substrate",
+    }]);
+    JSON.parse(recordFinding({
+      target_domain: domain,
+      title: "Selector collision in ink contract",
+      severity: "medium",
+      cwe: "CWE-840",
+      endpoint: "5GrwvaEF...:transfer(u128)",
+      description: "Two messages share the same 4-byte selector.",
+      proof_of_concept: "See cargo test",
+      response_evidence: "wrong message dispatched",
+      impact: "Incorrect call routing.",
+      validated: true,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-sub",
+      sc_evidence: {
+        chain_family: "substrate",
+        chain_id: "polkadot",
+        contract_address: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+        harness_path: os.homedir(),
+        match_test: "test_selector_collision",
+      },
+    }));
+    const finding = JSON.parse(readFindings({ target_domain: domain })).findings[0];
+    assert.equal(finding.capability_pack, "smart_contract_substrate");
+    assert.equal(finding.hunter_agent, "hunter-substrate-agent");
+    assert.equal(finding.brief_profile, "smart_contract_substrate");
+  });
+});
+
+test("normalizeFindingRecord backfills capability_pack metadata for legacy web rows (Phase C)", () => {
+  // Old findings.jsonl rows written before Phase C did not carry capability_pack.
+  // Read-side derives the pack triple from surface_type so Phase D consumers
+  // never see null and don't need to re-implement the surface_type→pack mapping.
+  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const legacyFinding = normalizeFindingRecord({
+    id: "F-1",
+    target_domain: "example.com",
+    title: "Legacy IDOR",
+    severity: "high",
+    endpoint: "/api/x",
+    description: "Pre-Phase-C row written by an older Bob version.",
+    proof_of_concept: "curl ...",
+    validated: true,
+    wave: "w1",
+    agent: "a1",
+    surface_id: "surface-a",
+    surface_type: "web",
+  });
+  assert.equal(legacyFinding.capability_pack, "web");
+  assert.equal(legacyFinding.hunter_agent, "hunter-agent");
+  assert.equal(legacyFinding.brief_profile, "web");
+  assert.equal(legacyFinding.surface_type, "web");
+});
+
+test("normalizeFindingRecord backfills capability_pack metadata for legacy SC rows from chain_family (Phase C)", () => {
+  // Pre-Phase-C SC findings carry sc_evidence.chain_family. Backfill must
+  // derive the right pack — smart_contract_evm for chain_family="evm",
+  // smart_contract_substrate for chain_family="substrate", etc.
+  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const legacyEvm = normalizeFindingRecord({
+    id: "F-1",
+    target_domain: "example.com",
+    title: "Legacy reentrancy",
+    severity: "high",
+    endpoint: "0x" + "ab".repeat(20) + ":withdraw()",
+    description: "Pre-Phase-C SC row.",
+    proof_of_concept: "See harness",
+    validated: true,
+    wave: "w1",
+    agent: "a1",
+    surface_id: "surface-evm",
+    surface_type: "smart_contract",
+    sc_evidence: {
+      chain_family: "evm",
+      chain_id: 1,
+      contract_address: "0x" + "ab".repeat(20),
+      harness_path: os.homedir(),
+      match_test: "test_reentrancy",
+    },
+  });
+  assert.equal(legacyEvm.capability_pack, "smart_contract_evm");
+  assert.equal(legacyEvm.hunter_agent, "hunter-evm-agent");
+  assert.equal(legacyEvm.brief_profile, "smart_contract_evm");
+
+  const legacySvm = normalizeFindingRecord({
+    id: "F-2",
+    target_domain: "example.com",
+    title: "Legacy SVM",
+    severity: "medium",
+    endpoint: "Programs:11111111111111111111111111111111:transfer",
+    description: "Pre-Phase-C SVM row.",
+    proof_of_concept: "See harness",
+    validated: true,
+    wave: "w1",
+    agent: "a2",
+    surface_id: "surface-svm",
+    surface_type: "smart_contract",
+    sc_evidence: {
+      chain_family: "svm",
+      chain_id: "mainnet-beta",
+      contract_address: "11111111111111111111111111111111",
+      harness_path: os.homedir(),
+      match_test: "test_x",
+    },
+  });
+  assert.equal(legacySvm.capability_pack, "smart_contract_svm");
+  assert.equal(legacySvm.hunter_agent, "hunter-svm-agent");
+  assert.equal(legacySvm.brief_profile, "smart_contract_svm");
+});
+
+test("bounty_record_finding rejects sc_evidence in the no-wave/no-agent path so SC findings stay routed (Phase C)", () => {
+  // The no-wave path hardcodes the web pack triple. If a future caller
+  // tries to record SC evidence without wave/agent, the routed pack would
+  // silently be web — Phase D dispatch would route to hunter-agent for an
+  // SC finding. Local assert keeps the invariant honest at the call site.
+  withTempHome(() => {
+    const domain = "example.com";
+    seedSessionState(domain, { phase: "HUNT" });
+    seedAttackSurfaces(domain, [
+      { id: "surface-evm", hosts: [`https://${domain}`], surface_type: "smart_contract", chain_family: "evm" },
+    ]);
+    assert.throws(() => recordFinding({
+      target_domain: domain,
+      title: "SC finding via no-wave",
+      severity: "high",
+      cwe: "CWE-841",
+      endpoint: "0x" + "ab".repeat(20) + ":withdraw()",
+      description: "should be rejected",
+      proof_of_concept: "x",
+      response_evidence: "x",
+      impact: "x",
+      validated: true,
+      sc_evidence: {
+        chain_family: "evm",
+        chain_id: 1,
+        contract_address: "0x" + "ab".repeat(20),
+        harness_path: os.homedir(),
+        match_test: "test_x",
+      },
+    }), /sc_evidence findings must be recorded with wave and agent/);
+  });
+});
+
+test("classifySurfaceCapability throws on smart_contract surface with missing or unsupported chain_family (Phase C)", () => {
+  // Pre-fix the router silently fell back to the web pack for SC surfaces
+  // with no chain_family, producing surface_type="smart_contract" routed to
+  // hunter-agent (a contradiction). Now the router fails loudly so the
+  // operator either fixes the surface or registers the missing pack.
+  const { classifySurfaceCapability } = require("../mcp/lib/capability-packs.js");
+  assert.throws(
+    () => classifySurfaceCapability({ id: "surface-mystery", surface_type: "smart_contract" }),
+    /missing chain_family/,
+  );
+  assert.throws(
+    () => classifySurfaceCapability({ id: "surface-near", surface_type: "smart_contract", chain_family: "near" }),
+    /unsupported chain_family/,
+  );
+});
+
+test("normalizeAssignmentRouteMetadata throws on smart_contract assignment without route metadata (Phase C)", () => {
+  // The all-null shortcut used to silently substitute web defaults for any
+  // assignment lacking the triple. That meant a smart_contract assignment
+  // whose route metadata had been dropped (forged file, half-rolled-back
+  // upgrade, etc.) got rubber-stamped as web. Fail loudly instead.
+  const { normalizeAssignmentRouteMetadata } = require("../mcp/lib/capability-packs.js");
+  assert.throws(
+    () => normalizeAssignmentRouteMetadata({
+      agent: "a1",
+      surface_id: "surface-evm",
+      surface_type: "smart_contract",
+    }),
+    /surface_type=smart_contract is missing capability_pack/,
+  );
+  // Web assignment with no route metadata still legitimately defaults to web.
+  const webMeta = normalizeAssignmentRouteMetadata({
+    agent: "a1",
+    surface_id: "surface-web",
+    surface_type: "api",
+  });
+  assert.equal(webMeta.capability_pack, "web");
+});
+
+test("findings.md mirror surfaces the routed capability pack for triage (Phase C)", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedAttackSurfaces(domain, [
+      { id: "surface-evm", hosts: [`https://${domain}`], surface_type: "smart_contract", chain_family: "evm" },
+    ]);
+    seedAssignments(domain, 1, [{
+      agent: "a1",
+      surface_id: "surface-evm",
+      capability_pack: "smart_contract_evm",
+      hunter_agent: "hunter-evm-agent",
+      brief_profile: "smart_contract_evm",
+    }]);
+    JSON.parse(recordFinding({
+      target_domain: domain,
+      title: "EVM reentrancy",
+      severity: "critical",
+      cwe: "CWE-841",
+      endpoint: "0x" + "ab".repeat(20) + ":withdraw()",
+      description: "Reentrancy on withdraw.",
+      proof_of_concept: "See harness",
+      response_evidence: "Drained.",
+      impact: "Funds loss.",
+      validated: true,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-evm",
+      sc_evidence: {
+        chain_family: "evm",
+        chain_id: 1,
+        contract_address: "0x" + "ab".repeat(20),
+        harness_path: os.homedir(),
+        match_test: "test_reentrancy",
+      },
+    }));
+    const md = fs.readFileSync(findingsMarkdownPath(domain), "utf8");
+    assert.match(md, /Capability Pack:\*\* smart_contract_evm \(hunter-evm-agent\)/);
   });
 });
 
