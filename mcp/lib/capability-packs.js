@@ -9,15 +9,13 @@
 //   verifier        — pack-keyed PoC replay for brutalist/balanced/final verifier
 //   evidence        — pack-keyed runner for evidence-agent's pre-grade re-runs
 //   spawn           — pack-keyed spawn template strings consumed by both the
-//                     Claude and Codex orchestrator-skill renderers (Phase E)
+//                     Claude and Codex orchestrator-skill renderers
 //
-// Adding a new chain pack must be a single-file edit here plus a new prompt
-// body. Phase D consumers (verifier, evidence) look up the pack by
-// finding.capability_pack and dispatch on the verifier/evidence blocks
-// instead of branching on chain_family in their prompts. Phase E extended the
-// same dispatch to orchestrator hunter spawn templates: every per-chain
-// SPAWN_HUNTER_*_AGENT template body is composed from spawn fields, so adding
-// a 7th pack auto-generates its catalogue entry without touching any renderer.
+// Verifier and evidence consumers look up the pack by finding.capability_pack
+// and dispatch on the verifier/evidence blocks instead of branching on
+// chain_family in their prompts. The orchestrator hunter spawn template body
+// is composed from spawn fields, so adding a chain pack auto-generates its
+// catalogue entry without touching any renderer.
 
 const WEB_CAPABILITY_PACK = Object.freeze({
   id: "web",
@@ -116,11 +114,10 @@ const SMART_CONTRACT_SVM_CAPABILITY_PACK = Object.freeze({
   }),
 });
 
-// Aptos and Sui were merged into a single "Move" pack pre-Phase-D so the
-// hunter-move-agent could dispatch internally. That broke verifier
-// dispatch (one runner per pack) so Phase D splits them. Both packs still
-// route to hunter-move-agent — the agent's own tool list covers both
-// bounty_aptos_* and bounty_sui_* — but verifier dispatch is one runner.
+// Aptos and Sui are separate packs so verifier dispatch is one runner per
+// pack (bounty_aptos_run vs bounty_sui_run). Both packs still route to
+// hunter-move-agent — the agent's own tool list covers both bounty_aptos_*
+// and bounty_sui_*.
 const SMART_CONTRACT_APTOS_CAPABILITY_PACK = Object.freeze({
   id: "smart_contract_aptos",
   hunter_agent: "hunter-move-agent",
@@ -274,15 +271,13 @@ const CAPABILITY_PACKS = Object.freeze({
   smart_contract_cosmwasm: SMART_CONTRACT_COSMWASM_CAPABILITY_PACK,
 });
 
-// Phase F: hunter-role registry — keyed by role_id, deduped across packs.
-// Aptos and Sui both route to hunter-move-agent so they share role_id
-// "hunter-move"; the registry holds the role spec (description, color,
-// prompt body filename, role bundle list) once per role_id rather than
-// per pack. role-model.js, claude-role-renderer.js, codex/role-specs.js,
-// and tool-registry.js all derive their hunter role specs from this map,
-// so adding a 7th chain pack drops 4–5 files from the edit list — only
-// HUNTER_ROLES + CAPABILITY_PACKS + a new prompts/roles/hunter-X.md need
-// touching, plus the per-chain validation in findings.js.
+// Hunter-role registry — keyed by role_id, deduped across packs. Multiple
+// capability packs that share a role_id (Move-family aptos+sui both route
+// to hunter-move-agent) collapse to a single role spec here. role-model.js,
+// claude-role-renderer.js, codex/role-specs.js, and tool-registry.js all
+// derive their hunter role specs from this map. Adding a chain pack means
+// adding an entry here and a CAPABILITY_PACKS entry plus a new
+// prompts/roles/hunter-X.md, plus the per-chain validation in findings.js.
 //
 // Cross-cutting roles (orchestrator, recon, deep-recon, surface-router,
 // chain, brutalist-verifier, balanced-verifier, final-verifier, evidence,
@@ -381,9 +376,8 @@ function hunterAgentNamesForCapabilityPacks() {
   ));
 }
 
-// Phase E: spawn-template iteration helpers consumed by Claude/Codex
-// orchestrator-skill renderers. Returning frozen arrays keeps callers from
-// accidentally mutating the registry.
+// Spawn-template iteration helper consumed by Claude/Codex
+// orchestrator-skill renderers.
 function smartContractCapabilityPacks() {
   return Object.values(CAPABILITY_PACKS).filter(
     (pack) => pack && pack.spawn && pack.spawn.profile === "smart_contract",
@@ -400,11 +394,11 @@ function hunterRoleSpecs() {
   return Object.values(HUNTER_ROLES);
 }
 
-// Phase F: chain-specific role bundles derived from HUNTER_ROLES, used by
-// tool-registry.js to build VALID_ROLE_BUNDLES at module load. Adding a 7th
-// hunter role automatically adds its role bundle here without a separate
-// edit. role_bundles[1] is the chain-specific bundle by convention; the
-// shared bundle (role_bundles[0]) is "hunter-shared" across every role.
+// Chain-specific role bundles derived from HUNTER_ROLES, used by
+// tool-registry.js to build VALID_ROLE_BUNDLES at module load. Adding a
+// hunter role automatically adds its role bundle here. role_bundles[0]
+// is "hunter-shared" across every role; role_bundles[1+] are the
+// chain-specific bundles.
 function chainSpecificHunterBundles() {
   const bundles = new Set();
   for (const role of hunterRoleSpecs()) {
@@ -496,7 +490,7 @@ function normalizeAssignmentRouteMetadata(assignment) {
     // to the web pack — but ONLY if the captured surface_type is non-SC. A
     // smart_contract assignment with no route triple would otherwise be
     // silently stamped as a web hunter; that contradicts surface_type and
-    // sends Phase D consumers into the wrong pipeline.
+    // sends pack-keyed consumers into the wrong pipeline.
     const surfaceType = assignment && typeof assignment === "object"
       ? assignment.surface_type
       : null;
@@ -529,11 +523,13 @@ function normalizeAssignmentRouteMetadata(assignment) {
   };
 }
 
-// Read-side backfill for legacy findings.jsonl rows written before Phase C.
-// Pre-Phase-C rows carry surface_type and (for SC findings) sc_evidence.chain_family
-// but no capability_pack/hunter_agent/brief_profile. Reconstructing the pack triple
-// at read time keeps Phase D consumers from each having to implement the same
-// fallback. Returns null when the record carries no usable signal.
+// Read-side backfill for legacy findings.jsonl rows written before
+// bounty_record_finding persisted the route triple. Legacy rows carry
+// surface_type and (for SC findings) sc_evidence.chain_family but no
+// capability_pack/hunter_agent/brief_profile. Reconstructing the triple
+// at read time keeps verifier/evidence/grader/reporter consumers from
+// each having to implement the same fallback. Returns null when the
+// record carries no usable signal.
 function capabilityPackForLegacyFinding({ surface_type: surfaceType, sc_evidence: scEvidence } = {}) {
   if (surfaceType === "smart_contract") {
     const chainFamily = scEvidence && typeof scEvidence === "object" ? scEvidence.chain_family : null;

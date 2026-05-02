@@ -15,10 +15,9 @@ const {
 const { hunterRoleSpecs } = require("../../mcp/lib/capability-packs.js");
 
 const DEFAULT_ROOT = path.join(__dirname, "..", "..");
-// Phase F: cross-cutting Codex worker contracts (recon/auth/chain/verifier/
-// evidence/grade/report). Per-chain hunter contracts are appended from
-// HUNTER_ROLES so adding a chain pack auto-extends this list without
-// editing this file.
+// Cross-cutting Codex worker contracts (recon/auth/chain/verifier/evidence/
+// grade/report). Per-chain hunter contracts are appended from HUNTER_ROLES
+// so adding a chain pack auto-extends this list without editing this file.
 const CODEX_CROSS_CUTTING_ROLE_IDS = Object.freeze([
   "recon",
   "deep-recon",
@@ -178,11 +177,11 @@ function codexLaunchTemplates() {
       "Wait with `wait_agent`, read `bounty_read_evidence_packs.data`, then `close_agent`.",
       "```",
     ].join("\n"),
-    // Phase E: smart-contract spawn templates render from the capability
-    // pack manifest. The Codex renderer fills the {{HUNTER_PACK_CATALOGUE}}
-    // placeholder via substituteCodexHunterPackCatalogue, which iterates
+    // Smart-contract spawn templates render from the capability pack manifest.
+    // The Codex renderer fills the {{HUNTER_PACK_CATALOGUE}} placeholder via
+    // substituteCodexHunterPackCatalogue, which iterates
     // smartContractCapabilityPacks() and emits one entry per pack. Adding a
-    // 7th chain pack auto-extends the catalogue here without editing this
+    // new chain pack auto-extends the catalogue here without editing this
     // file. Per-pack worker contracts still live in the role-contract
     // appendix below — that loop is also driven by the registry.
   });

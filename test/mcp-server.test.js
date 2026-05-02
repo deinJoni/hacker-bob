@@ -5641,7 +5641,7 @@ test("bounty_record_finding stamps surface_type from the assignment and treats S
   });
 });
 
-test("bounty_record_finding persists capability_pack metadata from the assignment (Phase C)", () => {
+test("bounty_record_finding persists capability_pack metadata from the assignment", () => {
   // Web hunter: the assignment carries the web pack triple and recordFinding
   // must persist all three fields verbatim into findings.jsonl.
   withTempHome(() => {
@@ -5679,7 +5679,7 @@ test("bounty_record_finding persists capability_pack metadata from the assignmen
   });
 });
 
-test("bounty_record_finding persists smart_contract_evm pack metadata for an EVM hunter wave (Phase C)", () => {
+test("bounty_record_finding persists smart_contract_evm pack metadata for an EVM hunter wave", () => {
   // SC hunter: the routed pack is smart_contract_evm. Persisting it on the
   // finding lets verifier/grader/reporter dispatch on the routed decision
   // rather than re-deriving from sc_evidence.chain_family.
@@ -5725,7 +5725,7 @@ test("bounty_record_finding persists smart_contract_evm pack metadata for an EVM
   });
 });
 
-test("bounty_record_finding persists smart_contract_substrate pack metadata for a Substrate hunter wave (Phase C)", () => {
+test("bounty_record_finding persists smart_contract_substrate pack metadata for a Substrate hunter wave", () => {
   // Sanity that non-EVM SC packs round-trip too.
   withTempHome(() => {
     const domain = "example.com";
@@ -5768,10 +5768,11 @@ test("bounty_record_finding persists smart_contract_substrate pack metadata for 
   });
 });
 
-test("normalizeFindingRecord backfills capability_pack metadata for legacy web rows (Phase C)", () => {
-  // Old findings.jsonl rows written before Phase C did not carry capability_pack.
-  // Read-side derives the pack triple from surface_type so Phase D consumers
-  // never see null and don't need to re-implement the surface_type→pack mapping.
+test("normalizeFindingRecord backfills capability_pack metadata for legacy web rows", () => {
+  // Old findings.jsonl rows from before routing-metadata existed did not
+  // carry capability_pack. Read-side derives the pack triple from
+  // surface_type so downstream consumers never see null and don't need to
+  // re-implement the surface_type→pack mapping.
   const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
   const legacyFinding = normalizeFindingRecord({
     id: "F-1",
@@ -5779,7 +5780,7 @@ test("normalizeFindingRecord backfills capability_pack metadata for legacy web r
     title: "Legacy IDOR",
     severity: "high",
     endpoint: "/api/x",
-    description: "Pre-Phase-C row written by an older Bob version.",
+    description: "Legacy row written by an older Bob version.",
     proof_of_concept: "curl ...",
     validated: true,
     wave: "w1",
@@ -5793,9 +5794,9 @@ test("normalizeFindingRecord backfills capability_pack metadata for legacy web r
   assert.equal(legacyFinding.surface_type, "web");
 });
 
-test("normalizeFindingRecord backfills capability_pack metadata for legacy SC rows from chain_family (Phase C)", () => {
-  // Pre-Phase-C SC findings carry sc_evidence.chain_family. Backfill must
-  // derive the right pack — smart_contract_evm for chain_family="evm",
+test("normalizeFindingRecord backfills capability_pack metadata for legacy SC rows from chain_family", () => {
+  // Legacy SC findings carry sc_evidence.chain_family. Backfill must derive
+  // the right pack — smart_contract_evm for chain_family="evm",
   // smart_contract_substrate for chain_family="substrate", etc.
   const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
   const legacyEvm = normalizeFindingRecord({
@@ -5849,11 +5850,12 @@ test("normalizeFindingRecord backfills capability_pack metadata for legacy SC ro
   assert.equal(legacySvm.brief_profile, "smart_contract_svm");
 });
 
-test("bounty_record_finding rejects sc_evidence in the no-wave/no-agent path so SC findings stay routed (Phase C)", () => {
+test("bounty_record_finding rejects sc_evidence in the no-wave/no-agent path so SC findings stay routed", () => {
   // The no-wave path hardcodes the web pack triple. If a future caller
   // tries to record SC evidence without wave/agent, the routed pack would
-  // silently be web — Phase D dispatch would route to hunter-agent for an
-  // SC finding. Local assert keeps the invariant honest at the call site.
+  // silently be web — downstream verifier/evidence dispatch would route to
+  // hunter-agent for an SC finding. Local assert keeps the invariant honest
+  // at the call site.
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "HUNT" });
@@ -5882,7 +5884,7 @@ test("bounty_record_finding rejects sc_evidence in the no-wave/no-agent path so 
   });
 });
 
-test("classifySurfaceCapability throws on smart_contract surface with missing or unsupported chain_family (Phase C)", () => {
+test("classifySurfaceCapability throws on smart_contract surface with missing or unsupported chain_family", () => {
   // Pre-fix the router silently fell back to the web pack for SC surfaces
   // with no chain_family, producing surface_type="smart_contract" routed to
   // hunter-agent (a contradiction). Now the router fails loudly so the
@@ -5898,7 +5900,7 @@ test("classifySurfaceCapability throws on smart_contract surface with missing or
   );
 });
 
-test("normalizeAssignmentRouteMetadata throws on smart_contract assignment without route metadata (Phase C)", () => {
+test("normalizeAssignmentRouteMetadata throws on smart_contract assignment without route metadata", () => {
   // The all-null shortcut used to silently substitute web defaults for any
   // assignment lacking the triple. That meant a smart_contract assignment
   // whose route metadata had been dropped (forged file, half-rolled-back
@@ -5921,7 +5923,7 @@ test("normalizeAssignmentRouteMetadata throws on smart_contract assignment witho
   assert.equal(webMeta.capability_pack, "web");
 });
 
-test("findings.md mirror surfaces the routed capability pack for triage (Phase C)", () => {
+test("findings.md mirror surfaces the routed capability pack for triage", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAttackSurfaces(domain, [
@@ -5963,10 +5965,10 @@ test("findings.md mirror surfaces the routed capability pack for triage (Phase C
 
 test("normalizeFindingRecord forbids sc_evidence on legacy null-surface rows (back-compat smuggling)", () => {
   const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
-  // A row pre-Phase-3a has surface_type=null. Pre-fix, sc_evidence was only
-  // forbidden on surface_type="web", so a malicious or buggy row could carry
-  // SC replay data while being routed as web by verifiers. Post-fix, sc_evidence
-  // is allowed only when surface_type === "smart_contract".
+  // A legacy row may have surface_type=null. The original guard forbade
+  // sc_evidence only on surface_type="web", so a malicious or buggy row
+  // could carry SC replay data while being routed as web by verifiers.
+  // sc_evidence is now allowed only when surface_type === "smart_contract".
   assert.throws(() => normalizeFindingRecord({
     id: "F-1",
     target_domain: "example.com",
@@ -6251,8 +6253,8 @@ test("sc_evidence rejects unknown chain_family value", () => {
 
 test("sc_evidence chain_family defaults to 'evm' when omitted (back-compat)", () => {
   const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
-  // A pre-Phase-4 row had no chain_family field at all. The normalizer must
-  // default to 'evm' so existing findings.jsonl rows keep validating.
+  // A legacy row may have no chain_family field at all. The normalizer
+  // defaults to 'evm' so existing findings.jsonl rows keep validating.
   const finding = normalizeFindingRecord({
     id: "F-1",
     target_domain: "example.com",
@@ -7153,7 +7155,7 @@ test("svm tools register with verifier and evidence role bundles (so balanced/br
 });
 
 // ----------------------------------------------------------------------
-// Phase 5b: Move (Aptos + Sui) primitives
+// Move (Aptos + Sui) primitives
 // ----------------------------------------------------------------------
 
 test("aptos rpc pool resolves network ladders and rejects private hosts", () => {
@@ -7388,7 +7390,7 @@ test("hunter-brief summarizeRpcPoolForBrief dispatches to aptos and sui pool sum
   assert.ok(Array.isArray(sui.endpoints) && sui.endpoints.length >= 1, "sui mainnet pool surfaces endpoints");
 });
 
-test("hunter-brief summarizeRpcPoolForBrief dispatches to substrate and cosmwasm pool summaries (Phase 6b)", () => {
+test("hunter-brief summarizeRpcPoolForBrief dispatches to substrate and cosmwasm pool summaries", () => {
   const { summarizeRpcPoolForBrief } = require("../mcp/lib/evm-rpc-pool.js");
   const substrate = summarizeRpcPoolForBrief("substrate", "polkadot");
   assert.equal(substrate.chain_family, "substrate");
@@ -7400,7 +7402,7 @@ test("hunter-brief summarizeRpcPoolForBrief dispatches to substrate and cosmwasm
   assert.ok(Array.isArray(cosmwasm.endpoints) && cosmwasm.endpoints.length >= 1, "cosmwasm osmosis pool surfaces endpoints");
 });
 
-test("parseCargoTestStdout parses cargo unit test output line-by-line (Phase 6b)", () => {
+test("parseCargoTestStdout parses cargo unit test output line-by-line", () => {
   const { parseCargoTestStdout } = require("../mcp/lib/cargo-test-output.js");
   const stdout = [
     "running 4 tests",
@@ -7430,7 +7432,7 @@ test("parseCargoTestStdout parses cargo unit test output line-by-line (Phase 6b)
   assert.equal(r.tests[2].status_raw, "ignored");
 });
 
-test("parseCargoTestStdout caps tests[] at 100 and sets truncated (Phase 6b)", () => {
+test("parseCargoTestStdout caps tests[] at 100 and sets truncated", () => {
   const { parseCargoTestStdout, CARGO_TESTS_CAP } = require("../mcp/lib/cargo-test-output.js");
   assert.equal(CARGO_TESTS_CAP, 100);
   const lines = ["running 150 tests"];
@@ -7444,7 +7446,7 @@ test("parseCargoTestStdout caps tests[] at 100 and sets truncated (Phase 6b)", (
   assert.equal(r.truncated, true);
 });
 
-test("parseCargoTestStdout returns ok=false when stdout has no test lines or result line (Phase 6b)", () => {
+test("parseCargoTestStdout returns ok=false when stdout has no test lines or result line", () => {
   const { parseCargoTestStdout } = require("../mcp/lib/cargo-test-output.js");
   const stdout = "error[E0432]: unresolved import\nCompilation aborted.\n";
   const r = parseCargoTestStdout(stdout);
@@ -7452,7 +7454,7 @@ test("parseCargoTestStdout returns ok=false when stdout has no test lines or res
   assert.equal(r.reason, "no_test_lines");
 });
 
-test("substrate runner classifies cargo missing as substrate_dependency_missing (Phase 6b)", () => {
+test("substrate runner classifies cargo missing as substrate_dependency_missing", () => {
   const { classifySubstrateFailure } = require("../mcp/lib/substrate-runner.js");
   const cargoMissing = classifySubstrateFailure(
     { ok: false, exit_code: 127, stderr: "/bin/sh: cargo: command not found", stdout: "" },
@@ -7473,7 +7475,7 @@ test("substrate runner classifies cargo missing as substrate_dependency_missing 
   assert.equal(compileErr, "cargo_compile_failed");
 });
 
-test("cosmwasm runner classifies cargo missing as cosmwasm_dependency_missing (Phase 6b)", () => {
+test("cosmwasm runner classifies cargo missing as cosmwasm_dependency_missing", () => {
   const { classifyCosmwasmFailure } = require("../mcp/lib/cosmwasm-runner.js");
   const cargoMissing = classifyCosmwasmFailure(
     { ok: false, exit_code: 127, stderr: "/bin/sh: cargo: command not found", stdout: "" },
@@ -7492,7 +7494,7 @@ test("cosmwasm runner classifies cargo missing as cosmwasm_dependency_missing (P
   assert.equal(compileErr, "cargo_compile_failed");
 });
 
-test("substrate runner rejects extra_args not in the cargo allowlist (Phase 6b)", async () => {
+test("substrate runner rejects extra_args not in the cargo allowlist", async () => {
   const { runSubstrateTest } = require("../mcp/lib/substrate-runner.js");
   // Need a real Cargo.toml to pass the harness path check. Use a temp dir.
   const tmpRoot = path.join(os.homedir(), "bob-substrate-allowlist-test-" + Math.random().toString(36).slice(2));
@@ -7506,8 +7508,8 @@ test("substrate runner rejects extra_args not in the cargo allowlist (Phase 6b)"
       extraArgs: ["--release"],
       timeoutMs: 5000,
     }), /not in the substrate cargo allowlist/);
-    // Phase 6 fix-up #5: --workspace is intentionally NOT allowlisted; running
-    // tests across every workspace member compounds compile-time blast radius.
+    // --workspace is intentionally NOT allowlisted; running tests across
+    // every workspace member compounds compile-time blast radius.
     await assert.rejects(async () => runSubstrateTest({
       workdir: tmpRoot,
       matchTest: "test_x",
@@ -7520,7 +7522,7 @@ test("substrate runner rejects extra_args not in the cargo allowlist (Phase 6b)"
   }
 });
 
-test("cosmwasm runner rejects extra_args not in the cargo allowlist (Phase 6b)", async () => {
+test("cosmwasm runner rejects extra_args not in the cargo allowlist", async () => {
   const { runCosmwasmTest } = require("../mcp/lib/cosmwasm-runner.js");
   const tmpRoot = path.join(os.homedir(), "bob-cosmwasm-allowlist-test-" + Math.random().toString(36).slice(2));
   fs.mkdirSync(tmpRoot, { recursive: true });
@@ -7538,7 +7540,7 @@ test("cosmwasm runner rejects extra_args not in the cargo allowlist (Phase 6b)",
   }
 });
 
-test("substrate runner rejects harness without Cargo.toml at root (Phase 6b)", async () => {
+test("substrate runner rejects harness without Cargo.toml at root", async () => {
   const { runSubstrateTest } = require("../mcp/lib/substrate-runner.js");
   const tmpRoot = path.join(os.homedir(), "bob-substrate-no-cargo-" + Math.random().toString(36).slice(2));
   fs.mkdirSync(tmpRoot, { recursive: true });
@@ -7554,7 +7556,7 @@ test("substrate runner rejects harness without Cargo.toml at root (Phase 6b)", a
   }
 });
 
-test("cosmwasm runner rejects harness without Cargo.toml at root (Phase 6b)", async () => {
+test("cosmwasm runner rejects harness without Cargo.toml at root", async () => {
   const { runCosmwasmTest } = require("../mcp/lib/cosmwasm-runner.js");
   const tmpRoot = path.join(os.homedir(), "bob-cosmwasm-no-cargo-" + Math.random().toString(36).slice(2));
   fs.mkdirSync(tmpRoot, { recursive: true });
@@ -7570,7 +7572,7 @@ test("cosmwasm runner rejects harness without Cargo.toml at root (Phase 6b)", as
   }
 });
 
-test("bech32 mixed-case rejection happens at findings layer with stable error shape (Phase 6 fix-up #6)", () => {
+test("bech32 mixed-case rejection happens at findings layer with stable error shape", () => {
   const { normalizeBech32Address } = require("../mcp/lib/findings.js");
   // BIP-0173 forbids mixed-case bech32 — the spec is explicit. We test the
   // normalizer directly so it's clear which layer enforces this.
@@ -7585,7 +7587,7 @@ test("bech32 mixed-case rejection happens at findings layer with stable error sh
   assert.equal(normalizeBech32Address("osmo1qypq xpq9"), null);
 });
 
-test("substrate-client rejects malformed SS58 (Phase 6b)", () => {
+test("substrate-client rejects malformed SS58", () => {
   const { isSs58Address } = require("../mcp/lib/substrate-client.js");
   assert.equal(isSs58Address("5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"), true);
   assert.equal(isSs58Address("0x" + "ab".repeat(20)), false);
@@ -7594,7 +7596,7 @@ test("substrate-client rejects malformed SS58 (Phase 6b)", () => {
   assert.equal(isSs58Address(""), false);
 });
 
-test("cosmwasm-client rejects malformed bech32 (Phase 6b)", () => {
+test("cosmwasm-client rejects malformed bech32", () => {
   const { isBech32Address } = require("../mcp/lib/cosmwasm-client.js");
   assert.equal(isBech32Address("osmo1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5z5tpwxqergd3c8g7rusq4z5ese"), true);
   assert.equal(isBech32Address("0x" + "ab".repeat(20)), false);
@@ -7602,7 +7604,7 @@ test("cosmwasm-client rejects malformed bech32 (Phase 6b)", () => {
   assert.equal(isBech32Address("noseparator"), false);
 });
 
-test("sc_evidence rejects EVM-canonical 40-hex address when chain_family is aptos or sui (Phase 5 fix-up #1)", () => {
+test("sc_evidence rejects EVM-canonical 40-hex address when chain_family is aptos or sui", () => {
   const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
   // A hunter pastes Vitalik's address (or any 0x + 40 hex EVM address) into a
   // Move-family sc_evidence. Without the EVM-shape rejection, the address
@@ -7669,7 +7671,7 @@ test("sc_evidence rejects EVM-canonical 40-hex address when chain_family is apto
   );
 });
 
-test("aptos runner classifies CLI usage errors as aptos_dependency_missing (Phase 5 fix-up #4)", () => {
+test("aptos runner classifies CLI usage errors as aptos_dependency_missing", () => {
   const { classifyAptosFailure } = require("../mcp/lib/aptos-runner.js");
   // Old aptos CLI (pre-1.0) doesn't support --package-dir.
   const oldPackageDir = classifyAptosFailure(
@@ -7689,7 +7691,7 @@ test("aptos runner classifies CLI usage errors as aptos_dependency_missing (Phas
   assert.equal(missingPositional, "aptos_dependency_missing");
 });
 
-test("sui runner classifies CLI usage errors as sui_dependency_missing (Phase 5 fix-up #5)", () => {
+test("sui runner classifies CLI usage errors as sui_dependency_missing", () => {
   const { classifySuiFailure } = require("../mcp/lib/sui-runner.js");
   // Older sui CLIs may not accept --filter / --path.
   const oldFilter = classifySuiFailure(
@@ -7726,7 +7728,7 @@ test("bounty_record_finding tolerates legacy findings.jsonl rows with no surface
     const domain = "example.com";
     const findingsPath = findingsJsonlPath(domain);
     fs.mkdirSync(path.dirname(findingsPath), { recursive: true });
-    // Hand-write a legacy row representing pre-Phase-3a findings.
+    // Hand-write a legacy row representing findings without surface_type.
     const legacy = {
       id: "F-1",
       target_domain: domain,
@@ -10489,11 +10491,11 @@ test("bounty_read_hunter_brief uses smart_contract_evm shape when the assignment
 });
 
 test("bounty_read_hunter_brief preserves per-chain harness paths for every smart-contract pack", () => {
-  // Phase B regression guard: slimSurfaceForBrief whitelists each chain's
-  // harness_path scalar. SVM/Move/Substrate/CosmWasm hunter prompts read
-  // anchor_harness_path / move_harness_path / ink_harness_path /
-  // cargo_harness_path / cosmwasm_harness_path; if those get stripped,
-  // hunters falsely report missing harnesses and write partial handoffs.
+  // slimSurfaceForBrief whitelists each chain's harness_path scalar.
+  // SVM/Move/Substrate/CosmWasm hunter prompts read anchor_harness_path /
+  // move_harness_path / ink_harness_path / cargo_harness_path /
+  // cosmwasm_harness_path; if those get stripped, hunters falsely report
+  // missing harnesses and write partial handoffs.
   const cases = [
     { pack: "smart_contract_svm",       chain_family: "svm",       agent: "hunter-svm-agent",       field: "anchor_harness_path",   value: "/tmp/harness/svm" },
     { pack: "smart_contract_aptos",     chain_family: "aptos",     agent: "hunter-move-agent",      field: "move_harness_path",     value: "/tmp/harness/aptos" },

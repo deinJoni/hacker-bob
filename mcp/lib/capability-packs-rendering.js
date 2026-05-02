@@ -55,7 +55,7 @@ function substituteCapabilityPackVerifierTable(document) {
 }
 
 // ----------------------------------------------------------------------
-// Phase E: hunter pack catalogue rendering
+// Hunter pack catalogue rendering
 // ----------------------------------------------------------------------
 //
 // The orchestrator skill embeds one canonical smart-contract spawn template

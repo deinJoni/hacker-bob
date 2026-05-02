@@ -53,8 +53,8 @@ const CLAUDE_LAUNCH_TEMPLATES = Object.freeze({
     "\")",
     "```",
   ].join("\n"),
-  // Phase E: smart-contract spawn bodies are rendered from the capability
-  // pack manifest's `spawn` block — see `mcp/lib/capability-packs-rendering.js`.
+  // Smart-contract spawn bodies are rendered from the capability pack
+  // manifest's `spawn` block — see `mcp/lib/capability-packs-rendering.js`.
   // Adding a new chain pack auto-extends the orchestrator catalogue at next
   // prompt regeneration; no per-pack template lives inline here anymore.
   "{{SPAWN_CHAIN_AGENT}}": [
@@ -182,10 +182,10 @@ const CLAUDE_ROLE_SPECS = Object.freeze({
     mcp_server: true,
     local_tools: Object.freeze(["Bash", "Read", "Grep", "Glob"]),
   }),
-  // Phase F: per-chain hunter Claude role specs derived from HUNTER_ROLES.
-  // Multiple capability packs that share a role_id (e.g. Aptos and Sui both
-  // route to the Move hunter) collapse to a single Claude agent \u2014 matching
-  // role-model.js + codex/role-specs.js. Adding a 7th hunter role
+  // Per-chain hunter Claude role specs derived from HUNTER_ROLES. Multiple
+  // capability packs that share a role_id (e.g. Aptos and Sui both route to
+  // the Move hunter) collapse to a single Claude agent \u2014 matching
+  // role-model.js + codex/role-specs.js. Adding a new hunter role
   // auto-extends this object without editing this file.
   ...Object.fromEntries(
     hunterRoleSpecs().map((role) => [

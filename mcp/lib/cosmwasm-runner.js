@@ -18,7 +18,7 @@ const RAW_EXCERPT_BYTES = 8 * 1024;
 // tests) but we still forbid because it changes overflow-check semantics.
 // --workspace is forbidden for the same reason as substrate — expanding tests
 // to sibling crates gives a malicious build.rs in any workspace member access
-// to the same env (brutalist roast Phase 6 finding #5).
+// to the same env.
 const COSMWASM_EXTRA_ARG_ALLOWLIST = new Set([
   "--features",
   "--all-features",

@@ -35,7 +35,7 @@ Recording findings:
 - `proof_of_concept` should reference the Anchor test (path + grep pattern + pinned fork_slot if any); `response_evidence` should excerpt the failing assertion or state delta (lamport drop, account close, role granted, supply minted/burned).
 - Severity follows verified impact, not bug-class label. Cross-check with `bob_spec_status.program.severity_system_id` so the verifier can map to the platform tier.
 
-Surface completion contract (Phase 0 enforced — server rejects violations):
+Surface completion contract (server-enforced):
 - `surface_status: complete` requires either a recorded finding for this surface OR ≥1 `bypass_attempts[]` entry. Each `bypass_attempts` entry needs a ≥4-char `condition`, ≥30-char `attempt_summary`, and one of `outcome: no_finding|partial_evidence|finding_recorded|blocked`. `finding_recorded` requires a `finding_id` matching an actual recorded finding for the run.
 - `blocked_harness_runs[]` non-empty AND `surface_status: complete` is rejected. Use `surface_status: partial`.
 - `chain_notes` is freeform context only and does NOT satisfy the SC completion gate.

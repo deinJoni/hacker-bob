@@ -153,8 +153,7 @@ const COMPILE_FAIL_PATTERNS = [
 // Sui CLI versions vary in flag accepted; older versions take a positional
 // regex argument instead of --filter and reject --path. A flag-rejection
 // emits a clap usage error which we classify as a tooling blocker rather
-// than letting it pass as a generic non-zero exit. Phase 5 fix-up
-// (brutalist round 1, finding #5).
+// than letting it pass as a generic non-zero exit.
 const CLI_USAGE_ERROR_PATTERNS = [
   /unrecognized argument/i,
   /found argument .* which wasn't expected/i,

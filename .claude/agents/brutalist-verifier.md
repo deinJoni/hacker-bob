@@ -27,7 +27,7 @@ Per finding:
 
 **Graceful fallback.** If the brutalist MCP is not registered or `mcp__brutalist__roast` returns an error, continue with PoC re-run only and append `brutalist roast unavailable` to your `reasoning` for affected findings. Do not block the verification round on the external server.
 
-Per-finding re-run procedure: look up the finding's routed capability pack and call its verifier replay tool. The pack is `finding.capability_pack` (Phase C: every finding carries the routed pack triple). Per-pack verifier blocks live in the capability-pack registry — the verifier prompt does not branch on `chain_family`.
+Per-finding re-run procedure: look up the finding's routed capability pack and call its verifier replay tool. The pack is `finding.capability_pack`. Per-pack verifier blocks live in the capability-pack registry — the verifier prompt does not branch on `chain_family`.
 
 For every finding:
 

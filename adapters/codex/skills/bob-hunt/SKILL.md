@@ -882,7 +882,7 @@ Recording findings:
 - Record proven findings via `bounty_record_finding` with all fields. `proof_of_concept` should reference the Foundry test (path + name + pinned fork block); `response_evidence` should excerpt the failing assertion or state delta.
 - Severity follows verified impact, not bug-class label. Cross-check with `bob_spec_status.program.severity_system_id` so the verifier can map to the platform tier.
 
-Surface completion contract (Phase 0 enforced — server rejects violations):
+Surface completion contract (server-enforced):
 - `surface_status: complete` requires either a recorded finding for this surface OR ≥1 `bypass_attempts[]` entry. Each `bypass_attempts` entry needs a ≥4-char `condition`, ≥30-char `attempt_summary`, and one of `outcome: no_finding|partial_evidence|finding_recorded|blocked`. `finding_recorded` requires a `finding_id` matching an actual recorded finding for the run.
 - `blocked_harness_runs[]` non-empty AND `surface_status: complete` is rejected. Use `surface_status: partial`.
 - `chain_notes` is freeform context only and does NOT satisfy the SC completion gate.
@@ -934,7 +934,7 @@ Recording findings:
 - `proof_of_concept` should reference the Anchor test (path + grep pattern + pinned fork_slot if any); `response_evidence` should excerpt the failing assertion or state delta (lamport drop, account close, role granted, supply minted/burned).
 - Severity follows verified impact, not bug-class label. Cross-check with `bob_spec_status.program.severity_system_id` so the verifier can map to the platform tier.
 
-Surface completion contract (Phase 0 enforced — server rejects violations):
+Surface completion contract (server-enforced):
 - `surface_status: complete` requires either a recorded finding for this surface OR ≥1 `bypass_attempts[]` entry. Each `bypass_attempts` entry needs a ≥4-char `condition`, ≥30-char `attempt_summary`, and one of `outcome: no_finding|partial_evidence|finding_recorded|blocked`. `finding_recorded` requires a `finding_id` matching an actual recorded finding for the run.
 - `blocked_harness_runs[]` non-empty AND `surface_status: complete` is rejected. Use `surface_status: partial`.
 - `chain_notes` is freeform context only and does NOT satisfy the SC completion gate.
@@ -994,7 +994,7 @@ Recording findings:
 - `proof_of_concept` should reference the Move test (package path + filter pattern + pinned fork_version/checkpoint if any); `response_evidence` should excerpt the failing assertion or state delta (Aptos: CoinStore balance drop, Capability granted, Resource removed; Sui: Coin object transferred to wrong owner, Treasury minted to attacker, dynamic field removed without authorization).
 - Severity follows verified impact, not bug-class label. Cross-check with `bob_spec_status.program.severity_system_id` so the verifier can map to the platform tier.
 
-Surface completion contract (Phase 0 enforced — server rejects violations):
+Surface completion contract (server-enforced):
 - `surface_status: complete` requires either a recorded finding for this surface OR ≥1 `bypass_attempts[]` entry. Each `bypass_attempts` entry needs a ≥4-char `condition`, ≥30-char `attempt_summary`, and one of `outcome: no_finding|partial_evidence|finding_recorded|blocked`. `finding_recorded` requires a `finding_id` matching an actual recorded finding for the run.
 - `blocked_harness_runs[]` non-empty AND `surface_status: complete` is rejected. Use `surface_status: partial`.
 - `chain_notes` is freeform context only and does NOT satisfy the SC completion gate.
@@ -1061,7 +1061,7 @@ Recording findings:
 - `proof_of_concept` should reference the cargo test invocation (manifest path + filter pattern + pinned `fork_block` if any); `response_evidence` should excerpt the failing assertion (Balance shift, Mapping insert, code_hash change) or panic message captured by `--nocapture`.
 - Severity follows verified impact, not bug-class label. Cross-check with `bob_spec_status.program.severity_system_id` so the verifier can map to the platform tier.
 
-Surface completion contract (Phase 0 enforced — server rejects violations):
+Surface completion contract (server-enforced):
 - `surface_status: complete` requires either a recorded finding for this surface OR ≥1 `bypass_attempts[]` entry. Each `bypass_attempts` entry needs a ≥4-char `condition`, ≥30-char `attempt_summary`, and one of `outcome: no_finding|partial_evidence|finding_recorded|blocked`. `finding_recorded` requires a `finding_id` matching an actual recorded finding for the run.
 - `blocked_harness_runs[]` non-empty AND `surface_status: complete` is rejected. Use `surface_status: partial`.
 - `chain_notes` is freeform context only and does NOT satisfy the SC completion gate.
@@ -1130,7 +1130,7 @@ Recording findings:
 - `proof_of_concept` should reference the cargo test invocation (manifest path + filter pattern + pinned `fork_block` if any); `response_evidence` should excerpt the failing assertion (BankMsg balance delta, contract storage write, admin field rotation) or the panic message captured by `--nocapture`.
 - Severity follows verified impact, not bug-class label. Cross-check with `bob_spec_status.program.severity_system_id` so the verifier can map to the platform tier.
 
-Surface completion contract (Phase 0 enforced — server rejects violations):
+Surface completion contract (server-enforced):
 - `surface_status: complete` requires either a recorded finding for this surface OR ≥1 `bypass_attempts[]` entry. Each `bypass_attempts` entry needs a ≥4-char `condition`, ≥30-char `attempt_summary`, and one of `outcome: no_finding|partial_evidence|finding_recorded|blocked`. `finding_recorded` requires a `finding_id` matching an actual recorded finding for the run.
 - `blocked_harness_runs[]` non-empty AND `surface_status: complete` is rejected. Use `surface_status: partial`.
 - `chain_notes` is freeform context only and does NOT satisfy the SC completion gate.
@@ -1231,7 +1231,7 @@ Per finding:
 
 **Graceful fallback.** If the brutalist MCP is not registered or `mcp__brutalist__roast` returns an error, continue with PoC re-run only and append `brutalist roast unavailable` to your `reasoning` for affected findings. Do not block the verification round on the external server.
 
-Per-finding re-run procedure: look up the finding's routed capability pack and call its verifier replay tool. The pack is `finding.capability_pack` (Phase C: every finding carries the routed pack triple). Per-pack verifier blocks live in the capability-pack registry — the verifier prompt does not branch on `chain_family`.
+Per-finding re-run procedure: look up the finding's routed capability pack and call its verifier replay tool. The pack is `finding.capability_pack`. Per-pack verifier blocks live in the capability-pack registry — the verifier prompt does not branch on `chain_family`.
 
 For every finding:
 

@@ -71,7 +71,7 @@ module.exports = Object.freeze({
           "chain_family": {
             "type": "string",
             "enum": ["evm", "svm", "aptos", "sui", "substrate", "cosmwasm"],
-            "description": "Discriminator for cross-family validation. Defaults to 'evm' when omitted (back-compat with pre-Phase-4 findings)."
+            "description": "Discriminator for cross-family validation. Defaults to 'evm' when omitted for back-compat with legacy findings."
           },
           "chain_id": {
             "oneOf": [

@@ -24,10 +24,10 @@ const CODEX_ROLE_SPECS = Object.freeze({
     lifecycle: "async_wave",
     bob_agent_id_source: "bounty_start_wave.data.assignments[].agent",
   }),
-  // Phase F: per-chain hunter Codex role specs derived from HUNTER_ROLES.
-  // Multiple capability packs that share a role_id collapse to a single
-  // codex spec — matching the role-model.js + Claude-role-renderer.js
-  // dedup. Adding a 7th hunter role auto-extends this object.
+  // Per-chain hunter Codex role specs derived from HUNTER_ROLES. Multiple
+  // capability packs that share a role_id collapse to a single codex spec —
+  // matching the role-model.js + Claude-role-renderer.js dedup. Adding a
+  // new hunter role auto-extends this object.
   ...Object.fromEntries(
     hunterRoleSpecs().map((role) => [
       role.role_id,

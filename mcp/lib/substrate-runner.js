@@ -20,8 +20,7 @@ const RAW_EXCERPT_BYTES = 8 * 1024;
 // (could compile to attacker-controlled wasm artifacts), --offline (could
 // hide network operations), --release (changes test semantics in subtle ways),
 // --workspace (would expand the test set to every workspace member,
-// compounding build.rs blast radius beyond the hunter's named harness —
-// brutalist roast Phase 6 finding #5).
+// compounding build.rs blast radius beyond the hunter's named harness).
 const SUBSTRATE_EXTRA_ARG_ALLOWLIST = new Set([
   "--features",       // followed by feature names (we accept the whole token)
   "--all-features",

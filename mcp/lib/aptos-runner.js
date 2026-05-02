@@ -159,8 +159,7 @@ const COMPILE_FAIL_PATTERNS = [
 // usage error rather than running the test, so we surface it as a tooling
 // blocker (kind: aptos_dependency_missing) rather than letting it slip through
 // as a generic non-zero exit with no reason set — verifier prompts treat
-// "no recognized reason" as a confirmed denial. Phase 5 fix-up (brutalist
-// round 1, finding #4).
+// "no recognized reason" as a confirmed denial.
 const CLI_USAGE_ERROR_PATTERNS = [
   /unrecognized argument/i,
   /found argument .* which wasn't expected/i,

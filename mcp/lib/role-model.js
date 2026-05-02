@@ -60,9 +60,9 @@ const ROLE_DEFINITIONS = Object.freeze({
     prompt_body: path.join(ROLE_PROMPT_DIR, "hunter.md"),
     mcp_role_bundles: Object.freeze(["hunter-shared", "hunter-web"]),
   }),
-  // Phase F: per-chain hunter role definitions are generated below from
-  // HUNTER_ROLES in capability-packs.js. The aliases above (hunter — web)
-  // stay hand-coded because they are not chain-specific.
+  // Per-chain hunter role definitions are generated below from HUNTER_ROLES
+  // in capability-packs.js. The static `hunter` (web) role above stays
+  // hand-coded because it is not chain-specific.
   ...Object.fromEntries(
     hunterRoleSpecs().map((role) => [
       role.role_id,

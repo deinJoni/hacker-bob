@@ -258,7 +258,7 @@ const SC_EVIDENCE_REQUIRED_FIELDS = ["chain_id", "contract_address", "harness_pa
 //
 // chain_family is the discriminator. EVM uses an integer chain_id and 0x40
 // hex contract address; SVM uses a Solana cluster string and base58 program
-// pubkey. Older rows pre-Phase-4 omit chain_family; we default to "evm" so
+// pubkey. Legacy rows omit chain_family; we default to "evm" so
 // findings.jsonl back-compat is preserved without a migration.
 function normalizeScEvidence(value) {
   if (value == null) return null;
@@ -361,8 +361,7 @@ function normalizeScEvidence(value) {
     // wrong-family addresses to triagers and routing the verifier to a
     // non-existent Aptos/Sui resource. Legitimate Move addresses with 12
     // leading zero bytes still encode canonically as 0x000...<40hex>; the
-    // 0x-prefix-plus-40-hex shorthand is reserved for EVM. Phase 5 fix-up
-    // (brutalist round 1).
+    // 0x-prefix-plus-40-hex shorthand is reserved for EVM.
     const familyLabel = chainFamily; // "aptos" or "sui"
     if (EVM_ADDRESS_RE.test(contractAddressRaw)) {
       throw new Error(`sc_evidence.contract_address looks like a canonical EVM address (0x + 40 hex) but chain_family='${familyLabel}'; if this is genuinely a Move address with 12 leading zero bytes, encode it canonically as 0x000...<40hex> (64 hex chars total)`);
@@ -529,12 +528,12 @@ function normalizeFindingRecord(record, { expectedDomain = null, lineNumber = nu
       agent: record.agent == null ? null : parseAgentId(record.agent),
       surface_id: normalizeOptionalText(record.surface_id, "surface_id"),
       surface_type: normalizeSurfaceType(record.surface_type),
-      // Routing metadata (Phase C). Optional on disk so pre-Phase-C rows in
-      // findings.jsonl normalize without failure; required on write because
-      // recordFinding always derives them from the assignment. We backfill
-      // from surface_type + sc_evidence.chain_family below so Phase D
-      // consumers never see null and don't have to re-implement the
-      // surface_type→pack mapping each.
+      // Routing metadata. Optional on disk so legacy rows in findings.jsonl
+      // normalize without failure; required on write because recordFinding
+      // always derives them from the assignment. We backfill from
+      // surface_type + sc_evidence.chain_family below so downstream consumers
+      // (verifier/evidence/grader/reporter) never see null and don't have to
+      // re-implement the surface_type→pack mapping each.
       capability_pack: normalizeOptionalText(record.capability_pack, "capability_pack"),
       hunter_agent: normalizeOptionalText(record.hunter_agent, "hunter_agent"),
       brief_profile: normalizeOptionalText(record.brief_profile, "brief_profile"),
@@ -544,7 +543,7 @@ function normalizeFindingRecord(record, { expectedDomain = null, lineNumber = nu
     };
     // Read-side backfill for legacy rows. If at least one of the three fields
     // is missing, derive the triple from surface_type + sc_evidence.chain_family.
-    // Rows written by Phase C onward already carry the triple; this is a
+    // Rows written under the current schema always carry the triple; this is a
     // one-way upgrade for old persisted findings.
     const missingRouting = !finding.capability_pack || !finding.hunter_agent || !finding.brief_profile;
     if (missingRouting) {
@@ -738,7 +737,7 @@ function recordFinding(args) {
     // hunter wave; assert that locally rather than relying on the
     // surface_type/sc_evidence guard further down to keep us honest. If a
     // future caller passes sc_evidence here, the routed pack would silently
-    // be web and the finding would mis-route in Phase D.
+    // be web and downstream verifier/evidence dispatch would mis-route.
     if (args.sc_evidence != null) {
       throw new Error("sc_evidence findings must be recorded with wave and agent so the routed capability pack is captured from the assignment");
     }
