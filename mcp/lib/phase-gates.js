@@ -48,13 +48,23 @@ function pushUnique(target, seen, value) {
   target.push(value);
 }
 
-function computeOpenRequeueSurfaceIds(records) {
+// Surface-level "open" status is governed by `state.explored` (populated
+// from `surface_status: complete` handoffs by applyWaveMerge), not by
+// per-endpoint coverage rows. A complete handoff says the hunter declared
+// the surface done; an old coverage row with status=requeue from an
+// earlier wave is endpoint-level history, not the surface's current state.
+// Filter out explored surfaces so HUNT -> CHAIN gating doesn't refuse the
+// transition over stale endpoint-level requeue rows whose surface was
+// later closed by a complete handoff.
+function computeOpenRequeueSurfaceIds(records, exploredSurfaceIds = []) {
+  const exploredSet = new Set(exploredSurfaceIds);
   const latestRecords = Array.from(latestCoverageRecordsByKey(records).values());
   const surfaceIds = [];
   const seen = new Set();
 
   for (const record of latestRecords) {
     if (!COVERAGE_UNFINISHED_STATUS_VALUES.includes(record.status)) continue;
+    if (exploredSet.has(record.surface_id)) continue;
     pushUnique(surfaceIds, seen, record.surface_id);
   }
 
@@ -114,7 +124,10 @@ function computeHuntToChainGate(domain, state) {
 
   let openRequeueSurfaceIds = [];
   try {
-    openRequeueSurfaceIds = computeOpenRequeueSurfaceIds(readCoverageRecordsFromJsonl(domain));
+    openRequeueSurfaceIds = computeOpenRequeueSurfaceIds(
+      readCoverageRecordsFromJsonl(domain),
+      Array.isArray(state.explored) ? state.explored : [],
+    );
   } catch (error) {
     blockers.push(blocker(
       "coverage_unavailable",

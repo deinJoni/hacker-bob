@@ -2361,17 +2361,20 @@ test("bounty_transition_phase blocks HUNT -> CHAIN with unexplored HIGH or CRITI
   });
 });
 
-test("bounty_transition_phase blocks HUNT -> CHAIN with unfinished latest coverage", () => {
+test("bounty_transition_phase blocks HUNT -> CHAIN with unfinished latest coverage on an unexplored surface", () => {
   withTempHome(() => {
     for (const status of ["promising", "needs_auth", "requeue"]) {
       const domain = `${status.replace("_", "-")}.example.com`;
+      // Note: surface-a is intentionally NOT in `explored`. An unfinished
+      // coverage row on a surface whose `surface_status: complete` handoff
+      // has not yet merged is the canonical "still has work" signal.
       seedSessionState(domain, {
         phase: "HUNT",
         pending_wave: null,
-        explored: ["surface-a"],
+        explored: [],
       });
       seedAttackSurfaces(domain, [
-        { id: "surface-a", hosts: [`https://${domain}`], priority: "HIGH" },
+        { id: "surface-a", hosts: [`https://${domain}`], priority: "MEDIUM" },
       ]);
       seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
       logCoverage({
@@ -2393,6 +2396,44 @@ test("bounty_transition_phase blocks HUNT -> CHAIN with unfinished latest covera
         /HUNT -> CHAIN blocked: .*surface-a/,
       );
     }
+  });
+});
+
+test("bounty_transition_phase allows HUNT -> CHAIN when unfinished coverage rows exist on explored surfaces", () => {
+  // state.explored is populated from `surface_status: complete` handoffs
+  // by applyWaveMerge. Once a complete handoff merges, the surface is
+  // closed regardless of older endpoint-level coverage rows whose latest
+  // status was promising/needs_auth/requeue. The HUNT -> CHAIN gate must
+  // not refuse the transition over such stale rows.
+  withTempHome(() => {
+    const domain = "explored-with-stale-coverage.example.com";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      pending_wave: null,
+      explored: ["surface-a"],
+      hunt_wave: 1,
+    });
+    seedAttackSurfaces(domain, [
+      { id: "surface-a", hosts: [`https://${domain}`], priority: "MEDIUM" },
+    ]);
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
+    logCoverage({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      entries: [{
+        endpoint: "/api/legacy",
+        method: "GET",
+        bug_class: "idor",
+        status: "requeue",
+        evidence_summary: "endpoint-level requeue from earlier wave; surface later closed by complete handoff",
+      }],
+    });
+
+    transitionPhase({ target_domain: domain, to_phase: "CHAIN" });
+    const summary = JSON.parse(readStateSummary({ target_domain: domain }));
+    assert.equal(summary.state.phase, "CHAIN");
   });
 });
 
@@ -11466,14 +11507,16 @@ test("bounty_wave_status coverage_pct is 100 when all surfaces are LOW", () => {
 test("bounty_wave_status returns open requeue coverage surface ids and transition blockers", () => {
   withTempHome(() => {
     const domain = "example.com";
+    // surface-a has unfinished coverage and is NOT in `explored`, so the
+    // surface is genuinely still open and the gate must block.
     seedSessionState(domain, {
       phase: "HUNT",
       hunt_wave: 1,
       pending_wave: null,
-      explored: ["surface-a"],
+      explored: [],
     });
     seedAttackSurfaces(domain, [
-      { id: "surface-a", hosts: [`https://${domain}`], priority: "HIGH" },
+      { id: "surface-a", hosts: [`https://${domain}`], priority: "MEDIUM" },
     ]);
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
     logCoverage({
@@ -11494,6 +11537,50 @@ test("bounty_wave_status returns open requeue coverage surface ids and transitio
     assert.deepEqual(result.coverage.open_requeue_surface_ids, ["surface-a"]);
     assert.deepEqual(result.coverage.unexplored_high_surface_ids, []);
     assert.equal(result.transition_blockers.some((item) => item.code === "open_requeue_coverage"), true);
+  });
+});
+
+test("bounty_wave_status excludes explored surfaces from open_requeue_surface_ids", () => {
+  // The veda.tech regression: a surface had a `requeue` coverage row from
+  // an earlier wave, then was closed by a `surface_status: complete`
+  // handoff in a later wave (which populated state.explored). wave_status
+  // used to keep the surface in open_requeue_surface_ids forever because
+  // no later coverage row was written for the same (endpoint, bug_class)
+  // tuple. The complete handoff is the authoritative "surface is closed"
+  // signal — coverage rows are endpoint-level history, not surface state.
+  withTempHome(() => {
+    const domain = "explored-stale-coverage.example.com";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 2,
+      pending_wave: null,
+      explored: ["surface-a"],
+    });
+    seedAttackSurfaces(domain, [
+      { id: "surface-a", hosts: [`https://${domain}`], priority: "MEDIUM" },
+    ]);
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
+    seedAssignments(domain, 2, [{ agent: "a1", surface_id: "surface-a" }]);
+    logCoverage({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      entries: [{
+        endpoint: "/api/legacy",
+        method: "GET",
+        bug_class: "idor",
+        status: "requeue",
+        evidence_summary: "endpoint-level requeue from earlier wave",
+      }],
+    });
+
+    const result = JSON.parse(waveStatus({ target_domain: domain }));
+    assert.deepEqual(result.coverage.open_requeue_surface_ids, []);
+    assert.equal(
+      result.transition_blockers.some((item) => item.code === "open_requeue_coverage"),
+      false,
+    );
   });
 });
 
