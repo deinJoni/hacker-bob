@@ -31,6 +31,7 @@ const {
 const {
   classifySurfaceCapability,
   getCapabilityPack,
+  normalizeContextBudget,
 } = require("./capability-packs.js");
 const {
   readSurfaceRoutesStrict,
@@ -63,28 +64,64 @@ const TECHNIQUE_FULL_ITEMS_PER_KIND = 12;
 const TECHNIQUE_FULL_ITEM_MAX_CHARS = 900;
 const TECHNIQUE_SELECTION_MAX_CHARS = 6000;
 
+function registryWarning(source, { entryIndex = null, entryId = null, reason }) {
+  const warning = {
+    source: source ? path.basename(source) : HUNTER_KNOWLEDGE_FILE[HUNTER_KNOWLEDGE_FILE.length - 1],
+    reason: String(reason || "invalid technique registry entry"),
+  };
+  if (entryIndex != null) warning.entry_index = entryIndex;
+  if (entryId != null && String(entryId).trim()) {
+    warning.entry_id = String(entryId).trim().slice(0, 128);
+  }
+  return warning;
+}
+
+function readableEntryId(entry) {
+  if (entry && typeof entry === "object" && !Array.isArray(entry) && entry.id != null) {
+    return String(entry.id);
+  }
+  return null;
+}
+
 function hunterKnowledgeCandidatePaths() {
   return resourceCandidatePaths(...HUNTER_KNOWLEDGE_FILE);
 }
 
 function loadHunterKnowledge() {
   for (const candidate of hunterKnowledgeCandidatePaths()) {
+    if (!candidate || !fs.existsSync(candidate)) continue;
+    let parsed;
     try {
-      if (!candidate || !fs.existsSync(candidate)) continue;
-      const parsed = JSON.parse(fs.readFileSync(candidate, "utf8"));
-      if (parsed && typeof parsed === "object" && Array.isArray(parsed.entries)) {
-        return {
-          path: candidate,
-          version: Number.isInteger(parsed.version) ? parsed.version : 1,
-          entries: parsed.entries.filter((entry) => entry && typeof entry === "object"),
-        };
-      }
-    } catch {
-      // Technique packs are read-only enrichment. Malformed optional knowledge
-      // must not block deterministic assignment briefs.
+      parsed = JSON.parse(fs.readFileSync(candidate, "utf8"));
+    } catch (error) {
+      return {
+        path: candidate,
+        version: 1,
+        entries: [],
+        warnings: [registryWarning(candidate, {
+          reason: `Malformed hunter-techniques.json: ${error.message || String(error)}`,
+        })],
+      };
     }
+    const version = parsed && Number.isInteger(parsed.version) ? parsed.version : 1;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !Array.isArray(parsed.entries)) {
+      return {
+        path: candidate,
+        version,
+        entries: [],
+        warnings: [registryWarning(candidate, {
+          reason: "hunter-techniques.json must be an object with entries[]",
+        })],
+      };
+    }
+    return {
+      path: candidate,
+      version,
+      entries: parsed.entries,
+      warnings: [],
+    };
   }
-  return { path: null, version: 1, entries: [] };
+  return { path: null, version: 1, entries: [], warnings: [] };
 }
 
 function lowerStringArray(value) {
@@ -246,13 +283,22 @@ function packEstimatedTokens(entry) {
 }
 
 function normalizeRegistryEntry(entry, registryVersion) {
+  if (entry == null || typeof entry !== "object" || Array.isArray(entry)) {
+    throw new Error("technique pack entry must be an object");
+  }
   const id = normalizeTechniquePackId(entry.id || "knowledge-entry", "technique_pack.id");
   const title = assertNonEmptyString(entry.title || entry.id || "Hunter guidance", "technique_pack.title");
+  const capabilityPacks = normalizeCapabilityPacks(entry);
+  for (const capabilityPack of capabilityPacks) {
+    if (!getCapabilityPack(capabilityPack)) {
+      throw new Error(`Unknown capability_pack in technique pack ${id}: ${capabilityPack}`);
+    }
+  }
   return {
     id,
     version: Number.isInteger(entry.version) ? entry.version : registryVersion,
     title,
-    capability_packs: normalizeCapabilityPacks(entry),
+    capability_packs: capabilityPacks,
     match: entry.match && typeof entry.match === "object" && !Array.isArray(entry.match) ? entry.match : {},
     techniques: stringArray(entry.techniques)
       .map((item) => item.trim())
@@ -277,10 +323,38 @@ function normalizeRegistryEntry(entry, registryVersion) {
 
 function loadTechniqueRegistry() {
   const knowledge = loadHunterKnowledge();
+  const warnings = Array.isArray(knowledge.warnings) ? knowledge.warnings.slice() : [];
+  const packs = [];
+  const seenIds = new Set();
+  for (let index = 0; index < knowledge.entries.length; index += 1) {
+    const entry = knowledge.entries[index];
+    let normalized;
+    try {
+      normalized = normalizeRegistryEntry(entry, knowledge.version);
+    } catch (error) {
+      warnings.push(registryWarning(knowledge.path, {
+        entryIndex: index,
+        entryId: readableEntryId(entry),
+        reason: error.message || String(error),
+      }));
+      continue;
+    }
+    if (seenIds.has(normalized.id)) {
+      warnings.push(registryWarning(knowledge.path, {
+        entryIndex: index,
+        entryId: normalized.id,
+        reason: `Duplicate technique pack id: ${normalized.id}`,
+      }));
+      continue;
+    }
+    seenIds.add(normalized.id);
+    packs.push(normalized);
+  }
   return {
     source: knowledge.path,
     version: knowledge.version,
-    packs: knowledge.entries.map((entry) => normalizeRegistryEntry(entry, knowledge.version)),
+    packs,
+    warnings,
   };
 }
 
@@ -370,6 +444,7 @@ function selectTechniquePacksForSurface(surface, {
       selected: [],
       omitted_attempted: [],
       registry_version: registry.version,
+      registry_warnings: registry.warnings.slice(),
       selection_limits: fitTechniquePackSummaries([], TECHNIQUE_SELECTION_MAX_CHARS, {
         candidateLimit: limit,
       }).selection_limits,
@@ -424,6 +499,7 @@ function selectTechniquePacksForSurface(surface, {
     selected: fitted.selected,
     omitted_attempted: omittedAttempted,
     registry_version: registry.version,
+    registry_warnings: registry.warnings.slice(),
     selection_limits: fitted.selection_limits,
   };
 }
@@ -442,8 +518,10 @@ function readTechniquePack(packId, { mode = "summary" } = {}) {
       version: 1,
       mode: normalizedMode,
       source: registry.source ? path.basename(registry.source) : null,
+      registry_version: registry.version,
       technique_pack: summary,
       summary_limits: summary.summary_limits,
+      registry_warnings: registry.warnings.slice(),
     };
   }
   const fullTechniques = boundedTechniqueStrings(pack.techniques, {
@@ -462,6 +540,7 @@ function readTechniquePack(packId, { mode = "summary" } = {}) {
     version: 1,
     mode: normalizedMode,
     source: registry.source ? path.basename(registry.source) : null,
+    registry_version: registry.version,
     technique_pack: {
       ...summary,
       full: {
@@ -477,7 +556,48 @@ function readTechniquePack(packId, { mode = "summary" } = {}) {
     },
     summary_limits: summary.summary_limits,
     full_limits: fullLimits,
+    registry_warnings: registry.warnings.slice(),
   };
+}
+
+function normalizeOptionalVersionInteger(value, fieldName) {
+  if (value == null) return null;
+  return assertInteger(value, fieldName, { min: 1, max: 100000 });
+}
+
+function addOptionalTechniqueVersionMetadata(normalized, record) {
+  const packVersion = normalizeOptionalVersionInteger(record.pack_version, "pack_version");
+  const registryVersion = normalizeOptionalVersionInteger(record.registry_version, "registry_version");
+  const capabilityPack = normalizeOptionalText(record.capability_pack, "capability_pack");
+  const capabilityPackVersion = normalizeOptionalVersionInteger(record.capability_pack_version, "capability_pack_version");
+
+  if (packVersion != null) normalized.pack_version = packVersion;
+  if (registryVersion != null) normalized.registry_version = registryVersion;
+  if (capabilityPack) {
+    if (!getCapabilityPack(capabilityPack)) {
+      throw new Error(`Unknown capability_pack: ${capabilityPack}`);
+    }
+    normalized.capability_pack = capabilityPack;
+  }
+  if (capabilityPackVersion != null) normalized.capability_pack_version = capabilityPackVersion;
+}
+
+function techniqueVersionMetadata(packResult, routeOrAssignment) {
+  const packVersion = packResult && packResult.technique_pack
+    ? packResult.technique_pack.version
+    : null;
+  const metadata = {};
+  if (Number.isInteger(packVersion) && packVersion > 0) metadata.pack_version = packVersion;
+  if (Number.isInteger(packResult && packResult.registry_version) && packResult.registry_version > 0) {
+    metadata.registry_version = packResult.registry_version;
+  }
+  if (routeOrAssignment && routeOrAssignment.capability_pack) {
+    metadata.capability_pack = routeOrAssignment.capability_pack;
+  }
+  if (routeOrAssignment && Number.isInteger(routeOrAssignment.capability_pack_version)) {
+    metadata.capability_pack_version = routeOrAssignment.capability_pack_version;
+  }
+  return metadata;
 }
 
 function normalizeTechniquePackReadRecord(record, { expectedDomain = null, lineNumber = null } = {}) {
@@ -500,6 +620,7 @@ function normalizeTechniquePackReadRecord(record, { expectedDomain = null, lineN
       pack_id: normalizeTechniquePackId(record.pack_id),
       mode: assertEnumValue(record.mode, ["full"], "mode"),
     };
+    addOptionalTechniqueVersionMetadata(read, record);
     if (expectedDomain != null && read.target_domain !== expectedDomain) {
       throw new Error("target_domain mismatch");
     }
@@ -565,18 +686,20 @@ function assertFullReadContext(args) {
   };
 }
 
-function assertPackMatchesAssignment(packResult, assignment) {
-  const capabilityPacks = packResult
-    && packResult.technique_pack
-    && Array.isArray(packResult.technique_pack.capability_packs)
-    ? packResult.technique_pack.capability_packs
+function assertTechniquePackMatchesCapability(techniquePack, capabilityPack) {
+  const capabilityPacks = techniquePack && Array.isArray(techniquePack.capability_packs)
+    ? techniquePack.capability_packs
     : [];
-  if (!capabilityPacks.includes(assignment.capability_pack)) {
+  if (!capabilityPacks.includes(capabilityPack)) {
     throw new ToolError(
       ERROR_CODES.INVALID_ARGUMENTS,
-      `technique pack ${packResult.technique_pack.id} is not compatible with capability_pack ${assignment.capability_pack}`,
+      `technique pack ${techniquePack && techniquePack.id ? techniquePack.id : "(unknown)"} is not compatible with capability_pack ${capabilityPack}`,
     );
   }
+}
+
+function assertPackMatchesAssignment(packResult, assignment) {
+  assertTechniquePackMatchesCapability(packResult && packResult.technique_pack, assignment.capability_pack);
 }
 
 function readTechniquePackForTool(args) {
@@ -623,6 +746,7 @@ function readTechniquePackForTool(args) {
         agent: context.agent,
         surface_id: context.surface_id,
         pack_id: packId,
+        ...techniqueVersionMetadata(full, assignment),
         mode: "full",
       }, { expectedDomain: context.domain }), { maxRecords: TECHNIQUE_PACK_READ_LOG_MAX_RECORDS });
       readPackIds.add(packId);
@@ -672,7 +796,7 @@ function resolveSurfaceTechniqueRoute(domain, surface, requestedCapabilityPack =
     capability_pack_version: route.capability_pack_version || pack.capability_pack_version,
     brief_profile: route.brief_profile || pack.brief_profile,
     hunter_agent: route.hunter_agent || pack.hunter_agent,
-    context_budget: route.context_budget || { ...pack.context_budget },
+    context_budget: normalizeContextBudget(route.context_budget, pack),
   };
 }
 
@@ -718,6 +842,7 @@ function selectTechniquePacks(args) {
     include_attempted: includeAttempted,
     technique_packs: selected.selected,
     selection_limits: selected.selection_limits,
+    registry_warnings: selected.registry_warnings,
     attempts_summary: {
       total_for_surface: attempts.length,
       omitted_attempted: selected.omitted_attempted,
@@ -791,6 +916,7 @@ function resolveHunterKnowledge(surface, {
       capped: slimEntries.length > fittedEntries.length,
       char_count: charCount,
       max_chars: HUNTER_KNOWLEDGE_MAX_CHARS,
+      registry_warnings: selectedResult.registry_warnings,
     },
   };
 }
@@ -814,6 +940,7 @@ function normalizeTechniqueAttemptRecord(record, { expectedDomain = null, lineNu
       status: assertEnumValue(record.status, TECHNIQUE_ATTEMPT_STATUS_VALUES, "status"),
       evidence: assertRequiredText(record.evidence, "evidence"),
     };
+    addOptionalTechniqueVersionMetadata(attempt, record);
 
     const wave = normalizeOptionalText(record.wave, "wave");
     const agent = normalizeOptionalText(record.agent, "agent");
@@ -874,6 +1001,10 @@ function summarizeTechniqueAttempt(record) {
   if (record.wave) summary.wave = record.wave;
   if (record.agent) summary.agent = record.agent;
   if (record.surface_id) summary.surface_id = record.surface_id;
+  if (record.pack_version != null) summary.pack_version = record.pack_version;
+  if (record.registry_version != null) summary.registry_version = record.registry_version;
+  if (record.capability_pack) summary.capability_pack = record.capability_pack;
+  if (record.capability_pack_version != null) summary.capability_pack_version = record.capability_pack_version;
   return summary;
 }
 
@@ -899,13 +1030,21 @@ function logTechniqueAttempt(args) {
   const parsedWave = wave ? parseWaveId(wave) : null;
   const parsedAgent = agent ? parseAgentId(agent) : null;
 
-  readTechniquePack(packId, { mode: "summary" });
+  const packResult = readTechniquePack(packId, { mode: "summary" });
   const attackSurface = readAttackSurfaceStrict(domain);
-  if (!attackSurface.surface_id_set.has(surfaceId)) {
+  const surface = attackSurface.document.surfaces.find((entry) => entry && entry.id === surfaceId);
+  if (!surface) {
     throw new Error(`Unknown surface_id: ${surfaceId}`);
   }
+  let routeMetadata;
   if (parsedWave && parsedAgent) {
-    validateAssignedWaveAgentSurface(domain, parsedWave, parsedAgent, surfaceId);
+    const assignment = validateAssignedWaveAgentSurface(domain, parsedWave, parsedAgent, surfaceId);
+    assertPackMatchesAssignment(packResult, assignment);
+    routeMetadata = assignment;
+  } else {
+    const route = resolveSurfaceTechniqueRoute(domain, surface);
+    assertTechniquePackMatchesCapability(packResult.technique_pack, route.capability_pack);
+    routeMetadata = route;
   }
 
   const record = normalizeTechniqueAttemptRecord({
@@ -916,6 +1055,7 @@ function logTechniqueAttempt(args) {
     agent: parsedAgent,
     surface_id: surfaceId,
     pack_id: packId,
+    ...techniqueVersionMetadata(packResult, routeMetadata),
     status,
     outcome,
     evidence,
@@ -938,6 +1078,7 @@ function logTechniqueAttempt(args) {
       appended: 1,
       log_path: logPath,
       record: summarizeTechniqueAttempt(record),
+      registry_warnings: packResult.registry_warnings,
     });
   });
 }
@@ -964,6 +1105,7 @@ module.exports = {
   scoreTechniqueEntry,
   selectTechniquePacks,
   selectTechniquePacksForSurface,
+  assertTechniquePackMatchesCapability,
   summarizeTechniqueAttempt,
   techniquePackSummary,
 };

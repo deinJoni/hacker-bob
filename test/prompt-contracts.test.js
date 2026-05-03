@@ -36,7 +36,9 @@ const {
 } = require("../scripts/generate-agent-tools.js");
 const {
   CAPABILITY_PACKS,
+  DEFAULT_CONTEXT_BUDGET,
   hunterAgentNamesForCapabilityPacks,
+  SMART_CONTRACT_CONTEXT_BUDGET,
 } = require("../mcp/lib/capability-packs.js");
 
 const ROOT = path.join(__dirname, "..");
@@ -446,6 +448,12 @@ test("manifest, settings, and generated Claude config keep global MCP permission
     if (!metadata.hook_required) continue;
     assert.ok(hookMatchers.has(`mcp__bountyagent__${toolName}`), `${toolName} requires a scope hook`);
   }
+});
+
+test("standard hook test script runs both write and read guards", () => {
+  const packageJson = JSON.parse(readFile("package.json"));
+  assert.match(packageJson.scripts["test:hooks"], /test-write-guard\.py/);
+  assert.match(packageJson.scripts["test:hooks"], /test-read-guard\.py/);
 });
 
 test("MCP-dependent agents declare official mcpServers bountyagent metadata", () => {
@@ -1105,13 +1113,15 @@ test("capability packs expose versioned context budgets for routed hunters", () 
     assert.equal(pack.capability_pack_version, 1);
     assert.ok(pack.hunter_agent);
     assert.ok(pack.brief_profile);
-    assert.deepEqual(pack.context_budget, {
-      brief_max_tokens: 2500,
-      candidate_pack_limit: 5,
-      full_pack_read_limit: 2,
-      attempt_log_required: true,
-      team_escalation_allowed: false,
-    });
+    assert.deepEqual(
+      Object.keys(pack.context_budget).sort(),
+      ["attempt_log_required", "candidate_pack_limit", "full_pack_read_limit"].sort(),
+    );
+    if (pack.brief_profile === "web") {
+      assert.deepEqual(pack.context_budget, DEFAULT_CONTEXT_BUDGET);
+    } else {
+      assert.deepEqual(pack.context_budget, SMART_CONTRACT_CONTEXT_BUDGET);
+    }
   }
 });
 
@@ -2239,6 +2249,8 @@ test("hunter and orchestrator prompts keep the structured handoff contract expli
   assert.match(hunterPrompt, /run_context/);
   assert.match(hunterPrompt, /run_context\.context_budget/);
   assert.match(hunterPrompt, /technique_packs\.selected/);
+  assert.match(hunterPrompt, /technique_packs\.selected` as the primary technique context/);
+  assert.match(hunterPrompt, /top-level `techniques` and `payload_hints` fields are smaller legacy compatibility summaries/);
   assert.match(hunterPrompt, /bounty_read_technique_pack/);
   assert.match(hunterPrompt, /full_pack_read_limit/);
   assert.match(hunterPrompt, /bounty_log_technique_attempt/);
@@ -2247,6 +2259,7 @@ test("hunter and orchestrator prompts keep the structured handoff contract expli
   assert.match(orchestratorPrompt, /bounty_read_hunter_brief\(\{ target_domain:[\s\S]*egress_profile:[\s\S]*block_internal_hosts/);
   assert.match(orchestratorPrompt, /Context budget: \[assignment\.context_budget\]/);
   assert.match(orchestratorPrompt, /technique_packs\.selected/);
+  assert.match(orchestratorPrompt, /registry warnings, and small legacy technique summaries/);
   assert.match(orchestratorPrompt, /bounty_read_technique_pack[\s\S]*bounty_log_technique_attempt/);
   assert.match(hunterPrompt, /Prefer real observed authenticated endpoints from `traffic_summary`/);
   assert.match(hunterPrompt, /Log coverage before switching away from a promising traffic-derived endpoint|log coverage before switching away from promising traffic-derived endpoints/i);
@@ -2274,6 +2287,21 @@ test("hunter and orchestrator prompts keep the structured handoff contract expli
   assert.match(orchestratorPrompt, /bounty_log_coverage/);
   assert.match(orchestratorPrompt, /never write `coverage\.jsonl` through Bash/);
   assert.match(orchestratorPrompt, /technique-pack-reads\.jsonl/);
+});
+
+test("context scaling architecture doc is durable and matches enforced budget contract", () => {
+  assert.equal(fs.existsSync(path.join(ROOT, "docs/context-scaling-and-platform-adapters.md")), false);
+  const doc = readFile("docs/context-scaling-architecture.md");
+
+  assert.match(doc, /^# Context Scaling Architecture/m);
+  assert.match(doc, /candidate_pack_limit/);
+  assert.match(doc, /full_pack_read_limit/);
+  assert.match(doc, /attempt_log_required/);
+  assert.match(doc, /technique_packs\.selected` is the canonical web-hunter context/);
+  assert.match(doc, /Smart-contract hunters currently set `attempt_log_required: false`/);
+  assert.doesNotMatch(doc, /Eric['’]s agent/i);
+  assert.doesNotMatch(doc, /rebase/i);
+  assert.doesNotMatch(doc, /brief_max_tokens|team_escalation_allowed/);
 });
 
 // ----------------------------------------------------------------------

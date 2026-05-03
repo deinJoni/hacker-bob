@@ -9,6 +9,7 @@ const {
   GRADE_VERDICT_VALUES,
   PHASE_VALUES,
   SEVERITY_VALUES,
+  TECHNIQUE_ATTEMPT_STATUS_VALUES,
   VERIFICATION_ROUND_VALUES,
 } = require("./constants.js");
 const {
@@ -30,6 +31,8 @@ const {
   sessionDir,
   sessionsRoot,
   statePath,
+  techniqueAttemptsJsonlPath,
+  techniquePackReadsJsonlPath,
   verificationRoundPaths,
 } = require("./paths.js");
 const {
@@ -469,6 +472,80 @@ function summarizeCoverageJsonl(targetDomain) {
   };
 }
 
+function summarizeTechniqueAttemptsJsonl(targetDomain) {
+  const read = readJsonlSafe(techniqueAttemptsJsonlPath(targetDomain), "technique-attempts.jsonl");
+  const byStatus = TECHNIQUE_ATTEMPT_STATUS_VALUES.reduce((result, status) => {
+    result[status] = 0;
+    return result;
+  }, {});
+  const surfaces = new Set();
+  const packs = new Set();
+  let total = 0;
+  let invalidRecords = 0;
+
+  for (const record of read.records) {
+    const status = capString(record.status, 40);
+    const surfaceId = capString(record.surface_id, 200);
+    const packId = capString(record.pack_id, 128);
+    if (
+      record.target_domain !== targetDomain ||
+      !TECHNIQUE_ATTEMPT_STATUS_VALUES.includes(status) ||
+      !surfaceId ||
+      !packId
+    ) {
+      invalidRecords += 1;
+      continue;
+    }
+    total += 1;
+    byStatus[status] += 1;
+    surfaces.add(surfaceId);
+    packs.add(packId);
+  }
+
+  return {
+    exists: read.exists,
+    total_records: total,
+    surface_count: surfaces.size,
+    pack_count: packs.size,
+    by_status: byStatus,
+    malformed_lines: read.malformed_lines + invalidRecords,
+    error: read.error,
+    mtime: read.mtime,
+  };
+}
+
+function summarizeTechniquePackReadsJsonl(targetDomain) {
+  const read = readJsonlSafe(techniquePackReadsJsonlPath(targetDomain), "technique-pack-reads.jsonl");
+  const surfaces = new Set();
+  const packs = new Set();
+  let fullReads = 0;
+  let invalidRecords = 0;
+
+  for (const record of read.records) {
+    const mode = capString(record.mode, 40);
+    const surfaceId = capString(record.surface_id, 200);
+    const packId = capString(record.pack_id, 128);
+    if (record.target_domain !== targetDomain || mode !== "full" || !surfaceId || !packId) {
+      invalidRecords += 1;
+      continue;
+    }
+    fullReads += 1;
+    surfaces.add(surfaceId);
+    packs.add(packId);
+  }
+
+  return {
+    exists: read.exists,
+    total_records: fullReads,
+    full_reads: fullReads,
+    surface_count: surfaces.size,
+    pack_count: packs.size,
+    malformed_lines: read.malformed_lines + invalidRecords,
+    error: read.error,
+    mtime: read.mtime,
+  };
+}
+
 function summarizeChainAttemptsJsonl(targetDomain) {
   const read = readJsonlSafe(chainAttemptsJsonlPath(targetDomain), "chain-attempts.jsonl");
   const byOutcome = CHAIN_ATTEMPT_OUTCOME_VALUES.reduce((result, outcome) => {
@@ -778,6 +855,8 @@ function readSessionArtifactSummary(targetDomain) {
   const waves = waveNumbers.map((waveNumber) => readWaveReadiness(targetDomain, waveNumber));
   const findings = summarizeFindingsJsonl(targetDomain);
   const coverage = summarizeCoverageJsonl(targetDomain);
+  const techniqueAttempts = summarizeTechniqueAttemptsJsonl(targetDomain);
+  const techniquePackReads = summarizeTechniquePackReadsJsonl(targetDomain);
   const httpAudit = summarizeHttpAuditJsonl(targetDomain);
   const chainAttempts = summarizeChainAttemptsJsonl(targetDomain);
   const chainHandoffs = summarizeStructuredHandoffChainNotes(targetDomain);
@@ -793,6 +872,8 @@ function readSessionArtifactSummary(targetDomain) {
     stateRead.mtime,
     findings.mtime,
     coverage.mtime,
+    techniqueAttempts.mtime,
+    techniquePackReads.mtime,
     httpAudit.mtime,
     chainAttempts.mtime,
     attackSurfaceCoverage.mtime,
@@ -809,10 +890,14 @@ function readSessionArtifactSummary(targetDomain) {
   if (stateRead.error) artifactErrors.push(stateRead.error);
   if (findings.error) artifactErrors.push(findings.error);
   if (coverage.error) artifactErrors.push(coverage.error);
+  if (techniqueAttempts.error) artifactErrors.push(techniqueAttempts.error);
+  if (techniquePackReads.error) artifactErrors.push(techniquePackReads.error);
   if (httpAudit.error) artifactErrors.push(httpAudit.error);
   if (chainAttempts.error) artifactErrors.push(chainAttempts.error);
   if (findings.malformed_lines > 0) artifactErrors.push(`Malformed findings.jsonl lines: ${findings.malformed_lines}`);
   if (coverage.malformed_lines > 0) artifactErrors.push(`Malformed coverage.jsonl lines: ${coverage.malformed_lines}`);
+  if (techniqueAttempts.malformed_lines > 0) artifactErrors.push(`Malformed technique-attempts.jsonl lines: ${techniqueAttempts.malformed_lines}`);
+  if (techniquePackReads.malformed_lines > 0) artifactErrors.push(`Malformed technique-pack-reads.jsonl lines: ${techniquePackReads.malformed_lines}`);
   if (chainAttempts.malformed_lines > 0) artifactErrors.push(`Malformed chain-attempts.jsonl lines: ${chainAttempts.malformed_lines}`);
   if (chainHandoffs.malformed_files > 0) artifactErrors.push(`Malformed chain handoff files: ${chainHandoffs.malformed_files}`);
   for (const wave of waves) {
@@ -839,6 +924,8 @@ function readSessionArtifactSummary(targetDomain) {
     waves,
     findings,
     coverage,
+    technique_attempts: techniqueAttempts,
+    technique_pack_reads: techniquePackReads,
     http_audit: httpAudit,
     chain_attempts: chainAttempts,
     chain_handoffs: chainHandoffs,
@@ -913,6 +1000,18 @@ function buildBackfillEvents(targetDomain, artifacts) {
       ts: artifacts.coverage.mtime || ts,
       status: "backfilled",
       counts: { records: artifacts.coverage.total_records, surfaces: artifacts.coverage.surface_count },
+      source,
+    }));
+  }
+  if (artifacts.technique_attempts.total_records > 0) {
+    events.push(normalizePipelineEvent(targetDomain, "technique_attempt_logged", {
+      ts: artifacts.technique_attempts.mtime || ts,
+      status: "backfilled",
+      counts: {
+        records: artifacts.technique_attempts.total_records,
+        surfaces: artifacts.technique_attempts.surface_count,
+        packs: artifacts.technique_attempts.pack_count,
+      },
       source,
     }));
   }
@@ -1314,6 +1413,18 @@ function analyzeSession(targetDomain, { cutoffMs = null, limit = DEFAULT_LIMIT, 
     },
     chain_attempts_count: artifacts.chain_attempts.total,
     chain_attempts_by_outcome: artifacts.chain_attempts.by_outcome,
+    technique_attempts: {
+      total: artifacts.technique_attempts.total_records,
+      by_status: artifacts.technique_attempts.by_status,
+      surface_count: artifacts.technique_attempts.surface_count,
+      pack_count: artifacts.technique_attempts.pack_count,
+    },
+    technique_pack_reads: {
+      total: artifacts.technique_pack_reads.total_records,
+      full_reads: artifacts.technique_pack_reads.full_reads,
+      surface_count: artifacts.technique_pack_reads.surface_count,
+      pack_count: artifacts.technique_pack_reads.pack_count,
+    },
     chain_phase_duration_ms: computeChainPhaseDurationMs(allEvents),
     final_verification_count: artifacts.verification.final_results_count,
     final_reportable_count: artifacts.verification.final_reportable_count,

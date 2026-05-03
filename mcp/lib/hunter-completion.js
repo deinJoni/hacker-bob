@@ -12,6 +12,9 @@ const {
   buildWaveHandoffsDocument,
 } = require("./waves.js");
 const {
+  loadWaveAssignments,
+} = require("./assignments.js");
+const {
   sessionDir,
 } = require("./paths.js");
 
@@ -132,6 +135,9 @@ const {
   readFindingsFromJsonl,
 } = require("./findings.js");
 const {
+  readTechniqueAttemptRecordsFromJsonl,
+} = require("./technique-packs.js");
+const {
   ERROR_CODES,
   ToolError,
 } = require("./envelope.js");
@@ -141,6 +147,15 @@ const {
 const {
   safeRecordHunterStoppedPipelineEvent,
 } = require("./pipeline-analytics.js");
+
+const TECHNIQUE_ATTEMPT_COMPLETION_STATUSES = new Set([
+  "attempted",
+  "not_applicable",
+  "promising",
+  "validated",
+  "failed",
+  "skipped",
+]);
 
 function handoffTelemetry(handoff, { present = true, valid = true } = {}) {
   return {
@@ -187,6 +202,48 @@ function summarizeFindingsForRun(marker) {
     )).length;
   } catch {}
   return summary;
+}
+
+function evaluateTechniqueAttemptRequirement(marker, assignment) {
+  if (
+    !assignment ||
+    !assignment.context_budget ||
+    assignment.context_budget.attempt_log_required !== true
+  ) {
+    return null;
+  }
+
+  let attempts;
+  try {
+    attempts = readTechniqueAttemptRecordsFromJsonl(marker.target_domain);
+  } catch (error) {
+    return {
+      ok: false,
+      status: "blocked",
+      block_code: "invalid_technique_attempt_log",
+      reason: `Hunter ${marker.wave}/${marker.agent} has unreadable technique attempt history: ${error.message || String(error)}`,
+      marker,
+      handoff: null,
+    };
+  }
+
+  const matchingAttempt = attempts.find((attempt) =>
+    attempt.target_domain === marker.target_domain &&
+    attempt.wave === marker.wave &&
+    attempt.agent === marker.agent &&
+    attempt.surface_id === marker.surface_id &&
+    TECHNIQUE_ATTEMPT_COMPLETION_STATUSES.has(attempt.status)
+  );
+  if (matchingAttempt) return null;
+
+  return {
+    ok: false,
+    status: "blocked",
+    block_code: "missing_technique_attempt_log",
+    reason: `Hunter ${marker.wave}/${marker.agent} must call bounty_log_technique_attempt with a real attempt outcome before finalizing this surface.`,
+    marker,
+    handoff: null,
+  };
 }
 
 function normalizeFinalizeArgs(args) {
@@ -250,6 +307,16 @@ function evaluateHunterCompletion(args) {
       block_code: "handoff_mismatch",
       reason: `Hunter finalization does not match structured handoff for ${marker.wave}/${marker.agent}.`,
       marker,
+      handoff: handoffTelemetry(handoff),
+    };
+  }
+
+  const { assignmentByAgent } = loadWaveAssignments(marker.target_domain, waveNumber);
+  const assignment = assignmentByAgent.get(marker.agent);
+  const techniqueAttemptBlock = evaluateTechniqueAttemptRequirement(marker, assignment);
+  if (techniqueAttemptBlock) {
+    return {
+      ...techniqueAttemptBlock,
       handoff: handoffTelemetry(handoff),
     };
   }
@@ -340,6 +407,7 @@ module.exports = {
   EVIDENCE_MODE,
   evaluateEvidenceCompletion,
   evaluateHunterCompletion,
+  evaluateTechniqueAttemptRequirement,
   evidenceMarkerValidationError,
   evidenceTelemetryInput,
   finalizeHunterCompletion,

@@ -19,11 +19,15 @@
 // catalogue entry without touching any renderer.
 
 const DEFAULT_CONTEXT_BUDGET = Object.freeze({
-  brief_max_tokens: 2500,
   candidate_pack_limit: 5,
   full_pack_read_limit: 2,
   attempt_log_required: true,
-  team_escalation_allowed: false,
+});
+
+const SMART_CONTRACT_CONTEXT_BUDGET = Object.freeze({
+  candidate_pack_limit: 5,
+  full_pack_read_limit: 2,
+  attempt_log_required: false,
 });
 
 const WEB_CAPABILITY_PACK = Object.freeze({
@@ -62,7 +66,7 @@ const SMART_CONTRACT_EVM_CAPABILITY_PACK = Object.freeze({
   brief_profile: "smart_contract_evm",
   role_bundles: Object.freeze(["hunter-shared", "hunter-evm"]),
   completion_gate: "smart_contract_wave_handoff",
-  context_budget: DEFAULT_CONTEXT_BUDGET,
+  context_budget: SMART_CONTRACT_CONTEXT_BUDGET,
   verifier: Object.freeze({
     replay_tool: "bounty_foundry_run",
     sample_type: "evm_foundry_run",
@@ -99,7 +103,7 @@ const SMART_CONTRACT_SVM_CAPABILITY_PACK = Object.freeze({
   brief_profile: "smart_contract_svm",
   role_bundles: Object.freeze(["hunter-shared", "hunter-svm"]),
   completion_gate: "smart_contract_wave_handoff",
-  context_budget: DEFAULT_CONTEXT_BUDGET,
+  context_budget: SMART_CONTRACT_CONTEXT_BUDGET,
   verifier: Object.freeze({
     replay_tool: "bounty_anchor_run",
     sample_type: "svm_anchor_run",
@@ -140,7 +144,7 @@ const SMART_CONTRACT_APTOS_CAPABILITY_PACK = Object.freeze({
   brief_profile: "smart_contract_aptos",
   role_bundles: Object.freeze(["hunter-shared", "hunter-move"]),
   completion_gate: "smart_contract_wave_handoff",
-  context_budget: DEFAULT_CONTEXT_BUDGET,
+  context_budget: SMART_CONTRACT_CONTEXT_BUDGET,
   verifier: Object.freeze({
     replay_tool: "bounty_aptos_run",
     sample_type: "aptos_move_test",
@@ -179,7 +183,7 @@ const SMART_CONTRACT_SUI_CAPABILITY_PACK = Object.freeze({
   brief_profile: "smart_contract_sui",
   role_bundles: Object.freeze(["hunter-shared", "hunter-move"]),
   completion_gate: "smart_contract_wave_handoff",
-  context_budget: DEFAULT_CONTEXT_BUDGET,
+  context_budget: SMART_CONTRACT_CONTEXT_BUDGET,
   verifier: Object.freeze({
     replay_tool: "bounty_sui_run",
     sample_type: "sui_move_test",
@@ -214,7 +218,7 @@ const SMART_CONTRACT_SUBSTRATE_CAPABILITY_PACK = Object.freeze({
   brief_profile: "smart_contract_substrate",
   role_bundles: Object.freeze(["hunter-shared", "hunter-substrate"]),
   completion_gate: "smart_contract_wave_handoff",
-  context_budget: DEFAULT_CONTEXT_BUDGET,
+  context_budget: SMART_CONTRACT_CONTEXT_BUDGET,
   verifier: Object.freeze({
     replay_tool: "bounty_substrate_run",
     sample_type: "substrate_ink_test",
@@ -253,7 +257,7 @@ const SMART_CONTRACT_COSMWASM_CAPABILITY_PACK = Object.freeze({
   brief_profile: "smart_contract_cosmwasm",
   role_bundles: Object.freeze(["hunter-shared", "hunter-cosmwasm"]),
   completion_gate: "smart_contract_wave_handoff",
-  context_budget: DEFAULT_CONTEXT_BUDGET,
+  context_budget: SMART_CONTRACT_CONTEXT_BUDGET,
   verifier: Object.freeze({
     replay_tool: "bounty_cosmwasm_run",
     sample_type: "cosmwasm_cw_multi_test",
@@ -393,11 +397,9 @@ function getCapabilityPack(packId) {
 
 function cloneContextBudget(budget) {
   return {
-    brief_max_tokens: budget.brief_max_tokens,
     candidate_pack_limit: budget.candidate_pack_limit,
     full_pack_read_limit: budget.full_pack_read_limit,
     attempt_log_required: budget.attempt_log_required,
-    team_escalation_allowed: budget.team_escalation_allowed,
   };
 }
 
@@ -552,12 +554,20 @@ function normalizeContextBudget(value, pack) {
   if (typeof value !== "object" || Array.isArray(value)) {
     throw new Error("assignment route metadata has invalid context_budget");
   }
+  const allowedFields = new Set([
+    "candidate_pack_limit",
+    "full_pack_read_limit",
+    "attempt_log_required",
+  ]);
+  for (const field of Object.keys(value)) {
+    if (!allowedFields.has(field)) {
+      throw new Error(`assignment route metadata has unsupported context_budget.${field}`);
+    }
+  }
   return {
-    brief_max_tokens: normalizeBudgetInteger(value.brief_max_tokens, "brief_max_tokens"),
     candidate_pack_limit: normalizeBudgetInteger(value.candidate_pack_limit, "candidate_pack_limit"),
     full_pack_read_limit: normalizeBudgetInteger(value.full_pack_read_limit, "full_pack_read_limit"),
     attempt_log_required: normalizeBudgetBoolean(value.attempt_log_required, "attempt_log_required"),
-    team_escalation_allowed: normalizeBudgetBoolean(value.team_escalation_allowed, "team_escalation_allowed"),
   };
 }
 
@@ -654,6 +664,8 @@ module.exports = {
   hunterRoleSpec,
   hunterRoleSpecs,
   normalizeAssignmentRouteMetadata,
+  normalizeContextBudget,
   normalizeSurfaceType,
+  SMART_CONTRACT_CONTEXT_BUDGET,
   smartContractCapabilityPacks,
 };

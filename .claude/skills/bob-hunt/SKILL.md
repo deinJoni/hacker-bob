@@ -83,7 +83,7 @@ MCP-owned session artifacts:
 - `bounty_static_scan` scans imported artifacts only and writes results to `static-scan-results.jsonl`.
 - `bounty_write_chain_attempt` writes CHAIN-phase evidence to `chain-attempts.jsonl`; `bounty_read_chain_attempts` is the only machine-readable chain source.
 - `bounty_write_evidence_packs` writes formal pre-grade evidence to `evidence-packs.json`; `bounty_read_evidence_packs` validates final-reportable coverage.
-- `bounty_read_hunter_brief` returns the assigned surface, exclusions, coverage, ranking, run context budget, and a profile-specific context block — web profile carries traffic, audit, circuit-breaker, intel, static scan, bypass table, curated techniques, and bounded `technique_packs.selected`; smart-contract profiles carry `bob_spec_status` and the chain `rpc_pool` instead.
+- `bounty_read_hunter_brief` returns the assigned surface, exclusions, coverage, ranking, run context budget, and a profile-specific context block — web profile carries traffic, audit, circuit-breaker, intel, static scan, bypass table, bounded `technique_packs.selected`, registry warnings, and small legacy technique summaries; smart-contract profiles carry `bob_spec_status` and the chain `rpc_pool` instead.
 - `bounty_read_technique_pack` in `mode: "full"` writes full-read history to `technique-pack-reads.jsonl` and enforces the assignment's `context_budget.full_pack_read_limit`.
 - `bounty_record_surface_leads`, `bounty_read_surface_leads`, and `bounty_promote_surface_leads` own compact `surface-leads.json` and promotion into `attack_surface.json`.
 - `bounty_read_pipeline_analytics` is the metadata-only dashboard for debugging stuck sessions and recent cross-session pipeline health.

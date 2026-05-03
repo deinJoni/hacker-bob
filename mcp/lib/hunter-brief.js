@@ -52,6 +52,7 @@ const {
   normalizeAssignmentRouteMetadata,
 } = require("./capability-packs.js");
 const {
+  HUNTER_KNOWLEDGE_MAX_CHARS,
   hunterKnowledgeCandidatePaths,
   resolveHunterKnowledge,
   selectTechniquePacksForSurface,
@@ -334,6 +335,47 @@ function buildBriefExtrasForProfile(profile, { domain, surface, assignment, rout
 // tech stack, web technique/payload knowledge, traffic + audit + circuit
 // breaker summaries from real HTTP probes, public bounty intel, static scan
 // hints, and an auth-profile hint pointing the hunter at bounty_list_auth_profiles.
+const LEGACY_TECHNIQUE_SUMMARY_LIMIT = 2;
+
+function basenameForSummary(filePath) {
+  if (!filePath) return null;
+  return String(filePath).split(/[\\/]/).pop() || null;
+}
+
+function legacyKnowledgeFromTechniquePacks(selectedResult, selectedTechniquePacks) {
+  const legacyEntries = selectedTechniquePacks.slice(0, LEGACY_TECHNIQUE_SUMMARY_LIMIT);
+  const techniques = legacyEntries
+    .filter((pack) => pack.summary && Array.isArray(pack.summary.guidance) && pack.summary.guidance.length > 0)
+    .map((pack) => ({
+      id: pack.id,
+      title: pack.title,
+      matched: Array.isArray(pack.matched) ? pack.matched.slice(0, 6) : [],
+      guidance: pack.summary.guidance.slice(0, 4),
+    }));
+  const payloadHints = legacyEntries
+    .filter((pack) => pack.summary && Array.isArray(pack.summary.payload_hints) && pack.summary.payload_hints.length > 0)
+    .map((pack) => ({
+      id: pack.id,
+      title: pack.title,
+      hints: pack.summary.payload_hints.slice(0, 4),
+    }));
+  const charCount = JSON.stringify({ techniques, payload_hints: payloadHints }).length;
+  return {
+    techniques,
+    payload_hints: payloadHints,
+    knowledge_summary: {
+      source: basenameForSummary(selectedResult.source),
+      entries_returned: legacyEntries.length,
+      capped: selectedTechniquePacks.length > legacyEntries.length,
+      char_count: charCount,
+      max_chars: HUNTER_KNOWLEDGE_MAX_CHARS,
+      max_entries: LEGACY_TECHNIQUE_SUMMARY_LIMIT,
+      legacy_compatibility: true,
+      registry_warnings: selectedResult.registry_warnings || [],
+    },
+  };
+}
+
 function buildWebBriefExtras(domain, surfaceObj, routeMetadata) {
   const bypassFile = resolveBypassTable(surfaceObj.tech_stack);
   let bypassTable = "";
@@ -342,10 +384,6 @@ function buildWebBriefExtras(domain, surfaceObj, routeMetadata) {
     if (content != null) bypassTable = content.trim();
   } catch {}
   const candidatePackLimit = routeMetadata.context_budget.candidate_pack_limit;
-  const knowledge = resolveHunterKnowledge(surfaceObj, {
-    capabilityPack: routeMetadata.capability_pack,
-    maxEntries: Math.min(4, candidatePackLimit),
-  });
   const selectedTechniquePackResult = selectTechniquePacksForSurface(surfaceObj, {
     capabilityPack: routeMetadata.capability_pack,
     maxPacks: candidatePackLimit,
@@ -366,6 +404,7 @@ function buildWebBriefExtras(domain, surfaceObj, routeMetadata) {
     selected_chars: JSON.stringify(selectedTechniquePacks).length,
     selected_count: selectedTechniquePacks.length,
   };
+  const knowledge = legacyKnowledgeFromTechniquePacks(selectedTechniquePackResult, selectedTechniquePacks);
   const trafficSummary = summarizeTrafficRecords(
     readTrafficRecordsFromJsonl(domain),
     { surface: surfaceObj },
@@ -383,9 +422,11 @@ function buildWebBriefExtras(domain, surfaceObj, routeMetadata) {
     technique_packs: {
       selected: selectedTechniquePacks,
       selection_limits: selectedTechniquePackLimits,
+      registry_warnings: selectedTechniquePackResult.registry_warnings,
       selection_budget: {
         candidate_pack_limit: candidatePackLimit,
         full_pack_read_limit: routeMetadata.context_budget.full_pack_read_limit,
+        attempt_log_required: routeMetadata.context_budget.attempt_log_required,
       },
     },
     traffic_summary: trafficSummary,

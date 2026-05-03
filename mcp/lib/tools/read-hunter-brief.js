@@ -5,7 +5,7 @@ const { readHunterBrief } = require("../hunter-brief.js");
 module.exports = Object.freeze({
   name: "bounty_read_hunter_brief",
   description:
-    "Return everything a hunter needs to start testing: assigned surface, exclusions, valid surface IDs, coverage summary, ranking summary, run context budget, plus profile-specific context. Web hunters get bypass tables, curated techniques/payload hints, bounded technique_packs.selected, traffic/audit/circuit-breaker summaries, public intel, and static scan hints. Smart-contract hunters get bob_spec_status (filtered to their surface) and the chain rpc_pool. Hunters call this once on startup instead of receiving everything via spawn prompt.",
+    "Return everything a hunter needs to start testing: assigned surface, exclusions, valid surface IDs, coverage summary, ranking summary, run context budget, plus profile-specific context. Web hunters get bypass tables, bounded technique_packs.selected with registry warnings, small legacy technique/payload hint summaries, traffic/audit/circuit-breaker summaries, public intel, and static scan hints. Smart-contract hunters get bob_spec_status (filtered to their surface) and the chain rpc_pool. Hunters call this once on startup instead of receiving everything via spawn prompt.",
   inputSchema: {
     "type": "object",
     "properties": {

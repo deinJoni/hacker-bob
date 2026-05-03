@@ -17,6 +17,7 @@ const {
 const {
   getCapabilityPack,
   getCapabilityPackContextBudget,
+  normalizeContextBudget,
 } = require("./capability-packs.js");
 const {
   ERROR_CODES,
@@ -66,7 +67,7 @@ function getContextBudget(args) {
         if (route.brief_profile) briefProfile = route.brief_profile;
         if (route.capability_pack_version) capabilityPackVersion = route.capability_pack_version;
         if (route.context_budget && typeof route.context_budget === "object" && !Array.isArray(route.context_budget)) {
-          contextBudget = { ...route.context_budget };
+          contextBudget = normalizeContextBudget(route.context_budget, pack);
         }
       }
     }

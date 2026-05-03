@@ -319,13 +319,17 @@ function withEnv(overrides, fn) {
 }
 
 function withTempTechniqueKnowledge(document, fn) {
+  return withTempTechniqueKnowledgeText(`${JSON.stringify(document, null, 2)}\n`, fn);
+}
+
+function withTempTechniqueKnowledgeText(contents, fn) {
   const previousProjectDir = process.env.CLAUDE_PROJECT_DIR;
   const tempProjectDir = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-techniques-"));
   const knowledgeDir = path.join(tempProjectDir, ".claude", "knowledge");
   fs.mkdirSync(knowledgeDir, { recursive: true });
   fs.writeFileSync(
     path.join(knowledgeDir, "hunter-techniques.json"),
-    `${JSON.stringify(document, null, 2)}\n`,
+    contents,
     "utf8",
   );
   process.env.CLAUDE_PROJECT_DIR = tempProjectDir;
@@ -513,12 +517,37 @@ function seedAttackSurfaces(domain, surfaces) {
 
 function expectedWebContextBudget() {
   return {
-    brief_max_tokens: 2500,
     candidate_pack_limit: 5,
     full_pack_read_limit: 2,
     attempt_log_required: true,
-    team_escalation_allowed: false,
   };
+}
+
+function expectedSmartContractContextBudget() {
+  return {
+    candidate_pack_limit: 5,
+    full_pack_read_limit: 2,
+    attempt_log_required: false,
+  };
+}
+
+function seedTechniqueAttempt(domain, {
+  wave = "w1",
+  agent = "a1",
+  surface_id = "surface-a",
+  pack_id = "generic-rest-api",
+  status = "attempted",
+  evidence = "Technique attempt recorded before finalization.",
+} = {}) {
+  return JSON.parse(logTechniqueAttempt({
+    target_domain: domain,
+    wave,
+    agent,
+    surface_id,
+    pack_id,
+    status,
+    evidence,
+  }));
 }
 
 function writeUnexpectedHandoff(domain, wave, agent, payload = {}) {
@@ -1533,6 +1562,7 @@ test("pipeline analytics records metadata-only events for a complete synthetic r
     const rawPocSecret = "pipeline-raw-poc-secret";
     const rawHandoffSecret = "pipeline-raw-handoff-secret";
     const rawCoverageSecret = "pipeline-raw-coverage-secret";
+    const rawTechniqueSecret = "pipeline-raw-technique-attempt-secret";
     const rawEvidenceText = "metadata-only analytics must not copy this evidence pack text";
 
     JSON.parse(initSession({ target_domain: domain, target_url: "https://example.com" }));
@@ -1557,6 +1587,16 @@ test("pipeline analytics records metadata-only events for a complete synthetic r
         status: "tested",
         evidence_summary: rawCoverageSecret,
       }],
+    }));
+    JSON.parse(logTechniqueAttempt({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      pack_id: "generic-rest-api",
+      status: "attempted",
+      outcome: "no_finding",
+      evidence: rawTechniqueSecret,
     }));
     JSON.parse(recordFinding({
       target_domain: domain,
@@ -1654,6 +1694,7 @@ test("pipeline analytics records metadata-only events for a complete synthetic r
       "phase_transitioned",
       "wave_started",
       "coverage_logged",
+      "technique_attempt_logged",
       "finding_recorded",
       "wave_merged",
       "verification_written",
@@ -1673,6 +1714,10 @@ test("pipeline analytics records metadata-only events for a complete synthetic r
     assert.equal(analytics.sessions[0].findings.total, 1);
     assert.equal(analytics.sessions[0].chain_attempts_count, 1);
     assert.equal(analytics.sessions[0].chain_attempts_by_outcome.not_applicable, 1);
+    assert.equal(analytics.sessions[0].technique_attempts.total, 1);
+    assert.equal(analytics.sessions[0].technique_attempts.by_status.attempted, 1);
+    assert.equal(analytics.sessions[0].technique_attempts.surface_count, 1);
+    assert.equal(analytics.sessions[0].technique_attempts.pack_count, 1);
     assert.equal(typeof analytics.sessions[0].chain_phase_duration_ms, "number");
     assert.equal(analytics.sessions[0].final_verification_count, 1);
     assert.equal(analytics.sessions[0].evidence.valid, true);
@@ -1682,7 +1727,7 @@ test("pipeline analytics records metadata-only events for a complete synthetic r
     assert.equal(analytics.funnel.reached.REPORT, 1);
     assert.equal(analytics.bottlenecks.length, 0);
 
-    for (const forbidden of [rawPocSecret, rawHandoffSecret, rawCoverageSecret, "metadata-only analytics must not copy this evidence", rawEvidenceText]) {
+    for (const forbidden of [rawPocSecret, rawHandoffSecret, rawCoverageSecret, rawTechniqueSecret, "metadata-only analytics must not copy this evidence", rawEvidenceText]) {
       assert.equal(analyticsText.includes(forbidden), false, `${forbidden} leaked into pipeline analytics`);
       assert.equal(JSON.stringify(rows).includes(forbidden), false, `${forbidden} leaked into pipeline events`);
     }
@@ -1728,6 +1773,36 @@ test("pipeline analytics backfills legacy sessions from artifacts without an eve
       agent: "a1",
       surface_id: "surface-a",
     })}\n`);
+    writeFileAtomic(techniqueAttemptsJsonlPath(domain), `${JSON.stringify({
+      version: 1,
+      ts: "2026-01-01T00:00:00.000Z",
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      pack_id: "generic-rest-api",
+      pack_version: 1,
+      registry_version: 1,
+      capability_pack: "web",
+      capability_pack_version: 1,
+      status: "attempted",
+      outcome: "no_finding",
+      evidence: "Legacy session attempted the generic REST API pack.",
+    })}\n`);
+    writeFileAtomic(techniquePackReadsJsonlPath(domain), `${JSON.stringify({
+      version: 1,
+      ts: "2026-01-01T00:00:00.000Z",
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      pack_id: "generic-rest-api",
+      pack_version: 1,
+      registry_version: 1,
+      capability_pack: "web",
+      capability_pack_version: 1,
+      mode: "full",
+    })}\n`);
     for (const round of ["brutalist", "balanced", "final"]) {
       writeFileAtomic(verificationRoundPaths(domain, round).json, `${JSON.stringify({
         version: 1,
@@ -1769,14 +1844,23 @@ test("pipeline analytics backfills legacy sessions from artifacts without an eve
     assert.equal(fs.existsSync(pipelineEventsJsonlPath(domain)), false);
     assert.equal(sessionsRoot(), path.join(process.env.HOME, "bounty-agent-sessions"));
 
+    const artifactSummary = readSessionArtifactSummary(domain);
+    assert.equal(artifactSummary.technique_attempts.total_records, 1);
+    assert.equal(artifactSummary.technique_attempts.by_status.attempted, 1);
+    assert.equal(artifactSummary.technique_pack_reads.full_reads, 1);
+
     const eventRead = readPipelineEvents(domain);
     assert.equal(eventRead.backfilled, true);
     assert.equal(eventRead.events.some((event) => event.source === "artifact_backfill"), true);
+    assert.equal(eventRead.events.some((event) => event.type === "technique_attempt_logged" && event.source === "artifact_backfill"), true);
 
     const analytics = JSON.parse(readPipelineAnalytics({ target_domain: domain, include_events: true }));
     assert.equal(analytics.event_log.backfilled, true);
     assert.equal(analytics.sessions[0].health.status, "healthy");
     assert.equal(analytics.sessions[0].report_present, true);
+    assert.equal(analytics.sessions[0].technique_attempts.total, 1);
+    assert.equal(analytics.sessions[0].technique_attempts.by_status.attempted, 1);
+    assert.equal(analytics.sessions[0].technique_pack_reads.full_reads, 1);
     assert.equal(analytics.events.some((event) => event.source === "artifact_backfill"), true);
 
     const crossSession = JSON.parse(readPipelineAnalytics({ window_days: 1 }));
@@ -4710,6 +4794,7 @@ test("bounty_finalize_hunter_run allows valid handoff and records metadata-only 
       agent: "a1",
       surface_id: "surface-a",
     });
+    seedTechniqueAttempt(domain);
 
     const direct = JSON.parse(finalizeHunterRun({
       target_domain: domain,
@@ -4740,7 +4825,107 @@ test("bounty_finalize_hunter_run allows valid handoff and records metadata-only 
   });
 });
 
-test("executeTool smoke path uses envelopes for init, wave, handoff, and merge", async () => {
+test("bounty_finalize_hunter_run enforces web technique attempt requirement", async () => {
+  await withTempHome(async () => {
+    const domain = "example.com";
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      surface_status: "complete",
+      summary: "A1 complete.",
+      content: "# a1",
+    });
+
+    const blocked = await executeTool("bounty_finalize_hunter_run", {
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+    });
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.error.code, "STATE_CONFLICT");
+    assert.equal(blocked.error.details.block_code, "missing_technique_attempt_log");
+    assert.match(blocked.error.message, /bounty_log_technique_attempt/);
+
+    seedTechniqueAttempt(domain, {
+      status: "selected",
+      evidence: "Selected a candidate technique pack but did not execute it yet.",
+    });
+    const selectedOnly = await executeTool("bounty_finalize_hunter_run", {
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+    });
+    assert.equal(selectedOnly.ok, false);
+    assert.equal(selectedOnly.error.code, "STATE_CONFLICT");
+    assert.equal(selectedOnly.error.details.block_code, "missing_technique_attempt_log");
+    assert.match(selectedOnly.error.message, /real attempt outcome/);
+
+    seedTechniqueAttempt(domain);
+    const allowed = await executeTool("bounty_finalize_hunter_run", {
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+    });
+    assert.equal(allowed.ok, true);
+    assert.equal(allowed.data.status, "allowed");
+
+    const rows = readJsonl(agentRunTelemetryPath());
+    assert.deepEqual(rows.map((row) => row.status), ["blocked", "blocked", "allowed"]);
+    assert.deepEqual(rows.map((row) => row.block_code), ["missing_technique_attempt_log", "missing_technique_attempt_log", null]);
+  });
+});
+
+test("bounty_finalize_hunter_run allows smart-contract handoff without technique attempts", async () => {
+  await withTempHome(async () => {
+    const domain = "example.com";
+    seedSessionState(domain, { phase: "HUNT", hunt_wave: 1, pending_wave: 1 });
+    seedAttackSurfaces(domain, [{
+      id: "surface-evm-1",
+      surface_type: "smart_contract",
+      chain_family: "evm",
+      chain_id: "1",
+      hosts: [`https://${domain}`],
+      foundry_harness_path: "/tmp/harness/evm",
+    }]);
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-evm-1" }]);
+
+    const brief = JSON.parse(readHunterBrief({ target_domain: domain, wave: "w1", agent: "a1" }));
+    assert.equal(brief.run_context.capability_pack, "smart_contract_evm");
+    assert.deepEqual(brief.run_context.context_budget, expectedSmartContractContextBudget());
+
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-evm-1",
+      surface_status: "complete",
+      summary: "EVM surface complete.",
+      content: "# evm",
+      bypass_attempts: [{
+        condition: "oracle_staleness",
+        attempt_summary: "Ran a forked oracle staleness harness and confirmed no exploitable stale-price path.",
+        outcome: "no_finding",
+      }],
+    });
+
+    const direct = JSON.parse(finalizeHunterRun({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-evm-1",
+    }));
+    assert.equal(direct.status, "allowed");
+    assert.equal(readTechniqueAttemptRecordsFromJsonl(domain).length, 0);
+  });
+});
+
+test("executeTool smoke path uses envelopes for init, wave, handoff, attempt, and merge", async () => {
   await withTempHome(async () => {
     const domain = "smoke.example";
     const init = await executeTool("bounty_init_session", {
@@ -4776,6 +4961,17 @@ test("executeTool smoke path uses envelopes for init, wave, handoff, and merge",
       content: "# Smoke",
     });
     assert.equal(handoff.ok, true);
+
+    const attempt = await executeTool("bounty_log_technique_attempt", {
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      pack_id: "generic-rest-api",
+      status: "attempted",
+      evidence: "Smoke test recorded a bounded web technique attempt before finalization.",
+    });
+    assert.equal(attempt.ok, true);
 
     const finalized = await executeTool("bounty_finalize_hunter_run", {
       target_domain: domain,
@@ -5033,6 +5229,7 @@ test("hunter SubagentStop hook allows incomplete waves without merging", async (
       summary: "a1 complete",
       content: "# a1",
     });
+    seedTechniqueAttempt(domain);
 
     const result = runHunterSubagentStop({
       last_assistant_message: 'BOB_HUNTER_DONE {"target_domain":"example.com","wave":"w1","agent":"a1","surface_id":"surface-a"}',
@@ -5065,6 +5262,7 @@ test("hunter SubagentStop hook allows a complete wave without merging", async ()
       summary: "a1 complete",
       content: "# a1",
     });
+    seedTechniqueAttempt(domain);
 
     const result = runHunterSubagentStop({
       last_assistant_message: 'BOB_HUNTER_DONE {"target_domain":"example.com","wave":"w1","agent":"a1","surface_id":"surface-a"}',
@@ -5096,6 +5294,7 @@ test("hunter SubagentStop hook writes metadata-only allowed run telemetry", () =
       chain_notes: ["no chain"],
       content: `# a1\n\n${rawHandoffSecret}`,
     });
+    seedTechniqueAttempt(domain);
     logCoverage({
       target_domain: domain,
       wave: "w1",
@@ -5193,6 +5392,7 @@ test("hunter SubagentStop telemetry can be disabled and write failures do not al
       summary: "a1 complete",
       content: "# a1",
     });
+    seedTechniqueAttempt(domain);
 
     const disabled = runHunterSubagentStop({
       last_assistant_message: 'BOB_HUNTER_DONE {"target_domain":"example.com","wave":"w1","agent":"a1","surface_id":"surface-a"}',
@@ -5236,6 +5436,7 @@ test("hunter SubagentStop hook treats stale completion notifications as valid ha
       summary: "a1 complete",
       content: "# a1",
     });
+    seedTechniqueAttempt(domain);
     const merged = await executeTool("bounty_apply_wave_merge", {
       target_domain: domain,
       wave_number: 1,
@@ -10802,6 +11003,11 @@ test("bounty_read_hunter_brief returns surface, exclusions, and valid IDs", () =
     assert.ok(Object.prototype.hasOwnProperty.call(brief, "techniques"), "web brief must expose techniques");
     assert.ok(Object.prototype.hasOwnProperty.call(brief, "payload_hints"), "web brief must expose payload_hints");
     assert.ok(Object.prototype.hasOwnProperty.call(brief, "knowledge_summary"), "web brief must expose knowledge_summary");
+    assert.ok(Object.prototype.hasOwnProperty.call(brief, "technique_packs"), "web brief must expose canonical technique_packs");
+    assert.equal(brief.technique_packs.selection_budget.attempt_log_required, true);
+    assert.deepEqual(brief.technique_packs.registry_warnings, []);
+    assert.ok(brief.techniques.length <= 2);
+    assert.ok(brief.payload_hints.length <= 2);
     assert.ok(Object.prototype.hasOwnProperty.call(brief, "traffic_summary"), "web brief must expose traffic_summary");
     assert.ok(Object.prototype.hasOwnProperty.call(brief, "audit_summary"), "web brief must expose audit_summary");
     assert.ok(Object.prototype.hasOwnProperty.call(brief, "circuit_breaker_summary"), "web brief must expose circuit_breaker_summary");
@@ -10847,6 +11053,7 @@ test("bounty_read_hunter_brief uses smart_contract_evm shape when the assignment
     assert.equal(brief.run_context.capability_pack, "smart_contract_evm");
     assert.equal(brief.run_context.brief_profile, "smart_contract_evm");
     assert.equal(brief.run_context.hunter_agent, "hunter-evm-agent");
+    assert.deepEqual(brief.run_context.context_budget, expectedSmartContractContextBudget());
 
     // SC profile must expose typed bob_spec_status and rpc_pool, not just
     // a present-but-undefined slot. hasOwnProperty + null-guard catches
@@ -11433,6 +11640,8 @@ test("bounty_read_hunter_brief knowledge remains bounded and excludes full sourc
 
     const brief = JSON.parse(readHunterBrief({ target_domain: domain, wave: "w1", agent: "a1" }));
     assert.ok(brief.knowledge_summary.entries_returned <= 4);
+    assert.equal(brief.knowledge_summary.max_entries, 2);
+    assert.equal(brief.knowledge_summary.legacy_compatibility, true);
     assert.ok(brief.knowledge_summary.char_count <= brief.knowledge_summary.max_chars);
     assert.doesNotMatch(JSON.stringify(brief), /Complete reference library|Advanced Bug Bounty Hunting Techniques|scripts\/|tools\//);
   });
@@ -11456,7 +11665,11 @@ test("bounty_read_hunter_brief includes bounded candidate technique packs and co
     assert.equal(brief.run_context.capability_pack_version, 1);
     assert.equal(brief.technique_packs.selection_budget.candidate_pack_limit, 5);
     assert.equal(brief.technique_packs.selection_budget.full_pack_read_limit, 2);
+    assert.equal(brief.technique_packs.selection_budget.attempt_log_required, true);
+    assert.deepEqual(brief.technique_packs.registry_warnings, []);
     assert.ok(brief.technique_packs.selected.length <= 5);
+    assert.ok(brief.techniques.length <= 2);
+    assert.ok(brief.payload_hints.length <= 2);
     const graphql = brief.technique_packs.selected.find((entry) => entry.id === "graphql");
     assert.ok(graphql);
     assert.equal(graphql.version, 1);
@@ -11548,6 +11761,9 @@ test("bounty_read_hunter_brief returns bounded oversized selected technique pack
       assert.ok(Array.isArray(brief.techniques));
       assert.ok(Array.isArray(brief.payload_hints));
       assert.ok(brief.knowledge_summary);
+      assert.equal(brief.knowledge_summary.max_entries, 2);
+      assert.equal(brief.techniques.length <= 2, true);
+      assert.equal(brief.payload_hints.length <= 2, true);
       assert.equal(brief.technique_packs.selection_limits.max_chars, TECHNIQUE_SELECTION_MAX_CHARS);
       assert.equal(JSON.stringify(brief.technique_packs.selected).length, brief.technique_packs.selection_limits.selected_chars);
       assert.ok(JSON.stringify(brief.technique_packs.selected).length <= TECHNIQUE_SELECTION_MAX_CHARS);
@@ -11557,6 +11773,98 @@ test("bounty_read_hunter_brief returns bounded oversized selected technique pack
         brief.technique_packs.selected.every((pack) => pack.summary.guidance.every((entry) => entry.length <= TECHNIQUE_SUMMARY_ITEM_MAX_CHARS)),
         true,
       );
+    });
+  });
+});
+
+test("technique registry skips malformed entries and surfaces registry warnings", () => {
+  withTempHome(() => {
+    withTempTechniqueKnowledge({
+      version: 4,
+      entries: [
+        {
+          id: "valid-api",
+          title: "Valid API pack",
+          capability_packs: ["web"],
+          match: { tech: ["customapi"], endpoints: ["/custom"] },
+          techniques: ["Use the valid registry entry only."],
+          payload_hints: ["/custom/export"],
+        },
+        "bad entry",
+        {
+          id: "bad-capability",
+          title: "Bad capability",
+          capability_packs: ["missing_pack"],
+          techniques: ["This entry should be skipped."],
+        },
+        {
+          id: "valid-api",
+          title: "Duplicate API pack",
+          capability_packs: ["web"],
+          techniques: ["Duplicate should be skipped."],
+        },
+      ],
+    }, () => {
+      const domain = "example.com";
+      seedSessionState(domain, { phase: "HUNT", hunt_wave: 1, pending_wave: 1 });
+      seedAttackSurfaces(domain, [{
+        id: "surface-custom",
+        hosts: [`https://${domain}`],
+        tech_stack: ["CustomAPI"],
+        endpoints: ["/custom"],
+      }]);
+      seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-custom" }]);
+
+      const registry = loadTechniqueRegistry();
+      assert.deepEqual(registry.packs.map((pack) => pack.id), ["valid-api"]);
+      assert.equal(registry.warnings.length, 3);
+      assert.match(JSON.stringify(registry.warnings), /technique pack entry must be an object/);
+      assert.match(JSON.stringify(registry.warnings), /Unknown capability_pack/);
+      assert.match(JSON.stringify(registry.warnings), /Duplicate technique pack id/);
+
+      const selected = JSON.parse(selectTechniquePacks({
+        target_domain: domain,
+        surface_id: "surface-custom",
+        capability_pack: "web",
+      }));
+      assert.equal(selected.technique_packs[0].id, "valid-api");
+      assert.equal(selected.registry_warnings.length, 3);
+
+      const summary = readTechniquePack("valid-api", { mode: "summary" });
+      assert.equal(summary.registry_warnings.length, 3);
+
+      const brief = JSON.parse(readHunterBrief({ target_domain: domain, wave: "w1", agent: "a1" }));
+      assert.equal(brief.technique_packs.selected[0].id, "valid-api");
+      assert.equal(brief.technique_packs.registry_warnings.length, 3);
+      assert.equal(brief.knowledge_summary.registry_warnings.length, 3);
+    });
+  });
+});
+
+test("malformed technique registry file warns instead of failing hunter brief generation", () => {
+  withTempHome(() => {
+    withTempTechniqueKnowledgeText("{bad json", () => {
+      const domain = "example.com";
+      seedSessionState(domain, { phase: "HUNT", hunt_wave: 1, pending_wave: 1 });
+      seedAttackSurfaces(domain, [{
+        id: "surface-api",
+        hosts: [`https://${domain}`],
+        tech_stack: ["JSON API"],
+        endpoints: ["/api"],
+      }]);
+      seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-api" }]);
+
+      const registry = loadTechniqueRegistry();
+      assert.deepEqual(registry.packs, []);
+      assert.equal(registry.warnings.length, 1);
+      assert.match(registry.warnings[0].reason, /Malformed hunter-techniques\.json/);
+
+      const brief = JSON.parse(readHunterBrief({ target_domain: domain, wave: "w1", agent: "a1" }));
+      assert.deepEqual(brief.technique_packs.selected, []);
+      assert.deepEqual(brief.techniques, []);
+      assert.deepEqual(brief.payload_hints, []);
+      assert.equal(brief.technique_packs.registry_warnings.length, 1);
+      assert.equal(brief.knowledge_summary.registry_warnings.length, 1);
     });
   });
 });
@@ -11619,11 +11927,9 @@ test("context budget and technique-pack MCP tools are deterministic and bounded"
     assert.deepEqual(budget.context_budget, expectedWebContextBudget());
 
     const routeSpecificBudget = {
-      brief_max_tokens: 1234,
       candidate_pack_limit: 3,
       full_pack_read_limit: 1,
       attempt_log_required: false,
-      team_escalation_allowed: true,
     };
     writeFileAtomic(surfaceRoutesPath(domain), `${JSON.stringify({
       version: 1,
@@ -11647,6 +11953,33 @@ test("context budget and technique-pack MCP tools are deterministic and bounded"
     }));
     assert.equal(routeBudget.capability_pack_version, 7);
     assert.deepEqual(routeBudget.context_budget, routeSpecificBudget);
+
+    writeFileAtomic(surfaceRoutesPath(domain), `${JSON.stringify({
+      version: 1,
+      route_version: 1,
+      routes: [{
+        surface_id: "surface-graphql",
+        surface_type: "graphql",
+        capability_pack: "web",
+        capability_pack_version: 7,
+        hunter_agent: "hunter-agent",
+        brief_profile: "web",
+        context_budget: {
+          ...routeSpecificBudget,
+          brief_max_tokens: 1234,
+        },
+        confidence: "high",
+        reasons: ["test:unsupported-route-budget"],
+      }],
+    }, null, 2)}\n`);
+    assert.throws(
+      () => getContextBudget({
+        target_domain: domain,
+        surface_id: "surface-graphql",
+        capability_pack: "web",
+      }),
+      /unsupported context_budget\.brief_max_tokens/,
+    );
     JSON.parse(routeSurfaces({ target_domain: domain }));
 
     const graphql = JSON.parse(selectTechniquePacks({
@@ -11668,10 +12001,12 @@ test("context budget and technique-pack MCP tools are deterministic and bounded"
     assert.equal(wordpress.technique_packs[0].id, "wordpress");
 
     const summary = readTechniquePack("graphql", { mode: "summary" });
+    assert.equal(summary.registry_version, 1);
     assert.equal(summary.technique_pack.id, "graphql");
     assert.equal(summary.technique_pack.full, undefined);
 
     const full = readTechniquePack("graphql", { mode: "full" });
+    assert.equal(full.registry_version, 1);
     assert.equal(full.technique_pack.id, "graphql");
     assert.ok(full.technique_pack.full.techniques.length > 0);
     assert.ok(full.technique_pack.full.techniques.length <= TECHNIQUE_FULL_ITEMS_PER_KIND);
@@ -11724,6 +12059,7 @@ test("bounty_read_technique_pack full mode enforces per-assignment read budget",
 
     const first = await executeTool("bounty_read_technique_pack", { ...context, pack_id: "graphql" });
     assert.equal(first.ok, true);
+    assert.equal(first.data.registry_version, 1);
     assert.equal(first.data.full_read_budget.full_pack_read_limit, 2);
     assert.equal(first.data.full_read_budget.full_packs_read, 1);
     assert.equal(first.data.full_read_budget.remaining_full_pack_reads, 1);
@@ -11742,6 +12078,28 @@ test("bounty_read_technique_pack full mode enforces per-assignment read budget",
 
     const records = readTechniquePackReadRecordsFromJsonl(domain);
     assert.deepEqual(records.map((record) => record.pack_id), ["graphql", "generic-rest-api"]);
+    assert.deepEqual(records.map((record) => ({
+      pack_id: record.pack_id,
+      pack_version: record.pack_version,
+      registry_version: record.registry_version,
+      capability_pack: record.capability_pack,
+      capability_pack_version: record.capability_pack_version,
+    })), [
+      {
+        pack_id: "graphql",
+        pack_version: 1,
+        registry_version: 1,
+        capability_pack: "web",
+        capability_pack_version: 1,
+      },
+      {
+        pack_id: "generic-rest-api",
+        pack_version: 1,
+        registry_version: 1,
+        capability_pack: "web",
+        capability_pack_version: 1,
+      },
+    ]);
 
     const third = await executeTool("bounty_read_technique_pack", { ...context, pack_id: "wordpress" });
     assert.equal(third.ok, false);
@@ -11775,10 +12133,18 @@ test("bounty_log_technique_attempt appends valid JSONL and rejects invalid input
     }));
     assert.equal(logged.appended, 1);
     assert.equal(logged.log_path, techniqueAttemptsJsonlPath(domain));
+    assert.equal(logged.record.pack_version, 1);
+    assert.equal(logged.record.registry_version, 1);
+    assert.equal(logged.record.capability_pack, "web");
+    assert.equal(logged.record.capability_pack_version, 1);
 
     const records = readTechniqueAttemptRecordsFromJsonl(domain);
     assert.equal(records.length, 1);
     assert.equal(records[0].pack_id, "graphql");
+    assert.equal(records[0].pack_version, 1);
+    assert.equal(records[0].registry_version, 1);
+    assert.equal(records[0].capability_pack, "web");
+    assert.equal(records[0].capability_pack_version, 1);
     assert.equal(records[0].status, "attempted");
     assert.equal(records[0].outcome, "not_applicable");
     assert.match(records[0].ts, /^\d{4}-\d{2}-\d{2}T/);
@@ -11823,6 +12189,68 @@ test("bounty_log_technique_attempt appends valid JSONL and rejects invalid input
     });
     assert.equal(invalidStatus.ok, false);
     assert.equal(invalidStatus.error.code, "INVALID_ARGUMENTS");
+  });
+});
+
+test("bounty_log_technique_attempt rejects packs incompatible with assigned capability pack", async () => {
+  await withTempHome(async () => {
+    await withTempTechniqueKnowledge({
+      version: 1,
+      entries: [
+        {
+          id: "web-pack",
+          title: "Web pack",
+          capability_packs: ["web"],
+          match: { tech: ["json api"] },
+          techniques: ["Exercise the web API route."],
+          payload_hints: ["/api/export"],
+        },
+        {
+          id: "evm-only-pack",
+          title: "EVM-only pack",
+          capability_packs: ["smart_contract_evm"],
+          match: { tech: ["solidity"] },
+          techniques: ["Exercise the EVM contract invariant."],
+          payload_hints: ["forge test"],
+        },
+      ],
+    }, async () => {
+      const domain = "example.com";
+      seedSessionState(domain, { phase: "HUNT", hunt_wave: 1, pending_wave: 1 });
+      seedAttackSurfaces(domain, [{
+        id: "surface-api",
+        hosts: [`https://${domain}`],
+        tech_stack: ["JSON API"],
+        endpoints: ["/api"],
+      }]);
+      seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-api" }]);
+
+      const rejected = await executeTool("bounty_log_technique_attempt", {
+        target_domain: domain,
+        wave: "w1",
+        agent: "a1",
+        surface_id: "surface-api",
+        pack_id: "evm-only-pack",
+        status: "attempted",
+        evidence: "Trying to log an EVM-only technique against a web assignment.",
+      });
+      assert.equal(rejected.ok, false);
+      assert.equal(rejected.error.code, "INVALID_ARGUMENTS");
+      assert.match(rejected.error.message, /not compatible with capability_pack web/);
+      assert.equal(readTechniqueAttemptRecordsFromJsonl(domain).length, 0);
+
+      const accepted = await executeTool("bounty_log_technique_attempt", {
+        target_domain: domain,
+        wave: "w1",
+        agent: "a1",
+        surface_id: "surface-api",
+        pack_id: "web-pack",
+        status: "attempted",
+        evidence: "Logged the compatible web technique pack.",
+      });
+      assert.equal(accepted.ok, true);
+      assert.equal(readTechniqueAttemptRecordsFromJsonl(domain).length, 1);
+    });
   });
 });
 
