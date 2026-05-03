@@ -1997,6 +1997,7 @@ test("bounty_init_session creates the initial state and bounty_read_session_stat
       pending_wave: null,
       total_findings: 0,
       explored: [],
+      terminally_blocked: [],
       dead_ends: [],
       waf_blocked_endpoints: [],
       lead_surface_ids: [],
@@ -2106,6 +2107,7 @@ test("legacy state normalization is applied while unknown fields remain on disk 
         pending_wave: null,
         total_findings: 0,
         explored: [],
+        terminally_blocked: [],
         dead_ends: [],
         waf_blocked_endpoints: [],
         lead_surface_ids: [],
@@ -2977,6 +2979,7 @@ test("bounty_start_wave validates inputs, writes assignments, and updates pendin
       pending_wave: 2,
       total_findings: 0,
       explored_count: 0,
+      terminally_blocked_count: 0,
       dead_ends_count: 0,
       waf_blocked_count: 0,
       lead_surface_ids: [],
@@ -3162,6 +3165,154 @@ test("bounty_apply_wave_merge returns pending without mutating state when handof
       state: JSON.parse(readStateSummary({ target_domain: domain })).state,
     });
     assert.equal(fs.readFileSync(statePath(domain), "utf8"), before);
+  });
+});
+
+function buildTerminallyBlockedEntry(surfaceId, kind, identifierHint, options = {}) {
+  return {
+    surface_id: surfaceId,
+    blocked_at_wave: options.blocked_at_wave || 2,
+    blockers: [
+      {
+        kind,
+        ...(identifierHint != null ? { identifier_hint: identifierHint } : {}),
+        ...(options.reason ? { reason: options.reason } : {}),
+      },
+    ],
+  };
+}
+
+test("compactSessionState exposes terminally_blocked_count and round-trips state.terminally_blocked", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 1,
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-a", "auth_missing", "attacker", { reason: "no attacker profile registered" }),
+        buildTerminallyBlockedEntry("surface-b", "egress_unreachable", null, { reason: "default egress unreachable" }),
+      ],
+    });
+    const summary = JSON.parse(readStateSummary({ target_domain: domain }));
+    assert.equal(summary.state.terminally_blocked_count, 2);
+    const fullState = JSON.parse(fs.readFileSync(statePath(domain), "utf8"));
+    assert.equal(fullState.terminally_blocked.length, 2);
+    assert.equal(fullState.terminally_blocked[0].surface_id, "surface-a");
+    assert.equal(fullState.terminally_blocked[0].blockers[0].kind, "auth_missing");
+    assert.equal(fullState.terminally_blocked[0].blockers[0].identifier_hint, "attacker");
+    assert.equal(fullState.terminally_blocked[1].blockers[0].identifier_hint, undefined);
+  });
+});
+
+test("compactSessionState reports terminally_blocked_count: 0 when state pre-dates the field (migration safety)", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedSessionState(domain, { phase: "HUNT", hunt_wave: 1 });
+    const stateFilePath = statePath(domain);
+    const stateDoc = JSON.parse(fs.readFileSync(stateFilePath, "utf8"));
+    delete stateDoc.terminally_blocked;
+    fs.writeFileSync(stateFilePath, JSON.stringify(stateDoc, null, 2) + "\n");
+    const summary = JSON.parse(readStateSummary({ target_domain: domain }));
+    assert.equal(summary.state.terminally_blocked_count, 0);
+  });
+});
+
+test("normalizeSessionStateDocument rejects state with explored / terminally_blocked overlap", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 1,
+      explored: ["surface-a"],
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-a", "auth_missing", "attacker"),
+      ],
+    });
+    assert.throws(() => readStateSummary({ target_domain: domain }), /must be disjoint/);
+  });
+});
+
+test("normalizeSessionStateDocument rejects duplicate surface_id in terminally_blocked", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 1,
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-a", "auth_missing", "attacker"),
+        buildTerminallyBlockedEntry("surface-a", "egress_unreachable", null),
+      ],
+    });
+    assert.throws(() => readStateSummary({ target_domain: domain }), /duplicate surface_id surface-a/);
+  });
+});
+
+test("computeOpenRequeueSurfaceIds excludes terminally_blocked surfaces (options-bag signature)", () => {
+  const { computeOpenRequeueSurfaceIds } = require("../mcp/lib/phase-gates.js");
+  const records = [
+    { surface_id: "surface-a", endpoint: "GET /a", status: "requeue", logged_at: "2026-05-02T00:00:00Z", wave: "w1", agent: "a1" },
+    { surface_id: "surface-b", endpoint: "GET /b", status: "requeue", logged_at: "2026-05-02T00:00:00Z", wave: "w1", agent: "a1" },
+    { surface_id: "surface-c", endpoint: "GET /c", status: "needs_auth", logged_at: "2026-05-02T00:00:00Z", wave: "w1", agent: "a1" },
+  ];
+  const result = computeOpenRequeueSurfaceIds(records, {
+    exploredSurfaceIds: ["surface-a"],
+    terminallyBlockedSurfaceIds: ["surface-c"],
+  });
+  assert.deepEqual(result, ["surface-b"]);
+});
+
+test("HUNT -> CHAIN gate exposes blocked_high_surface_ids and blocks transition on it", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedAttackSurfaces(domain, [
+      { id: "surface-a", hosts: [`https://${domain}`], priority: "HIGH" },
+      { id: "surface-b", hosts: [`https://${domain}`], priority: "HIGH" },
+      { id: "surface-c", hosts: [`https://${domain}`], priority: "HIGH" },
+    ]);
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 1,
+      explored: ["surface-a"],
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-b", "auth_missing", "attacker", { reason: "no profile" }),
+      ],
+    });
+    const { computeHuntToChainGate } = require("../mcp/lib/phase-gates.js");
+    const fullState = JSON.parse(fs.readFileSync(statePath(domain), "utf8"));
+    const gate = computeHuntToChainGate(domain, fullState);
+    assert.equal(gate.coverage.non_low_explored, 1);
+    assert.equal(gate.coverage.non_low_terminally_blocked, 1);
+    assert.equal(gate.coverage.non_low_closed, 2);
+    assert.deepEqual(gate.coverage.unexplored_high_surface_ids, ["surface-c"]);
+    assert.deepEqual(gate.coverage.blocked_high_surface_ids, ["surface-b"]);
+    assert.equal(gate.coverage.coverage_pct, 33);
+    assert.equal(gate.coverage.closed_pct, 67);
+    // Both unexplored and blocked HIGH surfaces produce distinct blockers.
+    const codes = gate.transition_blockers.map((b) => b.code);
+    assert.ok(codes.includes("unexplored_high_surfaces"), "expected unexplored_high_surfaces blocker");
+    assert.ok(codes.includes("blocked_high_surfaces"), "expected blocked_high_surfaces blocker");
+  });
+});
+
+test("bounty_start_wave rejects assignment of terminally_blocked surfaces", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedAttackSurface(domain, ["surface-a", "surface-b"]);
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 1,
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-a", "auth_missing", "attacker", { reason: "missing" }),
+      ],
+    });
+    assert.throws(() => startWave({
+      target_domain: domain,
+      wave_number: 2,
+      assignments: [
+        { agent: "a1", surface_id: "surface-a" },
+        { agent: "a2", surface_id: "surface-b" },
+      ],
+    }), /Cannot assign terminally-blocked surfaces.*surface-a/);
   });
 });
 

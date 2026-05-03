@@ -85,6 +85,7 @@ const SESSION_PUBLIC_STATE_FIELDS = [
   "pending_wave",
   "total_findings",
   "explored",
+  "terminally_blocked",
   "dead_ends",
   "waf_blocked_endpoints",
   "lead_surface_ids",

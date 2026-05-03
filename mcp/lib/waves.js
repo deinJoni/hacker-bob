@@ -27,6 +27,7 @@ const {
 const {
   compactSessionState,
   readSessionStateStrict,
+  terminallyBlockedSurfaceIds,
   writeSessionStateDocument,
 } = require("./session-state.js");
 const {
@@ -840,6 +841,22 @@ function startWave(args) {
       if (!attackSurface.surface_id_set.has(assignment.surface_id)) {
         throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `Unknown surface_id in assignments: ${assignment.surface_id}`);
       }
+    }
+
+    // Hard write-side filter: terminally-blocked surfaces cannot be
+    // assigned to a wave until an operator clears the block via
+    // bounty_clear_terminal_block. Defends against an orchestrator
+    // regression that drops the soft-prompt exclusion and silently burns
+    // hunter cycles on classified-blocked work.
+    const terminallyBlockedSet = new Set(terminallyBlockedSurfaceIds(state));
+    const blockedAssignments = assignments
+      .filter((assignment) => terminallyBlockedSet.has(assignment.surface_id))
+      .map((assignment) => assignment.surface_id);
+    if (blockedAssignments.length > 0) {
+      throw new ToolError(
+        ERROR_CODES.INVALID_ARGUMENTS,
+        `Cannot assign terminally-blocked surfaces to a wave; clear the block via bounty_clear_terminal_block first: ${blockedAssignments.join(", ")}`,
+      );
     }
 
     // Capture surface_type from attack_surface.json AT WAVE START into the

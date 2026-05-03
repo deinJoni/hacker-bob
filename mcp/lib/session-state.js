@@ -59,6 +59,66 @@ function assertOperatorNote(value, fieldName = "operator_note") {
   return validateOperatorNoteText(assertNonEmptyString(value, fieldName), fieldName);
 }
 
+// state.terminally_blocked carries one entry per terminally-blocked surface,
+// each with the blocker tuples (kind + identifier_hint + reason) that drove
+// promotion. Kind validation here is intentionally soft — the tuple was
+// already through normalizeBlockedPrereqs at handoff write time and through
+// the merge promotion logic before landing in state. State validation only
+// guards structural invariants so analytics / report writers can trust the
+// shape without re-walking handoff JSONs.
+function normalizeTerminallyBlocked(value, fieldName = "terminally_blocked") {
+  if (value == null) return [];
+  if (!Array.isArray(value)) {
+    throw new Error(`${fieldName} must be an array`);
+  }
+  const seenSurfaceIds = new Set();
+  return value.map((entry, index) => {
+    if (entry == null || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`${fieldName}[${index}] must be an object`);
+    }
+    const surfaceId = assertNonEmptyString(entry.surface_id, `${fieldName}[${index}].surface_id`);
+    if (seenSurfaceIds.has(surfaceId)) {
+      throw new Error(`${fieldName} contains duplicate surface_id ${surfaceId}; one closure entry per surface`);
+    }
+    seenSurfaceIds.add(surfaceId);
+    const blockedAtWave = assertInteger(entry.blocked_at_wave, `${fieldName}[${index}].blocked_at_wave`, { min: 1 });
+    if (!Array.isArray(entry.blockers) || entry.blockers.length === 0) {
+      throw new Error(`${fieldName}[${index}].blockers must be a non-empty array`);
+    }
+    const blockers = entry.blockers.map((blocker, blockerIndex) => {
+      if (blocker == null || typeof blocker !== "object" || Array.isArray(blocker)) {
+        throw new Error(`${fieldName}[${index}].blockers[${blockerIndex}] must be an object`);
+      }
+      const result = {
+        kind: assertNonEmptyString(blocker.kind, `${fieldName}[${index}].blockers[${blockerIndex}].kind`),
+      };
+      if (blocker.identifier_hint != null) {
+        result.identifier_hint = assertNonEmptyString(
+          blocker.identifier_hint,
+          `${fieldName}[${index}].blockers[${blockerIndex}].identifier_hint`,
+        );
+      }
+      if (blocker.reason != null) {
+        result.reason = assertNonEmptyString(
+          blocker.reason,
+          `${fieldName}[${index}].blockers[${blockerIndex}].reason`,
+        );
+      }
+      return result;
+    });
+    return {
+      surface_id: surfaceId,
+      blocked_at_wave: blockedAtWave,
+      blockers,
+    };
+  });
+}
+
+function terminallyBlockedSurfaceIds(state) {
+  const list = Array.isArray(state.terminally_blocked) ? state.terminally_blocked : [];
+  return list.map((entry) => entry.surface_id);
+}
+
 function buildInitialSessionState(domain, targetUrl, { deepMode = false } = {}) {
   return {
     target: domain,
@@ -69,6 +129,7 @@ function buildInitialSessionState(domain, targetUrl, { deepMode = false } = {}) 
     pending_wave: null,
     total_findings: 0,
     explored: [],
+    terminally_blocked: [],
     dead_ends: [],
     waf_blocked_endpoints: [],
     lead_surface_ids: [],
@@ -95,6 +156,7 @@ function compactSessionState(state) {
     pending_wave: state.pending_wave,
     total_findings: state.total_findings,
     explored_count: (state.explored || []).length,
+    terminally_blocked_count: (state.terminally_blocked || []).length,
     dead_ends_count: (state.dead_ends || []).length,
     waf_blocked_count: (state.waf_blocked_endpoints || []).length,
     lead_surface_ids: state.lead_surface_ids || [],
@@ -113,7 +175,7 @@ function normalizeSessionStateDocument(document, requestedDomain) {
     assertNonEmptyString(document.target, "target");
   }
 
-  return {
+  const normalized = {
     target: requestedDomain,
     target_url: assertNonEmptyString(document.target_url, "target_url"),
     deep_mode: document.deep_mode == null
@@ -130,6 +192,7 @@ function normalizeSessionStateDocument(document, requestedDomain) {
       ? 0
       : assertInteger(document.total_findings, "total_findings", { min: 0 }),
     explored: normalizeStringArray(document.explored, "explored"),
+    terminally_blocked: normalizeTerminallyBlocked(document.terminally_blocked, "terminally_blocked"),
     dead_ends: normalizeStringArray(document.dead_ends, "dead_ends"),
     waf_blocked_endpoints: normalizeStringArray(document.waf_blocked_endpoints, "waf_blocked_endpoints"),
     lead_surface_ids: normalizeStringArray(document.lead_surface_ids, "lead_surface_ids"),
@@ -142,6 +205,20 @@ function normalizeSessionStateDocument(document, requestedDomain) {
       : assertEnumValue(document.auth_status, AUTH_STATUS_VALUES, "auth_status"),
     operator_note: normalizeOperatorNote(document.operator_note, "operator_note"),
   };
+
+  // Disjointness invariant: a surface is either explored (hunter declared
+  // complete) OR terminally_blocked (system promoted on stuck loop with no
+  // registry delta). Both at once would let consumers double-count or pick
+  // the wrong closure reason. Fail loud rather than silently dedupe.
+  const exploredSet = new Set(normalized.explored);
+  const collisions = normalized.terminally_blocked
+    .map((entry) => entry.surface_id)
+    .filter((id) => exploredSet.has(id));
+  if (collisions.length > 0) {
+    throw new Error(`state.explored and state.terminally_blocked must be disjoint; overlapping surface_id(s): ${collisions.join(", ")}`);
+  }
+
+  return normalized;
 }
 
 function readSessionStateStrict(domain) {
@@ -401,6 +478,7 @@ module.exports = {
   readSessionState,
   readSessionStateStrict,
   readStateSummary,
+  terminallyBlockedSurfaceIds,
   transitionPhase,
   writeSessionStateDocument,
 };

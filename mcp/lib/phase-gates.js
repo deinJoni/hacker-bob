@@ -30,6 +30,14 @@ const {
   sessionDir,
 } = require("./paths.js");
 
+// Inline rather than importing terminallyBlockedSurfaceIds from
+// session-state.js to avoid a circular dep (session-state.js depends on
+// phase-gates.js for transition gating).
+function extractTerminallyBlockedSurfaceIds(state) {
+  const list = Array.isArray(state.terminally_blocked) ? state.terminally_blocked : [];
+  return list.map((entry) => entry.surface_id);
+}
+
 function compactErrorMessage(error) {
   return error && error.message ? error.message : String(error);
 }
@@ -48,16 +56,18 @@ function pushUnique(target, seen, value) {
   target.push(value);
 }
 
-// Surface-level "open" status is governed by `state.explored` (populated
-// from `surface_status: complete` handoffs by applyWaveMerge), not by
-// per-endpoint coverage rows. A complete handoff says the hunter declared
-// the surface done; an old coverage row with status=requeue from an
-// earlier wave is endpoint-level history, not the surface's current state.
-// Filter out explored surfaces so HUNT -> CHAIN gating doesn't refuse the
-// transition over stale endpoint-level requeue rows whose surface was
-// later closed by a complete handoff.
-function computeOpenRequeueSurfaceIds(records, exploredSurfaceIds = []) {
-  const exploredSet = new Set(exploredSurfaceIds);
+// Surface-level "open" status is governed by `state.explored` and
+// `state.terminally_blocked` (both populated from handoffs by
+// applyWaveMerge), not by per-endpoint coverage rows. A complete handoff
+// says the hunter declared the surface done; a terminally-blocked surface
+// has been classified as blocked-by-prereq across waves and should not
+// requeue until an operator clears it. An old coverage row with
+// status=requeue from an earlier wave is endpoint-level history, not the
+// surface's current state. Options-bag signature so additional closure
+// reasons in future cycles do not shift positional arg meaning.
+function computeOpenRequeueSurfaceIds(records, options = {}) {
+  const exploredSet = new Set(options.exploredSurfaceIds || []);
+  const terminallyBlockedSet = new Set(options.terminallyBlockedSurfaceIds || []);
   const latestRecords = Array.from(latestCoverageRecordsByKey(records).values());
   const surfaceIds = [];
   const seen = new Set();
@@ -65,6 +75,7 @@ function computeOpenRequeueSurfaceIds(records, exploredSurfaceIds = []) {
   for (const record of latestRecords) {
     if (!COVERAGE_UNFINISHED_STATUS_VALUES.includes(record.status)) continue;
     if (exploredSet.has(record.surface_id)) continue;
+    if (terminallyBlockedSet.has(record.surface_id)) continue;
     pushUnique(surfaceIds, seen, record.surface_id);
   }
 
@@ -73,26 +84,52 @@ function computeOpenRequeueSurfaceIds(records, exploredSurfaceIds = []) {
 
 function computeAttackSurfaceCoverage(surfaces, state, openRequeueSurfaceIds) {
   const exploredSet = new Set(Array.isArray(state.explored) ? state.explored : []);
+  const terminallyBlockedSet = new Set(extractTerminallyBlockedSurfaceIds(state));
+  const isHighOrCritical = (surface) =>
+    ["CRITICAL", "HIGH"].includes(String(surface.priority || "").toUpperCase());
   const nonLowSurfaces = surfaces.filter(
     (surface) => surface.priority && String(surface.priority).toUpperCase() !== "LOW",
   );
   const nonLowExplored = nonLowSurfaces.filter((surface) => exploredSet.has(surface.id)).length;
+  const nonLowTerminallyBlocked = nonLowSurfaces.filter((surface) => terminallyBlockedSet.has(surface.id)).length;
+  // unexplored_high is the operator-actionable HIGH/CRITICAL set: surfaces
+  // that are neither explored nor terminally_blocked. blocked_high is the
+  // separately-actionable set: HIGH/CRITICAL surfaces classified blocked
+  // by the merge promotion. Each demands a different operator response, so
+  // they are surfaced as distinct fields rather than collapsed into one
+  // "non-explored" list.
   const unexploredHighSurfaceIds = surfaces
     .filter((surface) => (
-      ["CRITICAL", "HIGH"].includes(String(surface.priority || "").toUpperCase()) &&
-      !exploredSet.has(surface.id)
+      isHighOrCritical(surface) &&
+      !exploredSet.has(surface.id) &&
+      !terminallyBlockedSet.has(surface.id)
     ))
+    .map((surface) => surface.id);
+  const blockedHighSurfaceIds = surfaces
+    .filter((surface) => isHighOrCritical(surface) && terminallyBlockedSet.has(surface.id))
     .map((surface) => surface.id);
 
   return {
     total_surfaces: surfaces.length,
     non_low_total: nonLowSurfaces.length,
     non_low_explored: nonLowExplored,
+    non_low_terminally_blocked: nonLowTerminallyBlocked,
+    non_low_closed: nonLowExplored + nonLowTerminallyBlocked,
+    // coverage_pct keeps the explored-only meaning for back-compat with
+    // existing analytics/report consumers. closed_pct includes
+    // terminally-blocked surfaces (which are closed for the purposes of
+    // HUNT -> CHAIN gating), so it represents "how much work is actually
+    // off the queue" — neglected gap is non_low_total - non_low_closed.
     coverage_pct: nonLowSurfaces.length > 0
       ? Math.round((nonLowExplored / nonLowSurfaces.length) * 100)
       : 100,
+    closed_pct: nonLowSurfaces.length > 0
+      ? Math.round(((nonLowExplored + nonLowTerminallyBlocked) / nonLowSurfaces.length) * 100)
+      : 100,
     unexplored_high: unexploredHighSurfaceIds.length,
     unexplored_high_surface_ids: unexploredHighSurfaceIds,
+    blocked_high: blockedHighSurfaceIds.length,
+    blocked_high_surface_ids: blockedHighSurfaceIds,
     open_requeue_surface_ids: openRequeueSurfaceIds,
   };
 }
@@ -126,7 +163,10 @@ function computeHuntToChainGate(domain, state) {
   try {
     openRequeueSurfaceIds = computeOpenRequeueSurfaceIds(
       readCoverageRecordsFromJsonl(domain),
-      Array.isArray(state.explored) ? state.explored : [],
+      {
+        exploredSurfaceIds: Array.isArray(state.explored) ? state.explored : [],
+        terminallyBlockedSurfaceIds: extractTerminallyBlockedSurfaceIds(state),
+      },
     );
   } catch (error) {
     blockers.push(blocker(
@@ -144,6 +184,13 @@ function computeHuntToChainGate(domain, state) {
         "unexplored_high_surfaces",
         "HIGH or CRITICAL attack surfaces remain unexplored",
         { surface_ids: coverage.unexplored_high_surface_ids },
+      ));
+    }
+    if (coverage.blocked_high_surface_ids.length > 0) {
+      blockers.push(blocker(
+        "blocked_high_surfaces",
+        "HIGH or CRITICAL surfaces are terminally blocked by missing prerequisites; add the registered material and clear via bounty_clear_terminal_block, or accept the gap with override_reason",
+        { surface_ids: coverage.blocked_high_surface_ids },
       ));
     }
   }
@@ -320,6 +367,7 @@ module.exports = {
   computeChainRequirement,
   computeChainToVerifyGate,
   computeHuntToChainGate,
+  computeOpenRequeueSurfaceIds,
   computeVerifyToGradeGate,
   formatTransitionBlockers,
   readStructuredHandoffChainNotes,
