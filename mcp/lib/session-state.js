@@ -132,6 +132,7 @@ function buildInitialSessionState(domain, targetUrl, { deepMode = false } = {}) 
     terminally_blocked: [],
     prereq_registry_snapshots: [],
     blocked_prereq_history: [],
+    terminal_block_clear_history: [],
     dead_ends: [],
     waf_blocked_endpoints: [],
     lead_surface_ids: [],
@@ -167,12 +168,67 @@ function normalizePrereqRegistrySnapshots(value, fieldName = "prereq_registry_sn
   });
 }
 
+// state.terminal_block_clear_history records every operator-driven clear:
+// when, why, and what was cleared. Stored in state.json (atomic write)
+// rather than relying on the best-effort pipeline event for audit
+// durability. The loop detector uses these clear epochs to filter
+// blocked_prereq_history so a re-block starts a fresh recurrence count
+// without erasing prior debugging data.
+function normalizeTerminalBlockClearHistory(value, fieldName = "terminal_block_clear_history") {
+  if (value == null) return [];
+  if (!Array.isArray(value)) {
+    throw new Error(`${fieldName} must be an array`);
+  }
+  return value.map((entry, index) => {
+    if (entry == null || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`${fieldName}[${index}] must be an object`);
+    }
+    const result = {
+      surface_id: assertNonEmptyString(entry.surface_id, `${fieldName}[${index}].surface_id`),
+      cleared_at_wave: assertInteger(entry.cleared_at_wave, `${fieldName}[${index}].cleared_at_wave`, { min: 0 }),
+      cleared_at_ts: assertNonEmptyString(entry.cleared_at_ts, `${fieldName}[${index}].cleared_at_ts`),
+      reason: assertNonEmptyString(entry.reason, `${fieldName}[${index}].reason`),
+    };
+    if (entry.previously_blocked_at_wave != null) {
+      result.previously_blocked_at_wave = assertInteger(
+        entry.previously_blocked_at_wave,
+        `${fieldName}[${index}].previously_blocked_at_wave`,
+        { min: 1 },
+      );
+    }
+    if (Array.isArray(entry.previous_blockers)) {
+      result.previous_blockers = entry.previous_blockers.map((blocker, blockerIndex) => {
+        if (blocker == null || typeof blocker !== "object" || Array.isArray(blocker)) {
+          throw new Error(`${fieldName}[${index}].previous_blockers[${blockerIndex}] must be an object`);
+        }
+        const blockerResult = {
+          kind: assertNonEmptyString(blocker.kind, `${fieldName}[${index}].previous_blockers[${blockerIndex}].kind`),
+        };
+        if (blocker.identifier_hint != null) {
+          blockerResult.identifier_hint = assertNonEmptyString(
+            blocker.identifier_hint,
+            `${fieldName}[${index}].previous_blockers[${blockerIndex}].identifier_hint`,
+          );
+        }
+        if (blocker.reason != null) {
+          blockerResult.reason = assertNonEmptyString(
+            blocker.reason,
+            `${fieldName}[${index}].previous_blockers[${blockerIndex}].reason`,
+          );
+        }
+        return blockerResult;
+      });
+    }
+    return result;
+  });
+}
+
 // state.blocked_prereq_history is the merge-validated record of blocker
 // tuples per wave per surface. Replaces raw handoff JSON reads in the
 // promotion path: handoffs go through schema/runtime validation at write
 // time, but reading them again at merge time bypasses that validation.
-// Storing the validated tuple means Cycle 4's clear semantics can prune
-// history per surface rather than rewriting handoff files.
+// Cleared entries are kept; the loop detector uses
+// state.terminal_block_clear_history to skip them.
 function normalizeBlockedPrereqHistory(value, fieldName = "blocked_prereq_history") {
   if (value == null) return [];
   if (!Array.isArray(value)) {
@@ -252,6 +308,7 @@ function normalizeSessionStateDocument(document, requestedDomain) {
     terminally_blocked: normalizeTerminallyBlocked(document.terminally_blocked, "terminally_blocked"),
     prereq_registry_snapshots: normalizePrereqRegistrySnapshots(document.prereq_registry_snapshots, "prereq_registry_snapshots"),
     blocked_prereq_history: normalizeBlockedPrereqHistory(document.blocked_prereq_history, "blocked_prereq_history"),
+    terminal_block_clear_history: normalizeTerminalBlockClearHistory(document.terminal_block_clear_history, "terminal_block_clear_history"),
     dead_ends: normalizeStringArray(document.dead_ends, "dead_ends"),
     waf_blocked_endpoints: normalizeStringArray(document.waf_blocked_endpoints, "waf_blocked_endpoints"),
     lead_surface_ids: normalizeStringArray(document.lead_surface_ids, "lead_surface_ids"),
@@ -525,9 +582,90 @@ function transitionPhase(args) {
   });
 }
 
+function clearTerminalBlock(args) {
+  const domain = assertNonEmptyString(args.target_domain, "target_domain");
+  const surfaceId = assertNonEmptyString(args.surface_id, "surface_id");
+  if (typeof args.reason !== "string" || args.reason.trim().length < 20) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "reason is required and must be at least 20 characters; the operator note is the audit trail",
+    );
+  }
+  const reason = args.reason.trim();
+  if (reason.length > 280) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "reason must be at most 280 characters",
+    );
+  }
+
+  return withSessionLock(domain, () => {
+    const { raw, state } = readSessionStateStrict(domain);
+    if (state.pending_wave != null) {
+      throw new ToolError(
+        ERROR_CODES.STATE_CONFLICT,
+        `Cannot clear a terminal block while wave ${state.pending_wave} is pending; merge the current wave first`,
+      );
+    }
+    const terminallyBlocked = Array.isArray(state.terminally_blocked) ? state.terminally_blocked : [];
+    const previousEntry = terminallyBlocked.find((entry) => entry.surface_id === surfaceId);
+    if (!previousEntry) {
+      throw new ToolError(
+        ERROR_CODES.STATE_CONFLICT,
+        `Surface ${surfaceId} is not in state.terminally_blocked; nothing to clear`,
+      );
+    }
+    const remainingTerminallyBlocked = terminallyBlocked.filter((entry) => entry.surface_id !== surfaceId);
+    // Keep blocked_prereq_history for debugging; the loop detector uses
+    // terminal_block_clear_history to filter prior entries that came
+    // before the latest clear for this surface.
+    const clearedAtTs = new Date().toISOString();
+    const priorClearHistory = Array.isArray(state.terminal_block_clear_history) ? state.terminal_block_clear_history : [];
+    const clearEntry = {
+      surface_id: surfaceId,
+      cleared_at_wave: state.hunt_wave,
+      cleared_at_ts: clearedAtTs,
+      reason,
+      previously_blocked_at_wave: previousEntry.blocked_at_wave,
+      previous_blockers: Array.isArray(previousEntry.blockers) ? previousEntry.blockers : [],
+    };
+    const nextClearHistory = [...priorClearHistory, clearEntry];
+
+    const nextState = {
+      ...state,
+      terminally_blocked: remainingTerminallyBlocked,
+      terminal_block_clear_history: nextClearHistory,
+    };
+    writeSessionStateDocument(domain, raw, nextState);
+
+    safeAppendPipelineEventDirect(domain, "terminal_block_cleared", {
+      phase: state.phase,
+      status: "cleared",
+      source: "bounty_clear_terminal_block",
+      surface_id: surfaceId,
+      counts: {
+        terminally_blocked_total: remainingTerminallyBlocked.length,
+        clear_history_size: nextClearHistory.length,
+      },
+    });
+
+    return JSON.stringify({
+      version: 1,
+      cleared: true,
+      surface_id: surfaceId,
+      cleared_at_wave: state.hunt_wave,
+      cleared_at_ts: clearedAtTs,
+      previous_blockers: clearEntry.previous_blockers,
+      previously_blocked_at_wave: clearEntry.previously_blocked_at_wave,
+      state: compactSessionState(nextState),
+    });
+  });
+}
+
 module.exports = {
   buildInitialSessionState,
   clearOperatorNote,
+  clearTerminalBlock,
   compactSessionState,
   composeSessionStateDocument,
   initSession,

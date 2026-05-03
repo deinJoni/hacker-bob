@@ -88,6 +88,7 @@ const SESSION_PUBLIC_STATE_FIELDS = [
   "terminally_blocked",
   "prereq_registry_snapshots",
   "blocked_prereq_history",
+  "terminal_block_clear_history",
   "dead_ends",
   "waf_blocked_endpoints",
   "lead_surface_ids",

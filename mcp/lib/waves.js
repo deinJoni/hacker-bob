@@ -1055,6 +1055,7 @@ function detectTerminalPromotions({
   currentWaveBlockersBySurface,
   historyBySurface,
   prereqRegistrySnapshots,
+  clearHistoryBySurface,
   currentWave,
 }) {
   const snapshotByWave = new Map(prereqRegistrySnapshots.map((s) => [s.wave, s]));
@@ -1062,6 +1063,15 @@ function detectTerminalPromotions({
   const promotions = [];
   for (const [surfaceId, currentEntries] of currentWaveBlockersBySurface) {
     const surfaceHistory = historyBySurface.get(surfaceId) || [];
+    // The latest clear for this surface defines the recurrence horizon:
+    // history entries from waves <= cleared_at_wave are pre-clear and
+    // do not count toward the loop detector's "recurred across waves"
+    // signal. Without this, every clear-then-reblock would immediately
+    // re-promote.
+    const clearsForSurface = clearHistoryBySurface.get(surfaceId) || [];
+    const latestClearAtWave = clearsForSurface.length > 0
+      ? Math.max(...clearsForSurface.map((c) => c.cleared_at_wave))
+      : 0;
     const promotedBlockers = [];
     const seenTuples = new Set();
     for (const entry of currentEntries) {
@@ -1069,9 +1079,10 @@ function detectTerminalPromotions({
       const tupleKey = `${entry.kind}\t${hint || ""}`;
       if (seenTuples.has(tupleKey)) continue;
       // Prior occurrences are entries from waves strictly before the
-      // current one. Same wave's entries are not "prior".
+      // current one and strictly after the latest clear for this surface.
       const priorMatches = surfaceHistory.filter((h) =>
         h.wave < currentWave &&
+        h.wave > latestClearAtWave &&
         h.kind === entry.kind &&
         (h.identifier_hint || null) === hint,
       );
@@ -1210,10 +1221,17 @@ function applyWaveMerge(args) {
     }
 
     const priorSnapshots = Array.isArray(state.prereq_registry_snapshots) ? state.prereq_registry_snapshots : [];
+    const clearHistory = Array.isArray(state.terminal_block_clear_history) ? state.terminal_block_clear_history : [];
+    const clearHistoryBySurface = new Map();
+    for (const entry of clearHistory) {
+      if (!clearHistoryBySurface.has(entry.surface_id)) clearHistoryBySurface.set(entry.surface_id, []);
+      clearHistoryBySurface.get(entry.surface_id).push(entry);
+    }
     const promotions = detectTerminalPromotions({
       currentWaveBlockersBySurface,
       historyBySurface,
       prereqRegistrySnapshots: priorSnapshots,
+      clearHistoryBySurface,
       currentWave: waveNumber,
     });
     // Merge promotions into existing state.terminally_blocked. If the

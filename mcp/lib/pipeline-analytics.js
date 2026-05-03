@@ -76,6 +76,9 @@ const PIPELINE_EVENT_TYPES = Object.freeze([
   "verification_written",
   "evidence_written",
   "grade_written",
+  "surface_terminally_blocked",
+  "terminal_block_cleared",
+  "report_written",
 ]);
 
 function pipelineAnalyticsEnabled(env = process.env) {

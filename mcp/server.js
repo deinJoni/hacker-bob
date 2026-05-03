@@ -85,6 +85,7 @@ const {
 const {
   compactSessionState,
   clearOperatorNote,
+  clearTerminalBlock,
   initSession,
   normalizeSessionStateDocument,
   readSessionState,
@@ -309,6 +310,7 @@ module.exports = {
   writeFileAtomic,
   writeChainAttempt,
   clearOperatorNote,
+  clearTerminalBlock,
   executeTool,
   finalizeHunterRun,
   startServer,

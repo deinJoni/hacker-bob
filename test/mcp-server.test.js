@@ -107,6 +107,7 @@ const {
   routeSurfaces,
   setOperatorNote,
   clearOperatorNote,
+  clearTerminalBlock,
   readCoverageRecordsFromJsonl,
   readHttpAudit,
   readHttpAuditRecordsFromJsonl,
@@ -208,6 +209,7 @@ const EXPECTED_TOOL_NAMES = [
   "bounty_read_session_summary",
   "bounty_set_operator_note",
   "bounty_clear_operator_note",
+  "bounty_clear_terminal_block",
   "bounty_read_hunter_brief",
   "bounty_read_tool_telemetry",
   "bounty_read_pipeline_analytics",
@@ -641,6 +643,7 @@ test("mcp server public exports remain stable", () => {
     "buildHeaderProfile",
     "chainAttemptsJsonlPath",
     "clearOperatorNote",
+    "clearTerminalBlock",
     "compactSessionState",
     "computeCoverageRequeueSurfaceIds",
     "coverageJsonlPath",
@@ -2000,6 +2003,7 @@ test("bounty_init_session creates the initial state and bounty_read_session_stat
       terminally_blocked: [],
       prereq_registry_snapshots: [],
       blocked_prereq_history: [],
+      terminal_block_clear_history: [],
       dead_ends: [],
       waf_blocked_endpoints: [],
       lead_surface_ids: [],
@@ -2112,6 +2116,7 @@ test("legacy state normalization is applied while unknown fields remain on disk 
         terminally_blocked: [],
         prereq_registry_snapshots: [],
         blocked_prereq_history: [],
+        terminal_block_clear_history: [],
         dead_ends: [],
         waf_blocked_endpoints: [],
         lead_surface_ids: [],
@@ -4221,6 +4226,152 @@ test("bounty_apply_wave_merge promotes funded_wallet_missing on 2-wave recurrenc
     const result = JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 2, force_merge: false }));
     assert.equal(result.merge.terminally_blocked_promoted.length, 1);
     assert.equal(result.merge.terminally_blocked_promoted[0].blockers[0].kind, "funded_wallet_missing");
+  });
+});
+
+test("bounty_clear_terminal_block removes a surface from terminally_blocked and records the clear in state", () => {
+  withTempHome(() => {
+    const domain = "clear-block.example.com";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 2,
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-auth", "auth_missing", "attacker", { reason: "no profile registered", blocked_at_wave: 2 }),
+      ],
+      blocked_prereq_history: [
+        { wave: 1, surface_id: "surface-auth", kind: "auth_missing", identifier_hint: "attacker", reason: "no profile" },
+        { wave: 2, surface_id: "surface-auth", kind: "auth_missing", identifier_hint: "attacker", reason: "still no profile" },
+        { wave: 1, surface_id: "surface-other", kind: "egress_unreachable", identifier_hint: "us-west", reason: "default egress unreachable" },
+      ],
+    });
+
+    const result = JSON.parse(clearTerminalBlock({
+      target_domain: domain,
+      surface_id: "surface-auth",
+      reason: "operator added attacker auth profile via auth_store",
+    }));
+    assert.equal(result.cleared, true);
+    assert.equal(result.surface_id, "surface-auth");
+    assert.equal(result.cleared_at_wave, 2);
+    assert.equal(result.previously_blocked_at_wave, 2);
+    assert.equal(result.previous_blockers[0].kind, "auth_missing");
+    assert.equal(result.state.terminally_blocked_count, 0);
+
+    const fullState = JSON.parse(readSessionState({ target_domain: domain })).state;
+    assert.equal(fullState.terminally_blocked.length, 0);
+    // History is RETAINED for debugging; loop detector uses clear epoch.
+    assert.equal(fullState.blocked_prereq_history.length, 3);
+    // Clear is recorded durably in state, not just in pipeline event.
+    assert.equal(fullState.terminal_block_clear_history.length, 1);
+    assert.equal(fullState.terminal_block_clear_history[0].surface_id, "surface-auth");
+    assert.equal(fullState.terminal_block_clear_history[0].cleared_at_wave, 2);
+    assert.match(fullState.terminal_block_clear_history[0].reason, /attacker auth profile/);
+    assert.equal(fullState.terminal_block_clear_history[0].previous_blockers[0].kind, "auth_missing");
+  });
+});
+
+test("bounty_clear_terminal_block rejects clearing while a wave is pending", () => {
+  withTempHome(() => {
+    const domain = "pending-clear.example.com";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 1,
+      pending_wave: 2,
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-a", "auth_missing", "attacker", { reason: "no profile" }),
+      ],
+    });
+    assert.throws(() => clearTerminalBlock({
+      target_domain: domain,
+      surface_id: "surface-a",
+      reason: "operator wants to clear during a pending wave",
+    }), /Cannot clear a terminal block while wave 2 is pending/);
+  });
+});
+
+test("bounty_clear_terminal_block rejects clearing a surface that was never terminally blocked", () => {
+  withTempHome(() => {
+    const domain = "never-blocked.example.com";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 1,
+      terminally_blocked: [],
+    });
+    assert.throws(() => clearTerminalBlock({
+      target_domain: domain,
+      surface_id: "surface-z",
+      reason: "operator wants to clear a non-blocked surface",
+    }), /not in state\.terminally_blocked/);
+  });
+});
+
+test("bounty_clear_terminal_block requires a reason of at least 20 characters", () => {
+  withTempHome(() => {
+    const domain = "short-reason.example.com";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 1,
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-a", "auth_missing", "attacker", { reason: "no profile" }),
+      ],
+    });
+    assert.throws(() => clearTerminalBlock({
+      target_domain: domain,
+      surface_id: "surface-a",
+      reason: "too short",
+    }), /reason is required and must be at least 20 characters/);
+  });
+});
+
+test("bounty_clear_terminal_block lets a re-blocked surface start fresh recurrence count via clear epoch", () => {
+  withTempHome(() => {
+    const domain = "reblock.example.com";
+    seedAttackSurfaces(domain, [
+      { id: "surface-auth", hosts: [`https://${domain}/auth`], priority: "HIGH" },
+    ]);
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 2,
+      pending_wave: null,
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-auth", "auth_missing", "attacker", { blocked_at_wave: 2, reason: "no profile" }),
+      ],
+      blocked_prereq_history: [
+        { wave: 1, surface_id: "surface-auth", kind: "auth_missing", identifier_hint: "attacker", reason: "no profile" },
+        { wave: 2, surface_id: "surface-auth", kind: "auth_missing", identifier_hint: "attacker", reason: "still none" },
+      ],
+    });
+
+    JSON.parse(clearTerminalBlock({
+      target_domain: domain,
+      surface_id: "surface-auth",
+      reason: "operator registered attacker profile and is unblocking",
+    }));
+
+    // Wave 3 still hits the same blocker (e.g., the new profile didn't help).
+    setStatePendingWave(domain, 3);
+    seedPrereqSnapshot(domain, 3, { auth_handles: ["attacker"], egress_handles: [] });
+    seedAssignments(domain, 3, [{ agent: "a1", surface_id: "surface-auth" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w3",
+      agent: "a1",
+      surface_id: "surface-auth",
+      surface_status: "partial",
+      summary: "still blocked even after profile added",
+      content: "# A1 wave 3",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "attacker", reason: "blocker reappeared" },
+      ],
+    });
+    const result = JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 3, force_merge: false }));
+    // After the clear, history is RETAINED but the loop detector ignores
+    // entries from waves <= cleared_at_wave (which was 2). Wave 3's
+    // blocker has no qualifying prior, so no promotion. History is still
+    // available for debugging.
+    assert.equal(result.merge.terminally_blocked_promoted.length, 0);
+    const fullState = JSON.parse(readSessionState({ target_domain: domain })).state;
+    assert.ok(fullState.blocked_prereq_history.length >= 2, "history should be retained, not pruned");
   });
 });
 
