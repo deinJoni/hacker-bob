@@ -71,6 +71,8 @@ const {
 const {
   validateNoSensitiveMaterial,
 } = require("./sensitive-material.js");
+const { listAuthProfiles } = require("./auth.js");
+const { listEgressProfiles } = require("./egress-profiles.js");
 const {
   computeHuntToChainGate,
 } = require("./phase-gates.js");
@@ -540,6 +542,38 @@ function groupBlockedHarnessRuns(entries) {
   }));
 }
 
+// Group blocked_prereqs by (kind, identifier_hint||""). identifier_hint is
+// optional, so "" stands in for "unspecified" — group "auth_missing without
+// any specific profile name" together. Matches the loop-detector identity
+// the merge promotion uses.
+function groupBlockedPrereqs(entries) {
+  const groups = new Map();
+  for (const entry of entries) {
+    const hint = entry.identifier_hint || "";
+    const key = `${entry.kind}\t${hint}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        kind: entry.kind,
+        identifier_hint: entry.identifier_hint || null,
+        count: 0,
+        agents: new Set(),
+        surface_ids: new Set(),
+      });
+    }
+    const group = groups.get(key);
+    group.count += 1;
+    if (entry.agent) group.agents.add(entry.agent);
+    if (entry.surface_id) group.surface_ids.add(entry.surface_id);
+  }
+  return Array.from(groups.values()).map((group) => ({
+    kind: group.kind,
+    identifier_hint: group.identifier_hint,
+    count: group.count,
+    agents: Array.from(group.agents).sort(compareAgentLabels),
+    surface_ids: Array.from(group.surface_ids).sort(),
+  }));
+}
+
 function groupBypassAttempts(entries) {
   const groups = new Map();
   for (const entry of entries) {
@@ -598,6 +632,7 @@ function mergeWaveHandoffsInternal(domain, waveNumber) {
   const wafBlockedEndpoints = [];
   const leadSurfaceIds = [];
   const blockedHarnessRuns = [];
+  const blockedPrereqs = [];
   const bypassAttempts = [];
   const provenance = {
     verified_agents: [],
@@ -669,6 +704,9 @@ function mergeWaveHandoffsInternal(domain, waveNumber) {
       for (const entry of payload.blocked_harness_runs || []) {
         blockedHarnessRuns.push({ ...entry, agent: assignment.agent, surface_id: assignment.surface_id });
       }
+      for (const entry of payload.blocked_prereqs || []) {
+        blockedPrereqs.push({ ...entry, agent: assignment.agent, surface_id: assignment.surface_id });
+      }
       for (const entry of payload.bypass_attempts || []) {
         bypassAttempts.push({ ...entry, agent: assignment.agent, surface_id: assignment.surface_id });
       }
@@ -721,6 +759,8 @@ function mergeWaveHandoffsInternal(domain, waveNumber) {
       lead_surface_ids: leadSurfaceIds,
       blocked_harness_runs: blockedHarnessRuns,
       blocked_harness_runs_grouped: groupBlockedHarnessRuns(blockedHarnessRuns),
+      blocked_prereqs: blockedPrereqs,
+      blocked_prereqs_grouped: groupBlockedPrereqs(blockedPrereqs),
       bypass_attempts: bypassAttempts,
       bypass_attempts_grouped: groupBypassAttempts(bypassAttempts),
       suspicion_flags: suspicionFlags,
@@ -894,9 +934,21 @@ function startWave(args) {
       assignments: assignmentsForDisk,
     }, null, 2)}\n`);
 
+    // Snapshot registries AT WAVE START so the next merge can compare
+    // against "what the hunter could have used". A snapshot taken at
+    // merge time would include profiles added mid-wave that the hunter
+    // never had access to.
+    const startSnapshot = snapshotPrereqRegistries(domain);
+    const priorSnapshots = Array.isArray(state.prereq_registry_snapshots) ? state.prereq_registry_snapshots : [];
+    const nextSnapshots = [
+      ...priorSnapshots.filter((s) => s.wave !== waveNumber),
+      { wave: waveNumber, ...startSnapshot },
+    ].sort((a, b) => a.wave - b.wave);
+
     const nextState = {
       ...state,
       pending_wave: waveNumber,
+      prereq_registry_snapshots: nextSnapshots,
     };
 
     try {
@@ -940,6 +992,128 @@ function startWave(args) {
       state: compactSessionState(nextState),
     });
   });
+}
+
+// Snapshot registry HANDLE SETS at wave start so the loop detector can
+// reason about whether the SPECIFIC material a stuck blocker named was
+// added since. Counts collapse unrelated additions into "growth" and
+// give the original blocker permanent amnesty (e.g., adding `victim`
+// would silently satisfy `auth_missing: attacker`). Failures throw
+// rather than fail-open because the caller (start_wave) cannot make a
+// trustworthy snapshot without registry visibility — better to refuse
+// the wave than to record a lying snapshot.
+function snapshotPrereqRegistries(domain) {
+  let authHandles;
+  try {
+    const result = JSON.parse(listAuthProfiles({ target_domain: domain }));
+    authHandles = Array.isArray(result.profiles)
+      ? result.profiles.map((p) => p && typeof p.profile_name === "string" ? p.profile_name : null).filter(Boolean)
+      : [];
+  } catch (error) {
+    throw new ToolError(
+      ERROR_CODES.STATE_CONFLICT,
+      `Could not snapshot auth-profile registry for ${domain}: ${error.message || String(error)}`,
+    );
+  }
+  let egressHandles;
+  try {
+    const profiles = listEgressProfiles();
+    egressHandles = profiles
+      .filter((p) => p && p.enabled)
+      .map((p) => p && typeof p.name === "string" ? p.name : null)
+      .filter(Boolean);
+  } catch (error) {
+    throw new ToolError(
+      ERROR_CODES.STATE_CONFLICT,
+      `Could not snapshot egress-profile registry: ${error.message || String(error)}`,
+    );
+  }
+  return {
+    auth_handles: Array.from(new Set(authHandles)).sort(),
+    egress_handles: Array.from(new Set(egressHandles)).sort(),
+  };
+}
+
+const BLOCKED_PREREQ_KINDS_WITH_REGISTRY_DELTA = Object.freeze({
+  auth_missing: "auth_handles",
+  egress_unreachable: "egress_handles",
+});
+
+// Loop detector. For each surface with current-wave blockers, look at
+// validated history (state.blocked_prereq_history) for prior occurrences
+// of the same (kind, identifier_hint) tuple. For kinds with a
+// registry-delta channel (auth_missing, egress_unreachable), skip
+// promotion when the SPECIFIC handle the blocker named was added since
+// the LATEST prior occurrence — handle-set membership rather than count
+// growth. For null identifier_hint (no specific handle requested), skip
+// when the handle set itself grew (any new handle appeared). Other
+// kinds (funded_wallet_missing, key_material_missing,
+// external_credential_missing) have no registry-delta path; they
+// promote on any 2-wave recurrence and require operator clear via
+// bounty_clear_terminal_block.
+function detectTerminalPromotions({
+  currentWaveBlockersBySurface,
+  historyBySurface,
+  prereqRegistrySnapshots,
+  currentWave,
+}) {
+  const snapshotByWave = new Map(prereqRegistrySnapshots.map((s) => [s.wave, s]));
+  const currentSnapshot = snapshotByWave.get(currentWave);
+  const promotions = [];
+  for (const [surfaceId, currentEntries] of currentWaveBlockersBySurface) {
+    const surfaceHistory = historyBySurface.get(surfaceId) || [];
+    const promotedBlockers = [];
+    const seenTuples = new Set();
+    for (const entry of currentEntries) {
+      const hint = entry.identifier_hint || null;
+      const tupleKey = `${entry.kind}\t${hint || ""}`;
+      if (seenTuples.has(tupleKey)) continue;
+      // Prior occurrences are entries from waves strictly before the
+      // current one. Same wave's entries are not "prior".
+      const priorMatches = surfaceHistory.filter((h) =>
+        h.wave < currentWave &&
+        h.kind === entry.kind &&
+        (h.identifier_hint || null) === hint,
+      );
+      if (priorMatches.length === 0) continue;
+      const registryField = BLOCKED_PREREQ_KINDS_WITH_REGISTRY_DELTA[entry.kind];
+      if (registryField && currentSnapshot) {
+        // LATEST prior wave: if the handle was added since the most
+        // recent unresolved occurrence, the loop was potentially broken.
+        const latestPriorWave = Math.max(...priorMatches.map((p) => p.wave));
+        const priorSnapshot = snapshotByWave.get(latestPriorWave);
+        const priorHandles = priorSnapshot && Array.isArray(priorSnapshot[registryField])
+          ? new Set(priorSnapshot[registryField])
+          : new Set();
+        const currentHandles = new Set(currentSnapshot[registryField] || []);
+        if (hint != null) {
+          // Specific handle named: skip promotion only if that exact
+          // handle is newly registered.
+          if (currentHandles.has(hint) && !priorHandles.has(hint)) continue;
+        } else {
+          // No specific handle: skip if the handle set grew at all.
+          let grew = false;
+          for (const h of currentHandles) {
+            if (!priorHandles.has(h)) { grew = true; break; }
+          }
+          if (grew) continue;
+        }
+      }
+      seenTuples.add(tupleKey);
+      const blocker = { kind: entry.kind };
+      if (entry.identifier_hint) blocker.identifier_hint = entry.identifier_hint;
+      if (entry.reason) blocker.reason = entry.reason;
+      promotedBlockers.push(blocker);
+    }
+    if (promotedBlockers.length > 0) {
+      promotions.push({
+        surface_id: surfaceId,
+        blocked_at_wave: currentWave,
+        blockers: promotedBlockers,
+      });
+    }
+  }
+  return promotions;
 }
 
 function applyWaveMerge(args) {
@@ -1000,6 +1174,57 @@ function applyWaveMerge(args) {
     const scopeExclusions = [...state.scope_exclusions];
     pushUnique(scopeExclusions, new Set(scopeExclusions), readScopeExclusions(domain));
 
+    // Append current wave's validated blocker tuples to state-side
+    // history. State history is the single source of truth for the loop
+    // detector — no raw handoff re-reads. Cycle 4's clear command will
+    // prune this history per surface so re-blocked surfaces start fresh.
+    const priorHistory = Array.isArray(state.blocked_prereq_history) ? state.blocked_prereq_history : [];
+    const newHistoryEntries = (merge.blocked_prereqs || []).map((entry) => {
+      const record = {
+        wave: waveNumber,
+        surface_id: entry.surface_id,
+        kind: entry.kind,
+      };
+      if (entry.identifier_hint) record.identifier_hint = entry.identifier_hint;
+      if (entry.reason) record.reason = entry.reason;
+      return record;
+    });
+    const nextHistory = [...priorHistory, ...newHistoryEntries];
+
+    // Build per-surface history map for the detector.
+    const historyBySurface = new Map();
+    for (const entry of nextHistory) {
+      if (!historyBySurface.has(entry.surface_id)) historyBySurface.set(entry.surface_id, []);
+      historyBySurface.get(entry.surface_id).push(entry);
+    }
+
+    // Build current wave's blocker map per surface from merge.blocked_prereqs.
+    const currentWaveBlockersBySurface = new Map();
+    for (const entry of merge.blocked_prereqs || []) {
+      if (!currentWaveBlockersBySurface.has(entry.surface_id)) currentWaveBlockersBySurface.set(entry.surface_id, []);
+      currentWaveBlockersBySurface.get(entry.surface_id).push({
+        kind: entry.kind,
+        identifier_hint: entry.identifier_hint || null,
+        reason: entry.reason,
+      });
+    }
+
+    const priorSnapshots = Array.isArray(state.prereq_registry_snapshots) ? state.prereq_registry_snapshots : [];
+    const promotions = detectTerminalPromotions({
+      currentWaveBlockersBySurface,
+      historyBySurface,
+      prereqRegistrySnapshots: priorSnapshots,
+      currentWave: waveNumber,
+    });
+    // Merge promotions into existing state.terminally_blocked. If the
+    // same surface is promoted twice, the new wave's promotion wins.
+    // Disjointness with state.explored is enforced at normalize time;
+    // a complete handoff in a later wave strips terminally_blocked.
+    const promotedSurfaceIds = new Set(promotions.map((p) => p.surface_id));
+    const carriedTerminallyBlocked = (Array.isArray(state.terminally_blocked) ? state.terminally_blocked : [])
+      .filter((entry) => !promotedSurfaceIds.has(entry.surface_id));
+    const nextTerminallyBlocked = [...carriedTerminallyBlocked, ...promotions];
+
     const explored = [...state.explored];
     const deadEnds = [...state.dead_ends];
     const wafBlockedEndpoints = [...state.waf_blocked_endpoints];
@@ -1030,13 +1255,34 @@ function applyWaveMerge(args) {
     pushUnique(leadSurfaceIds, new Set(leadSurfaceIds), merge.lead_surface_ids);
     pushUnique(leadSurfaceIds, new Set(leadSurfaceIds), deepPromotion.promoted_surface_ids || []);
 
+    // Disjointness invariant: a surface marked complete in this wave wins
+    // over any prior terminal promotion. Strip from terminally_blocked.
+    const exploredSet = new Set(explored);
+    const reconciledTerminallyBlocked = nextTerminallyBlocked.filter(
+      (entry) => !exploredSet.has(entry.surface_id),
+    );
+    const reconciledTerminallySet = new Set(reconciledTerminallyBlocked.map((e) => e.surface_id));
+
     const filteredLeadSurfaceIds = leadSurfaceIds.filter(
-      (surfaceId) => attackSurface.surface_id_set.has(surfaceId) && !explored.includes(surfaceId),
+      (surfaceId) =>
+        attackSurface.surface_id_set.has(surfaceId) &&
+        !explored.includes(surfaceId) &&
+        !reconciledTerminallySet.has(surfaceId),
     );
 
+    // Filter requeue: terminally-blocked surfaces are not "requeue
+    // candidates" — the orchestrator must clear them via
+    // bounty_clear_terminal_block before they can be assigned again.
+    const filteredRequeueSurfaceIds = requeueSurfaceIds.filter(
+      (surfaceId) => !reconciledTerminallySet.has(surfaceId),
+    );
+
+    // Snapshots are populated by start_wave; merge does not write them.
     const nextState = {
       ...state,
       explored,
+      terminally_blocked: reconciledTerminallyBlocked,
+      blocked_prereq_history: nextHistory,
       dead_ends: deadEnds,
       waf_blocked_endpoints: wafBlockedEndpoints,
       lead_surface_ids: filteredLeadSurfaceIds,
@@ -1061,7 +1307,9 @@ function applyWaveMerge(args) {
         invalid_handoffs: merge.invalid_agents.length,
         unexpected_handoffs: merge.unexpected_agents.length,
         missing_surfaces: merge.missing_surface_ids.length,
-        requeue_surfaces: requeueSurfaceIds.length,
+        requeue_surfaces: filteredRequeueSurfaceIds.length,
+        terminally_blocked_promoted: promotions.length,
+        terminally_blocked_total: reconciledTerminallyBlocked.length,
         findings: findings.total,
       },
     });
@@ -1079,12 +1327,15 @@ function applyWaveMerge(args) {
         completed_surface_ids: merge.completed_surface_ids,
         partial_surface_ids: merge.partial_surface_ids,
         missing_surface_ids: merge.missing_surface_ids,
-        requeue_surface_ids: requeueSurfaceIds,
+        requeue_surface_ids: filteredRequeueSurfaceIds,
         new_dead_ends_count: merge.dead_ends.length,
         new_waf_blocked_count: merge.waf_blocked_endpoints.length,
         lead_surface_ids: merge.lead_surface_ids,
         blocked_harness_runs: merge.blocked_harness_runs,
         blocked_harness_runs_grouped: merge.blocked_harness_runs_grouped,
+        blocked_prereqs: merge.blocked_prereqs,
+        blocked_prereqs_grouped: merge.blocked_prereqs_grouped,
+        terminally_blocked_promoted: promotions,
         bypass_attempts: merge.bypass_attempts,
         bypass_attempts_grouped: merge.bypass_attempts_grouped,
         suspicion_flags: merge.suspicion_flags,
@@ -1280,6 +1531,8 @@ function mergeWaveHandoffs(args) {
     lead_surface_ids: merge.lead_surface_ids,
     blocked_harness_runs: merge.blocked_harness_runs,
     blocked_harness_runs_grouped: merge.blocked_harness_runs_grouped,
+    blocked_prereqs: merge.blocked_prereqs,
+    blocked_prereqs_grouped: merge.blocked_prereqs_grouped,
     bypass_attempts: merge.bypass_attempts,
     bypass_attempts_grouped: merge.bypass_attempts_grouped,
     suspicion_flags: merge.suspicion_flags,
@@ -1355,6 +1608,7 @@ function buildWaveHandoffsDocument(domain, waveNumbers) {
           summary: payload.summary,
           chain_notes: payload.chain_notes,
           blocked_harness_runs: payload.blocked_harness_runs,
+          blocked_prereqs: payload.blocked_prereqs,
           bypass_attempts: payload.bypass_attempts,
           dead_ends: payload.dead_ends,
           waf_blocked_endpoints: payload.waf_blocked_endpoints,

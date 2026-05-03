@@ -1998,6 +1998,8 @@ test("bounty_init_session creates the initial state and bounty_read_session_stat
       total_findings: 0,
       explored: [],
       terminally_blocked: [],
+      prereq_registry_snapshots: [],
+      blocked_prereq_history: [],
       dead_ends: [],
       waf_blocked_endpoints: [],
       lead_surface_ids: [],
@@ -2108,6 +2110,8 @@ test("legacy state normalization is applied while unknown fields remain on disk 
         total_findings: 0,
         explored: [],
         terminally_blocked: [],
+        prereq_registry_snapshots: [],
+        blocked_prereq_history: [],
         dead_ends: [],
         waf_blocked_endpoints: [],
         lead_surface_ids: [],
@@ -3168,6 +3172,23 @@ test("bounty_apply_wave_merge returns pending without mutating state when handof
   });
 });
 
+function setStatePendingWave(domain, waveNumber) {
+  const stateFilePath = statePath(domain);
+  const stateDoc = JSON.parse(fs.readFileSync(stateFilePath, "utf8"));
+  stateDoc.pending_wave = waveNumber;
+  fs.writeFileSync(stateFilePath, JSON.stringify(stateDoc, null, 2) + "\n");
+}
+
+function seedPrereqSnapshot(domain, wave, { auth_handles = [], egress_handles = [] } = {}) {
+  const stateFilePath = statePath(domain);
+  const stateDoc = JSON.parse(fs.readFileSync(stateFilePath, "utf8"));
+  stateDoc.prereq_registry_snapshots = [
+    ...((stateDoc.prereq_registry_snapshots || []).filter((s) => s.wave !== wave)),
+    { wave, auth_handles, egress_handles },
+  ].sort((a, b) => a.wave - b.wave);
+  fs.writeFileSync(stateFilePath, JSON.stringify(stateDoc, null, 2) + "\n");
+}
+
 function buildTerminallyBlockedEntry(surfaceId, kind, identifierHint, options = {}) {
   return {
     surface_id: surfaceId,
@@ -3451,6 +3472,9 @@ test("bounty_apply_wave_merge merges state, findings, requeues, and scope exclus
       lead_surface_ids: ["surface-a", "surface-c", "surface-d", "surface-x"],
       blocked_harness_runs: [],
       blocked_harness_runs_grouped: [],
+      blocked_prereqs: [],
+      blocked_prereqs_grouped: [],
+      terminally_blocked_promoted: [],
       bypass_attempts: [],
       bypass_attempts_grouped: [],
       suspicion_flags: [],
@@ -4004,6 +4028,199 @@ test("bounty_apply_wave_merge requires a force_merge_reason for forced reconcili
       }),
       /force_merge_reason is only allowed/,
     );
+  });
+});
+
+test("bounty_apply_wave_merge promotes recurring blocked_prereqs to state.terminally_blocked when registry is unchanged", () => {
+  withTempHome(() => {
+    const domain = "promote.example.com";
+    seedAttackSurfaces(domain, [
+      { id: "surface-auth", hosts: [`https://${domain}/auth`], priority: "HIGH" },
+    ]);
+    seedSessionState(domain, { phase: "HUNT", pending_wave: 1, hunt_wave: 0 });
+    seedPrereqSnapshot(domain, 1, { auth_handles: [], egress_handles: [] });
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-auth" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-auth",
+      surface_status: "partial",
+      summary: "auth profile not registered; cannot test org-scoped IDOR",
+      content: "# A1",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "attacker", reason: "no attacker profile registered" },
+      ],
+    });
+    JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 1, force_merge: false }));
+    let fullState = JSON.parse(readSessionState({ target_domain: domain })).state;
+    assert.equal(fullState.terminally_blocked.length, 0);
+    assert.equal(fullState.blocked_prereq_history.length, 1);
+
+    setStatePendingWave(domain, 2);
+    seedPrereqSnapshot(domain, 2, { auth_handles: [], egress_handles: [] });
+    seedAssignments(domain, 2, [{ agent: "a1", surface_id: "surface-auth" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w2",
+      agent: "a1",
+      surface_id: "surface-auth",
+      surface_status: "partial",
+      summary: "still no attacker profile registered after wave 1; same blocker",
+      content: "# A1 wave 2",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "attacker", reason: "no attacker profile registered" },
+      ],
+    });
+    const result = JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 2, force_merge: false }));
+    assert.equal(result.merge.terminally_blocked_promoted.length, 1);
+    assert.equal(result.merge.terminally_blocked_promoted[0].surface_id, "surface-auth");
+    assert.equal(result.merge.terminally_blocked_promoted[0].blockers[0].kind, "auth_missing");
+    assert.equal(result.merge.terminally_blocked_promoted[0].blockers[0].identifier_hint, "attacker");
+
+    fullState = JSON.parse(readSessionState({ target_domain: domain })).state;
+    assert.equal(fullState.terminally_blocked.length, 1);
+    assert.equal(fullState.terminally_blocked[0].surface_id, "surface-auth");
+    assert.equal(fullState.terminally_blocked[0].blocked_at_wave, 2);
+    assert.equal(fullState.blocked_prereq_history.length, 2);
+    assert.ok(!result.merge.requeue_surface_ids.includes("surface-auth"));
+  });
+});
+
+test("bounty_apply_wave_merge does NOT promote auth_missing when the named handle was added between waves", () => {
+  withTempHome(() => {
+    const domain = "registry-grew.example.com";
+    seedAttackSurfaces(domain, [
+      { id: "surface-auth", hosts: [`https://${domain}/auth`], priority: "HIGH" },
+    ]);
+    seedSessionState(domain, { phase: "HUNT", pending_wave: 1, hunt_wave: 0 });
+    seedPrereqSnapshot(domain, 1, { auth_handles: [], egress_handles: [] });
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-auth" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-auth",
+      surface_status: "partial",
+      summary: "auth profile not registered; cannot test org-scoped IDOR",
+      content: "# A1",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "attacker", reason: "no attacker profile registered" },
+      ],
+    });
+    JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 1, force_merge: false }));
+
+    setStatePendingWave(domain, 2);
+    // Operator added the SPECIFIC handle the blocker named ("attacker") between waves.
+    seedPrereqSnapshot(domain, 2, { auth_handles: ["attacker"], egress_handles: [] });
+    seedAssignments(domain, 2, [{ agent: "a1", surface_id: "surface-auth" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w2",
+      agent: "a1",
+      surface_id: "surface-auth",
+      surface_status: "partial",
+      summary: "marker repeated even though attacker profile was added between waves",
+      content: "# A1 wave 2",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "attacker", reason: "marker repeated" },
+      ],
+    });
+    const result = JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 2, force_merge: false }));
+    assert.equal(result.merge.terminally_blocked_promoted.length, 0);
+    const fullState = JSON.parse(readSessionState({ target_domain: domain })).state;
+    assert.equal(fullState.terminally_blocked.length, 0);
+  });
+});
+
+test("bounty_apply_wave_merge DOES promote auth_missing when an unrelated handle was added (closes count-based amnesty bug)", () => {
+  withTempHome(() => {
+    const domain = "unrelated-handle.example.com";
+    seedAttackSurfaces(domain, [
+      { id: "surface-auth", hosts: [`https://${domain}/auth`], priority: "HIGH" },
+    ]);
+    seedSessionState(domain, { phase: "HUNT", pending_wave: 1, hunt_wave: 0 });
+    seedPrereqSnapshot(domain, 1, { auth_handles: [], egress_handles: [] });
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-auth" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-auth",
+      surface_status: "partial",
+      summary: "needs attacker profile to test org-scoped IDOR",
+      content: "# A1",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "attacker", reason: "attacker profile required" },
+      ],
+    });
+    JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 1, force_merge: false }));
+
+    setStatePendingWave(domain, 2);
+    // Operator added "victim" — UNRELATED to the "attacker" blocker.
+    // The previous count-based delta would have given amnesty (count grew
+    // 0 -> 1) and silently skipped promotion. The handle-set check refuses.
+    seedPrereqSnapshot(domain, 2, { auth_handles: ["victim"], egress_handles: [] });
+    seedAssignments(domain, 2, [{ agent: "a1", surface_id: "surface-auth" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w2",
+      agent: "a1",
+      surface_id: "surface-auth",
+      surface_status: "partial",
+      summary: "attacker still missing in wave 2",
+      content: "# A1 wave 2",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "attacker", reason: "attacker still missing" },
+      ],
+    });
+    const result = JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 2, force_merge: false }));
+    assert.equal(result.merge.terminally_blocked_promoted.length, 1);
+    assert.equal(result.merge.terminally_blocked_promoted[0].blockers[0].identifier_hint, "attacker");
+  });
+});
+
+test("bounty_apply_wave_merge promotes funded_wallet_missing on 2-wave recurrence (no registry-delta path)", () => {
+  withTempHome(() => {
+    const domain = "wallet-blocked.example.com";
+    seedAttackSurfaces(domain, [
+      { id: "surface-siwe", hosts: [`https://${domain}/siwe`], priority: "HIGH" },
+    ]);
+    seedSessionState(domain, { phase: "HUNT", pending_wave: 1, hunt_wave: 0 });
+    seedPrereqSnapshot(domain, 1, { auth_handles: [], egress_handles: [] });
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-siwe" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-siwe",
+      surface_status: "partial",
+      summary: "SIWE flow reaches verified-address balance gate; no funded wallet",
+      content: "# A1",
+      blocked_prereqs: [
+        { kind: "funded_wallet_missing", identifier_hint: "sepolia.funded", reason: "balance gate requires funded wallet" },
+      ],
+    });
+    JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 1, force_merge: false }));
+
+    setStatePendingWave(domain, 2);
+    seedPrereqSnapshot(domain, 2, { auth_handles: [], egress_handles: [] });
+    seedAssignments(domain, 2, [{ agent: "a1", surface_id: "surface-siwe" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w2",
+      agent: "a1",
+      surface_id: "surface-siwe",
+      surface_status: "partial",
+      summary: "second wave still lacks the funded wallet so the gate cannot be probed",
+      content: "# A1 wave 2",
+      blocked_prereqs: [
+        { kind: "funded_wallet_missing", identifier_hint: "sepolia.funded", reason: "still no funded wallet" },
+      ],
+    });
+    const result = JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 2, force_merge: false }));
+    assert.equal(result.merge.terminally_blocked_promoted.length, 1);
+    assert.equal(result.merge.terminally_blocked_promoted[0].blockers[0].kind, "funded_wallet_missing");
   });
 });
 
@@ -5904,6 +6121,8 @@ test("bounty_merge_wave_handoffs merges valid handoffs and dedupes optional arra
       lead_surface_ids: ["surface-b", "surface-c", "surface-d"],
       blocked_harness_runs: [],
       blocked_harness_runs_grouped: [],
+      blocked_prereqs: [],
+      blocked_prereqs_grouped: [],
       bypass_attempts: [],
       bypass_attempts_grouped: [],
       suspicion_flags: [],
@@ -5945,6 +6164,8 @@ test("bounty_merge_wave_handoffs requeues missing and invalid assigned handoffs 
       lead_surface_ids: [],
       blocked_harness_runs: [],
       blocked_harness_runs_grouped: [],
+      blocked_prereqs: [],
+      blocked_prereqs_grouped: [],
       bypass_attempts: [],
       bypass_attempts_grouped: [],
       suspicion_flags: [],
@@ -5991,6 +6212,7 @@ test("bounty_read_wave_handoffs returns validated structured summaries and ignor
       summary: "A1 complete with an old dead end.",
       chain_notes: ["Old endpoint may chain into surface-b."],
       blocked_harness_runs: [],
+      blocked_prereqs: [],
       bypass_attempts: [],
       dead_ends: ["/old"],
       waf_blocked_endpoints: [],

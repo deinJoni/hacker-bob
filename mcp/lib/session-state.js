@@ -130,6 +130,8 @@ function buildInitialSessionState(domain, targetUrl, { deepMode = false } = {}) 
     total_findings: 0,
     explored: [],
     terminally_blocked: [],
+    prereq_registry_snapshots: [],
+    blocked_prereq_history: [],
     dead_ends: [],
     waf_blocked_endpoints: [],
     lead_surface_ids: [],
@@ -138,6 +140,61 @@ function buildInitialSessionState(domain, targetUrl, { deepMode = false } = {}) 
     auth_status: "pending",
     operator_note: null,
   };
+}
+
+// state.prereq_registry_snapshots stores per-wave registry HANDLE SETS so
+// the loop detector can reason about whether the specific material that
+// would unblock a surface (e.g., the "attacker" auth profile) was added
+// since the surface got stuck — not just whether ANY profile was added.
+// Counts collapsed unrelated additions into "growth" and gave irrelevant
+// blockers permanent amnesty. Snapshot captured at wave start (before
+// hunters dispatch), not merge time, so the comparison reflects "what
+// the hunter could have used".
+function normalizePrereqRegistrySnapshots(value, fieldName = "prereq_registry_snapshots") {
+  if (value == null) return [];
+  if (!Array.isArray(value)) {
+    throw new Error(`${fieldName} must be an array`);
+  }
+  return value.map((entry, index) => {
+    if (entry == null || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`${fieldName}[${index}] must be an object`);
+    }
+    return {
+      wave: assertInteger(entry.wave, `${fieldName}[${index}].wave`, { min: 1 }),
+      auth_handles: normalizeStringArray(entry.auth_handles, `${fieldName}[${index}].auth_handles`),
+      egress_handles: normalizeStringArray(entry.egress_handles, `${fieldName}[${index}].egress_handles`),
+    };
+  });
+}
+
+// state.blocked_prereq_history is the merge-validated record of blocker
+// tuples per wave per surface. Replaces raw handoff JSON reads in the
+// promotion path: handoffs go through schema/runtime validation at write
+// time, but reading them again at merge time bypasses that validation.
+// Storing the validated tuple means Cycle 4's clear semantics can prune
+// history per surface rather than rewriting handoff files.
+function normalizeBlockedPrereqHistory(value, fieldName = "blocked_prereq_history") {
+  if (value == null) return [];
+  if (!Array.isArray(value)) {
+    throw new Error(`${fieldName} must be an array`);
+  }
+  return value.map((entry, index) => {
+    if (entry == null || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`${fieldName}[${index}] must be an object`);
+    }
+    const result = {
+      wave: assertInteger(entry.wave, `${fieldName}[${index}].wave`, { min: 1 }),
+      surface_id: assertNonEmptyString(entry.surface_id, `${fieldName}[${index}].surface_id`),
+      kind: assertNonEmptyString(entry.kind, `${fieldName}[${index}].kind`),
+    };
+    if (entry.identifier_hint != null) {
+      result.identifier_hint = assertNonEmptyString(entry.identifier_hint, `${fieldName}[${index}].identifier_hint`);
+    }
+    if (entry.reason != null) {
+      result.reason = assertNonEmptyString(entry.reason, `${fieldName}[${index}].reason`);
+    }
+    return result;
+  });
 }
 
 function publicSessionState(state) {
@@ -193,6 +250,8 @@ function normalizeSessionStateDocument(document, requestedDomain) {
       : assertInteger(document.total_findings, "total_findings", { min: 0 }),
     explored: normalizeStringArray(document.explored, "explored"),
     terminally_blocked: normalizeTerminallyBlocked(document.terminally_blocked, "terminally_blocked"),
+    prereq_registry_snapshots: normalizePrereqRegistrySnapshots(document.prereq_registry_snapshots, "prereq_registry_snapshots"),
+    blocked_prereq_history: normalizeBlockedPrereqHistory(document.blocked_prereq_history, "blocked_prereq_history"),
     dead_ends: normalizeStringArray(document.dead_ends, "dead_ends"),
     waf_blocked_endpoints: normalizeStringArray(document.waf_blocked_endpoints, "waf_blocked_endpoints"),
     lead_surface_ids: normalizeStringArray(document.lead_surface_ids, "lead_surface_ids"),

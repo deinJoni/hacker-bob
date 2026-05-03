@@ -86,6 +86,8 @@ const SESSION_PUBLIC_STATE_FIELDS = [
   "total_findings",
   "explored",
   "terminally_blocked",
+  "prereq_registry_snapshots",
+  "blocked_prereq_history",
   "dead_ends",
   "waf_blocked_endpoints",
   "lead_surface_ids",
