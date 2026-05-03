@@ -190,12 +190,22 @@ function normalizePipelineEvent(targetDomain, type, fields = {}) {
   const blockCode = capString(fields.block_code, 120);
   const source = capString(fields.source, 120);
   const counts = normalizeCounts(fields.counts);
+  // surface_terminally_blocked / terminal_block_cleared carry structured
+  // prereq metadata. Kept short and bounded; identifier_hint is the
+  // schema-validated handle (lowercase + ._-, <= 64 chars), kind is an
+  // enum value. No free-text reasons — those go in state-side artifacts
+  // (state.terminal_block_clear_history) so the event stream stays
+  // free of secret-shaped strings.
+  const kind = capString(fields.kind, 64);
+  const identifierHint = capString(fields.identifier_hint, 64);
   if (agent) event.agent = agent;
   if (surfaceId) event.surface_id = surfaceId;
   if (status) event.status = status;
   if (blockCode) event.block_code = blockCode;
   if (counts) event.counts = counts;
   if (source) event.source = source;
+  if (kind) event.kind = kind;
+  if (identifierHint) event.identifier_hint = identifierHint;
   if (typeof fields.force_merge === "boolean") event.force_merge = fields.force_merge;
   const forceMergeReason = capString(fields.force_merge_reason, 1000);
   if (forceMergeReason) event.force_merge_reason = forceMergeReason;
@@ -313,8 +323,8 @@ function normalizePipelineEventForRead(record, expectedDomain) {
     target_domain: targetDomain,
     type,
   };
-  for (const field of ["phase", "from_phase", "to_phase", "agent", "surface_id", "status", "block_code", "source"]) {
-    const safe = capString(record[field], field === "surface_id" ? 200 : 120);
+  for (const field of ["phase", "from_phase", "to_phase", "agent", "surface_id", "status", "block_code", "source", "kind", "identifier_hint"]) {
+    const safe = capString(record[field], field === "surface_id" ? 200 : (field === "kind" || field === "identifier_hint" ? 64 : 120));
     if (safe) event[field] = safe;
   }
   const waveNumber = normalizeWaveNumber(record.wave_number);
@@ -745,24 +755,42 @@ function summarizeAttackSurfaceCoverage(targetDomain, state) {
       total_surfaces: 0,
       non_low_total: 0,
       non_low_explored: 0,
+      non_low_terminally_blocked: 0,
       coverage_pct: null,
+      closed_pct: null,
       unexplored_high: 0,
+      blocked_high: 0,
       mtime: read.mtime,
     };
   }
   const exploredSet = new Set(Array.isArray(state?.explored) ? state.explored : []);
+  const terminallyBlockedSet = new Set(
+    Array.isArray(state?.terminally_blocked)
+      ? state.terminally_blocked.map((entry) => entry && typeof entry.surface_id === "string" ? entry.surface_id : null).filter(Boolean)
+      : [],
+  );
   const surfaces = read.document.surfaces.filter((surface) => isPlainObject(surface) && typeof surface.id === "string");
   const nonLowSurfaces = surfaces.filter((surface) => (surface.priority || "HIGH").toUpperCase() !== "LOW");
   const highSurfaces = surfaces.filter((surface) => ["CRITICAL", "HIGH"].includes((surface.priority || "HIGH").toUpperCase()));
   const exploredNonLow = nonLowSurfaces.filter((surface) => exploredSet.has(surface.id)).length;
+  const blockedNonLow = nonLowSurfaces.filter((surface) => terminallyBlockedSet.has(surface.id)).length;
+  const closedNonLow = exploredNonLow + blockedNonLow;
   return {
     exists: true,
     error: null,
     total_surfaces: surfaces.length,
     non_low_total: nonLowSurfaces.length,
     non_low_explored: exploredNonLow,
+    non_low_terminally_blocked: blockedNonLow,
+    // coverage_pct keeps the explored-only meaning for back-compat with
+    // existing dashboards. closed_pct is the post-Cycle-2 measure that
+    // also counts terminally_blocked surfaces (classified blocked, not
+    // neglected). low_coverage analytics fires on closed_pct so blocked
+    // surfaces correctly count as "off the queue".
     coverage_pct: nonLowSurfaces.length ? Math.round((exploredNonLow / nonLowSurfaces.length) * 100) : 100,
-    unexplored_high: highSurfaces.filter((surface) => !exploredSet.has(surface.id)).length,
+    closed_pct: nonLowSurfaces.length ? Math.round((closedNonLow / nonLowSurfaces.length) * 100) : 100,
+    unexplored_high: highSurfaces.filter((surface) => !exploredSet.has(surface.id) && !terminallyBlockedSet.has(surface.id)).length,
+    blocked_high: highSurfaces.filter((surface) => terminallyBlockedSet.has(surface.id)).length,
     mtime: read.mtime,
   };
 }
@@ -1003,7 +1031,7 @@ function compactEvent(event) {
     target_domain: event.target_domain,
     type: event.type,
   };
-  for (const field of ["phase", "from_phase", "to_phase", "wave_number", "agent", "surface_id", "status", "block_code", "counts", "source", "force_merge", "force_merge_reason", "override", "override_reason"]) {
+  for (const field of ["phase", "from_phase", "to_phase", "wave_number", "agent", "surface_id", "status", "block_code", "counts", "source", "force_merge", "force_merge_reason", "override", "override_reason", "kind", "identifier_hint"]) {
     if (event[field] != null) compact[field] = event[field];
   }
   return compact;
@@ -1234,14 +1262,17 @@ function analyzeSession(targetDomain, { cutoffMs = null, limit = DEFAULT_LIMIT, 
   if (
     phaseAtLeast(artifacts.state.phase, "CHAIN") &&
     coverage.non_low_total > 0 &&
-    Number.isFinite(coverage.coverage_pct) &&
-    coverage.coverage_pct < 100
+    Number.isFinite(coverage.closed_pct) &&
+    coverage.closed_pct < 100
   ) {
-    issues.push(issue("low_coverage", "needs_attention", "Non-low attack surface coverage is below the wave policy target.", {
+    issues.push(issue("low_coverage", "needs_attention", "Non-low attack surface coverage is below the wave policy target — this counts BOTH explored AND terminally_blocked as closed; the gap is genuinely unexplored.", {
       coverage_pct: coverage.coverage_pct,
+      closed_pct: coverage.closed_pct,
       non_low_explored: coverage.non_low_explored,
+      non_low_terminally_blocked: coverage.non_low_terminally_blocked,
       non_low_total: coverage.non_low_total,
       unexplored_high: coverage.unexplored_high,
+      blocked_high: coverage.blocked_high,
     }));
   }
 

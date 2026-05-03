@@ -1311,6 +1311,22 @@ function applyWaveMerge(args) {
     };
 
     writeSessionStateDocument(domain, raw, nextState);
+    // Emit one surface_terminally_blocked event per (surface, blocker)
+    // pair so analytics can attribute promotions back to specific
+    // missing-prereq tuples without joining against state.
+    for (const promotion of promotions) {
+      for (const blocker of promotion.blockers) {
+        safeAppendPipelineEventDirect(domain, "surface_terminally_blocked", {
+          phase: state.phase,
+          wave_number: waveNumber,
+          status: "promoted",
+          source: "bounty_apply_wave_merge",
+          surface_id: promotion.surface_id,
+          kind: blocker.kind,
+          identifier_hint: blocker.identifier_hint || null,
+        });
+      }
+    }
     safeAppendPipelineEventDirect(domain, "wave_merged", {
       phase: state.phase,
       wave_number: waveNumber,

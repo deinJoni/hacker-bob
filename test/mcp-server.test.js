@@ -108,6 +108,7 @@ const {
   setOperatorNote,
   clearOperatorNote,
   clearTerminalBlock,
+  reportWritten,
   readCoverageRecordsFromJsonl,
   readHttpAudit,
   readHttpAuditRecordsFromJsonl,
@@ -210,6 +211,7 @@ const EXPECTED_TOOL_NAMES = [
   "bounty_set_operator_note",
   "bounty_clear_operator_note",
   "bounty_clear_terminal_block",
+  "bounty_report_written",
   "bounty_read_hunter_brief",
   "bounty_read_tool_telemetry",
   "bounty_read_pipeline_analytics",
@@ -707,6 +709,7 @@ test("mcp server public exports remain stable", () => {
     "renderGradeVerdictMarkdown",
     "renderVerificationRoundMarkdown",
     "reportMarkdownPath",
+    "reportWritten",
     "resolveAuthJsonPath",
     "resolveHunterKnowledge",
     "routeSurfaces",
@@ -4320,6 +4323,108 @@ test("bounty_clear_terminal_block requires a reason of at least 20 characters", 
       surface_id: "surface-a",
       reason: "too short",
     }), /reason is required and must be at least 20 characters/);
+  });
+});
+
+test("bounty_apply_wave_merge emits a surface_terminally_blocked event per (surface, blocker) pair on promotion", () => {
+  withTempHome(() => {
+    const domain = "promote-event.example.com";
+    seedAttackSurfaces(domain, [
+      { id: "surface-auth", hosts: [`https://${domain}/auth`], priority: "HIGH" },
+    ]);
+    seedSessionState(domain, { phase: "HUNT", pending_wave: 1, hunt_wave: 0 });
+    seedPrereqSnapshot(domain, 1, { auth_handles: [], egress_handles: [] });
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-auth" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-auth",
+      surface_status: "partial",
+      summary: "missing attacker profile",
+      content: "# A1",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "attacker", reason: "no profile" },
+      ],
+    });
+    JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 1, force_merge: false }));
+
+    setStatePendingWave(domain, 2);
+    seedPrereqSnapshot(domain, 2, { auth_handles: [], egress_handles: [] });
+    seedAssignments(domain, 2, [{ agent: "a1", surface_id: "surface-auth" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w2",
+      agent: "a1",
+      surface_id: "surface-auth",
+      surface_status: "partial",
+      summary: "still missing attacker profile",
+      content: "# A1 wave 2",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "attacker", reason: "still none" },
+      ],
+    });
+    JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 2, force_merge: false }));
+
+    const eventsResult = readPipelineEvents(domain);
+    const events = eventsResult.events.filter((e) => e.type === "surface_terminally_blocked");
+    assert.equal(events.length, 1);
+    assert.equal(events[0].surface_id, "surface-auth");
+    assert.equal(events[0].kind, "auth_missing");
+    assert.equal(events[0].identifier_hint, "attacker");
+    assert.equal(events[0].wave_number, 2);
+  });
+});
+
+test("bounty_report_written emits report_written when report.md is present", () => {
+  withTempHome(() => {
+    const domain = "report-event.example.com";
+    const dir = sessionDir(domain);
+    fs.mkdirSync(dir, { recursive: true });
+    seedSessionState(domain, { phase: "REPORT", hunt_wave: 1 });
+    fs.writeFileSync(path.join(dir, "report.md"), "# Report\n\nNo findings.\n");
+
+    const result = JSON.parse(reportWritten({ target_domain: domain }));
+    assert.equal(result.report_written, true);
+    assert.ok(result.size_bytes > 0);
+
+    const eventsResult = readPipelineEvents(domain);
+    const events = eventsResult.events.filter((e) => e.type === "report_written");
+    assert.equal(events.length, 1);
+    assert.ok(events[0].counts.report_size_bytes > 0);
+  });
+});
+
+test("bounty_report_written rejects when report.md is absent", () => {
+  withTempHome(() => {
+    const domain = "no-report.example.com";
+    seedSessionState(domain, { phase: "REPORT", hunt_wave: 1 });
+    assert.throws(() => reportWritten({ target_domain: domain }), /report\.md is not present/);
+  });
+});
+
+test("low_coverage analytics fires on closed_pct (not coverage_pct) so terminally_blocked surfaces count as closed", () => {
+  withTempHome(() => {
+    const domain = "low-cov.example.com";
+    seedAttackSurfaces(domain, [
+      { id: "surface-a", hosts: [`https://${domain}/a`], priority: "HIGH" },
+      { id: "surface-b", hosts: [`https://${domain}/b`], priority: "HIGH" },
+    ]);
+    seedSessionState(domain, {
+      phase: "CHAIN",
+      hunt_wave: 1,
+      explored: ["surface-a"],
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-b", "auth_missing", "attacker", { reason: "no profile", blocked_at_wave: 1 }),
+      ],
+    });
+
+    const analytics = JSON.parse(readPipelineAnalytics({ target_domain: domain }));
+    const lowCoverage = analytics.bottlenecks.find((b) => b.code === "low_coverage");
+    // 1 explored + 1 terminally_blocked out of 2 non-low surfaces = 100% closed.
+    // Old (count-based) coverage_pct would be 50% (only explored). New
+    // closed_pct is 100%, so low_coverage does NOT fire.
+    assert.equal(lowCoverage, undefined, "low_coverage should not fire when all non-low surfaces are explored or terminally_blocked");
   });
 });
 

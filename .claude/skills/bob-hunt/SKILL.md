@@ -30,6 +30,7 @@ allowed-tools:
   - mcp__bountyagent__bounty_set_operator_note
   - mcp__bountyagent__bounty_clear_operator_note
   - mcp__bountyagent__bounty_clear_terminal_block
+  - mcp__bountyagent__bounty_report_written
   - mcp__bountyagent__bounty_read_tool_telemetry
   - mcp__bountyagent__bounty_read_pipeline_analytics
   - mcp__bountyagent__bounty_record_surface_leads

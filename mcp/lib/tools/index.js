@@ -44,6 +44,7 @@ const TOOL_MODULES = Object.freeze([
   require("./set-operator-note.js"),
   require("./clear-operator-note.js"),
   require("./clear-terminal-block.js"),
+  require("./report-written.js"),
   require("./read-hunter-brief.js"),
   require("./read-tool-telemetry.js"),
   require("./read-pipeline-analytics.js"),
