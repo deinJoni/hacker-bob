@@ -115,6 +115,8 @@ const {
   routeSurfaces,
   setOperatorNote,
   clearOperatorNote,
+  clearTerminalBlock,
+  reportWritten,
   readCoverageRecordsFromJsonl,
   readHttpAudit,
   readHttpAuditRecordsFromJsonl,
@@ -224,6 +226,8 @@ const EXPECTED_TOOL_NAMES = [
   "bounty_read_session_summary",
   "bounty_set_operator_note",
   "bounty_clear_operator_note",
+  "bounty_clear_terminal_block",
+  "bounty_report_written",
   "bounty_read_hunter_brief",
   "bounty_get_context_budget",
   "bounty_select_technique_packs",
@@ -778,6 +782,7 @@ test("mcp server public exports remain stable", () => {
     "buildHeaderProfile",
     "chainAttemptsJsonlPath",
     "clearOperatorNote",
+    "clearTerminalBlock",
     "compactSessionState",
     "computeCoverageRequeueSurfaceIds",
     "coverageJsonlPath",
@@ -847,6 +852,7 @@ test("mcp server public exports remain stable", () => {
     "renderGradeVerdictMarkdown",
     "renderVerificationRoundMarkdown",
     "reportMarkdownPath",
+    "reportWritten",
     "resolveAuthJsonPath",
     "resolveHunterKnowledge",
     "routeSurfaces",
@@ -1023,7 +1029,7 @@ test("MCP per-tool modules preserve representative tool behavior", () => {
   assert.deepEqual(TOOL_MANIFEST.bounty_log_technique_attempt.session_artifacts_written, ["technique-attempts.jsonl"]);
   assert.equal(TOOL_MANIFEST.bounty_read_session_summary.mutating, false);
   assert.equal(TOOL_MANIFEST.bounty_read_session_summary.global_preapproval, true);
-  assert.deepEqual(TOOL_MANIFEST.bounty_read_session_summary.role_bundles, ["orchestrator"]);
+  assert.deepEqual(TOOL_MANIFEST.bounty_read_session_summary.role_bundles, ["orchestrator", "reporter"]);
   assert.equal(TOOL_MANIFEST.bounty_set_operator_note.mutating, true);
   assert.equal(TOOL_MANIFEST.bounty_set_operator_note.global_preapproval, false);
   assert.deepEqual(TOOL_MANIFEST.bounty_set_operator_note.role_bundles, ["orchestrator"]);
@@ -2263,6 +2269,10 @@ test("bounty_init_session creates the initial state and bounty_read_session_stat
       pending_wave: null,
       total_findings: 0,
       explored: [],
+      terminally_blocked: [],
+      prereq_registry_snapshots: [],
+      blocked_prereq_history: [],
+      terminal_block_clear_history: [],
       dead_ends: [],
       waf_blocked_endpoints: [],
       lead_surface_ids: [],
@@ -2372,6 +2382,10 @@ test("legacy state normalization is applied while unknown fields remain on disk 
         pending_wave: null,
         total_findings: 0,
         explored: [],
+        terminally_blocked: [],
+        prereq_registry_snapshots: [],
+        blocked_prereq_history: [],
+        terminal_block_clear_history: [],
         dead_ends: [],
         waf_blocked_endpoints: [],
         lead_surface_ids: [],
@@ -2498,6 +2512,35 @@ test("bounty_read_session_summary derives compact status without raw proof evide
     assert.doesNotMatch(JSON.stringify(result), new RegExp(rawEvidence));
     assert.doesNotMatch(JSON.stringify(result), new RegExp(fullReport));
     assert.doesNotMatch(JSON.stringify(result), /representative_samples/);
+  });
+});
+
+test("bounty_read_session_summary aggregates blocked_prereqs by (kind, identifier_hint)", () => {
+  withTempHome(() => {
+    const domain = "summary-blocked.example.com";
+    seedSessionState(domain, {
+      phase: "REPORT",
+      hunt_wave: 3,
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-a", "auth_missing", "attacker", { reason: "no attacker profile registered" }),
+        buildTerminallyBlockedEntry("surface-b", "auth_missing", "attacker", { reason: "blocked second surface" }),
+        buildTerminallyBlockedEntry("surface-c", "egress_unreachable", null, { reason: "default egress unreachable" }),
+      ],
+    });
+    const summary = JSON.parse(readSessionSummary({ target_domain: domain })).summary;
+    assert.equal(summary.blocked_prereqs.total_blocked_surfaces, 3);
+    // by_kind ordered by actionability: auth_missing (rank 0) before egress_unreachable (rank 1).
+    assert.equal(summary.blocked_prereqs.by_kind[0].kind, "auth_missing");
+    assert.equal(summary.blocked_prereqs.by_kind[1].kind, "egress_unreachable");
+    const authGroup = summary.blocked_prereqs.by_kind.find((g) => g.kind === "auth_missing" && g.identifier_hint === "attacker");
+    assert.ok(authGroup, "expected auth_missing/attacker group");
+    assert.equal(authGroup.surface_count, 2);
+    assert.deepEqual(authGroup.surface_ids.sort(), ["surface-a", "surface-b"]);
+    assert.match(authGroup.latest_reason || "", /blocked second surface|no attacker profile/);
+    const egressGroup = summary.blocked_prereqs.by_kind.find((g) => g.kind === "egress_unreachable");
+    assert.ok(egressGroup, "expected egress_unreachable group");
+    assert.equal(egressGroup.identifier_hint, null);
+    assert.equal(egressGroup.surface_count, 1);
   });
 });
 
@@ -3249,6 +3292,7 @@ test("bounty_start_wave validates inputs, writes assignments, and updates pendin
       pending_wave: 2,
       total_findings: 0,
       explored_count: 0,
+      terminally_blocked_count: 0,
       dead_ends_count: 0,
       waf_blocked_count: 0,
       lead_surface_ids: [],
@@ -3445,6 +3489,171 @@ test("bounty_apply_wave_merge returns pending without mutating state when handof
   });
 });
 
+function setStatePendingWave(domain, waveNumber) {
+  const stateFilePath = statePath(domain);
+  const stateDoc = JSON.parse(fs.readFileSync(stateFilePath, "utf8"));
+  stateDoc.pending_wave = waveNumber;
+  fs.writeFileSync(stateFilePath, JSON.stringify(stateDoc, null, 2) + "\n");
+}
+
+function seedPrereqSnapshot(domain, wave, { auth_handles = [], egress_handles = [] } = {}) {
+  const stateFilePath = statePath(domain);
+  const stateDoc = JSON.parse(fs.readFileSync(stateFilePath, "utf8"));
+  stateDoc.prereq_registry_snapshots = [
+    ...((stateDoc.prereq_registry_snapshots || []).filter((s) => s.wave !== wave)),
+    { wave, auth_handles, egress_handles },
+  ].sort((a, b) => a.wave - b.wave);
+  fs.writeFileSync(stateFilePath, JSON.stringify(stateDoc, null, 2) + "\n");
+}
+
+function buildTerminallyBlockedEntry(surfaceId, kind, identifierHint, options = {}) {
+  return {
+    surface_id: surfaceId,
+    blocked_at_wave: options.blocked_at_wave || 2,
+    blockers: [
+      {
+        kind,
+        ...(identifierHint != null ? { identifier_hint: identifierHint } : {}),
+        ...(options.reason ? { reason: options.reason } : {}),
+      },
+    ],
+  };
+}
+
+test("compactSessionState exposes terminally_blocked_count and round-trips state.terminally_blocked", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 1,
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-a", "auth_missing", "attacker", { reason: "no attacker profile registered" }),
+        buildTerminallyBlockedEntry("surface-b", "egress_unreachable", null, { reason: "default egress unreachable" }),
+      ],
+    });
+    const summary = JSON.parse(readStateSummary({ target_domain: domain }));
+    assert.equal(summary.state.terminally_blocked_count, 2);
+    const fullState = JSON.parse(fs.readFileSync(statePath(domain), "utf8"));
+    assert.equal(fullState.terminally_blocked.length, 2);
+    assert.equal(fullState.terminally_blocked[0].surface_id, "surface-a");
+    assert.equal(fullState.terminally_blocked[0].blockers[0].kind, "auth_missing");
+    assert.equal(fullState.terminally_blocked[0].blockers[0].identifier_hint, "attacker");
+    assert.equal(fullState.terminally_blocked[1].blockers[0].identifier_hint, undefined);
+  });
+});
+
+test("compactSessionState reports terminally_blocked_count: 0 when state pre-dates the field (migration safety)", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedSessionState(domain, { phase: "HUNT", hunt_wave: 1 });
+    const stateFilePath = statePath(domain);
+    const stateDoc = JSON.parse(fs.readFileSync(stateFilePath, "utf8"));
+    delete stateDoc.terminally_blocked;
+    fs.writeFileSync(stateFilePath, JSON.stringify(stateDoc, null, 2) + "\n");
+    const summary = JSON.parse(readStateSummary({ target_domain: domain }));
+    assert.equal(summary.state.terminally_blocked_count, 0);
+  });
+});
+
+test("normalizeSessionStateDocument rejects state with explored / terminally_blocked overlap", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 1,
+      explored: ["surface-a"],
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-a", "auth_missing", "attacker"),
+      ],
+    });
+    assert.throws(() => readStateSummary({ target_domain: domain }), /must be disjoint/);
+  });
+});
+
+test("normalizeSessionStateDocument rejects duplicate surface_id in terminally_blocked", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 1,
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-a", "auth_missing", "attacker"),
+        buildTerminallyBlockedEntry("surface-a", "egress_unreachable", null),
+      ],
+    });
+    assert.throws(() => readStateSummary({ target_domain: domain }), /duplicate surface_id surface-a/);
+  });
+});
+
+test("computeOpenRequeueSurfaceIds excludes terminally_blocked surfaces (options-bag signature)", () => {
+  const { computeOpenRequeueSurfaceIds } = require("../mcp/lib/phase-gates.js");
+  const records = [
+    { surface_id: "surface-a", endpoint: "GET /a", status: "requeue", logged_at: "2026-05-02T00:00:00Z", wave: "w1", agent: "a1" },
+    { surface_id: "surface-b", endpoint: "GET /b", status: "requeue", logged_at: "2026-05-02T00:00:00Z", wave: "w1", agent: "a1" },
+    { surface_id: "surface-c", endpoint: "GET /c", status: "needs_auth", logged_at: "2026-05-02T00:00:00Z", wave: "w1", agent: "a1" },
+  ];
+  const result = computeOpenRequeueSurfaceIds(records, {
+    exploredSurfaceIds: ["surface-a"],
+    terminallyBlockedSurfaceIds: ["surface-c"],
+  });
+  assert.deepEqual(result, ["surface-b"]);
+});
+
+test("HUNT -> CHAIN gate exposes blocked_high_surface_ids and blocks transition on it", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedAttackSurfaces(domain, [
+      { id: "surface-a", hosts: [`https://${domain}`], priority: "HIGH" },
+      { id: "surface-b", hosts: [`https://${domain}`], priority: "HIGH" },
+      { id: "surface-c", hosts: [`https://${domain}`], priority: "HIGH" },
+    ]);
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 1,
+      explored: ["surface-a"],
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-b", "auth_missing", "attacker", { reason: "no profile" }),
+      ],
+    });
+    const { computeHuntToChainGate } = require("../mcp/lib/phase-gates.js");
+    const fullState = JSON.parse(fs.readFileSync(statePath(domain), "utf8"));
+    const gate = computeHuntToChainGate(domain, fullState);
+    assert.equal(gate.coverage.non_low_explored, 1);
+    assert.equal(gate.coverage.non_low_terminally_blocked, 1);
+    assert.equal(gate.coverage.non_low_closed, 2);
+    assert.deepEqual(gate.coverage.unexplored_high_surface_ids, ["surface-c"]);
+    assert.deepEqual(gate.coverage.blocked_high_surface_ids, ["surface-b"]);
+    assert.equal(gate.coverage.coverage_pct, 33);
+    assert.equal(gate.coverage.closed_pct, 67);
+    // Both unexplored and blocked HIGH surfaces produce distinct blockers.
+    const codes = gate.transition_blockers.map((b) => b.code);
+    assert.ok(codes.includes("unexplored_high_surfaces"), "expected unexplored_high_surfaces blocker");
+    assert.ok(codes.includes("blocked_high_surfaces"), "expected blocked_high_surfaces blocker");
+  });
+});
+
+test("bounty_start_wave rejects assignment of terminally_blocked surfaces", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedAttackSurface(domain, ["surface-a", "surface-b"]);
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 1,
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-a", "auth_missing", "attacker", { reason: "missing" }),
+      ],
+    });
+    assert.throws(() => startWave({
+      target_domain: domain,
+      wave_number: 2,
+      assignments: [
+        { agent: "a1", surface_id: "surface-a" },
+        { agent: "a2", surface_id: "surface-b" },
+      ],
+    }), /Cannot assign terminally-blocked surfaces.*surface-a/);
+  });
+});
+
 test("bounty_apply_wave_merge adds surface_status: complete surfaces to state.explored even when coverage rows are unfinished", () => {
   // The structured handoff is the contract. Coverage rows are advisory
   // history. A hunter that wrote `surface_status: complete` AND has stale
@@ -3580,6 +3789,9 @@ test("bounty_apply_wave_merge merges state, findings, requeues, and scope exclus
       lead_surface_ids: ["surface-a", "surface-c", "surface-d", "surface-x"],
       blocked_harness_runs: [],
       blocked_harness_runs_grouped: [],
+      blocked_prereqs: [],
+      blocked_prereqs_grouped: [],
+      terminally_blocked_promoted: [],
       bypass_attempts: [],
       bypass_attempts_grouped: [],
       suspicion_flags: [],
@@ -4136,6 +4348,465 @@ test("bounty_apply_wave_merge requires a force_merge_reason for forced reconcili
   });
 });
 
+test("bounty_apply_wave_merge promotes recurring blocked_prereqs to state.terminally_blocked when registry is unchanged", () => {
+  withTempHome(() => {
+    const domain = "promote.example.com";
+    seedAttackSurfaces(domain, [
+      { id: "surface-auth", hosts: [`https://${domain}/auth`], priority: "HIGH" },
+    ]);
+    seedSessionState(domain, { phase: "HUNT", pending_wave: 1, hunt_wave: 0 });
+    seedPrereqSnapshot(domain, 1, { auth_handles: [], egress_handles: [] });
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-auth" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-auth",
+      surface_status: "partial",
+      summary: "auth profile not registered; cannot test org-scoped IDOR",
+      content: "# A1",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "attacker", reason: "no attacker profile registered" },
+      ],
+    });
+    JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 1, force_merge: false }));
+    let fullState = JSON.parse(readSessionState({ target_domain: domain })).state;
+    assert.equal(fullState.terminally_blocked.length, 0);
+    assert.equal(fullState.blocked_prereq_history.length, 1);
+
+    setStatePendingWave(domain, 2);
+    seedPrereqSnapshot(domain, 2, { auth_handles: [], egress_handles: [] });
+    seedAssignments(domain, 2, [{ agent: "a1", surface_id: "surface-auth" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w2",
+      agent: "a1",
+      surface_id: "surface-auth",
+      surface_status: "partial",
+      summary: "still no attacker profile registered after wave 1; same blocker",
+      content: "# A1 wave 2",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "attacker", reason: "no attacker profile registered" },
+      ],
+    });
+    const result = JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 2, force_merge: false }));
+    assert.equal(result.merge.terminally_blocked_promoted.length, 1);
+    assert.equal(result.merge.terminally_blocked_promoted[0].surface_id, "surface-auth");
+    assert.equal(result.merge.terminally_blocked_promoted[0].blockers[0].kind, "auth_missing");
+    assert.equal(result.merge.terminally_blocked_promoted[0].blockers[0].identifier_hint, "attacker");
+
+    fullState = JSON.parse(readSessionState({ target_domain: domain })).state;
+    assert.equal(fullState.terminally_blocked.length, 1);
+    assert.equal(fullState.terminally_blocked[0].surface_id, "surface-auth");
+    assert.equal(fullState.terminally_blocked[0].blocked_at_wave, 2);
+    assert.equal(fullState.blocked_prereq_history.length, 2);
+    assert.ok(!result.merge.requeue_surface_ids.includes("surface-auth"));
+  });
+});
+
+test("bounty_apply_wave_merge does NOT promote auth_missing when the named handle was added between waves", () => {
+  withTempHome(() => {
+    const domain = "registry-grew.example.com";
+    seedAttackSurfaces(domain, [
+      { id: "surface-auth", hosts: [`https://${domain}/auth`], priority: "HIGH" },
+    ]);
+    seedSessionState(domain, { phase: "HUNT", pending_wave: 1, hunt_wave: 0 });
+    seedPrereqSnapshot(domain, 1, { auth_handles: [], egress_handles: [] });
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-auth" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-auth",
+      surface_status: "partial",
+      summary: "auth profile not registered; cannot test org-scoped IDOR",
+      content: "# A1",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "attacker", reason: "no attacker profile registered" },
+      ],
+    });
+    JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 1, force_merge: false }));
+
+    setStatePendingWave(domain, 2);
+    // Operator added the SPECIFIC handle the blocker named ("attacker") between waves.
+    seedPrereqSnapshot(domain, 2, { auth_handles: ["attacker"], egress_handles: [] });
+    seedAssignments(domain, 2, [{ agent: "a1", surface_id: "surface-auth" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w2",
+      agent: "a1",
+      surface_id: "surface-auth",
+      surface_status: "partial",
+      summary: "marker repeated even though attacker profile was added between waves",
+      content: "# A1 wave 2",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "attacker", reason: "marker repeated" },
+      ],
+    });
+    const result = JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 2, force_merge: false }));
+    assert.equal(result.merge.terminally_blocked_promoted.length, 0);
+    const fullState = JSON.parse(readSessionState({ target_domain: domain })).state;
+    assert.equal(fullState.terminally_blocked.length, 0);
+  });
+});
+
+test("bounty_apply_wave_merge DOES promote auth_missing when an unrelated handle was added (closes count-based amnesty bug)", () => {
+  withTempHome(() => {
+    const domain = "unrelated-handle.example.com";
+    seedAttackSurfaces(domain, [
+      { id: "surface-auth", hosts: [`https://${domain}/auth`], priority: "HIGH" },
+    ]);
+    seedSessionState(domain, { phase: "HUNT", pending_wave: 1, hunt_wave: 0 });
+    seedPrereqSnapshot(domain, 1, { auth_handles: [], egress_handles: [] });
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-auth" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-auth",
+      surface_status: "partial",
+      summary: "needs attacker profile to test org-scoped IDOR",
+      content: "# A1",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "attacker", reason: "attacker profile required" },
+      ],
+    });
+    JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 1, force_merge: false }));
+
+    setStatePendingWave(domain, 2);
+    // Operator added "victim" — UNRELATED to the "attacker" blocker.
+    // The previous count-based delta would have given amnesty (count grew
+    // 0 -> 1) and silently skipped promotion. The handle-set check refuses.
+    seedPrereqSnapshot(domain, 2, { auth_handles: ["victim"], egress_handles: [] });
+    seedAssignments(domain, 2, [{ agent: "a1", surface_id: "surface-auth" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w2",
+      agent: "a1",
+      surface_id: "surface-auth",
+      surface_status: "partial",
+      summary: "attacker still missing in wave 2",
+      content: "# A1 wave 2",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "attacker", reason: "attacker still missing" },
+      ],
+    });
+    const result = JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 2, force_merge: false }));
+    assert.equal(result.merge.terminally_blocked_promoted.length, 1);
+    assert.equal(result.merge.terminally_blocked_promoted[0].blockers[0].identifier_hint, "attacker");
+  });
+});
+
+test("bounty_apply_wave_merge promotes funded_wallet_missing on 2-wave recurrence (no registry-delta path)", () => {
+  withTempHome(() => {
+    const domain = "wallet-blocked.example.com";
+    seedAttackSurfaces(domain, [
+      { id: "surface-siwe", hosts: [`https://${domain}/siwe`], priority: "HIGH" },
+    ]);
+    seedSessionState(domain, { phase: "HUNT", pending_wave: 1, hunt_wave: 0 });
+    seedPrereqSnapshot(domain, 1, { auth_handles: [], egress_handles: [] });
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-siwe" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-siwe",
+      surface_status: "partial",
+      summary: "SIWE flow reaches verified-address balance gate; no funded wallet",
+      content: "# A1",
+      blocked_prereqs: [
+        { kind: "funded_wallet_missing", identifier_hint: "sepolia.funded", reason: "balance gate requires funded wallet" },
+      ],
+    });
+    JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 1, force_merge: false }));
+
+    setStatePendingWave(domain, 2);
+    seedPrereqSnapshot(domain, 2, { auth_handles: [], egress_handles: [] });
+    seedAssignments(domain, 2, [{ agent: "a1", surface_id: "surface-siwe" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w2",
+      agent: "a1",
+      surface_id: "surface-siwe",
+      surface_status: "partial",
+      summary: "second wave still lacks the funded wallet so the gate cannot be probed",
+      content: "# A1 wave 2",
+      blocked_prereqs: [
+        { kind: "funded_wallet_missing", identifier_hint: "sepolia.funded", reason: "still no funded wallet" },
+      ],
+    });
+    const result = JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 2, force_merge: false }));
+    assert.equal(result.merge.terminally_blocked_promoted.length, 1);
+    assert.equal(result.merge.terminally_blocked_promoted[0].blockers[0].kind, "funded_wallet_missing");
+  });
+});
+
+test("bounty_clear_terminal_block removes a surface from terminally_blocked and records the clear in state", () => {
+  withTempHome(() => {
+    const domain = "clear-block.example.com";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 2,
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-auth", "auth_missing", "attacker", { reason: "no profile registered", blocked_at_wave: 2 }),
+      ],
+      blocked_prereq_history: [
+        { wave: 1, surface_id: "surface-auth", kind: "auth_missing", identifier_hint: "attacker", reason: "no profile" },
+        { wave: 2, surface_id: "surface-auth", kind: "auth_missing", identifier_hint: "attacker", reason: "still no profile" },
+        { wave: 1, surface_id: "surface-other", kind: "egress_unreachable", identifier_hint: "us-west", reason: "default egress unreachable" },
+      ],
+    });
+
+    const result = JSON.parse(clearTerminalBlock({
+      target_domain: domain,
+      surface_id: "surface-auth",
+      reason: "operator added attacker auth profile via auth_store",
+    }));
+    assert.equal(result.cleared, true);
+    assert.equal(result.surface_id, "surface-auth");
+    assert.equal(result.cleared_at_wave, 2);
+    assert.equal(result.previously_blocked_at_wave, 2);
+    assert.equal(result.previous_blockers[0].kind, "auth_missing");
+    assert.equal(result.state.terminally_blocked_count, 0);
+
+    const fullState = JSON.parse(readSessionState({ target_domain: domain })).state;
+    assert.equal(fullState.terminally_blocked.length, 0);
+    // History is RETAINED for debugging; loop detector uses clear epoch.
+    assert.equal(fullState.blocked_prereq_history.length, 3);
+    // Clear is recorded durably in state, not just in pipeline event.
+    assert.equal(fullState.terminal_block_clear_history.length, 1);
+    assert.equal(fullState.terminal_block_clear_history[0].surface_id, "surface-auth");
+    assert.equal(fullState.terminal_block_clear_history[0].cleared_at_wave, 2);
+    assert.match(fullState.terminal_block_clear_history[0].reason, /attacker auth profile/);
+    assert.equal(fullState.terminal_block_clear_history[0].previous_blockers[0].kind, "auth_missing");
+  });
+});
+
+test("bounty_clear_terminal_block rejects clearing while a wave is pending", () => {
+  withTempHome(() => {
+    const domain = "pending-clear.example.com";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 1,
+      pending_wave: 2,
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-a", "auth_missing", "attacker", { reason: "no profile" }),
+      ],
+    });
+    assert.throws(() => clearTerminalBlock({
+      target_domain: domain,
+      surface_id: "surface-a",
+      reason: "operator wants to clear during a pending wave",
+    }), /Cannot clear a terminal block while wave 2 is pending/);
+  });
+});
+
+test("bounty_clear_terminal_block rejects clearing a surface that was never terminally blocked", () => {
+  withTempHome(() => {
+    const domain = "never-blocked.example.com";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 1,
+      terminally_blocked: [],
+    });
+    assert.throws(() => clearTerminalBlock({
+      target_domain: domain,
+      surface_id: "surface-z",
+      reason: "operator wants to clear a non-blocked surface",
+    }), /not in state\.terminally_blocked/);
+  });
+});
+
+test("bounty_clear_terminal_block rejects a reason that contains credentials", () => {
+  withTempHome(() => {
+    const domain = "secret-reason.example.com";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 1,
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-a", "auth_missing", "attacker", { reason: "no profile" }),
+      ],
+    });
+    assert.throws(() => clearTerminalBlock({
+      target_domain: domain,
+      surface_id: "surface-a",
+      reason: "Authorization: Bearer eyJabcdefghij.eyJklmnopqr.sigabcdefghij was added",
+    }), /appears to contain secrets/);
+  });
+});
+
+test("bounty_clear_terminal_block requires a reason of at least 20 characters", () => {
+  withTempHome(() => {
+    const domain = "short-reason.example.com";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 1,
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-a", "auth_missing", "attacker", { reason: "no profile" }),
+      ],
+    });
+    assert.throws(() => clearTerminalBlock({
+      target_domain: domain,
+      surface_id: "surface-a",
+      reason: "too short",
+    }), /reason is required and must be at least 20 characters/);
+  });
+});
+
+test("bounty_apply_wave_merge emits a surface_terminally_blocked event per (surface, blocker) pair on promotion", () => {
+  withTempHome(() => {
+    const domain = "promote-event.example.com";
+    seedAttackSurfaces(domain, [
+      { id: "surface-auth", hosts: [`https://${domain}/auth`], priority: "HIGH" },
+    ]);
+    seedSessionState(domain, { phase: "HUNT", pending_wave: 1, hunt_wave: 0 });
+    seedPrereqSnapshot(domain, 1, { auth_handles: [], egress_handles: [] });
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-auth" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-auth",
+      surface_status: "partial",
+      summary: "missing attacker profile",
+      content: "# A1",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "attacker", reason: "no profile" },
+      ],
+    });
+    JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 1, force_merge: false }));
+
+    setStatePendingWave(domain, 2);
+    seedPrereqSnapshot(domain, 2, { auth_handles: [], egress_handles: [] });
+    seedAssignments(domain, 2, [{ agent: "a1", surface_id: "surface-auth" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w2",
+      agent: "a1",
+      surface_id: "surface-auth",
+      surface_status: "partial",
+      summary: "still missing attacker profile",
+      content: "# A1 wave 2",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "attacker", reason: "still none" },
+      ],
+    });
+    JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 2, force_merge: false }));
+
+    const eventsResult = readPipelineEvents(domain);
+    const events = eventsResult.events.filter((e) => e.type === "surface_terminally_blocked");
+    assert.equal(events.length, 1);
+    assert.equal(events[0].surface_id, "surface-auth");
+    assert.equal(events[0].kind, "auth_missing");
+    assert.equal(events[0].identifier_hint, "attacker");
+    assert.equal(events[0].wave_number, 2);
+  });
+});
+
+test("bounty_report_written emits report_written when report.md is present", () => {
+  withTempHome(() => {
+    const domain = "report-event.example.com";
+    const dir = sessionDir(domain);
+    fs.mkdirSync(dir, { recursive: true });
+    seedSessionState(domain, { phase: "REPORT", hunt_wave: 1 });
+    fs.writeFileSync(path.join(dir, "report.md"), "# Report\n\nNo findings.\n");
+
+    const result = JSON.parse(reportWritten({ target_domain: domain }));
+    assert.equal(result.report_written, true);
+    assert.ok(result.size_bytes > 0);
+
+    const eventsResult = readPipelineEvents(domain);
+    const events = eventsResult.events.filter((e) => e.type === "report_written");
+    assert.equal(events.length, 1);
+    assert.ok(events[0].counts.report_size_bytes > 0);
+  });
+});
+
+test("bounty_report_written rejects when report.md is absent", () => {
+  withTempHome(() => {
+    const domain = "no-report.example.com";
+    seedSessionState(domain, { phase: "REPORT", hunt_wave: 1 });
+    assert.throws(() => reportWritten({ target_domain: domain }), /report\.md is not present/);
+  });
+});
+
+test("low_coverage analytics fires on closed_pct (not coverage_pct) so terminally_blocked surfaces count as closed", () => {
+  withTempHome(() => {
+    const domain = "low-cov.example.com";
+    seedAttackSurfaces(domain, [
+      { id: "surface-a", hosts: [`https://${domain}/a`], priority: "HIGH" },
+      { id: "surface-b", hosts: [`https://${domain}/b`], priority: "HIGH" },
+    ]);
+    seedSessionState(domain, {
+      phase: "CHAIN",
+      hunt_wave: 1,
+      explored: ["surface-a"],
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-b", "auth_missing", "attacker", { reason: "no profile", blocked_at_wave: 1 }),
+      ],
+    });
+
+    const analytics = JSON.parse(readPipelineAnalytics({ target_domain: domain }));
+    const lowCoverage = analytics.bottlenecks.find((b) => b.code === "low_coverage");
+    // 1 explored + 1 terminally_blocked out of 2 non-low surfaces = 100% closed.
+    // Old (count-based) coverage_pct would be 50% (only explored). New
+    // closed_pct is 100%, so low_coverage does NOT fire.
+    assert.equal(lowCoverage, undefined, "low_coverage should not fire when all non-low surfaces are explored or terminally_blocked");
+  });
+});
+
+test("bounty_clear_terminal_block lets a re-blocked surface start fresh recurrence count via clear epoch", () => {
+  withTempHome(() => {
+    const domain = "reblock.example.com";
+    seedAttackSurfaces(domain, [
+      { id: "surface-auth", hosts: [`https://${domain}/auth`], priority: "HIGH" },
+    ]);
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 2,
+      pending_wave: null,
+      terminally_blocked: [
+        buildTerminallyBlockedEntry("surface-auth", "auth_missing", "attacker", { blocked_at_wave: 2, reason: "no profile" }),
+      ],
+      blocked_prereq_history: [
+        { wave: 1, surface_id: "surface-auth", kind: "auth_missing", identifier_hint: "attacker", reason: "no profile" },
+        { wave: 2, surface_id: "surface-auth", kind: "auth_missing", identifier_hint: "attacker", reason: "still none" },
+      ],
+    });
+
+    JSON.parse(clearTerminalBlock({
+      target_domain: domain,
+      surface_id: "surface-auth",
+      reason: "operator registered attacker profile and is unblocking",
+    }));
+
+    // Wave 3 still hits the same blocker (e.g., the new profile didn't help).
+    setStatePendingWave(domain, 3);
+    seedPrereqSnapshot(domain, 3, { auth_handles: ["attacker"], egress_handles: [] });
+    seedAssignments(domain, 3, [{ agent: "a1", surface_id: "surface-auth" }]);
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w3",
+      agent: "a1",
+      surface_id: "surface-auth",
+      surface_status: "partial",
+      summary: "still blocked even after profile added",
+      content: "# A1 wave 3",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "attacker", reason: "blocker reappeared" },
+      ],
+    });
+    const result = JSON.parse(applyWaveMerge({ target_domain: domain, wave_number: 3, force_merge: false }));
+    // After the clear, history is RETAINED but the loop detector ignores
+    // entries from waves <= cleared_at_wave (which was 2). Wave 3's
+    // blocker has no qualifying prior, so no promotion. History is still
+    // available for debugging.
+    assert.equal(result.merge.terminally_blocked_promoted.length, 0);
+    const fullState = JSON.parse(readSessionState({ target_domain: domain })).state;
+    assert.ok(fullState.blocked_prereq_history.length >= 2, "history should be retained, not pruned");
+  });
+});
+
 test("bounty_apply_wave_merge rejects invalid state invariants and hard-fails on missing or malformed attack_surface.json", () => {
   withTempHome(() => {
     const domain = "example.com";
@@ -4329,6 +5000,7 @@ test("bounty_write_wave_handoff writes matching markdown and json with normalize
       summary: "Freeform handoff summary.",
       chain_notes: [],
       blocked_harness_runs: [],
+      blocked_prereqs: [],
       bypass_attempts: [],
       dead_ends: [],
       waf_blocked_endpoints: [],
@@ -4378,6 +5050,246 @@ test("bounty_write_wave_handoff accepts surface_status: partial with blocked_har
     assert.equal(payload.blocked_harness_runs[0].kind, "foundry_fork");
     assert.equal(payload.blocked_harness_runs[0].harness, "foundry-fork-mainnet");
     assert.equal(payload.blocked_harness_runs[0].needed_for, "PSM donation invariant");
+  });
+});
+
+test("bounty_write_wave_handoff accepts surface_status: partial with blocked_prereqs", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
+    const result = JSON.parse(writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      surface_status: "partial",
+      summary: "Blocked by missing auth profiles.",
+      content: "# Handoff\n",
+      blocked_prereqs: [
+        {
+          kind: "auth_missing",
+          identifier_hint: "attacker",
+          reason: "Org-scoped IDOR test requires attacker session; bounty_list_auth_profiles returned []",
+          needed_for: "cross-org dashboard authz check",
+        },
+        {
+          kind: "egress_unreachable",
+          identifier_hint: "us-west-egress",
+          reason: "thegraph.kiln.fi returned ECONNREFUSED across 5 attempts on default egress",
+          evidence_summary: "circuit-breaker reports 5 failures past threshold for thegraph.kiln.fi",
+        },
+      ],
+    }));
+    const payload = JSON.parse(fs.readFileSync(result.written_json, "utf8"));
+    assert.equal(payload.surface_status, "partial");
+    assert.equal(payload.blocked_prereqs.length, 2);
+    assert.equal(payload.blocked_prereqs[0].kind, "auth_missing");
+    assert.equal(payload.blocked_prereqs[0].identifier_hint, "attacker");
+    assert.equal(payload.blocked_prereqs[0].needed_for, "cross-org dashboard authz check");
+    assert.equal(payload.blocked_prereqs[1].kind, "egress_unreachable");
+    assert.equal(payload.blocked_prereqs[1].identifier_hint, "us-west-egress");
+    assert.match(payload.blocked_prereqs[1].evidence_summary, /circuit-breaker/);
+  });
+});
+
+test("bounty_write_wave_handoff rejects surface_status: complete with blocked_prereqs", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
+    assert.throws(() => writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      surface_status: "complete",
+      summary: "Pretending to be done despite missing material.",
+      content: "# Handoff\n",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "attacker", reason: "no profile loaded" },
+      ],
+    }), /surface_status cannot be 'complete' when blocked_prereqs is non-empty/);
+  });
+});
+
+test("bounty_write_wave_handoff rejects blocked_prereqs with unknown kind", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
+    assert.throws(() => writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      surface_status: "partial",
+      summary: "Trying a kind that does not exist in the registry.",
+      content: "# Handoff\n",
+      blocked_prereqs: [
+        { kind: "captcha_missing", identifier_hint: "captcha", reason: "captcha solver not configured" },
+      ],
+    }), /blocked_prereqs\[0\]\.kind must be one of/);
+  });
+});
+
+test("bounty_write_wave_handoff rejects blocked_prereqs identifier_hint that looks like a secret", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
+    // Mixed-case JWT shape rejected by the format regex.
+    assert.throws(() => writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      surface_status: "partial",
+      summary: "Operator pasted a credential into identifier_hint by accident.",
+      content: "# Handoff\n",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "eyJhbGciOiJIUzI1NiJ9.eyJpZCI6MX0", reason: "JWT token leaked into hint" },
+      ],
+    }), /identifier_hint must match/);
+    // Lowercase JWT shape passes the format regex but the sensitive-material
+    // validator catches the dotted JWT structure.
+    assert.throws(() => writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      surface_status: "partial",
+      summary: "Operator pasted a lowercase JWT into identifier_hint.",
+      content: "# Handoff\n",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "eyjabcdefghij.eyjklmnopqr.sigabcdefghij", reason: "lowercase JWT" },
+      ],
+    }), /appears to contain secrets/);
+    // 64-char lowercase hex (private key / SHA-256 shape) rejected by the
+    // long-hex screen even though the format regex accepts it.
+    assert.throws(() => writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      surface_status: "partial",
+      summary: "Operator pasted a hex hash into identifier_hint.",
+      content: "# Handoff\n",
+      blocked_prereqs: [
+        { kind: "key_material_missing", identifier_hint: "a".repeat(64), reason: "hex hash leaked" },
+      ],
+    }), /looks like a hex private key, address, or hash/);
+    // 65-char lowercase still rejected because of maxLength.
+    assert.throws(() => writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      surface_status: "partial",
+      summary: "Operator pasted a long lowercase token into identifier_hint.",
+      content: "# Handoff\n",
+      blocked_prereqs: [
+        { kind: "key_material_missing", identifier_hint: "a".repeat(65), reason: "long lowercase token" },
+      ],
+    }), /identifier_hint must be at most 64 characters/);
+    // Leading hyphen / non-alphanumeric start rejected.
+    assert.throws(() => writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      surface_status: "partial",
+      summary: "Operator used leading hyphen.",
+      content: "# Handoff\n",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "-attacker", reason: "leading hyphen" },
+      ],
+    }), /identifier_hint must match/);
+  });
+});
+
+test("bounty_write_wave_handoff accepts blocked_prereqs without identifier_hint", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
+    const result = JSON.parse(writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      surface_status: "partial",
+      summary: "Egress unreachable; no specific egress profile would obviously help.",
+      content: "# Handoff\n",
+      blocked_prereqs: [
+        {
+          kind: "egress_unreachable",
+          reason: "thegraph.kiln.fi unreachable across 5 attempts on default egress",
+        },
+      ],
+    }));
+    const payload = JSON.parse(fs.readFileSync(result.written_json, "utf8"));
+    assert.equal(payload.blocked_prereqs.length, 1);
+    assert.equal(payload.blocked_prereqs[0].kind, "egress_unreachable");
+    assert.equal(payload.blocked_prereqs[0].identifier_hint, undefined);
+  });
+});
+
+test("bounty_write_wave_handoff rejects blocked_prereqs reason with embedded secrets", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
+    assert.throws(() => writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      surface_status: "partial",
+      summary: "Reason field contains a leaked credential.",
+      content: "# Handoff\n",
+      blocked_prereqs: [
+        {
+          kind: "auth_missing",
+          reason: "Tried Authorization: Bearer eyJabcdefghij.eyJklmnopqr.sigabcdefghij from previous run",
+        },
+      ],
+    }), /appears to contain secrets/);
+  });
+});
+
+test("bounty_write_wave_handoff rejects blocked_prereqs reason past 240 chars", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
+    assert.throws(() => writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      surface_status: "partial",
+      summary: "Reason is too long.",
+      content: "# Handoff\n",
+      blocked_prereqs: [
+        { kind: "auth_missing", identifier_hint: "attacker", reason: "x".repeat(241) },
+      ],
+    }), /blocked_prereqs\[0\]\.reason must be at most 240 characters/);
+  });
+});
+
+test("bounty_write_wave_handoff rejects more than 20 blocked_prereqs", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
+    const overflow = Array.from({ length: 21 }, (_, i) => ({
+      kind: "auth_missing",
+      identifier_hint: `attacker${i}`,
+      reason: `entry ${i}`,
+    }));
+    assert.throws(() => writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      surface_status: "partial",
+      summary: "Too many blocked_prereqs entries.",
+      content: "# Handoff\n",
+      blocked_prereqs: overflow,
+    }), /blocked_prereqs must contain at most 20 entries/);
   });
 });
 
@@ -5952,6 +6864,8 @@ test("bounty_merge_wave_handoffs merges valid handoffs and dedupes optional arra
       lead_surface_ids: ["surface-b", "surface-c", "surface-d"],
       blocked_harness_runs: [],
       blocked_harness_runs_grouped: [],
+      blocked_prereqs: [],
+      blocked_prereqs_grouped: [],
       bypass_attempts: [],
       bypass_attempts_grouped: [],
       suspicion_flags: [],
@@ -5993,6 +6907,8 @@ test("bounty_merge_wave_handoffs requeues missing and invalid assigned handoffs 
       lead_surface_ids: [],
       blocked_harness_runs: [],
       blocked_harness_runs_grouped: [],
+      blocked_prereqs: [],
+      blocked_prereqs_grouped: [],
       bypass_attempts: [],
       bypass_attempts_grouped: [],
       suspicion_flags: [],
@@ -6039,6 +6955,7 @@ test("bounty_read_wave_handoffs returns validated structured summaries and ignor
       summary: "A1 complete with an old dead end.",
       chain_notes: ["Old endpoint may chain into surface-b."],
       blocked_harness_runs: [],
+      blocked_prereqs: [],
       bypass_attempts: [],
       dead_ends: ["/old"],
       waf_blocked_endpoints: [],

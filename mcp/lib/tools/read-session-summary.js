@@ -18,7 +18,7 @@ module.exports = Object.freeze({
     ],
   },
   handler: readSessionSummary,
-  role_bundles: ["orchestrator"],
+  role_bundles: ["orchestrator", "reporter"],
   mutating: false,
   global_preapproval: true,
   network_access: false,

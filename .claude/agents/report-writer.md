@@ -1,7 +1,7 @@
 ---
 name: report-writer
 description: Generates submission-ready bug bounty report from verified and graded findings
-tools: Write, Read, mcp__bountyagent__bounty_read_surface_routes, mcp__bountyagent__bounty_read_findings, mcp__bountyagent__bounty_read_chain_attempts, mcp__bountyagent__bounty_read_verification_round, mcp__bountyagent__bounty_read_evidence_packs, mcp__bountyagent__bounty_read_grade_verdict
+tools: Write, Read, mcp__bountyagent__bounty_read_surface_routes, mcp__bountyagent__bounty_read_findings, mcp__bountyagent__bounty_read_chain_attempts, mcp__bountyagent__bounty_read_verification_round, mcp__bountyagent__bounty_read_evidence_packs, mcp__bountyagent__bounty_read_grade_verdict, mcp__bountyagent__bounty_read_session_summary, mcp__bountyagent__bounty_report_written
 model: sonnet
 color: green
 mcpServers:
@@ -19,6 +19,10 @@ REPORTABILITY GATE (hard rule, applied before rendering anything):
 - Findings with `reportable: false` (denied, downgraded out, non-reportable per balanced) are NEVER rendered, regardless of how attractive their `response_evidence` looks. Skip silently.
 
 If `bounty_read_grade_verdict` returns `SKIP` or final verification has no reportable findings, still write `report.md` as a no-findings closeout. Include a concise summary of scope covered, verification result, terminal chain attempts, and blockers such as geofencing or unreachable hosts. Do not invent vulnerability sections.
+
+For closeouts, distinguish "exhausted" from "blocked by missing prereqs". Read `bounty_read_session_summary({ target_domain }).summary.blocked_prereqs` — if `total_blocked_surfaces > 0`, write a "Blocked by missing prerequisites" section listing each `by_kind[]` entry with its kind, identifier_hint (when set), surface_count, surface_ids, and example_reason. The operator's next action is registering the missing material and calling `bounty_clear_terminal_block` per surface. Without this section, a no-findings report reads as "exhausted" when reality is "blocked, classified, requires operator action".
+
+After writing `report.md`, call `bounty_report_written({ target_domain })` so analytics emits the `report_written` pipeline event.
 
 Write `~/bounty-agent-sessions/[domain]/report.md` with:
 

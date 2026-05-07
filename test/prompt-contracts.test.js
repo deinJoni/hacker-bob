@@ -537,6 +537,27 @@ test("hunting rules and hunter prompt encode the smart_contract anti-stop rule",
   );
 });
 
+test("hunter prompt teaches the blocked_prereqs[] policy and orchestrator handles terminally_blocked surfaces", () => {
+  const hunterPrompt = readFile(".claude/agents/hunter-agent.md");
+  assert.match(hunterPrompt, /blocked_prereqs/, "hunter prompt missing blocked_prereqs policy");
+  assert.match(hunterPrompt, /auth_missing/, "hunter prompt missing auth_missing kind reference");
+  assert.match(hunterPrompt, /egress_unreachable/, "hunter prompt missing egress_unreachable kind reference");
+  assert.match(hunterPrompt, /bounty_clear_terminal_block/, "hunter prompt missing bounty_clear_terminal_block reference");
+
+  const orchestratorPrompt = readFile("prompts/roles/orchestrator.md");
+  assert.match(orchestratorPrompt, /terminally_blocked/, "orchestrator prompt missing terminally_blocked exclusion guidance");
+  assert.match(orchestratorPrompt, /bounty_clear_terminal_block/, "orchestrator prompt missing clear-block tool reference");
+  assert.match(
+    orchestratorPrompt,
+    /override_reason` is rejected outside/,
+    "orchestrator prompt missing override_reason scope warning",
+  );
+
+  const reporterPrompt = readFile("prompts/roles/reporter.md");
+  assert.match(reporterPrompt, /Blocked by missing prerequisites/, "reporter prompt missing blocked-prereqs section guidance");
+  assert.match(reporterPrompt, /bounty_report_written/, "reporter prompt missing bounty_report_written call");
+});
+
 test("bob-spec loader is wired into the hunter brief", () => {
   const briefSource = readFile("mcp/lib/hunter-brief.js");
   assert.match(
@@ -1306,6 +1327,59 @@ test("BLOCKED_HARNESS_RUN_KINDS, schema enum, and waves.js normalizer all stay i
     "BLOCKED_HARNESS_RUN_KINDS must mirror the write-wave-handoff schema enum");
   assert.deepEqual(sorted(BLOCKED_HARNESS_RUN_KINDS), sorted(wavesKinds),
     "waves.js BLOCKED_HARNESS_KIND_VALUES must mirror BLOCKED_HARNESS_RUN_KINDS — runtime normalizer rejects schema-accepted kinds otherwise");
+});
+
+test("BLOCKED_PREREQ_KINDS, schema enum, and waves.js normalizer all stay in sync", () => {
+  // Same three-way mirror invariant as BLOCKED_HARNESS_RUN_KINDS. Adding a
+  // new prereq kind requires updating all three sites, otherwise hunters
+  // either get rejected by the schema or fail finalization in the runtime
+  // normalizer.
+  const { BLOCKED_PREREQ_KINDS } = require("../mcp/lib/capability-packs-rendering.js");
+  const schema = require("../mcp/lib/tools/write-wave-handoff.js").inputSchema;
+  const enumFromSchema = schema.properties.blocked_prereqs.items.properties.kind.enum;
+  const wavesSource = readFile("mcp/lib/waves.js");
+  const wavesEnumMatch = wavesSource.match(/BLOCKED_PREREQ_KIND_VALUES = Object\.freeze\(\[([^\]]+)\]\)/);
+  assert.ok(wavesEnumMatch, "could not locate BLOCKED_PREREQ_KIND_VALUES literal in waves.js");
+  const wavesKinds = Array.from(wavesEnumMatch[1].matchAll(/"([a-z_]+)"/g)).map((m) => m[1]);
+  const sorted = (arr) => [...arr].sort();
+  assert.deepEqual(sorted(BLOCKED_PREREQ_KINDS), sorted(enumFromSchema),
+    "BLOCKED_PREREQ_KINDS must mirror the write-wave-handoff schema enum");
+  assert.deepEqual(sorted(BLOCKED_PREREQ_KINDS), sorted(wavesKinds),
+    "waves.js BLOCKED_PREREQ_KIND_VALUES must mirror BLOCKED_PREREQ_KINDS — runtime normalizer rejects schema-accepted kinds otherwise");
+});
+
+test("blocked_prereqs identifier_hint pattern matches between schema and runtime normalizer", () => {
+  // The schema regex and the runtime normalizer must reject the same
+  // strings, otherwise hunters can submit secret-shaped values that pass
+  // one check and fail the other (or worse, leak through).
+  const schema = require("../mcp/lib/tools/write-wave-handoff.js").inputSchema;
+  const schemaPattern = schema.properties.blocked_prereqs.items.properties.identifier_hint.pattern;
+  const wavesSource = readFile("mcp/lib/waves.js");
+  const runtimeMatch = wavesSource.match(/BLOCKED_PREREQ_IDENTIFIER_HINT_PATTERN = (\/[^\n]+\/)/);
+  assert.ok(runtimeMatch, "could not locate BLOCKED_PREREQ_IDENTIFIER_HINT_PATTERN literal in waves.js");
+  // Strip leading and trailing /; runtime pattern is a JS regex literal,
+  // schema pattern is a JSON-schema string.
+  const runtimePattern = runtimeMatch[1].slice(1, -1);
+  assert.equal(runtimePattern, schemaPattern,
+    "blocked_prereqs[].identifier_hint pattern must be identical between the JSON schema and the waves.js runtime normalizer");
+});
+
+test("rendered hunter prompts include blocked_prereqs handoff field limits", () => {
+  // The placeholder substitution in capability-packs-rendering.js writes
+  // limits for blocked_prereqs[] into every hunter prompt. Without this,
+  // hunters learn the constraints by rejection.
+  const { renderHandoffFieldLimits, BLOCKED_PREREQ_KINDS } = require("../mcp/lib/capability-packs-rendering.js");
+  const limits = renderHandoffFieldLimits();
+  assert.match(limits, /blocked_prereqs\[\]\.kind/,
+    "renderHandoffFieldLimits must surface blocked_prereqs[].kind for hunter prompts");
+  for (const kind of BLOCKED_PREREQ_KINDS) {
+    assert.ok(limits.includes(kind),
+      `renderHandoffFieldLimits must list every BLOCKED_PREREQ_KIND in the rendered limits — missing ${kind}`);
+  }
+  assert.match(limits, /blocked_prereqs\[\]\.identifier_hint/,
+    "renderHandoffFieldLimits must surface blocked_prereqs[].identifier_hint with its lowercase-handle constraint");
+  assert.match(limits, /no secrets/,
+    "renderHandoffFieldLimits must remind hunters that identifier_hint cannot hold secret-shaped values");
 });
 
 test("rendered orchestrator catalogue lists every smart-contract pack exactly once", () => {

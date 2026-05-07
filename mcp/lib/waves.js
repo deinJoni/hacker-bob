@@ -27,6 +27,7 @@ const {
 const {
   compactSessionState,
   readSessionStateStrict,
+  terminallyBlockedSurfaceIds,
   writeSessionStateDocument,
 } = require("./session-state.js");
 const {
@@ -67,6 +68,11 @@ const {
 const {
   safeAppendPipelineEventDirect,
 } = require("./pipeline-analytics.js");
+const {
+  validateNoSensitiveMaterial,
+} = require("./sensitive-material.js");
+const { listAuthProfiles } = require("./auth.js");
+const { listEgressProfiles } = require("./egress-profiles.js");
 const {
   computeHuntToChainGate,
 } = require("./phase-gates.js");
@@ -219,6 +225,28 @@ const BLOCKED_HARNESS_KIND_VALUES = Object.freeze([
   "other",
 ]);
 
+// Mirror of capability-packs-rendering.js BLOCKED_PREREQ_KINDS and the
+// bounty_write_wave_handoff schema enum for blocked_prereqs[].kind. Like
+// BLOCKED_HARNESS_KIND_VALUES this is a runtime guard that throws on unknown
+// kinds before the JSON schema would even check; mismatch with the renderer
+// constant or schema enum is caught by the parity test in
+// test/prompt-contracts.test.js.
+const BLOCKED_PREREQ_KIND_VALUES = Object.freeze([
+  "auth_missing",
+  "egress_unreachable",
+  "funded_wallet_missing",
+  "key_material_missing",
+  "external_credential_missing",
+]);
+
+const BLOCKED_PREREQ_IDENTIFIER_HINT_PATTERN = /^[a-z0-9][a-z0-9_.-]{0,63}$/;
+
+// Long-hex rejector for identifier_hint. Catches private-key / hash shapes
+// (32+ lowercase hex chars) that pass the handle-format regex but should
+// never appear in a registry handle. Layered defense above
+// validateNoSensitiveMaterial which targets JWT / bearer / cookie shapes.
+const BLOCKED_PREREQ_IDENTIFIER_HINT_LONG_HEX_PATTERN = /^[0-9a-f]{32,}$/;
+
 const BYPASS_ATTEMPT_OUTCOME_VALUES = Object.freeze([
   "no_finding",
   "partial_evidence",
@@ -255,6 +283,78 @@ function normalizeBlockedHarnessRuns(value) {
       const neededFor = assertNonEmptyString(entry.needed_for, `blocked_harness_runs[${index}].needed_for`);
       if (neededFor.length > 200) {
         throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_harness_runs[${index}].needed_for must be at most 200 characters`);
+      }
+      normalized.needed_for = neededFor;
+    }
+    return normalized;
+  });
+}
+
+function normalizeBlockedPrereqs(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) {
+    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "blocked_prereqs must be an array");
+  }
+  if (value.length > 20) {
+    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "blocked_prereqs must contain at most 20 entries");
+  }
+  return value.map((entry, index) => {
+    if (entry == null || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_prereqs[${index}] must be an object`);
+    }
+    const kind = assertNonEmptyString(entry.kind, `blocked_prereqs[${index}].kind`);
+    if (!BLOCKED_PREREQ_KIND_VALUES.includes(kind)) {
+      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_prereqs[${index}].kind must be one of ${BLOCKED_PREREQ_KIND_VALUES.join(", ")}`);
+    }
+    const reason = assertNonEmptyString(entry.reason, `blocked_prereqs[${index}].reason`);
+    if (reason.length > 240) {
+      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_prereqs[${index}].reason must be at most 240 characters`);
+    }
+    try {
+      validateNoSensitiveMaterial(reason, `blocked_prereqs[${index}].reason`);
+    } catch (error) {
+      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, error.message);
+    }
+    const normalized = { kind, reason };
+    if (entry.identifier_hint != null) {
+      const identifierHint = assertNonEmptyString(entry.identifier_hint, `blocked_prereqs[${index}].identifier_hint`);
+      if (identifierHint.length > 64) {
+        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_prereqs[${index}].identifier_hint must be at most 64 characters`);
+      }
+      if (!BLOCKED_PREREQ_IDENTIFIER_HINT_PATTERN.test(identifierHint)) {
+        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_prereqs[${index}].identifier_hint must match /^[a-z0-9][a-z0-9_.-]{0,63}$/ — use a lowercase registry handle, not a credential or token value`);
+      }
+      if (BLOCKED_PREREQ_IDENTIFIER_HINT_LONG_HEX_PATTERN.test(identifierHint)) {
+        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_prereqs[${index}].identifier_hint looks like a hex private key, address, or hash; use a human-readable registry handle instead`);
+      }
+      try {
+        validateNoSensitiveMaterial(identifierHint, `blocked_prereqs[${index}].identifier_hint`);
+      } catch (error) {
+        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, error.message);
+      }
+      normalized.identifier_hint = identifierHint;
+    }
+    if (entry.evidence_summary != null) {
+      const evidenceSummary = assertNonEmptyString(entry.evidence_summary, `blocked_prereqs[${index}].evidence_summary`);
+      if (evidenceSummary.length > 300) {
+        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_prereqs[${index}].evidence_summary must be at most 300 characters`);
+      }
+      try {
+        validateNoSensitiveMaterial(evidenceSummary, `blocked_prereqs[${index}].evidence_summary`);
+      } catch (error) {
+        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, error.message);
+      }
+      normalized.evidence_summary = evidenceSummary;
+    }
+    if (entry.needed_for != null) {
+      const neededFor = assertNonEmptyString(entry.needed_for, `blocked_prereqs[${index}].needed_for`);
+      if (neededFor.length > 200) {
+        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_prereqs[${index}].needed_for must be at most 200 characters`);
+      }
+      try {
+        validateNoSensitiveMaterial(neededFor, `blocked_prereqs[${index}].needed_for`);
+      } catch (error) {
+        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, error.message);
       }
       normalized.needed_for = neededFor;
     }
@@ -322,6 +422,15 @@ function assertBlockedHarnessConsistency(surfaceStatus, blockedHarnessRuns) {
   }
 }
 
+function assertBlockedPrereqConsistency(surfaceStatus, blockedPrereqs) {
+  if (surfaceStatus === "complete" && blockedPrereqs.length > 0) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "surface_status cannot be 'complete' when blocked_prereqs is non-empty; set surface_status to 'partial' or resolve the missing prerequisites first",
+    );
+  }
+}
+
 function assertSmartContractCompletionEvidence({
   surfaceType,
   surfaceStatus,
@@ -373,8 +482,10 @@ function validateWaveHandoffPayload(payload, {
   const findingIdSet = new Set(findingsForCheck.map((finding) => finding.id));
 
   const blockedHarnessRuns = normalizeBlockedHarnessRuns(payload.blocked_harness_runs);
+  const blockedPrereqs = normalizeBlockedPrereqs(payload.blocked_prereqs);
   const bypassAttempts = normalizeBypassAttempts(payload.bypass_attempts, { findingIds: findingIdSet });
   assertBlockedHarnessConsistency(surfaceStatus, blockedHarnessRuns);
+  assertBlockedPrereqConsistency(surfaceStatus, blockedPrereqs);
 
   // Authoritative source for surface_type is the MCP-owned assignment file
   // (captured at start_wave time). Callers from active wave paths
@@ -400,6 +511,7 @@ function validateWaveHandoffPayload(payload, {
     summary: normalizeHandoffSummary(payload),
     chain_notes: normalizeChainNotes(payload.chain_notes),
     blocked_harness_runs: blockedHarnessRuns,
+    blocked_prereqs: blockedPrereqs,
     bypass_attempts: bypassAttempts,
     dead_ends: normalizeStringArray(payload.dead_ends, "dead_ends"),
     waf_blocked_endpoints: normalizeStringArray(payload.waf_blocked_endpoints, "waf_blocked_endpoints"),
@@ -424,6 +536,38 @@ function groupBlockedHarnessRuns(entries) {
   return Array.from(groups.values()).map((group) => ({
     kind: group.kind,
     harness: group.harness,
+    count: group.count,
+    agents: Array.from(group.agents).sort(compareAgentLabels),
+    surface_ids: Array.from(group.surface_ids).sort(),
+  }));
+}
+
+// Group blocked_prereqs by (kind, identifier_hint||""). identifier_hint is
+// optional, so "" stands in for "unspecified" — group "auth_missing without
+// any specific profile name" together. Matches the loop-detector identity
+// the merge promotion uses.
+function groupBlockedPrereqs(entries) {
+  const groups = new Map();
+  for (const entry of entries) {
+    const hint = entry.identifier_hint || "";
+    const key = `${entry.kind}\t${hint}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        kind: entry.kind,
+        identifier_hint: entry.identifier_hint || null,
+        count: 0,
+        agents: new Set(),
+        surface_ids: new Set(),
+      });
+    }
+    const group = groups.get(key);
+    group.count += 1;
+    if (entry.agent) group.agents.add(entry.agent);
+    if (entry.surface_id) group.surface_ids.add(entry.surface_id);
+  }
+  return Array.from(groups.values()).map((group) => ({
+    kind: group.kind,
+    identifier_hint: group.identifier_hint,
     count: group.count,
     agents: Array.from(group.agents).sort(compareAgentLabels),
     surface_ids: Array.from(group.surface_ids).sort(),
@@ -488,6 +632,7 @@ function mergeWaveHandoffsInternal(domain, waveNumber) {
   const wafBlockedEndpoints = [];
   const leadSurfaceIds = [];
   const blockedHarnessRuns = [];
+  const blockedPrereqs = [];
   const bypassAttempts = [];
   const provenance = {
     verified_agents: [],
@@ -559,6 +704,9 @@ function mergeWaveHandoffsInternal(domain, waveNumber) {
       for (const entry of payload.blocked_harness_runs || []) {
         blockedHarnessRuns.push({ ...entry, agent: assignment.agent, surface_id: assignment.surface_id });
       }
+      for (const entry of payload.blocked_prereqs || []) {
+        blockedPrereqs.push({ ...entry, agent: assignment.agent, surface_id: assignment.surface_id });
+      }
       for (const entry of payload.bypass_attempts || []) {
         bypassAttempts.push({ ...entry, agent: assignment.agent, surface_id: assignment.surface_id });
       }
@@ -611,6 +759,8 @@ function mergeWaveHandoffsInternal(domain, waveNumber) {
       lead_surface_ids: leadSurfaceIds,
       blocked_harness_runs: blockedHarnessRuns,
       blocked_harness_runs_grouped: groupBlockedHarnessRuns(blockedHarnessRuns),
+      blocked_prereqs: blockedPrereqs,
+      blocked_prereqs_grouped: groupBlockedPrereqs(blockedPrereqs),
       bypass_attempts: bypassAttempts,
       bypass_attempts_grouped: groupBypassAttempts(bypassAttempts),
       suspicion_flags: suspicionFlags,
@@ -733,6 +883,22 @@ function startWave(args) {
       }
     }
 
+    // Hard write-side filter: terminally-blocked surfaces cannot be
+    // assigned to a wave until an operator clears the block via
+    // bounty_clear_terminal_block. Defends against an orchestrator
+    // regression that drops the soft-prompt exclusion and silently burns
+    // hunter cycles on classified-blocked work.
+    const terminallyBlockedSet = new Set(terminallyBlockedSurfaceIds(state));
+    const blockedAssignments = assignments
+      .filter((assignment) => terminallyBlockedSet.has(assignment.surface_id))
+      .map((assignment) => assignment.surface_id);
+    if (blockedAssignments.length > 0) {
+      throw new ToolError(
+        ERROR_CODES.INVALID_ARGUMENTS,
+        `Cannot assign terminally-blocked surfaces to a wave; clear the block via bounty_clear_terminal_block first: ${blockedAssignments.join(", ")}`,
+      );
+    }
+
     // Capture surface_type from attack_surface.json AT WAVE START into the
     // immutable, MCP-owned assignment file. This makes the smart_contract
     // completion gate tamper-resistant — hunters cannot disable enforcement
@@ -765,6 +931,18 @@ function startWave(args) {
     });
     const assignmentsForDisk = persistedAssignments.map(({ handoff_token, ...assignment }) => assignment);
 
+    // Snapshot registries BEFORE the assignment file is written. If the
+    // snapshot throws (auth.json malformed, egress config missing, etc.)
+    // we want the wave start to fail cleanly with no orphaned assignment
+    // file — not a half-written session that fails on retry with
+    // "Assignment file already exists".
+    const startSnapshot = snapshotPrereqRegistries(domain);
+    const priorSnapshots = Array.isArray(state.prereq_registry_snapshots) ? state.prereq_registry_snapshots : [];
+    const nextSnapshots = [
+      ...priorSnapshots.filter((s) => s.wave !== waveNumber),
+      { wave: waveNumber, ...startSnapshot },
+    ].sort((a, b) => a.wave - b.wave);
+
     writeFileAtomic(assignmentsPath, `${JSON.stringify({
       wave_number: waveNumber,
       assignments: assignmentsForDisk,
@@ -773,6 +951,7 @@ function startWave(args) {
     const nextState = {
       ...state,
       pending_wave: waveNumber,
+      prereq_registry_snapshots: nextSnapshots,
     };
 
     try {
@@ -818,6 +997,139 @@ function startWave(args) {
       state: compactSessionState(nextState),
     });
   });
+}
+
+// Snapshot registry HANDLE SETS at wave start so the loop detector can
+// reason about whether the SPECIFIC material a stuck blocker named was
+// added since. Counts collapse unrelated additions into "growth" and
+// give the original blocker permanent amnesty (e.g., adding `victim`
+// would silently satisfy `auth_missing: attacker`). Failures throw
+// rather than fail-open because the caller (start_wave) cannot make a
+// trustworthy snapshot without registry visibility — better to refuse
+// the wave than to record a lying snapshot.
+function snapshotPrereqRegistries(domain) {
+  let authHandles;
+  try {
+    const result = JSON.parse(listAuthProfiles({ target_domain: domain }));
+    authHandles = Array.isArray(result.profiles)
+      ? result.profiles.map((p) => p && typeof p.profile_name === "string" ? p.profile_name : null).filter(Boolean)
+      : [];
+  } catch (error) {
+    throw new ToolError(
+      ERROR_CODES.STATE_CONFLICT,
+      `Could not snapshot auth-profile registry for ${domain}: ${error.message || String(error)}`,
+    );
+  }
+  let egressHandles;
+  try {
+    const profiles = listEgressProfiles();
+    egressHandles = profiles
+      .filter((p) => p && p.enabled)
+      .map((p) => p && typeof p.name === "string" ? p.name : null)
+      .filter(Boolean);
+  } catch (error) {
+    throw new ToolError(
+      ERROR_CODES.STATE_CONFLICT,
+      `Could not snapshot egress-profile registry: ${error.message || String(error)}`,
+    );
+  }
+  return {
+    auth_handles: Array.from(new Set(authHandles)).sort(),
+    egress_handles: Array.from(new Set(egressHandles)).sort(),
+  };
+}
+
+const BLOCKED_PREREQ_KINDS_WITH_REGISTRY_DELTA = Object.freeze({
+  auth_missing: "auth_handles",
+  egress_unreachable: "egress_handles",
+});
+
+// Loop detector. For each surface with current-wave blockers, look at
+// validated history (state.blocked_prereq_history) for prior occurrences
+// of the same (kind, identifier_hint) tuple. For kinds with a
+// registry-delta channel (auth_missing, egress_unreachable), skip
+// promotion when the SPECIFIC handle the blocker named was added since
+// the LATEST prior occurrence — handle-set membership rather than count
+// growth. For null identifier_hint (no specific handle requested), skip
+// when the handle set itself grew (any new handle appeared). Other
+// kinds (funded_wallet_missing, key_material_missing,
+// external_credential_missing) have no registry-delta path; they
+// promote on any 2-wave recurrence and require operator clear via
+// bounty_clear_terminal_block.
+function detectTerminalPromotions({
+  currentWaveBlockersBySurface,
+  historyBySurface,
+  prereqRegistrySnapshots,
+  clearHistoryBySurface,
+  currentWave,
+}) {
+  const snapshotByWave = new Map(prereqRegistrySnapshots.map((s) => [s.wave, s]));
+  const currentSnapshot = snapshotByWave.get(currentWave);
+  const promotions = [];
+  for (const [surfaceId, currentEntries] of currentWaveBlockersBySurface) {
+    const surfaceHistory = historyBySurface.get(surfaceId) || [];
+    // The latest clear for this surface defines the recurrence horizon:
+    // history entries from waves <= cleared_at_wave are pre-clear and
+    // do not count toward the loop detector's "recurred across waves"
+    // signal. Without this, every clear-then-reblock would immediately
+    // re-promote.
+    const clearsForSurface = clearHistoryBySurface.get(surfaceId) || [];
+    const latestClearAtWave = clearsForSurface.length > 0
+      ? Math.max(...clearsForSurface.map((c) => c.cleared_at_wave))
+      : 0;
+    const promotedBlockers = [];
+    const seenTuples = new Set();
+    for (const entry of currentEntries) {
+      const hint = entry.identifier_hint || null;
+      const tupleKey = `${entry.kind}\t${hint || ""}`;
+      if (seenTuples.has(tupleKey)) continue;
+      // Prior occurrences are entries from waves strictly before the
+      // current one and strictly after the latest clear for this surface.
+      const priorMatches = surfaceHistory.filter((h) =>
+        h.wave < currentWave &&
+        h.wave > latestClearAtWave &&
+        h.kind === entry.kind &&
+        (h.identifier_hint || null) === hint,
+      );
+      if (priorMatches.length === 0) continue;
+      const registryField = BLOCKED_PREREQ_KINDS_WITH_REGISTRY_DELTA[entry.kind];
+      if (registryField && currentSnapshot) {
+        // LATEST prior wave: if the handle was added since the most
+        // recent unresolved occurrence, the loop was potentially broken.
+        const latestPriorWave = Math.max(...priorMatches.map((p) => p.wave));
+        const priorSnapshot = snapshotByWave.get(latestPriorWave);
+        const priorHandles = priorSnapshot && Array.isArray(priorSnapshot[registryField])
+          ? new Set(priorSnapshot[registryField])
+          : new Set();
+        const currentHandles = new Set(currentSnapshot[registryField] || []);
+        if (hint != null) {
+          // Specific handle named: skip promotion only if that exact
+          // handle is newly registered.
+          if (currentHandles.has(hint) && !priorHandles.has(hint)) continue;
+        } else {
+          // No specific handle: skip if the handle set grew at all.
+          let grew = false;
+          for (const h of currentHandles) {
+            if (!priorHandles.has(h)) { grew = true; break; }
+          }
+          if (grew) continue;
+        }
+      }
+      seenTuples.add(tupleKey);
+      const blocker = { kind: entry.kind };
+      if (entry.identifier_hint) blocker.identifier_hint = entry.identifier_hint;
+      if (entry.reason) blocker.reason = entry.reason;
+      promotedBlockers.push(blocker);
+    }
+    if (promotedBlockers.length > 0) {
+      promotions.push({
+        surface_id: surfaceId,
+        blocked_at_wave: currentWave,
+        blockers: promotedBlockers,
+      });
+    }
+  }
+  return promotions;
 }
 
 function applyWaveMerge(args) {
@@ -878,6 +1190,64 @@ function applyWaveMerge(args) {
     const scopeExclusions = [...state.scope_exclusions];
     pushUnique(scopeExclusions, new Set(scopeExclusions), readScopeExclusions(domain));
 
+    // Append current wave's validated blocker tuples to state-side
+    // history. State history is the single source of truth for the loop
+    // detector — no raw handoff re-reads. Cycle 4's clear command will
+    // prune this history per surface so re-blocked surfaces start fresh.
+    const priorHistory = Array.isArray(state.blocked_prereq_history) ? state.blocked_prereq_history : [];
+    const newHistoryEntries = (merge.blocked_prereqs || []).map((entry) => {
+      const record = {
+        wave: waveNumber,
+        surface_id: entry.surface_id,
+        kind: entry.kind,
+      };
+      if (entry.identifier_hint) record.identifier_hint = entry.identifier_hint;
+      if (entry.reason) record.reason = entry.reason;
+      return record;
+    });
+    const nextHistory = [...priorHistory, ...newHistoryEntries];
+
+    // Build per-surface history map for the detector.
+    const historyBySurface = new Map();
+    for (const entry of nextHistory) {
+      if (!historyBySurface.has(entry.surface_id)) historyBySurface.set(entry.surface_id, []);
+      historyBySurface.get(entry.surface_id).push(entry);
+    }
+
+    // Build current wave's blocker map per surface from merge.blocked_prereqs.
+    const currentWaveBlockersBySurface = new Map();
+    for (const entry of merge.blocked_prereqs || []) {
+      if (!currentWaveBlockersBySurface.has(entry.surface_id)) currentWaveBlockersBySurface.set(entry.surface_id, []);
+      currentWaveBlockersBySurface.get(entry.surface_id).push({
+        kind: entry.kind,
+        identifier_hint: entry.identifier_hint || null,
+        reason: entry.reason,
+      });
+    }
+
+    const priorSnapshots = Array.isArray(state.prereq_registry_snapshots) ? state.prereq_registry_snapshots : [];
+    const clearHistory = Array.isArray(state.terminal_block_clear_history) ? state.terminal_block_clear_history : [];
+    const clearHistoryBySurface = new Map();
+    for (const entry of clearHistory) {
+      if (!clearHistoryBySurface.has(entry.surface_id)) clearHistoryBySurface.set(entry.surface_id, []);
+      clearHistoryBySurface.get(entry.surface_id).push(entry);
+    }
+    const promotions = detectTerminalPromotions({
+      currentWaveBlockersBySurface,
+      historyBySurface,
+      prereqRegistrySnapshots: priorSnapshots,
+      clearHistoryBySurface,
+      currentWave: waveNumber,
+    });
+    // Merge promotions into existing state.terminally_blocked. If the
+    // same surface is promoted twice, the new wave's promotion wins.
+    // Disjointness with state.explored is enforced at normalize time;
+    // a complete handoff in a later wave strips terminally_blocked.
+    const promotedSurfaceIds = new Set(promotions.map((p) => p.surface_id));
+    const carriedTerminallyBlocked = (Array.isArray(state.terminally_blocked) ? state.terminally_blocked : [])
+      .filter((entry) => !promotedSurfaceIds.has(entry.surface_id));
+    const nextTerminallyBlocked = [...carriedTerminallyBlocked, ...promotions];
+
     const explored = [...state.explored];
     const deadEnds = [...state.dead_ends];
     const wafBlockedEndpoints = [...state.waf_blocked_endpoints];
@@ -908,13 +1278,34 @@ function applyWaveMerge(args) {
     pushUnique(leadSurfaceIds, new Set(leadSurfaceIds), merge.lead_surface_ids);
     pushUnique(leadSurfaceIds, new Set(leadSurfaceIds), deepPromotion.promoted_surface_ids || []);
 
+    // Disjointness invariant: a surface marked complete in this wave wins
+    // over any prior terminal promotion. Strip from terminally_blocked.
+    const exploredSet = new Set(explored);
+    const reconciledTerminallyBlocked = nextTerminallyBlocked.filter(
+      (entry) => !exploredSet.has(entry.surface_id),
+    );
+    const reconciledTerminallySet = new Set(reconciledTerminallyBlocked.map((e) => e.surface_id));
+
     const filteredLeadSurfaceIds = leadSurfaceIds.filter(
-      (surfaceId) => attackSurface.surface_id_set.has(surfaceId) && !explored.includes(surfaceId),
+      (surfaceId) =>
+        attackSurface.surface_id_set.has(surfaceId) &&
+        !explored.includes(surfaceId) &&
+        !reconciledTerminallySet.has(surfaceId),
     );
 
+    // Filter requeue: terminally-blocked surfaces are not "requeue
+    // candidates" — the orchestrator must clear them via
+    // bounty_clear_terminal_block before they can be assigned again.
+    const filteredRequeueSurfaceIds = requeueSurfaceIds.filter(
+      (surfaceId) => !reconciledTerminallySet.has(surfaceId),
+    );
+
+    // Snapshots are populated by start_wave; merge does not write them.
     const nextState = {
       ...state,
       explored,
+      terminally_blocked: reconciledTerminallyBlocked,
+      blocked_prereq_history: nextHistory,
       dead_ends: deadEnds,
       waf_blocked_endpoints: wafBlockedEndpoints,
       lead_surface_ids: filteredLeadSurfaceIds,
@@ -925,6 +1316,22 @@ function applyWaveMerge(args) {
     };
 
     writeSessionStateDocument(domain, raw, nextState);
+    // Emit one surface_terminally_blocked event per (surface, blocker)
+    // pair so analytics can attribute promotions back to specific
+    // missing-prereq tuples without joining against state.
+    for (const promotion of promotions) {
+      for (const blocker of promotion.blockers) {
+        safeAppendPipelineEventDirect(domain, "surface_terminally_blocked", {
+          phase: state.phase,
+          wave_number: waveNumber,
+          status: "promoted",
+          source: "bounty_apply_wave_merge",
+          surface_id: promotion.surface_id,
+          kind: blocker.kind,
+          identifier_hint: blocker.identifier_hint || null,
+        });
+      }
+    }
     safeAppendPipelineEventDirect(domain, "wave_merged", {
       phase: state.phase,
       wave_number: waveNumber,
@@ -939,7 +1346,9 @@ function applyWaveMerge(args) {
         invalid_handoffs: merge.invalid_agents.length,
         unexpected_handoffs: merge.unexpected_agents.length,
         missing_surfaces: merge.missing_surface_ids.length,
-        requeue_surfaces: requeueSurfaceIds.length,
+        requeue_surfaces: filteredRequeueSurfaceIds.length,
+        terminally_blocked_promoted: promotions.length,
+        terminally_blocked_total: reconciledTerminallyBlocked.length,
         findings: findings.total,
       },
     });
@@ -957,12 +1366,15 @@ function applyWaveMerge(args) {
         completed_surface_ids: merge.completed_surface_ids,
         partial_surface_ids: merge.partial_surface_ids,
         missing_surface_ids: merge.missing_surface_ids,
-        requeue_surface_ids: requeueSurfaceIds,
+        requeue_surface_ids: filteredRequeueSurfaceIds,
         new_dead_ends_count: merge.dead_ends.length,
         new_waf_blocked_count: merge.waf_blocked_endpoints.length,
         lead_surface_ids: merge.lead_surface_ids,
         blocked_harness_runs: merge.blocked_harness_runs,
         blocked_harness_runs_grouped: merge.blocked_harness_runs_grouped,
+        blocked_prereqs: merge.blocked_prereqs,
+        blocked_prereqs_grouped: merge.blocked_prereqs_grouped,
+        terminally_blocked_promoted: promotions,
         bypass_attempts: merge.bypass_attempts,
         bypass_attempts_grouped: merge.bypass_attempts_grouped,
         suspicion_flags: merge.suspicion_flags,
@@ -1060,6 +1472,7 @@ function writeWaveHandoff(args) {
   const summary = normalizeHandoffSummary(args, { requireStructuredSummary: true });
   const chainNotes = normalizeChainNotes(args.chain_notes);
   const blockedHarnessRuns = normalizeBlockedHarnessRuns(args.blocked_harness_runs);
+  const blockedPrereqs = normalizeBlockedPrereqs(args.blocked_prereqs);
 
   if (typeof args.content !== "string") {
     throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "content must be a string");
@@ -1087,6 +1500,7 @@ function writeWaveHandoff(args) {
     const findingIdSet = new Set(findingsForRun.map((finding) => finding.id));
     const bypassAttempts = normalizeBypassAttempts(args.bypass_attempts, { findingIds: findingIdSet });
     assertBlockedHarnessConsistency(surfaceStatus, blockedHarnessRuns);
+    assertBlockedPrereqConsistency(surfaceStatus, blockedPrereqs);
     assertSmartContractCompletionEvidence({
       surfaceType,
       surfaceStatus,
@@ -1105,6 +1519,7 @@ function writeWaveHandoff(args) {
       summary,
       chain_notes: chainNotes,
       blocked_harness_runs: blockedHarnessRuns,
+      blocked_prereqs: blockedPrereqs,
       bypass_attempts: bypassAttempts,
       dead_ends: normalizeStringArray(args.dead_ends, "dead_ends"),
       waf_blocked_endpoints: normalizeStringArray(args.waf_blocked_endpoints, "waf_blocked_endpoints"),
@@ -1155,6 +1570,8 @@ function mergeWaveHandoffs(args) {
     lead_surface_ids: merge.lead_surface_ids,
     blocked_harness_runs: merge.blocked_harness_runs,
     blocked_harness_runs_grouped: merge.blocked_harness_runs_grouped,
+    blocked_prereqs: merge.blocked_prereqs,
+    blocked_prereqs_grouped: merge.blocked_prereqs_grouped,
     bypass_attempts: merge.bypass_attempts,
     bypass_attempts_grouped: merge.bypass_attempts_grouped,
     suspicion_flags: merge.suspicion_flags,
@@ -1230,6 +1647,7 @@ function buildWaveHandoffsDocument(domain, waveNumbers) {
           summary: payload.summary,
           chain_notes: payload.chain_notes,
           blocked_harness_runs: payload.blocked_harness_runs,
+          blocked_prereqs: payload.blocked_prereqs,
           bypass_attempts: payload.bypass_attempts,
           dead_ends: payload.dead_ends,
           waf_blocked_endpoints: payload.waf_blocked_endpoints,

@@ -42,6 +42,7 @@ Rules:
 - Lead with the assigned first-party surface, but follow third-party hops (CDNs, OAuth providers, webhooks, integrated SaaS) whenever they are needed to prove or chain impact back into the in-scope asset.
 - Start with crown jewels on this surface: auth, admin, user data, money movement, uploads, key material.
 - Use `bounty_list_auth_profiles` to check available auth profiles. If both "attacker" and "victim" profiles exist, use `auth_profile="attacker"` for primary testing. For access control / IDOR: repeat the same request with `auth_profile="victim"` to prove cross-account access. Include which `auth_profile` was used in the proof_of_concept and `auth_profile` fields of recorded findings.
+- If your surface needs registry material that is absent — e.g., `bounty_list_auth_profiles` returns no relevant profile, no enabled non-default egress profile when default egress hits `network_unreachable_target`, no funded test wallet for a SIWE/balance gate — record a `blocked_prereqs[]` entry on the handoff with the kind (`auth_missing`, `egress_unreachable`, `funded_wallet_missing`, `key_material_missing`, `external_credential_missing`), the optional `identifier_hint` (the registry handle that would unblock you, e.g. `attacker`, `us-west-egress`, `sepolia.funded`), and a one-line `reason`. Pair with `surface_status: partial`. Do not loop the same blocker tuple across waves: the merge layer terminalizes a surface that recurs without registry change, and the operator unblocks via `bounty_clear_terminal_block` once the prerequisite is registered.
 - Before recording a finding, prove it live with the exact request and response evidence.
 - Call `bounty_list_findings` first. Do not record a finding if the same endpoint+title already exists.
 - If you hit two hard WAF blocks on the same endpoint class, mark it WAF-blocked and move on.
@@ -74,6 +75,11 @@ Handoff field limits (enforced by `bounty_write_wave_handoff`; oversize values a
 - `blocked_harness_runs[].harness`: 1–120 chars
 - `blocked_harness_runs[].reason`: 1–240 chars
 - `blocked_harness_runs[].needed_for`: 1–200 chars (optional)
+- `blocked_prereqs[].kind`: one of auth_missing, egress_unreachable, funded_wallet_missing, key_material_missing, external_credential_missing
+- `blocked_prereqs[].identifier_hint`: 1–64 chars, lowercase alphanumeric + ._- only (optional, no secrets — registry handle when known)
+- `blocked_prereqs[].reason`: 1–240 chars (free text screened for credentials at write time)
+- `blocked_prereqs[].evidence_summary`: 1–300 chars (optional, screened for credentials)
+- `blocked_prereqs[].needed_for`: 1–200 chars (optional)
 - `bypass_attempts[].condition`: 4–120 chars
 - `bypass_attempts[].attempt_summary`: 30–500 chars (max 30 entries)
 

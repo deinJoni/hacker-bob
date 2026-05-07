@@ -29,6 +29,8 @@ allowed-tools:
   - mcp__bountyagent__bounty_read_session_summary
   - mcp__bountyagent__bounty_set_operator_note
   - mcp__bountyagent__bounty_clear_operator_note
+  - mcp__bountyagent__bounty_clear_terminal_block
+  - mcp__bountyagent__bounty_report_written
   - mcp__bountyagent__bounty_get_context_budget
   - mcp__bountyagent__bounty_select_technique_packs
   - mcp__bountyagent__bounty_read_technique_pack
@@ -223,8 +225,9 @@ Wave reconciliation:
 4. If status is `"pending"`, report the pending count and stop.
 5. If status is `"merged"`, use returned `state`, `merge`, `findings`, and `readiness`.
 6. `bounty_apply_wave_merge` owns reconciliation-side state mutation.
-7. Use `merge.requeue_surface_ids` for the next wave; surface `unexpected_agents` in output only.
-8. After merge, continue automatically to the next wave decision or CHAIN.
+7. Use `merge.requeue_surface_ids` for the next wave (already excludes terminally-blocked surfaces); surface `unexpected_agents` in output only.
+8. If `merge.terminally_blocked_promoted` is non-empty, report the promoted surfaces and the blocker tuples to the operator before the next wave — these are classified blocked, not neglected. Do not include them in the next `bounty_start_wave` assignments; `bounty_start_wave` will hard-reject them. When the operator confirms the missing prerequisite material is now registered, call `bounty_clear_terminal_block({ target_domain, surface_id, reason })` (>= 20 char reason) before assigning the surface again.
+9. After merge, continue automatically to the next wave decision or CHAIN.
 
 Wave decisions use `bounty_wave_status({ target_domain }).data`:
 - `wave < 2` → run another wave.
@@ -241,7 +244,7 @@ Spawn:
 ```
 Agent(subagent_type: "chain-builder", name: "chain", prompt: "Domain: [domain]. Egress profile: [egress_profile]. Session: ~/bounty-agent-sessions/[domain]. Read findings, wave handoffs, auth profiles, HTTP audit, and prior chain attempts through MCP. Test plausible chains with bounty_http_scan as needed, passing egress_profile on every scan, and write every outcome through bounty_write_chain_attempt. Do not read findings.md, chains.md, or markdown handoffs.")
 ```
-After completion, call `bounty_transition_phase({ target_domain, to_phase: "VERIFY" })`. If MCP blocks this transition for missing terminal chain attempts, retry the chain-builder once with the blocker text. Use `override_reason` only when the operator explicitly accepts proceeding without terminal chain evidence.
+After completion, call `bounty_transition_phase({ target_domain, to_phase: "VERIFY" })`. If MCP blocks this transition for missing terminal chain attempts, retry the chain-builder once with the blocker text. Use `override_reason` only when the operator explicitly accepts proceeding without terminal chain evidence. `override_reason` is rejected outside HUNT->CHAIN and CHAIN->VERIFY — do not pass it on other transitions; the MCP returns INVALID_ARGUMENTS and the call wastes a turn.
 
 ## PHASE 5: VERIFY
 Verification JSON is the only machine-readable source of truth. Markdown mirrors are human/debug only.

@@ -8,6 +8,10 @@ REPORTABILITY GATE (hard rule, applied before rendering anything):
 
 If `bounty_read_grade_verdict` returns `SKIP` or final verification has no reportable findings, still write `report.md` as a no-findings closeout. Include a concise summary of scope covered, verification result, terminal chain attempts, and blockers such as geofencing or unreachable hosts. Do not invent vulnerability sections.
 
+For closeouts, distinguish "exhausted" from "blocked by missing prereqs". Read `bounty_read_session_summary({ target_domain }).summary.blocked_prereqs` — if `total_blocked_surfaces > 0`, write a "Blocked by missing prerequisites" section listing each `by_kind[]` entry with its kind, identifier_hint (when set), surface_count, surface_ids, and example_reason. The operator's next action is registering the missing material and calling `bounty_clear_terminal_block` per surface. Without this section, a no-findings report reads as "exhausted" when reality is "blocked, classified, requires operator action".
+
+After writing `report.md`, call `bounty_report_written({ target_domain })` so analytics emits the `report_written` pipeline event.
+
 Write `~/bounty-agent-sessions/[domain]/report.md` with:
 
 1. Executive summary

@@ -79,6 +79,38 @@ module.exports = Object.freeze({
           "additionalProperties": false
         }
       },
+      "blocked_prereqs": {
+        "type": "array",
+        "maxItems": 20,
+        "description": "Prerequisites the hunter could not satisfy from registered material (auth profile, egress profile, funded wallet, etc.). Pair with surface_status: partial. Free-text fields (reason, evidence_summary) are screened for secrets at write time; identifier_hint must be a lowercase handle when present.",
+        "items": {
+          "type": "object",
+          "required": ["kind", "reason"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "auth_missing",
+                "egress_unreachable",
+                "funded_wallet_missing",
+                "key_material_missing",
+                "external_credential_missing"
+              ]
+            },
+            "identifier_hint": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$",
+              "description": "Optional. Registry handle (e.g., auth profile name 'attacker', egress profile name 'us-west-egress') that would resolve this prereq when added. Omit when no specific registry handle is identified. Restricted to lowercase alphanumerics + ._- and screened for long-hex / secret-shaped values."
+            },
+            "reason": { "type": "string", "minLength": 1, "maxLength": 240 },
+            "evidence_summary": { "type": "string", "minLength": 1, "maxLength": 300 },
+            "needed_for": { "type": "string", "minLength": 1, "maxLength": 200 }
+          },
+          "additionalProperties": false
+        }
+      },
       "bypass_attempts": {
         "type": "array",
         "maxItems": 30,

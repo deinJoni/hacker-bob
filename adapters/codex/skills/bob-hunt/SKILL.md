@@ -176,8 +176,9 @@ Wave reconciliation:
 4. If status is `"pending"`, report the pending count and stop.
 5. If status is `"merged"`, use returned `state`, `merge`, `findings`, and `readiness`.
 6. `bounty_apply_wave_merge` owns reconciliation-side state mutation.
-7. Use `merge.requeue_surface_ids` for the next wave; surface `unexpected_agents` in output only.
-8. After merge, continue automatically to the next wave decision or CHAIN.
+7. Use `merge.requeue_surface_ids` for the next wave (already excludes terminally-blocked surfaces); surface `unexpected_agents` in output only.
+8. If `merge.terminally_blocked_promoted` is non-empty, report the promoted surfaces and the blocker tuples to the operator before the next wave — these are classified blocked, not neglected. Do not include them in the next `bounty_start_wave` assignments; `bounty_start_wave` will hard-reject them. When the operator confirms the missing prerequisite material is now registered, call `bounty_clear_terminal_block({ target_domain, surface_id, reason })` (>= 20 char reason) before assigning the surface again.
+9. After merge, continue automatically to the next wave decision or CHAIN.
 
 Wave decisions use `bounty_wave_status({ target_domain }).data`:
 - `wave < 2` → run another wave.
@@ -197,7 +198,7 @@ Use Codex spawn_agent for chain-builder -> Codex worker.
 - message: `Bob role: chain-builder. Domain: [domain]. Session: ~/bounty-agent-sessions/[domain].` Include the full `chain` contract from Codex Worker Role Contracts.
 Wait with `wait_agent`, validate expected output, then `close_agent`.
 ```
-After completion, call `bounty_transition_phase({ target_domain, to_phase: "VERIFY" })`. If MCP blocks this transition for missing terminal chain attempts, retry the chain-builder once with the blocker text. Use `override_reason` only when the operator explicitly accepts proceeding without terminal chain evidence.
+After completion, call `bounty_transition_phase({ target_domain, to_phase: "VERIFY" })`. If MCP blocks this transition for missing terminal chain attempts, retry the chain-builder once with the blocker text. Use `override_reason` only when the operator explicitly accepts proceeding without terminal chain evidence. `override_reason` is rejected outside HUNT->CHAIN and CHAIN->VERIFY — do not pass it on other transitions; the MCP returns INVALID_ARGUMENTS and the call wastes a turn.
 
 ## PHASE 5: VERIFY
 Verification JSON is the only machine-readable source of truth. Markdown mirrors are human/debug only.
@@ -819,6 +820,7 @@ Rules:
 - Lead with the assigned first-party surface, but follow third-party hops (CDNs, OAuth providers, webhooks, integrated SaaS) whenever they are needed to prove or chain impact back into the in-scope asset.
 - Start with crown jewels on this surface: auth, admin, user data, money movement, uploads, key material.
 - Use `bounty_list_auth_profiles` to check available auth profiles. If both "attacker" and "victim" profiles exist, use `auth_profile="attacker"` for primary testing. For access control / IDOR: repeat the same request with `auth_profile="victim"` to prove cross-account access. Include which `auth_profile` was used in the proof_of_concept and `auth_profile` fields of recorded findings.
+- If your surface needs registry material that is absent — e.g., `bounty_list_auth_profiles` returns no relevant profile, no enabled non-default egress profile when default egress hits `network_unreachable_target`, no funded test wallet for a SIWE/balance gate — record a `blocked_prereqs[]` entry on the handoff with the kind (`auth_missing`, `egress_unreachable`, `funded_wallet_missing`, `key_material_missing`, `external_credential_missing`), the optional `identifier_hint` (the registry handle that would unblock you, e.g. `attacker`, `us-west-egress`, `sepolia.funded`), and a one-line `reason`. Pair with `surface_status: partial`. Do not loop the same blocker tuple across waves: the merge layer terminalizes a surface that recurs without registry change, and the operator unblocks via `bounty_clear_terminal_block` once the prerequisite is registered.
 - Before recording a finding, prove it live with the exact request and response evidence.
 - Call `bounty_list_findings` first. Do not record a finding if the same endpoint+title already exists.
 - If you hit two hard WAF blocks on the same endpoint class, mark it WAF-blocked and move on.
@@ -851,6 +853,11 @@ Handoff field limits (enforced by `bounty_write_wave_handoff`; oversize values a
 - `blocked_harness_runs[].harness`: 1–120 chars
 - `blocked_harness_runs[].reason`: 1–240 chars
 - `blocked_harness_runs[].needed_for`: 1–200 chars (optional)
+- `blocked_prereqs[].kind`: one of auth_missing, egress_unreachable, funded_wallet_missing, key_material_missing, external_credential_missing
+- `blocked_prereqs[].identifier_hint`: 1–64 chars, lowercase alphanumeric + ._- only (optional, no secrets — registry handle when known)
+- `blocked_prereqs[].reason`: 1–240 chars (free text screened for credentials at write time)
+- `blocked_prereqs[].evidence_summary`: 1–300 chars (optional, screened for credentials)
+- `blocked_prereqs[].needed_for`: 1–200 chars (optional)
 - `bypass_attempts[].condition`: 4–120 chars
 - `bypass_attempts[].attempt_summary`: 30–500 chars (max 30 entries)
 
@@ -915,6 +922,11 @@ Handoff field limits (enforced by `bounty_write_wave_handoff`; oversize values a
 - `blocked_harness_runs[].harness`: 1–120 chars
 - `blocked_harness_runs[].reason`: 1–240 chars
 - `blocked_harness_runs[].needed_for`: 1–200 chars (optional)
+- `blocked_prereqs[].kind`: one of auth_missing, egress_unreachable, funded_wallet_missing, key_material_missing, external_credential_missing
+- `blocked_prereqs[].identifier_hint`: 1–64 chars, lowercase alphanumeric + ._- only (optional, no secrets — registry handle when known)
+- `blocked_prereqs[].reason`: 1–240 chars (free text screened for credentials at write time)
+- `blocked_prereqs[].evidence_summary`: 1–300 chars (optional, screened for credentials)
+- `blocked_prereqs[].needed_for`: 1–200 chars (optional)
 - `bypass_attempts[].condition`: 4–120 chars
 - `bypass_attempts[].attempt_summary`: 30–500 chars (max 30 entries)
 END hunter-evm CONTRACT
@@ -976,6 +988,11 @@ Handoff field limits (enforced by `bounty_write_wave_handoff`; oversize values a
 - `blocked_harness_runs[].harness`: 1–120 chars
 - `blocked_harness_runs[].reason`: 1–240 chars
 - `blocked_harness_runs[].needed_for`: 1–200 chars (optional)
+- `blocked_prereqs[].kind`: one of auth_missing, egress_unreachable, funded_wallet_missing, key_material_missing, external_credential_missing
+- `blocked_prereqs[].identifier_hint`: 1–64 chars, lowercase alphanumeric + ._- only (optional, no secrets — registry handle when known)
+- `blocked_prereqs[].reason`: 1–240 chars (free text screened for credentials at write time)
+- `blocked_prereqs[].evidence_summary`: 1–300 chars (optional, screened for credentials)
+- `blocked_prereqs[].needed_for`: 1–200 chars (optional)
 - `bypass_attempts[].condition`: 4–120 chars
 - `bypass_attempts[].attempt_summary`: 30–500 chars (max 30 entries)
 END hunter-svm CONTRACT
@@ -1045,6 +1062,11 @@ Handoff field limits (enforced by `bounty_write_wave_handoff`; oversize values a
 - `blocked_harness_runs[].harness`: 1–120 chars
 - `blocked_harness_runs[].reason`: 1–240 chars
 - `blocked_harness_runs[].needed_for`: 1–200 chars (optional)
+- `blocked_prereqs[].kind`: one of auth_missing, egress_unreachable, funded_wallet_missing, key_material_missing, external_credential_missing
+- `blocked_prereqs[].identifier_hint`: 1–64 chars, lowercase alphanumeric + ._- only (optional, no secrets — registry handle when known)
+- `blocked_prereqs[].reason`: 1–240 chars (free text screened for credentials at write time)
+- `blocked_prereqs[].evidence_summary`: 1–300 chars (optional, screened for credentials)
+- `blocked_prereqs[].needed_for`: 1–200 chars (optional)
 - `bypass_attempts[].condition`: 4–120 chars
 - `bypass_attempts[].attempt_summary`: 30–500 chars (max 30 entries)
 END hunter-move CONTRACT
@@ -1121,6 +1143,11 @@ Handoff field limits (enforced by `bounty_write_wave_handoff`; oversize values a
 - `blocked_harness_runs[].harness`: 1–120 chars
 - `blocked_harness_runs[].reason`: 1–240 chars
 - `blocked_harness_runs[].needed_for`: 1–200 chars (optional)
+- `blocked_prereqs[].kind`: one of auth_missing, egress_unreachable, funded_wallet_missing, key_material_missing, external_credential_missing
+- `blocked_prereqs[].identifier_hint`: 1–64 chars, lowercase alphanumeric + ._- only (optional, no secrets — registry handle when known)
+- `blocked_prereqs[].reason`: 1–240 chars (free text screened for credentials at write time)
+- `blocked_prereqs[].evidence_summary`: 1–300 chars (optional, screened for credentials)
+- `blocked_prereqs[].needed_for`: 1–200 chars (optional)
 - `bypass_attempts[].condition`: 4–120 chars
 - `bypass_attempts[].attempt_summary`: 30–500 chars (max 30 entries)
 END hunter-substrate CONTRACT
@@ -1199,6 +1226,11 @@ Handoff field limits (enforced by `bounty_write_wave_handoff`; oversize values a
 - `blocked_harness_runs[].harness`: 1–120 chars
 - `blocked_harness_runs[].reason`: 1–240 chars
 - `blocked_harness_runs[].needed_for`: 1–200 chars (optional)
+- `blocked_prereqs[].kind`: one of auth_missing, egress_unreachable, funded_wallet_missing, key_material_missing, external_credential_missing
+- `blocked_prereqs[].identifier_hint`: 1–64 chars, lowercase alphanumeric + ._- only (optional, no secrets — registry handle when known)
+- `blocked_prereqs[].reason`: 1–240 chars (free text screened for credentials at write time)
+- `blocked_prereqs[].evidence_summary`: 1–300 chars (optional, screened for credentials)
+- `blocked_prereqs[].needed_for`: 1–200 chars (optional)
 - `bypass_attempts[].condition`: 4–120 chars
 - `bypass_attempts[].attempt_summary`: 30–500 chars (max 30 entries)
 END hunter-cosmwasm CONTRACT
@@ -1826,6 +1858,10 @@ REPORTABILITY GATE (hard rule, applied before rendering anything):
 - Findings with `reportable: false` (denied, downgraded out, non-reportable per balanced) are NEVER rendered, regardless of how attractive their `response_evidence` looks. Skip silently.
 
 If `bounty_read_grade_verdict` returns `SKIP` or final verification has no reportable findings, still write `report.md` as a no-findings closeout. Include a concise summary of scope covered, verification result, terminal chain attempts, and blockers such as geofencing or unreachable hosts. Do not invent vulnerability sections.
+
+For closeouts, distinguish "exhausted" from "blocked by missing prereqs". Read `bounty_read_session_summary({ target_domain }).summary.blocked_prereqs` — if `total_blocked_surfaces > 0`, write a "Blocked by missing prerequisites" section listing each `by_kind[]` entry with its kind, identifier_hint (when set), surface_count, surface_ids, and example_reason. The operator's next action is registering the missing material and calling `bounty_clear_terminal_block` per surface. Without this section, a no-findings report reads as "exhausted" when reality is "blocked, classified, requires operator action".
+
+After writing `report.md`, call `bounty_report_written({ target_domain })` so analytics emits the `report_written` pipeline event.
 
 Write `~/bounty-agent-sessions/[domain]/report.md` with:
 
