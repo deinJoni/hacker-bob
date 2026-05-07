@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-05-07
+
+### Public naming cleanup
+
+- Replaced public site metadata and landing-page copy that described Hacker Bob as a "bug bounty agent" with "bug bounty workflow framework" wording.
+- Updated the MCP server facade comment to use Hacker Bob naming.
+- Added a prompt-contract regression so public copy does not reintroduce the retired product phrasing.
+- Preserved compatibility identifiers: the `bountyagent` MCP namespace and `~/bounty-agent-sessions` state path are unchanged.
+
 ### Recon tool coverage
 
 - Added optional Katana integration to normal and deep recon so bounded in-scope crawling augments CDX/Wayback and JS extraction before `attack_surface.json` is built.

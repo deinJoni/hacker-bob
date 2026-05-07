@@ -1,6 +1,6 @@
 {
   "name": "hacker-bob-cc",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Hacker Bob — Claude Code adapter wrapper. Pins --adapter claude and delegates to the canonical hacker-bob CLI.",
   "license": "Apache-2.0",
   "repository": {
@@ -21,6 +21,6 @@
     "bin/hacker-bob-cc.js"
   ],
   "dependencies": {
-    "hacker-bob": "1.2.0"
+    "hacker-bob": "1.2.1"
   }
 }

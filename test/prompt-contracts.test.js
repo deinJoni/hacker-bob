@@ -213,8 +213,10 @@ test("adapter registry exposes the shared lifecycle surface", () => {
 
 test("Codex plugin manifest and direct skills expose portable Bob contracts", () => {
   const codex = getAdapter("codex");
+  const rootPackage = JSON.parse(readFile("package.json"));
   const manifest = JSON.parse(readFile("adapters/codex/hacker-bob/.codex-plugin/plugin.json"));
   assert.equal(manifest.name, "hacker-bob");
+  assert.equal(manifest.version, rootPackage.version);
   assert.equal(manifest.mcpServers, "./.mcp.json");
   assert.equal(Object.prototype.hasOwnProperty.call(manifest, "skills"), false);
   assert.doesNotMatch(JSON.stringify(manifest), /TODO/);

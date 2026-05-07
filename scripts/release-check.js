@@ -172,6 +172,12 @@ function assertFile(filePath, message) {
 function checkManifest() {
   const rootPackage = readJson(path.join(ROOT, "package.json"));
   assertEqual(rootPackage.name, "hacker-bob", "canonical package name is hacker-bob");
+  const codexPluginManifest = readJson(path.join(ROOT, "adapters", "codex", "hacker-bob", ".codex-plugin", "plugin.json"));
+  assertEqual(
+    codexPluginManifest.version,
+    rootPackage.version,
+    "Codex plugin manifest version matches canonical version",
+  );
 
   const wrapperPackages = WRAPPER_PACKAGES.map((spec) => {
     const wrapperPackage = readJson(path.join(spec.root, "package.json"));
