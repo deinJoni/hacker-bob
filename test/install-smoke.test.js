@@ -33,6 +33,7 @@ test("installer copies a require-able complete MCP runtime", () => {
     assert.ok(fs.existsSync(path.join(workspace, "mcp", "lib", "egress-profiles.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-update.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-egress.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-export.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "hunt.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "status.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "debug.md")));
@@ -47,10 +48,12 @@ test("installer copies a require-able complete MCP runtime", () => {
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bountyagentdebug", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "hunter-subagent-stop.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-egress.js")));
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-export.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-update.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-check-update.js")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-update-lib.js")));
     assert.ok(fs.existsSync(path.join(workspace, "mcp", "lib", "update-check.js")));
+    assert.ok(fs.existsSync(path.join(workspace, "mcp", "lib", "bob-export.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".hacker-bob", "knowledge", "hunter-techniques.json")));
     assert.ok(fs.existsSync(path.join(workspace, ".hacker-bob", "bypass-tables", "rest-api.txt")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "knowledge")));
@@ -294,6 +297,7 @@ test("installer merges existing MCP/settings config idempotently", () => {
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "bypass-tables", "rest-api.txt")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-update-lib.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-update.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-export.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "hunt.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "status.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "debug.md")));
@@ -389,8 +393,8 @@ test("codex adapter installs direct skills and doctor checks MCP wiring", () => 
       targetAbs: workspace,
       serverPath: path.join(workspace, "mcp", "server.js"),
     });
-    assert.equal(install.skills, 4);
-    assert.equal(install.commands, 4);
+    assert.equal(install.skills, 5);
+    assert.equal(install.commands, 5);
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".codex-plugin", "plugin.json")));
     const manifest = JSON.parse(fs.readFileSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".codex-plugin", "plugin.json"), "utf8"));
     assert.equal(Object.prototype.hasOwnProperty.call(manifest, "skills"), false);
@@ -398,11 +402,13 @@ test("codex adapter installs direct skills and doctor checks MCP wiring", () => 
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-status", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-debug", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-update", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-export", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "hunt", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "bob-hunt", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "hacker-bob-hunt", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "hacker-bob-hunt", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-hunt.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-export.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".agents", "plugins", "marketplace.json")));
 
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".mcp.json"), "utf8"));
@@ -431,8 +437,10 @@ test("codex adapter installs direct skills and doctor checks MCP wiring", () => 
     const removed = CODEX_ADAPTER.uninstall({ sourceRoot: ROOT, targetAbs: workspace, dryRun: false });
     assert.equal(removed.dry_run, false);
     assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-hunt", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-export", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".mcp.json")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-hunt.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-export.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".agents", "plugins", "marketplace.json")));
   } finally {
     if (originalCodexHome === undefined) {

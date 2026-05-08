@@ -62,6 +62,11 @@ const CODEX_SKILL_SPECS = Object.freeze({
     name: "bob-update",
     description: "Check for Hacker Bob package updates and guide project-local update installation from Codex.",
   }),
+  export: Object.freeze({
+    output_path: path.join("adapters", "codex", "skills", "bob-export", "SKILL.md"),
+    name: "bob-export",
+    description: "Create a Hacker Bob post-release improvement bundle for the currently installed Bob version.",
+  }),
 });
 
 function renderFrontmatter(spec) {
@@ -212,10 +217,12 @@ function applyCodexHostText(document) {
     .replace(/\/bob-status/g, "$bob-status")
     .replace(/\/bob-debug/g, "$bob-debug")
     .replace(/\/bob-update/g, "$bob-update")
+    .replace(/\/bob-export/g, "$bob-export")
     .replace(/\/bob:hunt/g, "$bob-hunt")
     .replace(/\/bob:status/g, "$bob-status")
     .replace(/\/bob:debug/g, "$bob-debug")
-    .replace(/\/bob:update/g, "$bob-update");
+    .replace(/\/bob:update/g, "$bob-update")
+    .replace(/\/bob:export/g, "$bob-export");
 }
 
 function replaceLaunchTemplates(document) {
@@ -324,12 +331,33 @@ function renderUpdateSkill() {
   ].join("\n");
 }
 
+function renderExportSkill() {
+  return [
+    "# Hacker Bob Export",
+    "",
+    "Use this when the operator asks to create a post-release improvement bundle from Codex.",
+    "",
+    "Run from the project root. The command has no v1 flags:",
+    "```bash",
+    "node -e \"const exporter=require('./mcp/lib/bob-export.js'); const result=exporter.exportBobReleaseBundle({ projectDir: process.cwd() }); process.stdout.write(exporter.renderExportResult(result));\"",
+    "```",
+    "",
+    "Report the helper output exactly. This workflow exports telemetry and session summaries for improving Hacker Bob; it does not hunt, resume sessions, or interact with targets.",
+    "",
+  ].join("\n");
+}
+
 function renderCodexSkill(skillId, options = {}) {
   const spec = CODEX_SKILL_SPECS[skillId];
   if (!spec) throw new Error(`Missing Codex skill spec for ${skillId}`);
-  const body = spec.role_id
-    ? renderCodexPromptBody(spec.role_id, roleBody(spec.role_id, options), options)
-    : renderUpdateSkill();
+  let body;
+  if (spec.role_id) {
+    body = renderCodexPromptBody(spec.role_id, roleBody(spec.role_id, options), options);
+  } else if (skillId === "export") {
+    body = renderExportSkill();
+  } else {
+    body = renderUpdateSkill();
+  }
   return `${renderFrontmatter(spec)}\n\n${body}`;
 }
 

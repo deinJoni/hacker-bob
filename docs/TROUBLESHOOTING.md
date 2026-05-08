@@ -41,7 +41,7 @@ cd /path/to/your/project
 codex
 ```
 
-The install should print `Codex plugin cache/config activated for MCP discovery`. Then look for `$bob-hunt`, `$bob-status`, `$bob-debug`, and `$bob-update`. If they still do not appear, run:
+The install should print `Codex plugin cache/config activated for MCP discovery`. Then look for `$bob-hunt`, `$bob-status`, `$bob-debug`, `$bob-update`, and `$bob-export`. If they still do not appear, run:
 
 ```bash
 hacker-bob doctor /path/to/your/project --adapter codex --json

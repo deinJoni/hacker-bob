@@ -24,6 +24,7 @@ const LEGACY_SKILL_DIRS = Object.freeze([
   "hacker-bob-status",
   "hacker-bob-debug",
   "hacker-bob-update",
+  "hacker-bob-export",
 ]);
 const STALE_PLUGIN_SKILL_DIRS = Object.freeze([
   "hunt",
@@ -63,6 +64,12 @@ const COMMAND_SPECS = Object.freeze({
     skill: "bob-update",
     description: "Check or apply Hacker Bob project-local updates.",
     argumentHint: "[check|apply]",
+  }),
+  export: Object.freeze({
+    file: "bob-export.md",
+    skill: "bob-export",
+    description: "Create a Hacker Bob post-release improvement bundle.",
+    argumentHint: "[no arguments]",
   }),
 });
 

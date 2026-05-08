@@ -132,11 +132,12 @@ Then in Claude Code, use the Claude slash commands:
 /bob-status                 # quick latest-session status
 /bob-debug                   # review the latest local session
 /bob-update                  # preview and install the latest Bob release
+/bob-export                  # create a post-release improvement bundle
 ```
 
 That's it. Now go make coffee.
 
-In Codex, restart in the target project and use `$bob-hunt`, `$bob-status`, `$bob-debug`, and `$bob-update`. In generic MCP hosts, connect to `mcp/server.js` through the generated `.mcp.json` entry and follow `.hacker-bob/generic-mcp/hacker-bob.md`.
+In Codex, restart in the target project and use `$bob-hunt`, `$bob-status`, `$bob-debug`, `$bob-update`, and `$bob-export`. In generic MCP hosts, connect to `mcp/server.js` through the generated `.mcp.json` entry and follow `.hacker-bob/generic-mcp/hacker-bob.md`.
 
 For install diagnostics, run:
 
@@ -159,6 +160,10 @@ npx -y hacker-bob@latest install "$CLAUDE_PROJECT_DIR"
 After an update, fully restart Claude Code in that project. Bob also checks for available updates once per day on `SessionStart` and stores the result in `~/.cache/hacker-bob/update-checks/`; the statusline and `/bob-status` only read that local cache.
 
 In Codex, use `$bob-update`. In generic MCP hosts, run `hacker-bob update /path/to/your/project --adapter generic-mcp` from a shell and reload the host's MCP config.
+
+## Post-Release Export
+
+After running Bob on one or more sessions with the installed release, run `/bob-export` in Claude or `$bob-export` in Codex. Bob writes a timestamped bundle under `~/bounty-agent-telemetry/release-bundles/v<version>/` with a fresh-agent prompt, manifest, summaries, filtered telemetry, and source paths for improving the next release. The export is read-only and release-scoped; it does not start hunts or touch targets.
 
 ## How Bob hunts
 

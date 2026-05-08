@@ -228,9 +228,11 @@ test("Codex plugin manifest and direct skills expose portable Bob contracts", ()
   const hunt = readFile("adapters/codex/skills/bob-hunt/SKILL.md");
   const status = readFile("adapters/codex/skills/bob-status/SKILL.md");
   const debug = readFile("adapters/codex/skills/bob-debug/SKILL.md");
+  const exportSkill = readFile("adapters/codex/skills/bob-export/SKILL.md");
   assert.equal(parseFrontmatter(hunt, "adapters/codex/skills/bob-hunt/SKILL.md").name, "bob-hunt");
   assert.equal(parseFrontmatter(status, "adapters/codex/skills/bob-status/SKILL.md").name, "bob-status");
   assert.equal(parseFrontmatter(debug, "adapters/codex/skills/bob-debug/SKILL.md").name, "bob-debug");
+  assert.equal(parseFrontmatter(exportSkill, "adapters/codex/skills/bob-export/SKILL.md").name, "bob-export");
   assert.match(hunt, /bounty_finalize_hunter_run/);
   assert.match(hunt, /Codex Agent Mapping/);
   assert.match(hunt, /Codex Worker Role Contracts/);
@@ -242,8 +244,11 @@ test("Codex plugin manifest and direct skills expose portable Bob contracts", ()
   assert.match(hunt, /wait_agent/);
   assert.match(hunt, /close_agent/);
   assert.match(hunt, /host_agent_id -> w\[wave\]\/a\[agent\]\/surface_id/);
-  assert.doesNotMatch(hunt + status + debug, /CLAUDE_PROJECT_DIR|mcp__bountyagent__|\/bob:|\bClaude\b|Agent\(subagent_type|subagent_type|run_in_background|\bTask\b|SubagentStop/);
+  assert.doesNotMatch(hunt + status + debug + exportSkill, /CLAUDE_PROJECT_DIR|mcp__bountyagent__|\/bob:|\bClaude\b|Agent\(subagent_type|subagent_type|run_in_background|\bTask\b|SubagentStop/);
   assert.match(status, /mcp\/lib\/update-check\.js/);
+  assert.match(exportSkill, /mcp\/lib\/bob-export\.js/);
+  assert.match(exportSkill, /no v1 flags/);
+  assert.match(exportSkill, /does not hunt, resume sessions, or interact with targets/);
 
   for (const [roleId, spec] of Object.entries(CODEX_ROLE_SPECS)) {
     assert.equal(spec.agent_type, "worker", `${roleId} must map to a Codex worker`);
@@ -782,12 +787,14 @@ test("bountyagent skill allowed-tools match orchestrator and auth bundles", () =
   assert.ok(!allowedTools.includes("mcp__bountyagent__bounty_write_wave_handoff"));
 });
 
-test("Claude ships only the bob-update command shim", () => {
+test("Claude ships generated command shims for update and export", () => {
   const claudeAdapter = getAdapter("claude");
   const updateCommand = readFile(".claude/commands/bob-update.md");
+  const exportCommand = readFile(".claude/commands/bob-export.md");
 
-  assert.deepEqual(Object.keys(claudeAdapter.COMMAND_SPECS), ["update"]);
+  assert.deepEqual(Object.keys(claudeAdapter.COMMAND_SPECS).sort(), ["export", "update"]);
   assert.equal(updateCommand, claudeAdapter.renderCommand("update"));
+  assert.equal(exportCommand, claudeAdapter.renderCommand("export"));
   assert.equal(fs.existsSync(path.join(ROOT, ".claude", "commands", "bob", "hunt.md")), false);
   assert.equal(fs.existsSync(path.join(ROOT, ".claude", "commands", "bob", "status.md")), false);
   assert.equal(fs.existsSync(path.join(ROOT, ".claude", "commands", "bob", "debug.md")), false);
@@ -795,9 +802,15 @@ test("Claude ships only the bob-update command shim", () => {
   assert.match(updateCommand, /hacker-bob@latest install/);
   assert.match(updateCommand, /Update now\?/);
   assert.match(updateCommand, /fully restart Claude Code/);
+  assert.match(exportCommand, /bob-export\.js/);
+  assert.match(exportCommand, /Do not add flags or run a hunt/);
   assert.deepEqual(
     parseYamlListFrontmatter(updateCommand, "allowed-tools", "bob-update.md").sort(),
     ["AskUserQuestion", "Bash"].sort(),
+  );
+  assert.deepEqual(
+    parseYamlListFrontmatter(exportCommand, "allowed-tools", "bob-export.md"),
+    ["Bash"],
   );
 });
 
@@ -932,6 +945,7 @@ test("installer and dev-sync ship Claude hyphen skills and prune legacy slash pa
 
   assert.match(install, /bin\/hacker-bob\.js/);
   assert.match(claudeAdapter, /bob-update\.md/);
+  assert.match(claudeAdapter, /bob-export\.md/);
   assert.match(claudeAdapter, /bob-hunt/);
   assert.match(claudeAdapter, /bob-status/);
   assert.match(claudeAdapter, /bob-debug/);
@@ -943,6 +957,8 @@ test("installer and dev-sync ship Claude hyphen skills and prune legacy slash pa
   assert.match(devSync, /\.hacker-bob\/knowledge/);
   assert.match(devSync, /\.hacker-bob\/bypass-tables/);
   assert.match(devSync, /\.claude\/commands\/bob-update\.md/);
+  assert.match(devSync, /\.claude\/commands\/bob-export\.md/);
+  assert.match(devSync, /\.claude\/hooks\/bob-export\.js/);
   assert.match(devSync, /rm -f "\$CLAUDE_DIR\/commands\/bob\/hunt\.md"/);
   assert.match(devSync, /"\$CLAUDE_DIR\/commands\/bob\/update\.md"/);
   assert.match(claudeAdapter, /bountyagentstatus/);
@@ -1151,6 +1167,7 @@ test("installer and dev-sync copy and configure session guards", () => {
   assert.match(devSync, /\.claude\/skills\/bob-hunt\/SKILL\.md/);
   assert.match(claudeAdapter, /hunt\.md/);
   assert.match(devSync, /\.claude\/commands\/bob-update\.md/);
+  assert.match(devSync, /\.claude\/commands\/bob-export\.md/);
   assert.match(install, /"mcp", "lib", "tools"/);
   assert.match(devSync, /mcp\/lib\/tools/);
   assert.match(claudeAdapter, /merge-claude-config\.js/);

@@ -19,7 +19,7 @@ npx -y hacker-bob@latest install /path/to/your/project --adapter generic-mcp
 npx -y hacker-bob@latest install /path/to/your/project --adapter all
 ```
 
-The installer writes shared runtime files into `mcp/` and `.hacker-bob/`, then writes the selected adapter surface. Claude uses `.claude/`, Codex uses direct `$bob-*` skills in `~/.codex/skills` plus `.codex/plugins/hacker-bob`, `.agents/plugins/marketplace.json`, and Codex cache/config activation for MCP wiring, and generic MCP uses root `.mcp.json` plus `.hacker-bob/generic-mcp/` prompt docs. Codex exposes Bob as `$bob-hunt`, `$bob-status`, `$bob-debug`, and `$bob-update` skills. A global npm install adds the `hacker-bob` command to your `PATH`, but it does not install Bob into every project automatically.
+The installer writes shared runtime files into `mcp/` and `.hacker-bob/`, then writes the selected adapter surface. Claude uses `.claude/`, Codex uses direct `$bob-*` skills in `~/.codex/skills` plus `.codex/plugins/hacker-bob`, `.agents/plugins/marketplace.json`, and Codex cache/config activation for MCP wiring, and generic MCP uses root `.mcp.json` plus `.hacker-bob/generic-mcp/` prompt docs. Codex exposes Bob as `$bob-hunt`, `$bob-status`, `$bob-debug`, `$bob-update`, and `$bob-export` skills. A global npm install adds the `hacker-bob` command to your `PATH`, but it does not install Bob into every project automatically.
 
 ## Doctor Check
 
@@ -87,7 +87,7 @@ Warning: `--dangerously-skip-permissions` disables Claude Code permission prompt
 
 The restart is required because Claude Code reads slash commands, MCP config, settings, hooks, and statusline setup at startup.
 
-For Codex, restart Codex in the target directory and confirm `$bob-hunt`, `$bob-status`, `$bob-debug`, and `$bob-update` are available. The installer activates `hacker-bob@hacker-bob-local` in Codex's cache/config for MCP wiring; if skills are still missing, run `hacker-bob doctor /path/to/your/project --adapter codex --json`. For generic MCP hosts, reload the host's MCP server configuration and use `.hacker-bob/generic-mcp/hacker-bob.md` as the operator prompt guide.
+For Codex, restart Codex in the target directory and confirm `$bob-hunt`, `$bob-status`, `$bob-debug`, `$bob-update`, and `$bob-export` are available. The installer activates `hacker-bob@hacker-bob-local` in Codex's cache/config for MCP wiring; if skills are still missing, run `hacker-bob doctor /path/to/your/project --adapter codex --json`. For generic MCP hosts, reload the host's MCP server configuration and use `.hacker-bob/generic-mcp/hacker-bob.md` as the operator prompt guide.
 
 ## Smoke Check
 

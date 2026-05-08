@@ -24,6 +24,7 @@ const HOOK_FILES = Object.freeze([
   "bounty-statusline.js",
   "hunter-subagent-stop.js",
   "bob-egress.js",
+  "bob-export.js",
   "bob-update.js",
   "bob-check-update.js",
   "bob-check-update-worker.js",
@@ -40,6 +41,7 @@ const EXECUTABLE_HOOKS = Object.freeze([
   "session-write-guard.sh",
   "hunter-subagent-stop.js",
   "bob-egress.js",
+  "bob-export.js",
   "bob-update.js",
   "bob-check-update.js",
   "bob-check-update-worker.js",
@@ -48,6 +50,7 @@ const EXECUTABLE_HOOKS = Object.freeze([
 const BOB_COMMAND_FILES = Object.freeze([
   "bob-update.md",
   "bob-egress.md",
+  "bob-export.md",
 ]);
 
 const LEGACY_BOB_COMMAND_FILES = Object.freeze([
@@ -61,6 +64,10 @@ const COMMAND_SPECS = Object.freeze({
   update: Object.freeze({
     file: "bob-update.md",
     slash: "/bob-update",
+  }),
+  export: Object.freeze({
+    file: "bob-export.md",
+    slash: "/bob-export",
   }),
 });
 
@@ -164,8 +171,25 @@ function renderUpdateCommand() {
   ].join("\n");
 }
 
+function renderExportCommand() {
+  return [
+    "---",
+    "allowed-tools:",
+    "  - Bash",
+    "---",
+    "Create a Hacker Bob post-release improvement bundle for the currently installed Bob version.",
+    "",
+    "Run:",
+    '   `node "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/bob-export.js" "${CLAUDE_PROJECT_DIR:-$PWD}"`',
+    "",
+    "Report the helper output exactly. Do not add flags or run a hunt.",
+    "",
+  ].join("\n");
+}
+
 function renderCommand(commandId) {
   if (commandId === "update") return renderUpdateCommand();
+  if (commandId === "export") return renderExportCommand();
   throw new Error(`Unknown Claude command: ${commandId}`);
 }
 

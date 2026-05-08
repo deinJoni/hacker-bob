@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-05-08
+
+### Post-release export bundles
+
+- Added `/bob-export` for Claude and `$bob-export` for Codex to create deterministic, timestamped release improvement bundles after completed Bob sessions.
+- Added a shared non-LLM exporter that filters telemetry and sessions to the current `bob_version`, excludes unknown/mixed-version sessions, and records exclusions in `manifest.json`.
+- Bundle output now includes `AGENT_PROMPT.md`, `manifest.json`, `summary.md`, `problem-clusters.json`, `sessions.json`, filtered telemetry JSONL files, and `source-paths.txt` under `~/bounty-agent-telemetry/release-bundles/v<version>/<timestamp>/`.
+- Clustered repeated bottlenecks, failed MCP tool/error-code groups, hunter block codes, malformed artifacts, evidence/report/coverage blockers, version exclusions, and source paths for fresh-agent patching.
+- Updated Claude/Codex adapter wiring, installer/dev-sync/doctor/uninstall expectations, docs, and release/package checks for the new export surface.
+
 ## [1.2.2] - 2026-05-07
 
 ### Telemetry version stamping

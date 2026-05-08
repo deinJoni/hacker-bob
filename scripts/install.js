@@ -431,16 +431,16 @@ function printInstallSummary(summary) {
   console.log(`  host adapters: ${summary.adapters.join(", ")}`);
   if (summary.adapterResults.claude) {
     console.log(`  ${summary.agents} Claude agent definitions`);
-    console.log("  Claude command shim (/bob-update)");
+    console.log("  Claude command shims (/bob-update, /bob-egress, /bob-export)");
     console.log("  Claude bob-hunt + bob-status + bob-debug skills");
     console.log(`  ${summary.rules} Claude rules`);
-    console.log("  Claude scope/session/update guard hooks + status line");
+    console.log("  Claude scope/session guard hooks, update/export helpers, and status line");
     console.log("  Claude .mcp.json and settings.json merged");
     console.log("  .claude/bob/VERSION and install.json compatibility metadata");
   }
   if (summary.adapterResults.codex) {
     console.log("  Codex plugin (.codex/plugins/hacker-bob) for MCP wiring");
-    console.log(`  Codex skills ($bob-hunt, $bob-status, $bob-debug, $bob-update) in ~/.codex/skills`);
+    console.log(`  Codex skills ($bob-hunt, $bob-status, $bob-debug, $bob-update, $bob-export) in ~/.codex/skills`);
     console.log(`  Codex plugin command wrappers (${summary.codexCommands}) and .agents/plugins/marketplace.json`);
     if (summary.codexActivation && summary.codexActivation.ok) {
       console.log("  Codex plugin cache/config activated for MCP discovery");
