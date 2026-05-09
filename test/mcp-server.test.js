@@ -9929,6 +9929,40 @@ test("verification v2 attempt is created only on CHAIN -> VERIFY and context rep
   });
 });
 
+test("verification v2 CHAIN -> VERIFY rejects when manifest refresh fails", () => {
+  withTempHome(() => {
+    const domain = "manifest-fail.example.com";
+    seedSessionState(domain, { phase: "CHAIN" });
+    seedFinding(domain);
+    const manifestPath = verificationManifestPath(domain);
+    // writeFileAtomic uses fs.renameSync to move a tempfile onto the target path.
+    // Intercept the rename when the destination is the manifest to simulate a
+    // manifest write failure without touching the snapshot or state writes.
+    const originalRenameSync = fs.renameSync;
+    fs.renameSync = (from, to) => {
+      if (to === manifestPath) {
+        throw new Error("simulated manifest write failure");
+      }
+      return originalRenameSync(from, to);
+    };
+    try {
+      assert.throws(
+        () => transitionPhase({ target_domain: domain, to_phase: "VERIFY" }),
+        /simulated manifest write failure/,
+      );
+    } finally {
+      fs.renameSync = originalRenameSync;
+    }
+    // The transition should have refused to publish the new attempt as durable
+    // state once the manifest write fails. The CR-flagged race was that state
+    // would advance silently while the manifest was missing.
+    const stateOnDisk = JSON.parse(fs.readFileSync(statePath(domain), "utf8"));
+    assert.equal(stateOnDisk.phase, "CHAIN");
+    assert.equal(stateOnDisk.verification_attempt_id ?? null, null);
+    assert.equal(stateOnDisk.verification_snapshot_hash ?? null, null);
+  });
+});
+
 test("verification v2 round and final hashes are stable across confidence_reasons and artifact_hashes ordering", () => {
   withTempHome(() => {
     const domain = "determinism.example.com";

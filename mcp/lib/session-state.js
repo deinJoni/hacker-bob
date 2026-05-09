@@ -578,7 +578,17 @@ function transitionPhase(args) {
 
     writeSessionStateDocument(domain, raw, nextState);
     if (verificationEntry && verificationEntry.schema_version === 2) {
-      verificationLib().refreshVerificationManifest(domain);
+      try {
+        verificationLib().refreshVerificationManifest(domain, { throw_on_error: true });
+      } catch (manifestError) {
+        // Roll back the state advance so the transition is fully aborted on
+        // manifest write failure. The verification snapshot stays on disk and
+        // will be archived under its real attempt_id by the next CHAIN -> VERIFY.
+        try {
+          writeSessionStateDocument(domain, raw, state);
+        } catch {}
+        throw manifestError;
+      }
     }
     const eventFields = {
       from_phase: fromPhase,

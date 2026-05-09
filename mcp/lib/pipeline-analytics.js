@@ -353,8 +353,16 @@ function normalizePipelineEventForRead(record, expectedDomain) {
     target_domain: targetDomain,
     type,
   };
+  const fieldCaps = {
+    surface_id: 200,
+    kind: 64,
+    identifier_hint: 64,
+    verification_snapshot_hash: 128,
+    adjudication_plan_hash: 128,
+    final_verification_hash: 128,
+  };
   for (const field of ["phase", "from_phase", "to_phase", "agent", "surface_id", "status", "block_code", "source", "kind", "identifier_hint", "verification_attempt_id", "verification_snapshot_hash", "adjudication_plan_hash", "final_verification_hash", "capability_pack", "lease_scope", "replay_purpose"]) {
-    const safe = capString(record[field], field === "surface_id" ? 200 : (field === "kind" || field === "identifier_hint" ? 64 : 120));
+    const safe = capString(record[field], fieldCaps[field] || 120);
     if (safe) event[field] = safe;
   }
   const waveNumber = normalizeWaveNumber(record.wave_number);
@@ -785,8 +793,15 @@ function summarizeVerificationArtifacts(targetDomain) {
     }
     rounds[round] = summary;
   }
+  const schemaVersion = (
+    snapshot.exists ||
+    adjudication.exists ||
+    Object.values(rounds).some((round) => round.schema_version === 2)
+  )
+    ? 2
+    : (Object.values(rounds).some((round) => round.schema_version === 1) ? 1 : null);
   return {
-    schema_version: snapshot.exists ? 2 : (Object.values(rounds).some((round) => round.schema_version === 1) ? 1 : null),
+    schema_version: schemaVersion,
     current_attempt_id: snapshot.attempt_id,
     snapshot_hash: snapshot.snapshot_hash,
     snapshot,
