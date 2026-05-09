@@ -220,6 +220,8 @@ const EXPECTED_TOOL_NAMES = [
   "bounty_record_finding",
   "bounty_read_findings",
   "bounty_list_findings",
+  "bounty_index_finding",
+  "bounty_query_findings_index",
   "bounty_write_chain_attempt",
   "bounty_read_chain_attempts",
   "bounty_write_verification_round",

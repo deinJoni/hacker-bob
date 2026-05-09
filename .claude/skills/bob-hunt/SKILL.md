@@ -17,6 +17,8 @@ allowed-tools:
   - mcp__bountyagent__bounty_run_auth_differential
   - mcp__bountyagent__bounty_read_auth_differential_results
   - mcp__bountyagent__bounty_list_findings
+  - mcp__bountyagent__bounty_index_finding
+  - mcp__bountyagent__bounty_query_findings_index
   - mcp__bountyagent__bounty_read_chain_attempts
   - mcp__bountyagent__bounty_read_verification_round
   - mcp__bountyagent__bounty_read_verification_context

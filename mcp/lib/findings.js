@@ -821,6 +821,28 @@ function recordFinding(args) {
         validated: finding.validated ? 1 : 0,
       },
     });
+    try {
+      const { indexFinding } = require("./findings-index.js");
+      indexFinding({
+        target_domain: domain,
+        finding: {
+          finding_id: finding.id,
+          title: finding.title,
+          description: finding.description,
+          severity: finding.severity,
+          attack_class: finding.attack_class,
+          cwe: finding.cwe,
+          endpoint: finding.endpoint,
+          surface_id: finding.surface_id,
+          surface_type: finding.surface_type,
+          tech_stack: finding.tech_stack,
+          evidence_summary: finding.evidence_summary || finding.response_evidence,
+          proof_of_concept: finding.proof_of_concept,
+        },
+      });
+    } catch (_err) {
+      // Best-effort: indexing failure must not break the recordFinding write.
+    }
     return JSON.stringify(response);
   });
 }
