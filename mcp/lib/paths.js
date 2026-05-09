@@ -126,6 +126,10 @@ function schemaContractsJsonlPath(domain) {
   return path.join(sessionDir(domain), "schema-contracts.jsonl");
 }
 
+function docDeltaResultsPath(domain) {
+  return path.join(sessionDir(domain), "doc-delta-results.json");
+}
+
 function staticScanResultsJsonlPath(domain) {
   return path.join(sessionDir(domain), "static-scan-results.jsonl");
 }
@@ -205,6 +209,7 @@ module.exports = {
   surfaceRoutesPath,
   techniqueAttemptsJsonlPath,
   techniquePackReadsJsonlPath,
+  docDeltaResultsPath,
   schemaContractsJsonlPath,
   staticArtifactImportDir,
   staticArtifactPath,
