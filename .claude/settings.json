@@ -133,6 +133,16 @@
         ]
       },
       {
+        "matcher": "mcp__bountyagent__bounty_run_auth_differential",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/scope-guard-mcp.sh\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "mcp__bountyagent__bounty_signup_detect",
         "hooks": [
           {

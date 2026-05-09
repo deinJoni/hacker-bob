@@ -213,6 +213,7 @@ const EXPECTED_TOOL_NAMES = [
   "bounty_ingest_schema_doc",
   "bounty_query_schema_contracts",
   "bounty_run_doc_delta",
+  "bounty_run_auth_differential",
   "bounty_static_scan",
   "bounty_record_finding",
   "bounty_read_findings",

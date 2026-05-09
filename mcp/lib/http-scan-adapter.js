@@ -89,7 +89,38 @@ function makeHttpScanFetcher({
   };
 }
 
+function makePerCallHttpScanFetcher({
+  httpScanFn,
+  target_domain,
+  block_internal_hosts,
+  egress_profile,
+}) {
+  if (typeof httpScanFn !== "function") {
+    throw new Error("httpScanFn must be a function");
+  }
+  if (typeof target_domain !== "string" || target_domain.length === 0) {
+    throw new Error("target_domain must be a non-empty string");
+  }
+  return async function fetch_fn({ url, method, auth_profile }) {
+    const sentWithAuth = typeof auth_profile === "string" && auth_profile.length > 0;
+    const args = {
+      method,
+      url,
+      target_domain,
+      response_mode: "full",
+      block_internal_hosts: block_internal_hosts === true,
+    };
+    if (sentWithAuth) args.auth_profile = auth_profile;
+    if (typeof egress_profile === "string" && egress_profile.length > 0) {
+      args.egress_profile = egress_profile;
+    }
+    const rawResult = await httpScanFn(args);
+    return parseHttpScanResult(rawResult, sentWithAuth);
+  };
+}
+
 module.exports = {
   parseHttpScanResult,
   makeHttpScanFetcher,
+  makePerCallHttpScanFetcher,
 };

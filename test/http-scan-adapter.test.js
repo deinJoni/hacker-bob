@@ -6,6 +6,7 @@ const assert = require("node:assert/strict");
 const {
   parseHttpScanResult,
   makeHttpScanFetcher,
+  makePerCallHttpScanFetcher,
 } = require("../mcp/lib/http-scan-adapter.js");
 
 test("parseHttpScanResult parses JSON string into normalized observed shape", () => {
@@ -150,6 +151,48 @@ test("makeHttpScanFetcher rejects invalid configuration", () => {
   );
   assert.throws(
     () => makeHttpScanFetcher({ httpScanFn: () => {}, target_domain: "" }),
+    /target_domain/,
+  );
+});
+
+test("makePerCallHttpScanFetcher uses auth_profile from per-call args", async () => {
+  const calls = [];
+  const stubHttpScan = async (args) => {
+    calls.push(args);
+    return JSON.stringify({ status: 200, headers: {}, body: "" });
+  };
+  const fetcher = makePerCallHttpScanFetcher({
+    httpScanFn: stubHttpScan,
+    target_domain: "example.com",
+  });
+  await fetcher({ url: "https://example.com/x", method: "GET", auth_profile: "admin" });
+  await fetcher({ url: "https://example.com/x", method: "GET", auth_profile: "user" });
+  assert.equal(calls[0].auth_profile, "admin");
+  assert.equal(calls[1].auth_profile, "user");
+});
+
+test("makePerCallHttpScanFetcher omits auth_profile when blank and reports sent_with_auth false", async () => {
+  const calls = [];
+  const stubHttpScan = async (args) => {
+    calls.push(args);
+    return JSON.stringify({ status: 200, headers: {}, body: "" });
+  };
+  const fetcher = makePerCallHttpScanFetcher({
+    httpScanFn: stubHttpScan,
+    target_domain: "example.com",
+  });
+  const observed = await fetcher({ url: "https://example.com/x", method: "GET" });
+  assert.equal(calls[0].auth_profile, undefined);
+  assert.equal(observed.sent_with_auth, false);
+});
+
+test("makePerCallHttpScanFetcher rejects invalid configuration", () => {
+  assert.throws(
+    () => makePerCallHttpScanFetcher({ httpScanFn: null, target_domain: "x" }),
+    /httpScanFn/,
+  );
+  assert.throws(
+    () => makePerCallHttpScanFetcher({ httpScanFn: () => {}, target_domain: "" }),
     /target_domain/,
   );
 });

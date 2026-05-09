@@ -12,6 +12,7 @@ const TOOL_MODULES = Object.freeze([
   require("./ingest-schema-doc.js"),
   require("./query-schema-contracts.js"),
   require("./run-doc-delta.js"),
+  require("./run-auth-differential.js"),
   require("./static-scan.js"),
   require("./record-finding.js"),
   require("./read-findings.js"),
