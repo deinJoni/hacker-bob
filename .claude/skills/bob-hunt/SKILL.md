@@ -20,6 +20,7 @@ allowed-tools:
   - mcp__bountyagent__bounty_read_chain_attempts
   - mcp__bountyagent__bounty_read_verification_round
   - mcp__bountyagent__bounty_read_verification_context
+  - mcp__bountyagent__bounty_diff_verification_attempts
   - mcp__bountyagent__bounty_build_verification_adjudication
   - mcp__bountyagent__bounty_read_evidence_packs
   - mcp__bountyagent__bounty_read_grade_verdict
