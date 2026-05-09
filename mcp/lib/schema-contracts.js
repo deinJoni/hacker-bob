@@ -2,6 +2,7 @@
 
 const { hashCanonicalJson } = require("./verification.js");
 const { parseGraphqlSdl, looksLikeGraphqlSdl } = require("./graphql-sdl-parser.js");
+const { parsePostmanCollection, looksLikePostmanCollection } = require("./postman-parser.js");
 
 const HTTP_METHODS = Object.freeze([
   "get",
@@ -311,6 +312,9 @@ function parseSchemaDoc(rawDoc) {
     ) {
       return parseOpenApi3(parsedJson);
     }
+    if (looksLikePostmanCollection(parsedJson)) {
+      return parsePostmanCollection(parsedJson);
+    }
     return {
       schema_format: null,
       contracts: [],
@@ -333,4 +337,5 @@ module.exports = {
   parseSchemaDoc,
   parseOpenApi3,
   parseGraphqlSdl,
+  parsePostmanCollection,
 };

@@ -83,7 +83,7 @@ Each index is a pre-computed structure that turns one or more capabilities into 
 
 ### I2 — Schema-contract corpus
 
-**Status.** In progress — OpenAPI 3 parser, GraphQL SDL parser, contract canonicalization, JSONL persistence with content-hash dedup, and orchestrator-only MCP tools (`bounty_ingest_schema_doc`, `bounty_query_schema_contracts`) shipped. Postman collection parser and hunter-brief integration pending.
+**Status.** Source coverage complete (OpenAPI 3, GraphQL SDL, Postman v2.1). Persistence, dedup, and orchestrator-only MCP tools (`bounty_ingest_schema_doc`, `bounty_query_schema_contracts`) shipped. Hunter-brief `schema_slice` integration is the only remaining I2 work.
 
 **What it holds.** Parsed contracts from OpenAPI / GraphQL / Postman collections. Each contract is `(endpoint, method, claimed_auth, claimed_params, claimed_response_shape, source_doc_hash)`.
 
@@ -255,7 +255,7 @@ Each index is a pre-computed structure that turns one or more capabilities into 
 | ID  | Path                                          | Status            | Feeds            |
 | --- | --------------------------------------------- | ----------------- | ---------------- |
 | IP1 | JS extraction (current recon pipeline)        | Existing, partial | `I1`             |
-| IP2 | OpenAPI / GraphQL / Postman ingestion         | In progress (OpenAPI 3 + GraphQL SDL shipped; Postman pending) | `I2` |
+| IP2 | OpenAPI / GraphQL / Postman ingestion         | Complete (OpenAPI 3, GraphQL SDL, Postman v2.1)               | `I2` |
 | IP3 | Public-repo watcher with diff dispatch        | New               | `I3` (via `I1`)  |
 | IP4 | Audit report ingestion (PDF, markdown, HTML)  | New               | `I5`             |
 | IP5 | CVE / advisory feed ingestion                 | New               | `I8`             |
@@ -507,6 +507,7 @@ For every work item in this hypergraph:
 
 Append-only, newest first. Each entry: date, item, slice, commit ref, parishioner-review status.
 
+- **2026-05-10** · IP2 / I2 · Postman v2.1 collection parser · `mcp/lib/postman-parser.js` + `test/postman-parser.test.js` (15 tests passing). Flattens nested folders into leaf requests, normalizes Postman path variables (`:name`) to OpenAPI shape (`{name}`), extracts query / path / header / body params (skipping Authorization and Content-Type request headers, those are runtime concerns), infers JSON body shape from raw bodies, derives `claimed_auth` schemes as `postman_auth:<type>` with collection-level cascade and item-level override, and reads response examples for `claimed_response_shape`. Closes IP2 source coverage (OpenAPI 3, GraphQL SDL, Postman v2.1). Full `npm test` green (465→480 mcp tests).
 - **2026-05-10** · IP2 / I2 · GraphQL SDL parser + dispatcher routing · `mcp/lib/graphql-sdl-parser.js` + `test/graphql-sdl-parser.test.js` (17 tests passing). Hand-rolled tokenizer + recursive-descent parser handles type / input / schema / extend defs, descriptions, comments, list / non-null type modifiers, args with defaults, and directives. Auth directives (`@auth`, `@authenticated`, `@requireAuth`, `@hasRole`, `@guard`, etc.) populate `claimed_auth.schemes` as `graphql_directive:<name>`. Each Query / Mutation field becomes one contract with `endpoint = /graphql:<kind>.<name>` and `method = POST`. Return-type shape resolves nested types with `$ref_cycle` markers for self-recursion and `$ref_unresolved` for missing types. `parseSchemaDoc` now dispatches to GraphQL when JSON parsing fails and the source matches SDL heuristics. Full `npm test` green (448→465 mcp tests).
 - **2026-05-10** · C2 · `bounty_http_scan` adapter + `bounty_run_doc_delta` MCP tool · `mcp/lib/http-scan-adapter.js`, `mcp/lib/tools/run-doc-delta.js`, `test/http-scan-adapter.test.js` (13 adapter tests passing). Adapter parses http-scan's JSON-stringified result, extracts content-type via case-insensitive header lookup, JSON-parses the body when content-type indicates JSON, and surfaces fetch errors with their `scope_decision`. The MCP tool is orchestrator-only, scope-required, hook-required (for the scope guard around the underlying http-scan call), and writes `doc-delta-results.json`. Tool count 79→80; settings, agent-tools, skill regenerated. Full `npm test` green (435→448 mcp tests).
 - **2026-05-10** · C2 · Differential runner with DI-style fetch + deterministic persistence · `mcp/lib/doc-delta-runner.js` + `test/doc-delta-runner.test.js` (12 tests passing). Runner queries the I2 corpus, joins each contract endpoint to a base URL, calls a caller-supplied `fetch_fn` (so production wires `bounty_http_scan` while tests stub synthetic responses), runs the divergence classifier, and persists a content-addressed `doc-delta-results.json` per target. Per-contract entries sort by contract_hash; results_hash is computed over the canonicalized payload with timestamps zeroed so identical inputs hash identically across runs. Fetch errors per-contract are recorded but do not abort the run. Full `npm test` green (423→435 mcp tests).
