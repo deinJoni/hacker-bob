@@ -373,6 +373,20 @@ test("orchestrator playbook documents the doc-vs-behavior differential workflow"
   assert.match(codexSkill, /Doc-vs-Behavior Differential/);
 });
 
+test("orchestrator playbook documents the multi-account differential workflow", () => {
+  const body = readFile("prompts/roles/orchestrator.md");
+  assert.match(body, /Multi-Account Differential/);
+  assert.match(body, /bounty_list_auth_profiles/);
+  assert.match(body, /bounty_run_auth_differential/);
+  assert.match(body, /bounty_read_auth_differential_results/);
+  assert.match(body, /unauth_succeeds_where_auth_blocked/);
+  // Rendered surfaces must carry the same workflow.
+  const claudeSkill = readFile(".claude/skills/bob-hunt/SKILL.md");
+  const codexSkill = readFile("adapters/codex/skills/bob-hunt/SKILL.md");
+  assert.match(claudeSkill, /Multi-Account Differential/);
+  assert.match(codexSkill, /Multi-Account Differential/);
+});
+
 test("hunter frontmatter excludes Write and still exposes wave handoff MCP tools", () => {
   const document = readFile(".claude/agents/hunter-agent.md");
   const frontmatter = parseFrontmatter(document, "hunter-agent.md");
