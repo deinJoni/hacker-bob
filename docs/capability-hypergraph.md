@@ -279,6 +279,8 @@ Each capability is a hunting mode that produces findings a triager recognizes. I
 
 ### C2 — Doc-vs-behavior delta hunting (Tier 1, first ship)
 
+**Status.** In progress — divergence-detection kernel shipped (`mcp/lib/contract-divergence.js`) covering auth bypass, auth misconfig, documented-but-unreachable, status mismatch, undocumented response fields, missing required fields, and content-type mismatch. Differential runner (HTTP scan loop), capability pack registration (`web-doc-delta`), triage subagent for prose-only contracts, and hunter-brief `schema_slice` integration pending.
+
 **Pedagogical note.** Every public-facing API is two systems — the documented contract and the deployed behavior. The delta is bug surface. Skilled hunters find these one endpoint at a time. Bob with `I2` finds them across full scope mechanically. The LLM is needed only on prose-only docs (no formal spec) and on triage of divergences.
 
 **Why first ship.** Highest yield. No NDA risk. No AI-ban risk. Plays directly to bob's context-window advantage. Requires only `IP2` + `I2` (cheapest pillar to build). Produces findings a triager recognizes on day one.
@@ -505,6 +507,7 @@ For every work item in this hypergraph:
 
 Append-only, newest first. Each entry: date, item, slice, commit ref, parishioner-review status.
 
+- **2026-05-10** · C2 · Divergence-detection kernel · `mcp/lib/contract-divergence.js` + `test/contract-divergence.test.js` (15 tests passing). Pure-function classifier emits seven divergence types (auth-bypass, auth-misconfig, unreachable, status mismatch, undocumented field, missing required field, content-type mismatch) tagged with one of three severity classes (security, info_leak_potential, doc_or_infra) for the triage subagent. Output sorted deterministically by type. Full `npm test` green (408→423 mcp tests).
 - **2026-05-10** · I2 · JSONL persistence + orchestrator-only ingest/query tools · `mcp/lib/schema-contracts-store.js`, `mcp/lib/tools/{ingest-schema-doc,query-schema-contracts}.js`, `test/schema-contracts-store.test.js` (10 store tests passing); full `npm test` green (407→408 mcp tests, 129 prompt-contracts, 9 package). Tools land as orchestrator-only mutators with `global_preapproval: false` so the budgeted hunter-web brief stays under cap. Settings, agent tools, and skill regenerated; install-smoke and package canonical-files walker updated for the new tool count and the cron lock file.
 - **2026-05-10** · IP2 / I2 · OpenAPI 3 parser + contract canonicalization · `mcp/lib/schema-contracts.js` + `test/schema-contracts.test.js` (13 tests passing) · *engineering review complete; persistence + tool wrappers pending; parishioner gate not yet reachable.*
 
