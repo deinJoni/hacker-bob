@@ -9932,7 +9932,7 @@ test("verification v2 supports independent round order, deterministic adjudicati
     assert.equal(manifest.artifacts.adjudication.exists, false);
     assert.equal(manifest.chain_complete, false);
 
-    const adjudication = JSON.parse(buildVerificationAdjudication({ target_domain: domain }));
+    let adjudication = JSON.parse(buildVerificationAdjudication({ target_domain: domain }));
     const adjudicationAgain = JSON.parse(buildVerificationAdjudication({ target_domain: domain }));
     assert.equal(adjudication.adjudication_plan_hash, adjudicationAgain.adjudication_plan_hash);
     assert.equal(Object.hasOwn(adjudication, "plan_hash"), false);
@@ -9960,6 +9960,42 @@ test("verification v2 supports independent round order, deterministic adjudicati
     assert.equal(manifest.artifacts.adjudication.current, true);
     assert.equal(manifest.chain_hashes.adjudication_plan_hash, adjudication.adjudication_plan_hash);
     assert.equal(Object.hasOwn(manifest, "plan_hash"), false);
+
+    const staleAdjudicationHash = adjudication.adjudication_plan_hash;
+    writeVerificationRound({
+      target_domain: domain,
+      round: "balanced",
+      notes: "Balanced round revised after adjudication.",
+      verification_attempt_id: context.current_attempt_id,
+      verification_snapshot_hash: context.snapshot_hash,
+      round_profile: "balanced",
+      results: [v2VerificationResult("F-1", {
+        confidence: "medium",
+        confidence_reasons: ["manual_inference"],
+        reasoning: "Balanced round revised after adjudication.",
+      })],
+    });
+    manifest = JSON.parse(fs.readFileSync(verificationManifestPath(domain), "utf8"));
+    assert.equal(manifest.artifacts.adjudication.current, false);
+    assert.match(
+      manifest.artifacts.adjudication.blocker_reason,
+      /input_round_hashes\.balanced does not match current balanced round/,
+    );
+    assert.throws(() => writeVerificationRound({
+      target_domain: domain,
+      round: "final",
+      notes: null,
+      verification_attempt_id: context.current_attempt_id,
+      verification_snapshot_hash: context.snapshot_hash,
+      round_profile: "final",
+      adjudication_plan_hash: staleAdjudicationHash,
+      results: [result],
+    }), /input_round_hashes\.balanced does not match current balanced round/);
+    adjudication = JSON.parse(buildVerificationAdjudication({ target_domain: domain }));
+    assert.notEqual(adjudication.adjudication_plan_hash, staleAdjudicationHash);
+    manifest = JSON.parse(fs.readFileSync(verificationManifestPath(domain), "utf8"));
+    assert.equal(manifest.artifacts.adjudication.current, true);
+    assert.equal(manifest.adjudication_plan_hash, adjudication.adjudication_plan_hash);
 
     assert.throws(() => writeVerificationRound({
       target_domain: domain,
@@ -10122,6 +10158,70 @@ test("verification v2 rejects changed inputs after snapshot at write/adjudicatio
       () => buildVerificationAdjudication({ target_domain: domain }),
       /VERIFY input changed after snapshot; restart VERIFY\/adjudication\./,
     );
+  });
+});
+
+test("verification v2 read context marks current-attempt round coverage corruption stale", () => {
+  withTempHome(() => {
+    const domain = "corrupt-round.example.com";
+    enterVerifyV2(domain);
+    const context = JSON.parse(readVerificationContext({ target_domain: domain }));
+    const paths = verificationRoundPaths(domain, "brutalist");
+    writeFileAtomic(paths.json, `${JSON.stringify({
+      version: 2,
+      target_domain: domain,
+      round: "brutalist",
+      verification_attempt_id: context.current_attempt_id,
+      verification_snapshot_hash: context.snapshot_hash,
+      round_profile: "brutalist",
+      notes: null,
+      results: [],
+    }, null, 2)}\n`);
+
+    const round = JSON.parse(readVerificationRound({ target_domain: domain, round: "brutalist" }));
+    assert.equal(round.current, false);
+    assert.equal(round.stale, true);
+    assert.match(round.blocker_reason, /must cover exactly the current VERIFY snapshot finding IDs/);
+    const nextContext = JSON.parse(readVerificationContext({ target_domain: domain }));
+    assert.equal(nextContext.round_status.brutalist.current, false);
+    assert.match(nextContext.round_status.brutalist.blocker_reason, /must cover exactly/);
+  });
+});
+
+test("verification v2 snapshot ignores time-derived auth expiry booleans", () => {
+  withTempHome(() => {
+    const domain = "auth-expiry.example.com";
+    seedSessionState(domain, { phase: "CHAIN" });
+    seedFinding(domain);
+    const baseNow = Date.now();
+    const authPath = resolveAuthJsonPath(domain);
+    writeFileAtomic(authPath, `${JSON.stringify({
+      version: 2,
+      profiles: {
+        attacker: {
+          Cookie: "sid=redacted",
+          expires_at: new Date(baseNow + 1_000).toISOString(),
+        },
+      },
+    }, null, 2)}\n`);
+
+    const originalDateNow = Date.now;
+    try {
+      Date.now = () => baseNow;
+      const transitioned = JSON.parse(transitionPhase({ target_domain: domain, to_phase: "VERIFY" }));
+      Date.now = () => baseNow + 2_000;
+      assert.doesNotThrow(() => writeVerificationRound({
+        target_domain: domain,
+        round: "brutalist",
+        notes: null,
+        verification_attempt_id: transitioned.verification.attempt_id,
+        verification_snapshot_hash: transitioned.verification.snapshot_hash,
+        round_profile: "brutalist",
+        results: [v2VerificationResult("F-1")],
+      }));
+    } finally {
+      Date.now = originalDateNow;
+    }
   });
 });
 

@@ -217,6 +217,23 @@ function parseListAuthProfiles(domain) {
   }
 }
 
+function normalizeAuthProfileSnapshot(profile) {
+  const normalized = cloneJson(profile);
+  if (isPlainObject(normalized.expiry)) {
+    // These booleans depend on Date.now(), so including them would make an
+    // otherwise unchanged VERIFY snapshot turn stale just because time passed.
+    delete normalized.expiry.is_expired;
+    delete normalized.expiry.is_stale;
+  }
+  return normalized;
+}
+
+function readAuthProfileSnapshot(domain) {
+  return parseListAuthProfiles(domain)
+    .map((profile) => normalizeAuthProfileSnapshot(profile))
+    .sort((a, b) => String(a.profile_name || "").localeCompare(String(b.profile_name || "")));
+}
+
 function readSurfaceRoutesSnapshot(domain) {
   try {
     return readSurfaceRoutesStrict(domain).document;
@@ -230,8 +247,7 @@ function buildSnapshotPayload(domain, { attemptId, createdAt }) {
     .sort((a, b) => a.id.localeCompare(b.id));
   const chainAttempts = readChainAttemptsFromJsonl(domain).slice()
     .sort((a, b) => canonicalJson(a).localeCompare(canonicalJson(b)));
-  const authProfiles = parseListAuthProfiles(domain).slice()
-    .sort((a, b) => String(a.profile_name || "").localeCompare(String(b.profile_name || "")));
+  const authProfiles = readAuthProfileSnapshot(domain);
   const surfaceRoutes = readSurfaceRoutesSnapshot(domain);
   const findingIds = findings.map((finding) => finding.id);
   return {
@@ -783,7 +799,28 @@ function requireCurrentAdjudication(domain, { adjudicationPlanHash = null, state
   if (adjudicationPlanHash != null && adjudicationPlanHash !== document.adjudication_plan_hash) {
     throw new ToolError(ERROR_CODES.STATE_CONFLICT, "final verification adjudication_plan_hash does not match the current adjudication plan");
   }
+  assertAdjudicationRoundInputsCurrent(domain, document, effective);
   return document;
+}
+
+function assertAdjudicationRoundInputsCurrent(domain, document, { state, snapshot }) {
+  if (!isPlainObject(document.input_round_hashes)) {
+    throw new ToolError(ERROR_CODES.STATE_CONFLICT, "verification adjudication is missing input_round_hashes");
+  }
+  for (const round of ["brutalist", "balanced"]) {
+    const expectedHash = document.input_round_hashes[round];
+    if (typeof expectedHash !== "string" || !expectedHash) {
+      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `verification adjudication is missing input_round_hashes.${round}`);
+    }
+    const currentRound = loadCurrentV2Round(domain, round, { state, snapshot });
+    const currentHash = hashCanonicalJson(currentRound);
+    if (expectedHash !== currentHash) {
+      throw new ToolError(
+        ERROR_CODES.STATE_CONFLICT,
+        `verification adjudication input_round_hashes.${round} does not match current ${round} round`,
+      );
+    }
+  }
 }
 
 function validateFinalAgainstAdjudication(domain, finalDocument, adjudication) {
@@ -827,7 +864,12 @@ function decorateVerificationRoundRead(domain, document) {
     return result;
   }
   try {
-    assertFreshVerificationSnapshot(domain, state);
+    const snapshot = assertFreshVerificationSnapshot(domain, state);
+    assertCurrentV2RoundDocument(domain, document, {
+      expectedRound: document.round,
+      state,
+      snapshot,
+    });
   } catch (error) {
     result.blocker_reason = error.message || String(error);
     return result;
@@ -1059,6 +1101,7 @@ function adjudicationStatus(domain, state) {
       status.stale = true;
       status.blocker_reason = "adjudication_plan_hash mismatch";
     } else {
+      assertAdjudicationRoundInputsCurrent(domain, doc, { state, snapshot: assertFreshVerificationSnapshot(domain, state) });
       status.current = true;
     }
   } catch (error) {
@@ -1376,6 +1419,7 @@ module.exports = {
   VERIFICATION_SCHEMA_V2,
   assertCurrentV2RoundDocument,
   assertEvidenceMatchesFinal,
+  assertAdjudicationRoundInputsCurrent,
   assertExactFindingCoverage,
   assertFreshVerificationSnapshot,
   buildVerificationAdjudication,
