@@ -274,6 +274,79 @@ function queryFindingsCrossTarget({ query_text, top_k, severity_filter, attack_c
   };
 }
 
+const PRIORS_SLICE_DEFAULT_LIMIT = 5;
+const PRIORS_SLICE_MAX_LIMIT = 15;
+
+function indexableSurfaceQuery(surfaceObj) {
+  if (surfaceObj == null || typeof surfaceObj !== "object") return "";
+  const parts = [];
+  if (typeof surfaceObj.endpoint === "string") parts.push(surfaceObj.endpoint);
+  if (typeof surfaceObj.endpoint_pattern === "string") parts.push(surfaceObj.endpoint_pattern);
+  if (Array.isArray(surfaceObj.endpoints)) parts.push(surfaceObj.endpoints.join(" "));
+  if (typeof surfaceObj.surface_type === "string") parts.push(surfaceObj.surface_type);
+  if (typeof surfaceObj.bug_class === "string") parts.push(surfaceObj.bug_class);
+  if (Array.isArray(surfaceObj.bug_classes)) parts.push(surfaceObj.bug_classes.join(" "));
+  if (Array.isArray(surfaceObj.tech_stack)) parts.push(surfaceObj.tech_stack.join(" "));
+  if (typeof surfaceObj.notes === "string") parts.push(surfaceObj.notes);
+  if (typeof surfaceObj.title === "string") parts.push(surfaceObj.title);
+  if (typeof surfaceObj.description === "string") parts.push(surfaceObj.description);
+  if (typeof surfaceObj.chain_family === "string") parts.push(surfaceObj.chain_family);
+  if (typeof surfaceObj.chain_id !== "undefined" && surfaceObj.chain_id != null) {
+    parts.push(String(surfaceObj.chain_id));
+  }
+  if (typeof surfaceObj.contract_address === "string") parts.push(surfaceObj.contract_address);
+  return parts.filter((part) => typeof part === "string" && part.length > 0).join(" ");
+}
+
+function compactPriorRecord(record) {
+  if (record == null || typeof record !== "object") return null;
+  return {
+    finding_id: record.finding_id,
+    target_domain: record.target_domain,
+    title: record.title,
+    severity: record.severity,
+    attack_class: record.attack_class,
+    surface_type: record.surface_type,
+    endpoint: record.endpoint,
+    tech_stack: record.tech_stack,
+    calibration_label: record.calibration_label,
+    similarity: record.similarity,
+  };
+}
+
+function summarizePriorFindingsForSurface(domain, surfaceObj, options) {
+  const opts = options || {};
+  const requestedLimit = Number.isInteger(opts.limit) && opts.limit > 0
+    ? opts.limit
+    : PRIORS_SLICE_DEFAULT_LIMIT;
+  const limit = Math.min(requestedLimit, PRIORS_SLICE_MAX_LIMIT);
+  const queryText = indexableSurfaceQuery(surfaceObj);
+  if (queryText.length === 0) return null;
+  let crossTarget;
+  try {
+    crossTarget = queryFindingsCrossTarget({
+      query_text: queryText,
+      top_k: limit,
+    });
+  } catch (_err) {
+    return null;
+  }
+  if (crossTarget.matches.length === 0) {
+    return null;
+  }
+  const sameTargetMatches = crossTarget.matches.filter((m) => m.target_domain === domain);
+  const otherTargetMatches = crossTarget.matches.filter((m) => m.target_domain !== domain);
+  return {
+    total_in_corpus: crossTarget.total_in_index,
+    domains_scanned: crossTarget.domains_scanned,
+    matched_total: crossTarget.matched_total,
+    same_target_count: sameTargetMatches.length,
+    other_target_count: otherTargetMatches.length,
+    priors: crossTarget.matches.slice(0, limit).map(compactPriorRecord).filter((entry) => entry != null),
+    limit,
+  };
+}
+
 module.exports = {
   tokenize,
   hashedFeatureVector,
@@ -282,5 +355,6 @@ module.exports = {
   indexFinding,
   queryFindingsForTarget,
   queryFindingsCrossTarget,
+  summarizePriorFindingsForSurface,
   FEATURE_DIMENSION,
 };

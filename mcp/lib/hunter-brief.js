@@ -39,6 +39,9 @@ const {
   summarizeSchemaSliceForSurface,
 } = require("./schema-contracts-store.js");
 const {
+  summarizePriorFindingsForSurface,
+} = require("./findings-index.js");
+const {
   loadBobSpec,
   summarizeBobSpecForBrief,
 } = require("./bob-spec.js");
@@ -418,6 +421,7 @@ function buildWebBriefExtras(domain, surfaceObj, routeMetadata) {
   const intelHints = summarizePublicIntelForSurface(domain, surfaceObj);
   const staticScanHints = summarizeStaticScanHints(domain, { surface: surfaceObj });
   const schemaSlice = summarizeSchemaSliceForSurface(domain, surfaceObj);
+  const priorsSlice = summarizePriorFindingsForSurface(domain, surfaceObj);
   return {
     bypass_table: bypassTable || null,
     techniques: knowledge.techniques,
@@ -439,6 +443,7 @@ function buildWebBriefExtras(domain, surfaceObj, routeMetadata) {
     intel_hints: intelHints,
     static_scan_hints: staticScanHints,
     schema_slice: schemaSlice,
+    priors_slice: priorsSlice,
     auth_profiles_hint: "Call `bounty_list_auth_profiles`; pass the chosen profile name as `auth_profile` to `bounty_http_scan`.",
   };
 }
@@ -452,6 +457,7 @@ function buildSmartContractBriefExtras(domain, surfaceObj, assignment) {
   return {
     bob_spec_status: summarizeBobSpecForBrief(loadBobSpec(domain), assignment.surface_id),
     rpc_pool: summarizeRpcPoolForBrief(surfaceObj.chain_family, surfaceObj.chain_id),
+    priors_slice: summarizePriorFindingsForSurface(domain, surfaceObj),
   };
 }
 
