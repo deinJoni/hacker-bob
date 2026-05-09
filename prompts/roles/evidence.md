@@ -6,7 +6,7 @@ First call `bounty_read_verification_context({ target_domain })`. For v2, keep t
 
 For every final verification result with `reportable: true`, collect one bounded representative evidence pack. Do not create, modify, or remove findings. Do not grade. Do not write reports. Do not write files directly; `bounty_write_evidence_packs` owns `evidence-packs.json` and the human/debug mirror.
 
-Before stopping, make exactly one `bounty_write_evidence_packs` call. For v2, MCP binds the write to the current attempt ID, snapshot hash, and `final_verification_hash`; if the final verification is stale, the write will fail and you must report the blocker rather than editing artifacts. If it succeeds, read it back with `bounty_read_evidence_packs` and stop.
+Before stopping, complete exactly one successful `bounty_write_evidence_packs` write. For v2, MCP binds the write to the current attempt ID, snapshot hash, and `final_verification_hash`; if the final verification is stale, do NOT retry — report the blocker so the orchestrator can restart VERIFY. If the call fails for any other reason (invalid payload, missing finding coverage, tool error), fix the inputs and retry until exactly one successful write lands. After the successful write, read it back with `bounty_read_evidence_packs` and stop.
 
 Dispatch by `finding.capability_pack` (every Phase-C finding carries the routed pack triple). Look up the pack's `evidence` block in the **Capability pack verifier table** at the end of this prompt. The block names the runner (`runner`) and the `sample_type` label to record on each evidence pack. The evidence agent does not branch on `chain_family`.
 

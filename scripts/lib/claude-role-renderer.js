@@ -78,17 +78,17 @@ const CLAUDE_LAUNCH_TEMPLATES = Object.freeze({
   ].join("\n"),
   "{{SPAWN_BRUTALIST_VERIFIER}}": [
     "```",
-    "Agent(subagent_type: \"brutalist-verifier\", name: \"brutalist\", prompt: \"Session: ~/bounty-agent-sessions/[domain]. Egress profile: [egress_profile]. First call bounty_read_verification_context; for v2 use current_attempt_id and snapshot_hash on writes and verification_replay context, cover exactly the snapshot findings, then write only through bounty_write_verification_round(round='brutalist').\")",
+    "Agent(subagent_type: \"brutalist-verifier\", name: \"brutalist\", prompt: \"Session: ~/bounty-agent-sessions/[domain]. Egress profile: [egress_profile]. First call bounty_read_verification_context({ target_domain }); for v2 use current_attempt_id and snapshot_hash on writes and verification_replay context, cover exactly the snapshot findings, then write only through bounty_write_verification_round(round='brutalist').\")",
     "```",
   ].join("\n"),
   "{{SPAWN_BALANCED_VERIFIER}}": [
     "```",
-    "Agent(subagent_type: \"balanced-verifier\", name: \"balanced\", prompt: \"Session: ~/bounty-agent-sessions/[domain]. Egress profile: [egress_profile]. First call bounty_read_verification_context. If v1, read brutalist and preserve the legacy cascade. If v2, do not read brutalist or adjudication; use current_attempt_id and snapshot_hash, pass verification_replay context on replay tools, cover exactly snapshot findings, then write only through bounty_write_verification_round(round='balanced').\")",
+    "Agent(subagent_type: \"balanced-verifier\", name: \"balanced\", prompt: \"Session: ~/bounty-agent-sessions/[domain]. Egress profile: [egress_profile]. First call bounty_read_verification_context({ target_domain }). If v1, read brutalist and preserve the legacy cascade. If v2, do not read brutalist or adjudication; use current_attempt_id and snapshot_hash, pass verification_replay context on replay tools, cover exactly snapshot findings, then write only through bounty_write_verification_round(round='balanced').\")",
     "```",
   ].join("\n"),
   "{{SPAWN_FINAL_VERIFIER}}": [
     "```",
-    "Agent(subagent_type: \"final-verifier\", name: \"final-verify\", prompt: \"Session: ~/bounty-agent-sessions/[domain]. Egress profile: [egress_profile]. First call bounty_read_verification_context. If v2, consume the current adjudication_plan_hash from the orchestrator/context, do not compute diffs, pass verification_replay context on replay tools, and write round='final' with verification_attempt_id, verification_snapshot_hash, and adjudication_plan_hash. If v1, read balanced and use the legacy final cascade.\")",
+    "Agent(subagent_type: \"final-verifier\", name: \"final-verify\", prompt: \"Session: ~/bounty-agent-sessions/[domain]. Egress profile: [egress_profile]. First call bounty_read_verification_context({ target_domain }). If v2, consume the current adjudication_plan_hash from the orchestrator/context, do not compute diffs, pass verification_replay context on replay tools, and write round='final' with verification_attempt_id, verification_snapshot_hash, and adjudication_plan_hash. If v1, read balanced and use the legacy final cascade.\")",
     "```",
   ].join("\n"),
   "{{SPAWN_EVIDENCE_AGENT}}": [

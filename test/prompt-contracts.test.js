@@ -747,12 +747,15 @@ test("evidence-agent exists, is MCP-only, and cannot mutate unrelated artifacts"
 test("bob-hunt spawns evidence before grade and validates evidence packs", () => {
   const orchestrator = readFile(".claude/skills/bob-hunt/SKILL.md");
   const evidenceIndex = orchestrator.indexOf('subagent_type: "evidence-agent"');
-  const gradeTransitionIndex = orchestrator.indexOf('to_phase: "GRADE"');
+  // The no-reportables branch transitions to GRADE without spawning the
+  // evidence agent. The evidence-present branch transitions only after
+  // the agent completes — that's the GRADE transition this test guards.
+  const evidencePresentGrade = orchestrator.indexOf('to_phase: "GRADE"', evidenceIndex);
   const graderIndex = orchestrator.indexOf('subagent_type: "grader"');
 
   assert.ok(evidenceIndex > 0, "missing evidence-agent spawn");
-  assert.ok(gradeTransitionIndex > evidenceIndex, "GRADE transition must happen after evidence-agent");
-  assert.ok(graderIndex > gradeTransitionIndex, "grader must spawn after GRADE transition");
+  assert.ok(evidencePresentGrade > evidenceIndex, "GRADE transition must happen after evidence-agent in the evidence-present branch");
+  assert.ok(graderIndex > evidencePresentGrade, "grader must spawn after GRADE transition");
   assert.match(orchestrator, /bounty_read_evidence_packs\(\{ target_domain: "\[domain\]" \}\)/);
   assert.match(orchestrator, /write only through bounty_write_evidence_packs/);
 });

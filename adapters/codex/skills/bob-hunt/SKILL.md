@@ -210,7 +210,7 @@ If `schema_version === 1`, use the legacy sequential cascade:
 ```text
 Use Codex spawn_agent for brutalist-verifier -> Codex worker.
 - agent_type: "worker"
-- message: `Bob role: brutalist-verifier. Session: ~/bounty-agent-sessions/[domain]. Target: [domain]. First call bounty_read_verification_context; for v2 include current_attempt_id/snapshot_hash on writes and verification_replay context on replay tools.` Include the full `brutalist-verifier` contract from Codex Worker Role Contracts.
+- message: `Bob role: brutalist-verifier. Session: ~/bounty-agent-sessions/[domain]. Target: [domain]. First call bounty_read_verification_context({ target_domain }); for v2 include current_attempt_id/snapshot_hash on writes and verification_replay context on replay tools.` Include the full `brutalist-verifier` contract from Codex Worker Role Contracts.
 Wait with `wait_agent`, read the MCP verification artifact, then `close_agent`.
 ```
 After the brutalist agent completes, validate the artifact: call `bounty_read_verification_round({ target_domain: "[domain]", round: "brutalist" })` and inspect `.data`. If missing/empty, retry once, then report failure and stop.
@@ -218,7 +218,7 @@ After the brutalist agent completes, validate the artifact: call `bounty_read_ve
 ```text
 Use Codex spawn_agent for balanced-verifier -> Codex worker.
 - agent_type: "worker"
-- message: `Bob role: balanced-verifier. Session: ~/bounty-agent-sessions/[domain]. Target: [domain]. First call bounty_read_verification_context. If v2, do not read brutalist or adjudication; use current_attempt_id/snapshot_hash and write the independent balanced round.` Include the full `balanced-verifier` contract from Codex Worker Role Contracts.
+- message: `Bob role: balanced-verifier. Session: ~/bounty-agent-sessions/[domain]. Target: [domain]. First call bounty_read_verification_context({ target_domain }). If v2, do not read brutalist or adjudication; use current_attempt_id/snapshot_hash and write the independent balanced round.` Include the full `balanced-verifier` contract from Codex Worker Role Contracts.
 Wait with `wait_agent`, read the MCP verification artifact, then `close_agent`.
 ```
 After the balanced agent completes, validate the artifact: call `bounty_read_verification_round({ target_domain: "[domain]", round: "balanced" })` and inspect `.data`. If missing/empty, retry once, then report failure and stop.
@@ -226,7 +226,7 @@ After the balanced agent completes, validate the artifact: call `bounty_read_ver
 ```text
 Use Codex spawn_agent for final-verifier -> Codex worker.
 - agent_type: "worker"
-- message: `Bob role: final-verifier. Session: ~/bounty-agent-sessions/[domain]. Target: [domain]. First call bounty_read_verification_context. If v2, consume the adjudication_plan_hash and write with current_attempt_id/snapshot_hash/adjudication_plan_hash; do not compute diffs.` Include the full `final-verifier` contract from Codex Worker Role Contracts.
+- message: `Bob role: final-verifier. Session: ~/bounty-agent-sessions/[domain]. Target: [domain]. First call bounty_read_verification_context({ target_domain }). If v2, consume the adjudication_plan_hash and write with current_attempt_id/snapshot_hash/adjudication_plan_hash; do not compute diffs.` Include the full `final-verifier` contract from Codex Worker Role Contracts.
 Wait with `wait_agent`, read the MCP verification artifact, then `close_agent`.
 ```
 
@@ -236,13 +236,13 @@ If `schema_version === 2`, use the attempt-scoped independent flow:
 ```text
 Use Codex spawn_agent for brutalist-verifier -> Codex worker.
 - agent_type: "worker"
-- message: `Bob role: brutalist-verifier. Session: ~/bounty-agent-sessions/[domain]. Target: [domain]. First call bounty_read_verification_context; for v2 include current_attempt_id/snapshot_hash on writes and verification_replay context on replay tools.` Include the full `brutalist-verifier` contract from Codex Worker Role Contracts.
+- message: `Bob role: brutalist-verifier. Session: ~/bounty-agent-sessions/[domain]. Target: [domain]. First call bounty_read_verification_context({ target_domain }); for v2 include current_attempt_id/snapshot_hash on writes and verification_replay context on replay tools.` Include the full `brutalist-verifier` contract from Codex Worker Role Contracts.
 Wait with `wait_agent`, read the MCP verification artifact, then `close_agent`.
 ```
 ```text
 Use Codex spawn_agent for balanced-verifier -> Codex worker.
 - agent_type: "worker"
-- message: `Bob role: balanced-verifier. Session: ~/bounty-agent-sessions/[domain]. Target: [domain]. First call bounty_read_verification_context. If v2, do not read brutalist or adjudication; use current_attempt_id/snapshot_hash and write the independent balanced round.` Include the full `balanced-verifier` contract from Codex Worker Role Contracts.
+- message: `Bob role: balanced-verifier. Session: ~/bounty-agent-sessions/[domain]. Target: [domain]. First call bounty_read_verification_context({ target_domain }). If v2, do not read brutalist or adjudication; use current_attempt_id/snapshot_hash and write the independent balanced round.` Include the full `balanced-verifier` contract from Codex Worker Role Contracts.
 Wait with `wait_agent`, read the MCP verification artifact, then `close_agent`.
 ```
 3. After both complete, call `bounty_read_verification_context({ target_domain })` again. Require brutalist and balanced statuses to be `current: true`; retry a missing/invalid worker once.
@@ -251,15 +251,15 @@ Wait with `wait_agent`, read the MCP verification artifact, then `close_agent`.
 ```text
 Use Codex spawn_agent for final-verifier -> Codex worker.
 - agent_type: "worker"
-- message: `Bob role: final-verifier. Session: ~/bounty-agent-sessions/[domain]. Target: [domain]. First call bounty_read_verification_context. If v2, consume the adjudication_plan_hash and write with current_attempt_id/snapshot_hash/adjudication_plan_hash; do not compute diffs.` Include the full `final-verifier` contract from Codex Worker Role Contracts.
+- message: `Bob role: final-verifier. Session: ~/bounty-agent-sessions/[domain]. Target: [domain]. First call bounty_read_verification_context({ target_domain }). If v2, consume the adjudication_plan_hash and write with current_attempt_id/snapshot_hash/adjudication_plan_hash; do not compute diffs.` Include the full `final-verifier` contract from Codex Worker Role Contracts.
 Wait with `wait_agent`, read the MCP verification artifact, then `close_agent`.
 ```
 
-After final verification in either branch, read `bounty_read_verification_round(round='final').data`. For v2, require `.data.current === true` and no `stale` flag. If no result has `reportable: true`, do not stop: call `bounty_read_evidence_packs({ target_domain: "[domain]" })` to confirm `skipped: true`, then continue through GRADE and REPORT so the session gets a durable SKIP grade and no-findings report. If final reportables exist, spawn the evidence agent before GRADE:
+After final verification in either branch, read `bounty_read_verification_round({ target_domain: "[domain]", round: "final" }).data`. For v2, require `.data.current === true` and no `stale` flag. If no result has `reportable: true`, do not stop: call `bounty_read_evidence_packs({ target_domain: "[domain]" })` to confirm `skipped: true`, then call `bounty_transition_phase({ target_domain, to_phase: "GRADE" })` and continue through GRADE and REPORT so the session gets a durable SKIP grade and no-findings report. If final reportables exist, spawn the evidence agent before GRADE:
 ```text
 Use Codex spawn_agent for evidence-agent -> Codex worker.
 - agent_type: "worker"
-- message: `Bob role: evidence-agent. Session: ~/bounty-agent-sessions/[domain]. Egress profile: [egress_profile]. First call bounty_read_verification_context; for v2 pass evidence_replay context and bind evidence to the current final_verification_hash.` Include the full `evidence` contract from Codex Worker Role Contracts.
+- message: `Bob role: evidence-agent. Session: ~/bounty-agent-sessions/[domain]. Egress profile: [egress_profile]. First call bounty_read_verification_context({ target_domain }); for v2 pass evidence_replay context and bind evidence to the current final_verification_hash.` Include the full `evidence` contract from Codex Worker Role Contracts.
 Wait with `wait_agent`, read `bounty_read_evidence_packs.data`, then `close_agent`.
 ```
 After the evidence agent completes, validate with `bounty_read_verification_context({ target_domain })` and `bounty_read_evidence_packs({ target_domain: "[domain]" })`. For v2, require evidence to match current attempt ID, snapshot hash, and final verification hash. Retry once if missing/invalid, then call `bounty_transition_phase({ target_domain, to_phase: "GRADE" })`.
@@ -1822,7 +1822,7 @@ First call `bounty_read_verification_context({ target_domain })`. For v2, keep t
 
 For every final verification result with `reportable: true`, collect one bounded representative evidence pack. Do not create, modify, or remove findings. Do not grade. Do not write reports. Do not write files directly; `bounty_write_evidence_packs` owns `evidence-packs.json` and the human/debug mirror.
 
-Before stopping, make exactly one `bounty_write_evidence_packs` call. For v2, MCP binds the write to the current attempt ID, snapshot hash, and `final_verification_hash`; if the final verification is stale, the write will fail and you must report the blocker rather than editing artifacts. If it succeeds, read it back with `bounty_read_evidence_packs` and stop.
+Before stopping, complete exactly one successful `bounty_write_evidence_packs` write. For v2, MCP binds the write to the current attempt ID, snapshot hash, and `final_verification_hash`; if the final verification is stale, do NOT retry — report the blocker so the orchestrator can restart VERIFY. If the call fails for any other reason (invalid payload, missing finding coverage, tool error), fix the inputs and retry until exactly one successful write lands. After the successful write, read it back with `bounty_read_evidence_packs` and stop.
 
 Dispatch by `finding.capability_pack` (every Phase-C finding carries the routed pack triple). Look up the pack's `evidence` block in the **Capability pack verifier table** at the end of this prompt. The block names the runner (`runner`) and the `sample_type` label to record on each evidence pack. The evidence agent does not branch on `chain_family`.
 

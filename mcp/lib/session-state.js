@@ -613,7 +613,7 @@ function transitionPhase(args) {
       eventFields.counts.verification_findings = verificationEntry.snapshot
         ? verificationEntry.snapshot.finding_ids.length
         : 0;
-      eventFields.counts.verification_archived = verificationEntry.archived ? 1 : 0;
+      eventFields.counts.verification_archived = verificationEntry.archived != null ? 1 : 0;
     }
     if (fromPhase === "VERIFY" && toPhase === "GRADE" && state.verification_entered_at) {
       const enteredMs = Date.parse(state.verification_entered_at);
