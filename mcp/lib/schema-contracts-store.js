@@ -141,7 +141,74 @@ function querySchemaContracts({ target_domain, endpoint_pattern, method, limit }
   };
 }
 
+const SCHEMA_SLICE_DEFAULT_LIMIT = 5;
+const SCHEMA_SLICE_MAX_LIMIT = 25;
+
+function compactContractForSlice(contract) {
+  if (contract == null || typeof contract !== "object") return null;
+  const auth = contract.claimed_auth || {};
+  return {
+    endpoint: typeof contract.endpoint === "string" ? contract.endpoint : null,
+    method: typeof contract.method === "string" ? contract.method : null,
+    claimed_auth_schemes: Array.isArray(auth.schemes) ? auth.schemes : [],
+    none_allowed: auth.none_allowed === true,
+    param_count: Array.isArray(contract.claimed_params) ? contract.claimed_params.length : 0,
+    documented_status_codes: Object.keys(contract.claimed_response_shape || {}).sort(),
+    contract_hash: typeof contract.contract_hash === "string" ? contract.contract_hash.slice(0, 16) : null,
+    schema_format: typeof contract.schema_format === "string" ? contract.schema_format : null,
+  };
+}
+
+function summarizeSchemaSliceForSurface(domain, surfaceObj, options) {
+  const opts = options || {};
+  const requestedLimit = Number.isInteger(opts.limit) && opts.limit > 0 ? opts.limit : SCHEMA_SLICE_DEFAULT_LIMIT;
+  const limit = Math.min(requestedLimit, SCHEMA_SLICE_MAX_LIMIT);
+  let queryResult;
+  try {
+    queryResult = querySchemaContracts({ target_domain: domain });
+  } catch (_err) {
+    return null;
+  }
+  if (queryResult.total_in_corpus === 0) return null;
+  const candidateHints = [];
+  if (surfaceObj && typeof surfaceObj === "object") {
+    if (typeof surfaceObj.endpoint_pattern === "string" && surfaceObj.endpoint_pattern.length > 0) {
+      candidateHints.push(surfaceObj.endpoint_pattern);
+    }
+    if (Array.isArray(surfaceObj.endpoints)) {
+      for (const endpoint of surfaceObj.endpoints) {
+        if (typeof endpoint === "string" && endpoint.length > 0) {
+          candidateHints.push(endpoint);
+        }
+      }
+    }
+  }
+  let matchedHint = null;
+  let contracts = queryResult.contracts;
+  for (const hint of candidateHints) {
+    const filtered = contracts.filter((contract) =>
+      typeof contract.endpoint === "string" && contract.endpoint.includes(hint));
+    if (filtered.length > 0) {
+      contracts = filtered;
+      matchedHint = hint;
+      break;
+    }
+  }
+  const sliced = contracts.slice(0, limit)
+    .map(compactContractForSlice)
+    .filter((entry) => entry != null);
+  return {
+    total_in_corpus: queryResult.total_in_corpus,
+    matched_to_surface: contracts.length,
+    contracts: sliced,
+    truncated: contracts.length > limit,
+    hint_applied: matchedHint,
+    limit,
+  };
+}
+
 module.exports = {
   ingestSchemaDoc,
   querySchemaContracts,
+  summarizeSchemaSliceForSurface,
 };
