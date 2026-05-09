@@ -122,6 +122,10 @@ function staticArtifactsJsonlPath(domain) {
   return path.join(sessionDir(domain), "static-artifacts.jsonl");
 }
 
+function schemaContractsJsonlPath(domain) {
+  return path.join(sessionDir(domain), "schema-contracts.jsonl");
+}
+
 function staticScanResultsJsonlPath(domain) {
   return path.join(sessionDir(domain), "static-scan-results.jsonl");
 }
@@ -201,6 +205,7 @@ module.exports = {
   surfaceRoutesPath,
   techniqueAttemptsJsonlPath,
   techniquePackReadsJsonlPath,
+  schemaContractsJsonlPath,
   staticArtifactImportDir,
   staticArtifactPath,
   staticArtifactsJsonlPath,

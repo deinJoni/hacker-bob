@@ -83,7 +83,7 @@ Each index is a pre-computed structure that turns one or more capabilities into 
 
 ### I2 — Schema-contract corpus
 
-**Status.** In progress — OpenAPI 3 parser + contract canonicalization shipped (`mcp/lib/schema-contracts.js`); persistence layer (`schema-contracts.jsonl`), MCP query tool, and GraphQL/Postman parsers pending.
+**Status.** In progress — OpenAPI 3 parser, contract canonicalization, JSONL persistence with content-hash dedup, and orchestrator-only MCP tools (`bounty_ingest_schema_doc`, `bounty_query_schema_contracts`) shipped. GraphQL SDL parser, Postman collection parser, and hunter-brief integration pending.
 
 **What it holds.** Parsed contracts from OpenAPI / GraphQL / Postman collections. Each contract is `(endpoint, method, claimed_auth, claimed_params, claimed_response_shape, source_doc_hash)`.
 
@@ -505,6 +505,7 @@ For every work item in this hypergraph:
 
 Append-only, newest first. Each entry: date, item, slice, commit ref, parishioner-review status.
 
+- **2026-05-10** · I2 · JSONL persistence + orchestrator-only ingest/query tools · `mcp/lib/schema-contracts-store.js`, `mcp/lib/tools/{ingest-schema-doc,query-schema-contracts}.js`, `test/schema-contracts-store.test.js` (10 store tests passing); full `npm test` green (407→408 mcp tests, 129 prompt-contracts, 9 package). Tools land as orchestrator-only mutators with `global_preapproval: false` so the budgeted hunter-web brief stays under cap. Settings, agent tools, and skill regenerated; install-smoke and package canonical-files walker updated for the new tool count and the cron lock file.
 - **2026-05-10** · IP2 / I2 · OpenAPI 3 parser + contract canonicalization · `mcp/lib/schema-contracts.js` + `test/schema-contracts.test.js` (13 tests passing) · *engineering review complete; persistence + tool wrappers pending; parishioner gate not yet reachable.*
 
 ## Glossary

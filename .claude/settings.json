@@ -3,6 +3,7 @@
     "allow": [
       "mcp__bountyagent__bounty_http_scan",
       "mcp__bountyagent__bounty_read_http_audit",
+      "mcp__bountyagent__bounty_read_surface_routes",
       "mcp__bountyagent__bounty_import_static_artifact",
       "mcp__bountyagent__bounty_static_scan",
       "mcp__bountyagent__bounty_record_finding",
@@ -12,11 +13,11 @@
       "mcp__bountyagent__bounty_read_chain_attempts",
       "mcp__bountyagent__bounty_write_verification_round",
       "mcp__bountyagent__bounty_read_verification_round",
+      "mcp__bountyagent__bounty_read_verification_context",
       "mcp__bountyagent__bounty_write_evidence_packs",
       "mcp__bountyagent__bounty_read_evidence_packs",
       "mcp__bountyagent__bounty_write_grade_verdict",
       "mcp__bountyagent__bounty_read_grade_verdict",
-      "mcp__bountyagent__bounty_read_surface_routes",
       "mcp__bountyagent__bounty_read_session_state",
       "mcp__bountyagent__bounty_write_wave_handoff",
       "mcp__bountyagent__bounty_finalize_hunter_run",
@@ -66,8 +67,7 @@
       "Bash(echo *)",
       "Read",
       "Glob",
-      "Grep",
-      "mcp__bountyagent__bounty_read_verification_context"
+      "Grep"
     ]
   },
   "hooks": {

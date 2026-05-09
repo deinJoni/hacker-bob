@@ -31,6 +31,9 @@ const LOCAL_INSTALL_METADATA_FILES = new Set([
   // files glob (only settings.json ships) so npm pack never includes it. The
   // expectedCanonicalFiles walker should not require it either.
   ".claude/settings.local.json",
+  // Cron scheduler runtime lock file. Present only while a Claude Code session
+  // owns scheduled jobs; never persisted to disk by the installer.
+  ".claude/scheduled_tasks.lock",
 ]);
 
 function sourceTreeFiles(relativeDir) {

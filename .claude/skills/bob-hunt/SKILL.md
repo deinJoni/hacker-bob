@@ -10,6 +10,8 @@ allowed-tools:
   - mcp__bountyagent__bounty_read_surface_routes
   - mcp__bountyagent__bounty_import_http_traffic
   - mcp__bountyagent__bounty_public_intel
+  - mcp__bountyagent__bounty_ingest_schema_doc
+  - mcp__bountyagent__bounty_query_schema_contracts
   - mcp__bountyagent__bounty_list_findings
   - mcp__bountyagent__bounty_read_chain_attempts
   - mcp__bountyagent__bounty_read_verification_round
