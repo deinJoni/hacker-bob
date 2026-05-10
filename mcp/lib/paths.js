@@ -142,6 +142,10 @@ function surfaceGraphJsonlPath(domain) {
   return path.join(sessionDir(domain), "surface-graph.jsonl");
 }
 
+function chainTreeJsonlPath(domain) {
+  return path.join(sessionDir(domain), "chain-tree.jsonl");
+}
+
 function staticScanResultsJsonlPath(domain) {
   return path.join(sessionDir(domain), "static-scan-results.jsonl");
 }
@@ -222,6 +226,7 @@ module.exports = {
   techniqueAttemptsJsonlPath,
   techniquePackReadsJsonlPath,
   authDifferentialResultsPath,
+  chainTreeJsonlPath,
   docDeltaResultsPath,
   findingsIndexJsonlPath,
   schemaContractsJsonlPath,
