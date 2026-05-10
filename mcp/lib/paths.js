@@ -146,6 +146,10 @@ function chainTreeJsonlPath(domain) {
   return path.join(sessionDir(domain), "chain-tree.jsonl");
 }
 
+function auditReportsJsonlPath(domain) {
+  return path.join(sessionDir(domain), "audit-reports.jsonl");
+}
+
 function staticScanResultsJsonlPath(domain) {
   return path.join(sessionDir(domain), "static-scan-results.jsonl");
 }
@@ -225,6 +229,7 @@ module.exports = {
   surfaceRoutesPath,
   techniqueAttemptsJsonlPath,
   techniquePackReadsJsonlPath,
+  auditReportsJsonlPath,
   authDifferentialResultsPath,
   chainTreeJsonlPath,
   docDeltaResultsPath,
