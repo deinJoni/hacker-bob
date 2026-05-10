@@ -16,6 +16,9 @@ const {
   writeFileAtomic,
 } = require("../mcp/server.js");
 const {
+  HUNTER_BRIEF_SLICE_REGISTRY,
+} = require("../mcp/lib/hunter-brief.js");
+const {
   ingestSchemaDoc,
 } = require("../mcp/lib/schema-contracts-store.js");
 const {
@@ -99,6 +102,40 @@ function assertBriefWithinBudget(label, args) {
   );
   return brief;
 }
+
+test("hunter brief slice registry is explicit and budgeted per profile", () => {
+  assert.deepEqual(HUNTER_BRIEF_SLICE_REGISTRY.web.map((slice) => slice.key), [
+    "bypass_table",
+    "techniques",
+    "payload_hints",
+    "knowledge_summary",
+    "technique_packs",
+    "traffic_summary",
+    "audit_summary",
+    "circuit_breaker_summary",
+    "intel_hints",
+    "static_scan_hints",
+    "schema_slice",
+    "priors_slice",
+    "surface_graph_slice",
+    "auth_profiles_hint",
+  ]);
+  assert.deepEqual(HUNTER_BRIEF_SLICE_REGISTRY.smart_contract.map((slice) => slice.key), [
+    "bob_spec_status",
+    "rpc_pool",
+    "priors_slice",
+    "surface_graph_slice",
+  ]);
+  for (const [profile, slices] of Object.entries(HUNTER_BRIEF_SLICE_REGISTRY)) {
+    assert.ok(Array.isArray(slices), `${profile} slice registry must be an array`);
+    for (const slice of slices) {
+      assert.equal(typeof slice.key, "string");
+      assert.equal(typeof slice.budget_chars, "number");
+      assert.ok(slice.budget_chars > 0, `${profile}.${slice.key} must declare a positive budget`);
+      assert.equal(typeof slice.read, "function");
+    }
+  }
+});
 
 function webOpenApiFixture() {
   return JSON.stringify({

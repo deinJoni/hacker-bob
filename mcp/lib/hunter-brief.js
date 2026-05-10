@@ -119,6 +119,70 @@ const HUNTER_BRIEF_RANKING_REASON_MAX_CHARS = 160;
 // real (mcp/lib/bob-spec.js); this message is the empty-state fallback.
 const BOB_SPEC_ABSENT_MESSAGE = "bob-spec.json not present in the session directory; the smart_contract anti-stop rule still applies (record at least one bypass_attempts[] entry citing the trust assumption you actually attempted to break, or record a finding).";
 
+function briefSliceEntry(key, budget_chars, read) {
+  return Object.freeze({
+    key,
+    budget_chars,
+    read,
+  });
+}
+
+const WEB_BRIEF_SLICE_REGISTRY = Object.freeze([
+  briefSliceEntry("bypass_table", 4096, (context) => context.bypassTable),
+  briefSliceEntry("techniques", 4096, (context) => context.knowledge.techniques),
+  briefSliceEntry("payload_hints", 2048, (context) => context.knowledge.payload_hints),
+  briefSliceEntry("knowledge_summary", 1024, (context) => context.knowledge.knowledge_summary),
+  briefSliceEntry("technique_packs", 8192, (context) => ({
+    selected: context.selectedTechniquePacks,
+    selection_limits: context.selectedTechniquePackLimits,
+    registry_warnings: context.selectedTechniquePackResult.registry_warnings,
+    selection_budget: {
+      candidate_pack_limit: context.candidatePackLimit,
+      full_pack_read_limit: context.routeMetadata.context_budget.full_pack_read_limit,
+      attempt_log_required: context.routeMetadata.context_budget.attempt_log_required,
+    },
+  })),
+  briefSliceEntry("traffic_summary", 4096, (context) => context.trafficSummary),
+  briefSliceEntry("audit_summary", 4096, (context) => context.auditSummary),
+  briefSliceEntry("circuit_breaker_summary", 1024, (context) => context.circuitBreakerSummary),
+  briefSliceEntry("intel_hints", 4096, (context) => context.intelHints),
+  briefSliceEntry("static_scan_hints", 4096, (context) => context.staticScanHints),
+  briefSliceEntry("schema_slice", 8192, (context) => context.schemaSlice),
+  briefSliceEntry("priors_slice", 8192, (context) => context.priorsSlice),
+  briefSliceEntry("surface_graph_slice", 8192, (context) => context.surfaceGraphSlice),
+  briefSliceEntry("auth_profiles_hint", 512, () => "Call `bounty_list_auth_profiles`; pass the chosen profile name as `auth_profile` to `bounty_http_scan`."),
+]);
+
+const SMART_CONTRACT_BRIEF_SLICE_REGISTRY = Object.freeze([
+  briefSliceEntry("bob_spec_status", 4096, (context) => context.bobSpecStatus),
+  briefSliceEntry("rpc_pool", 4096, (context) => context.rpcPool),
+  briefSliceEntry("priors_slice", 8192, (context) => context.priorsSlice),
+  briefSliceEntry("surface_graph_slice", 8192, (context) => context.surfaceGraphSlice),
+]);
+
+const HUNTER_BRIEF_SLICE_REGISTRY = Object.freeze({
+  web: WEB_BRIEF_SLICE_REGISTRY,
+  smart_contract: SMART_CONTRACT_BRIEF_SLICE_REGISTRY,
+});
+
+function briefSliceRegistryForProfile(profile) {
+  if (profile === "web") {
+    return WEB_BRIEF_SLICE_REGISTRY;
+  }
+  if (typeof profile === "string" && profile.startsWith("smart_contract_")) {
+    return SMART_CONTRACT_BRIEF_SLICE_REGISTRY;
+  }
+  return null;
+}
+
+function buildBriefExtrasFromRegistry(registry, context) {
+  const extras = {};
+  for (const slice of registry) {
+    extras[slice.key] = slice.read(context);
+  }
+  return extras;
+}
+
 function resolveBypassTable(techStack) {
   if (!Array.isArray(techStack)) return BYPASS_TABLE_DEFAULT;
   for (const tech of techStack) {
@@ -331,10 +395,11 @@ function readHunterBrief(args) {
 // adding both a pack record (capability-packs.js) and an entry here — fail
 // loudly on any profile we did not explicitly opt in.
 function buildBriefExtrasForProfile(profile, { domain, surface, assignment, routeMetadata }) {
-  if (profile === "web") {
+  const registry = briefSliceRegistryForProfile(profile);
+  if (registry === WEB_BRIEF_SLICE_REGISTRY) {
     return buildWebBriefExtras(domain, surface, routeMetadata);
   }
-  if (typeof profile === "string" && profile.startsWith("smart_contract_")) {
+  if (registry === SMART_CONTRACT_BRIEF_SLICE_REGISTRY) {
     return buildSmartContractBriefExtras(domain, surface, assignment);
   }
   throw new Error(`Unsupported brief profile: ${profile}`);
@@ -426,31 +491,24 @@ function buildWebBriefExtras(domain, surfaceObj, routeMetadata) {
   const schemaSlice = summarizeSchemaSliceForSurface(domain, surfaceObj);
   const priorsSlice = summarizePriorFindingsForSurface(domain, surfaceObj);
   const surfaceGraphSlice = summarizeSurfaceGraphForSurface(domain, surfaceObj);
-  return {
-    bypass_table: bypassTable || null,
-    techniques: knowledge.techniques,
-    payload_hints: knowledge.payload_hints,
-    knowledge_summary: knowledge.knowledge_summary,
-    technique_packs: {
-      selected: selectedTechniquePacks,
-      selection_limits: selectedTechniquePackLimits,
-      registry_warnings: selectedTechniquePackResult.registry_warnings,
-      selection_budget: {
-        candidate_pack_limit: candidatePackLimit,
-        full_pack_read_limit: routeMetadata.context_budget.full_pack_read_limit,
-        attempt_log_required: routeMetadata.context_budget.attempt_log_required,
-      },
-    },
-    traffic_summary: trafficSummary,
-    audit_summary: auditSummary,
-    circuit_breaker_summary: circuitBreakerSummary,
-    intel_hints: intelHints,
-    static_scan_hints: staticScanHints,
-    schema_slice: schemaSlice,
-    priors_slice: priorsSlice,
-    surface_graph_slice: surfaceGraphSlice,
-    auth_profiles_hint: "Call `bounty_list_auth_profiles`; pass the chosen profile name as `auth_profile` to `bounty_http_scan`.",
+  const webBriefContext = {
+    bypassTable: bypassTable || null,
+    knowledge,
+    selectedTechniquePacks,
+    selectedTechniquePackLimits,
+    selectedTechniquePackResult,
+    candidatePackLimit,
+    routeMetadata,
+    trafficSummary,
+    auditSummary,
+    circuitBreakerSummary,
+    intelHints,
+    staticScanHints,
+    schemaSlice,
+    priorsSlice,
+    surfaceGraphSlice,
   };
+  return buildBriefExtrasFromRegistry(WEB_BRIEF_SLICE_REGISTRY, webBriefContext);
 }
 
 // Smart-contract profile carries on-chain context: the bob-spec status with
@@ -459,16 +517,18 @@ function buildWebBriefExtras(domain, surfaceObj, routeMetadata) {
 // fields (bypass_table, traffic, audit, intel, payload hints, auth profiles)
 // are intentionally omitted; SC hunters do not have the tools that consume them.
 function buildSmartContractBriefExtras(domain, surfaceObj, assignment) {
-  return {
-    bob_spec_status: summarizeBobSpecForBrief(loadBobSpec(domain), assignment.surface_id),
-    rpc_pool: summarizeRpcPoolForBrief(surfaceObj.chain_family, surfaceObj.chain_id),
-    priors_slice: summarizePriorFindingsForSurface(domain, surfaceObj),
-    surface_graph_slice: summarizeSurfaceGraphForSurface(domain, surfaceObj),
+  const smartContractBriefContext = {
+    bobSpecStatus: summarizeBobSpecForBrief(loadBobSpec(domain), assignment.surface_id),
+    rpcPool: summarizeRpcPoolForBrief(surfaceObj.chain_family, surfaceObj.chain_id),
+    priorsSlice: summarizePriorFindingsForSurface(domain, surfaceObj),
+    surfaceGraphSlice: summarizeSurfaceGraphForSurface(domain, surfaceObj),
   };
+  return buildBriefExtrasFromRegistry(SMART_CONTRACT_BRIEF_SLICE_REGISTRY, smartContractBriefContext);
 }
 
 module.exports = {
   BOB_SPEC_ABSENT_MESSAGE,
+  HUNTER_BRIEF_SLICE_REGISTRY,
   readHunterBrief,
   hunterKnowledgeCandidatePaths,
   resolveBypassTable,
