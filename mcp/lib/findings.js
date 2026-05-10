@@ -842,6 +842,17 @@ function recordFinding(args) {
       });
     } catch (_err) {
       // Best-effort: indexing failure must not break the recordFinding write.
+      safeAppendPipelineEventDirect(domain, "finding_index_failed", {
+        wave,
+        agent,
+        surface_id: surfaceId,
+        status: finding.severity,
+        source: "bounty_record_finding",
+        counts: {
+          findings: counter,
+          validated: finding.validated ? 1 : 0,
+        },
+      });
     }
     return JSON.stringify(response);
   });

@@ -93,6 +93,7 @@ const PIPELINE_EVENT_TYPES = Object.freeze([
   "grade_written",
   "surface_terminally_blocked",
   "terminal_block_cleared",
+  "finding_index_failed",
   "report_written",
 ]);
 
@@ -1435,6 +1436,14 @@ function analyzeSession(targetDomain, { cutoffMs = null, limit = DEFAULT_LIMIT, 
     issues.push(issue("repeated_hunter_stops", "blocked", "Hunter SubagentStop blocks repeated for this session.", {
       blocked_runs: blockedHunterRuns,
       by_block_code: hunterHealth.totals.by_block_code,
+    }));
+  }
+
+  const findingIndexFailures = allEvents.filter((event) => event.type === "finding_index_failed");
+  if (findingIndexFailures.length > 0) {
+    issues.push(issue("finding_index_failed", "needs_attention", "Finding index refresh failed after a finding was recorded.", {
+      failures: findingIndexFailures.length,
+      latest_event: compactEvent(findingIndexFailures[findingIndexFailures.length - 1]),
     }));
   }
 

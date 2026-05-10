@@ -28,6 +28,7 @@ const {
   TECHNIQUE_SUMMARY_ITEMS_PER_KIND,
 } = require("../mcp/lib/technique-packs.js");
 const egressProfiles = require("../mcp/lib/egress-profiles.js");
+const findingsIndexModule = require("../mcp/lib/findings-index.js");
 const {
   TOOL_HANDLERS,
 } = require("../mcp/lib/dispatch.js");
@@ -5278,6 +5279,64 @@ test("bounty_record_finding rejects partial or invalid wave metadata and still a
     assert.equal(finding.agent, null);
     assert.equal(finding.surface_id, null);
     assert.equal(finding.auth_profile, null);
+  });
+});
+
+test("bounty_record_finding emits finding_index_failed and keeps recording when indexing fails", () => {
+  withTempHome(() => {
+    const domain = "finding-index-failure.example.com";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 1,
+      pending_wave: 1,
+    });
+    seedAttackSurfaces(domain, [{
+      id: "surface-a",
+      surface_type: "api",
+      hosts: [`https://${domain}`],
+    }]);
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
+
+    const originalIndexFinding = findingsIndexModule.indexFinding;
+    findingsIndexModule.indexFinding = () => {
+      throw new Error("forced index failure");
+    };
+
+    try {
+      const recorded = JSON.parse(recordFinding({
+        target_domain: domain,
+        title: "Index health finding",
+        severity: "medium",
+        endpoint: "/api/health",
+        description: "The finding index will fail in this test.",
+        proof_of_concept: "poc",
+        validated: true,
+        wave: "w1",
+        agent: "a1",
+        surface_id: "surface-a",
+      }));
+      assert.equal(recorded.recorded, true);
+
+      const eventRead = readPipelineEvents(domain);
+      const failureEvents = eventRead.events.filter((event) => event.type === "finding_index_failed");
+      assert.equal(failureEvents.length, 1);
+      assert.equal(failureEvents[0].source, "bounty_record_finding");
+      assert.equal(failureEvents[0].surface_id, "surface-a");
+      assert.equal(failureEvents[0].status, "medium");
+
+      const analytics = JSON.parse(readPipelineAnalytics({ target_domain: domain, include_events: true }));
+      const bottleneck = analytics.bottlenecks.find((item) => item.code === "finding_index_failed");
+      assert.ok(bottleneck, "finding_index_failed should surface in pipeline analytics");
+      assert.equal(bottleneck.severity, "needs_attention");
+      assert.equal(analytics.sessions[0].health.reasons.includes("finding_index_failed"), true);
+      assert.equal(
+        analytics.events.some((event) => event.type === "finding_index_failed"),
+        true,
+        "finding_index_failed should appear in the analytics event window",
+      );
+    } finally {
+      findingsIndexModule.indexFinding = originalIndexFinding;
+    }
   });
 });
 
