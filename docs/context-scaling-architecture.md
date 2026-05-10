@@ -44,6 +44,26 @@ Host adapters install and render Bob contracts, but they should not own routing,
 
 Session artifacts for state, routes, handoffs, findings, coverage, technique reads, and technique attempts remain MCP-owned. Host hooks and guards should preserve that boundary instead of introducing adapter-specific artifact writers.
 
+## Artifact Naming Conventions
+
+Artifact filenames should communicate both storage shape and ownership boundary:
+
+- `.jsonl` means append-only records. Use it for event streams, attempt logs, coverage traces, and other artifacts that accumulate entries over time.
+- `.json` means a single document snapshot. Use it for the current state of a structure, a derived result bundle, or a manifest-style index.
+
+The naming should also hint at the artifact category:
+
+- `index` artifacts are lookup structures. They are usually single-document `.json` files when they represent the current index state, but they can be `.jsonl` when the index is emitted as a stream of records.
+- `result` artifacts are derived outputs from a specific run, wave, or evaluation pass. They should read as snapshots rather than logs.
+- `raw-evidence` artifacts preserve source material or minimally transformed evidence. They should stay append-only when multiple records are collected, and their names should make provenance obvious.
+
+Current v1.3.0 examples already follow this split:
+
+- Append-only `.jsonl`: `schema-contracts.jsonl`, `findings-index.jsonl`, `surface-graph.jsonl`, `chain-tree.jsonl`, `audit-reports.jsonl`, `invariant-runs.jsonl`
+- Snapshot `.json`: `doc-delta-results.json`, `auth-differential-results.json`, `symbol-surface-index.json`
+
+The rule of thumb is simple: if the artifact grows record by record, name it like a log. If the artifact should be replaced wholesale, name it like a snapshot.
+
 ## Evaluation Gates
 
 Before adding a large technique registry, keep tests around:
