@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-05-10
+
+### Capability hypergraph
+
+- Shipped the post-v2 [capability hypergraph](docs/capability-hypergraph.md): 8 capabilities, with C8 shipping substrate-only until explicit program policy permits live AI-driven disclosure speedruns.
+- Added 26 MCP tools across schema contracts, doc delta, auth differential, findings index, surface graph, chain tree, audit report ingest, invariant suggestions/runs, route extraction, symbol-surface indexing, diff impact, capability metrics, and capability evaluation.
+- Added 9 session artifacts: `schema-contracts.jsonl`, `doc-delta-results.json`, `auth-differential-results.json`, `findings-index.jsonl`, `surface-graph.jsonl`, `chain-tree.jsonl`, `audit-reports.jsonl`, `invariant-runs.jsonl`, and `symbol-surface-index.json`.
+- Added 3 bounded hunter-brief slices: `schema_slice`, `priors_slice`, and `surface_graph_slice`.
+- Added regression guards for web and smart-contract hunter brief size, v1/v2 `/bob-status` verification-panel rendering, and MCP-driven doc-delta execution against a local HTTP fixture.
+- Release notes: [docs/releases/v1.3.0.md](docs/releases/v1.3.0.md).
+
 ## [1.2.5] - 2026-05-08
 
 ### Adapter wrapper READMEs
