@@ -51,7 +51,7 @@
     "check:syntax": "find mcp .claude/hooks -type f -name '*.js' -print0 | xargs -0 -n1 node --check",
     "check:agent-tools": "node scripts/generate-agent-tools.js --check",
     "check:skill": "node scripts/generate-bountyagent-skill.js --check",
-    "test:mcp": "node --test test/mcp-server.test.js test/bob-export.test.js test/schema-contracts.test.js test/schema-contracts-store.test.js test/contract-divergence.test.js test/doc-delta-runner.test.js test/doc-delta-e2e.test.js test/http-scan-adapter.test.js test/graphql-sdl-parser.test.js test/postman-parser.test.js test/schema-slice-brief.test.js test/auth-differential.test.js test/auth-differential-runner.test.js test/verification-attempt-diff.test.js test/findings-index.test.js test/priors-slice-brief.test.js test/surface-graph.test.js test/surface-graph-builder.test.js test/surface-graph-slice-brief.test.js test/hunter-brief-size.test.js test/determinism-ci.test.js test/chain-state-tree.test.js test/capability-metrics.test.js test/capability-eval-harness.test.js test/audit-report-parser.test.js test/invariant-template-corpus.test.js test/invariant-runner.test.js test/route-extractor.test.js test/symbol-surface-index.test.js test/unified-diff-parser.test.js test/cve-feed-parser.test.js test/cve-scope-matcher.test.js",
+    "test:mcp": "node scripts/run-mcp-tests.js",
     "test:prompts": "npm run check:agent-tools && npm run check:skill && node --test test/prompt-contracts.test.js",
     "test:install": "node --test test/install-smoke.test.js",
     "test:update": "node --test test/update-check.test.js",
