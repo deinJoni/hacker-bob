@@ -50,6 +50,9 @@ BLOCKED_EXACT = {
 
 ALLOWED_EXACT = {
     "attack_surface.json",
+    "deep-summary.json",
+    "recon-summary.json",
+    "surface-leads.json",
 }
 
 BLOCKED_DIRS = {

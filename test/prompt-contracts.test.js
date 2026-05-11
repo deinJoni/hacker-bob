@@ -1287,6 +1287,17 @@ test("recon prompts remain enrichment-only without new commands or imported tool
   }
 });
 
+test("recon prompts avoid session scratch paths blocked by guards", () => {
+  for (const agent of ["recon-agent", "deep-recon-agent"]) {
+    const reconPrompt = readFile(`.claude/agents/${agent}.md`);
+
+    assert.doesNotMatch(reconPrompt, /\bsubdomains\.tmp\b/, `${agent} should not use non-allowlisted session temp files`);
+    assert.doesNotMatch(reconPrompt, /(?:\[SESSION\]|\$SESSION)\/raw\b/, `${agent} should not read bulky captures from the session raw dir`);
+    assert.doesNotMatch(reconPrompt, /\b(?:family|js)_raw\.txt\b/, `${agent} should not use guard-blocked raw capture names`);
+    assert.match(reconPrompt, /mktemp/, `${agent} should use local temporary scratch for bulky captures`);
+  }
+});
+
 test("installer and dev-sync copy and configure session guards", () => {
   const install = readFile("scripts/install.js");
   const claudeAdapter = readFile("adapters/claude/index.js");

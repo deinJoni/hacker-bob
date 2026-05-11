@@ -10,24 +10,28 @@ Execution contract:
 - Use exactly the 7 Bash calls below, in order. Do not make any additional Bash calls.
 - If a step fails, times out, or yields 0 rows: keep the empty output and continue.
 - Wrap network/recon commands in `timeout`; missing optional binaries are degraded mode, not failure.
-- Preserve raw files under `[SESSION]/raw`, but keep prompt-facing JSON compact.
+- Keep bulky collection captures in temporary scratch outside `[SESSION]`; only compact derived artifacts belong in `[SESSION]`.
 - Do not dump raw URLs, JavaScript bodies, or scanner output into prose.
 - Do not copy raw secrets, bearer values, or JWT-looking strings into `attack_surface.json`, `deep-summary.json`, `surface-leads.json`, or prose. Use counts and local artifact names instead.
 
 1. Binary check and workspace setup
 ```bash
-mkdir -p "[SESSION]" "[SESSION]/raw" && { for t in subfinder amass assetfinder chaos curl python3 nuclei dig; do command -v "$t" >/dev/null && echo "OK:$t" || echo "MISSING:$t"; done; for t in dnsx tlsx subzy; do command -v "$t" >/dev/null && echo "OK:$t" || { [ -x "$HOME/go/bin/$t" ] && echo "OK:$t" || echo "MISSING:$t"; }; done; command -v httpx >/dev/null && echo "OK:httpx" || { [ -x ~/go/bin/httpx ] && echo "OK:httpx" || echo "MISSING:httpx"; }; command -v katana >/dev/null && echo "OK:katana" || { [ -x ~/go/bin/katana ] && echo "OK:katana" || echo "MISSING:katana"; }; JWT_TOOL="$(command -v jwt_tool 2>/dev/null || command -v jwt_tool.py 2>/dev/null || true)"; [ -z "$JWT_TOOL" ] && [ -x "$HOME/jwt_tool/jwt_tool.py" ] && JWT_TOOL="$HOME/jwt_tool/jwt_tool.py"; [ -n "$JWT_TOOL" ] && echo "OK:jwt_tool" || echo "MISSING:jwt_tool"; } > "[SESSION]/recon-tools.txt"
+mkdir -p "[SESSION]" && { for t in subfinder amass assetfinder chaos curl python3 nuclei dig; do command -v "$t" >/dev/null && echo "OK:$t" || echo "MISSING:$t"; done; for t in dnsx tlsx subzy; do command -v "$t" >/dev/null && echo "OK:$t" || { [ -x "$HOME/go/bin/$t" ] && echo "OK:$t" || echo "MISSING:$t"; }; done; command -v httpx >/dev/null && echo "OK:httpx" || { [ -x ~/go/bin/httpx ] && echo "OK:httpx" || echo "MISSING:httpx"; }; command -v katana >/dev/null && echo "OK:katana" || { [ -x ~/go/bin/katana ] && echo "OK:katana" || echo "MISSING:katana"; }; JWT_TOOL="$(command -v jwt_tool 2>/dev/null || command -v jwt_tool.py 2>/dev/null || true)"; [ -z "$JWT_TOOL" ] && [ -x "$HOME/jwt_tool/jwt_tool.py" ] && JWT_TOOL="$HOME/jwt_tool/jwt_tool.py"; [ -n "$JWT_TOOL" ] && echo "OK:jwt_tool" || echo "MISSING:jwt_tool"; } > "[SESSION]/recon-tools.txt"
 ```
 2. Passive subdomain and CT aggregation
 ```bash
 DOMAIN="[DOMAIN]"; SESSION="[SESSION]"
-: > "$SESSION/raw/subdomains-tools.txt"
-timeout 60 sh -c 'command -v subfinder >/dev/null && subfinder -d "$1" -silent -all' sh "$DOMAIN" 2>/dev/null >> "$SESSION/raw/subdomains-tools.txt" || true
-timeout 120 sh -c 'command -v amass >/dev/null && amass enum -passive -d "$1"' sh "$DOMAIN" 2>/dev/null >> "$SESSION/raw/subdomains-tools.txt" || true
-timeout 60 sh -c 'command -v assetfinder >/dev/null && assetfinder --subs-only "$1"' sh "$DOMAIN" 2>/dev/null >> "$SESSION/raw/subdomains-tools.txt" || true
-timeout 60 sh -c 'command -v chaos >/dev/null && chaos -d "$1" -silent' sh "$DOMAIN" 2>/dev/null >> "$SESSION/raw/subdomains-tools.txt" || true
-timeout 40 curl -ks "https://crt.sh/?q=%25.$DOMAIN&output=json" -o "$SESSION/raw/crtsh.json" 2>/dev/null || true
-python3 - "$DOMAIN" "$SESSION/raw/crtsh.json" <<'PY' >> "$SESSION/raw/subdomains-tools.txt" || true
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/bob-deep-recon-subdomains.XXXXXX")" || exit 0
+trap 'rm -rf "$scratch"' EXIT
+tool_subdomains="$scratch/subdomains-tools.txt"
+crtsh_json="$scratch/crtsh.json"
+: > "$tool_subdomains"
+timeout 60 sh -c 'command -v subfinder >/dev/null && subfinder -d "$1" -silent -all' sh "$DOMAIN" 2>/dev/null >> "$tool_subdomains" || true
+timeout 120 sh -c 'command -v amass >/dev/null && amass enum -passive -d "$1"' sh "$DOMAIN" 2>/dev/null >> "$tool_subdomains" || true
+timeout 60 sh -c 'command -v assetfinder >/dev/null && assetfinder --subs-only "$1"' sh "$DOMAIN" 2>/dev/null >> "$tool_subdomains" || true
+timeout 60 sh -c 'command -v chaos >/dev/null && chaos -d "$1" -silent' sh "$DOMAIN" 2>/dev/null >> "$tool_subdomains" || true
+timeout 40 curl -ks "https://crt.sh/?q=%25.$DOMAIN&output=json" -o "$crtsh_json" 2>/dev/null || true
+python3 - "$DOMAIN" "$crtsh_json" <<'PY' >> "$tool_subdomains" || true
 import json, re, sys
 domain, path = sys.argv[1].lower(), sys.argv[2]
 try:
@@ -42,23 +46,28 @@ for row in rows if isinstance(rows, list) else []:
             seen.add(name)
 print("\n".join(sorted(seen)))
 PY
-printf "%s\nwww.%s\n" "$DOMAIN" "$DOMAIN" >> "$SESSION/raw/subdomains-tools.txt"
-sort -u "$SESSION/raw/subdomains-tools.txt" | head -n 5000 > "$SESSION/subdomains.txt"
+printf "%s\nwww.%s\n" "$DOMAIN" "$DOMAIN" >> "$tool_subdomains"
+sort -u "$tool_subdomains" | head -n 5000 > "$SESSION/subdomains.txt"
 ```
 3. Live hosts, DNS, CNAME, TLS, takeover, and tech hints
 ```bash
 DOMAIN="[DOMAIN]"; SESSION="[SESSION]"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/bob-deep-recon-live.XXXXXX")" || exit 0
+trap 'rm -rf "$scratch"' EXIT
+httpx_json="$scratch/httpx.jsonl"
+dnsx_json="$scratch/dnsx.jsonl"
+tlsx_json="$scratch/tlsx.jsonl"
 HTTPX="$(command -v httpx 2>/dev/null || true)"; [ -z "$HTTPX" ] && [ -x ~/go/bin/httpx ] && HTTPX="$HOME/go/bin/httpx"
 DNSX="$(command -v dnsx 2>/dev/null || true)"; [ -z "$DNSX" ] && [ -x ~/go/bin/dnsx ] && DNSX="$HOME/go/bin/dnsx"
 TLSX="$(command -v tlsx 2>/dev/null || true)"; [ -z "$TLSX" ] && [ -x ~/go/bin/tlsx ] && TLSX="$HOME/go/bin/tlsx"
 SUBZY="$(command -v subzy 2>/dev/null || true)"; [ -z "$SUBZY" ] && [ -x ~/go/bin/subzy ] && SUBZY="$HOME/go/bin/subzy"
-: > "$SESSION/raw/httpx.jsonl"; : > "$SESSION/raw/dnsx.jsonl"; : > "$SESSION/raw/tlsx.jsonl"; : > "$SESSION/live_hosts.txt"; : > "$SESSION/cname_records.txt"; : > "$SESSION/dns_records.txt"; : > "$SESSION/tlsx_sans.txt"; : > "$SESSION/takeover_probe_hosts.txt"; : > "$SESSION/subzy_takeovers.txt"
-if [ -n "$HTTPX" ]; then timeout 180 "$HTTPX" -l "$SESSION/subdomains.txt" -silent -follow-redirects -tech-detect -title -status-code -content-length -json -o "$SESSION/raw/httpx.jsonl" 2>/dev/null || true; fi
-python3 - "$SESSION" <<'PY'
+: > "$httpx_json"; : > "$dnsx_json"; : > "$tlsx_json"; : > "$SESSION/live_hosts.txt"; : > "$SESSION/cname_records.txt"; : > "$SESSION/dns_records.txt"; : > "$SESSION/tlsx_sans.txt"; : > "$SESSION/takeover_probe_hosts.txt"; : > "$SESSION/subzy_takeovers.txt"
+if [ -n "$HTTPX" ]; then timeout 180 "$HTTPX" -l "$SESSION/subdomains.txt" -silent -follow-redirects -tech-detect -title -status-code -content-length -json -o "$httpx_json" 2>/dev/null || true; fi
+python3 - "$SESSION" "$httpx_json" <<'PY'
 import json, pathlib, sys
-session = pathlib.Path(sys.argv[1])
+session, httpx_path = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 rows = []
-for line in (session / "raw" / "httpx.jsonl").read_text(errors="ignore").splitlines():
+for line in httpx_path.read_text(errors="ignore").splitlines():
     try:
         item = json.loads(line)
     except Exception:
@@ -74,10 +83,10 @@ for line in (session / "raw" / "httpx.jsonl").read_text(errors="ignore").splitli
 PY
 if [ ! -s "$SESSION/live_hosts.txt" ]; then printf "https://%s\nhttps://www.%s\n" "$DOMAIN" "$DOMAIN" > "$SESSION/live_hosts.txt"; fi
 if command -v dig >/dev/null; then awk '{print $1}' "$SESSION/subdomains.txt" | head -n 500 | while read -r h; do timeout 4 dig +short CNAME "$h" 2>/dev/null | sed "s#^#$h #" >> "$SESSION/cname_records.txt" || true; timeout 4 dig +short A "$h" 2>/dev/null | sed "s#^#$h A #" >> "$SESSION/dns_records.txt" || true; done; fi
-if [ -n "$DNSX" ]; then timeout 120 "$DNSX" -l "$SESSION/subdomains.txt" -silent -a -aaaa -cname -resp -json -o "$SESSION/raw/dnsx.jsonl" 2>/dev/null || true; fi
-python3 - "$DOMAIN" "$SESSION" <<'PY'
+if [ -n "$DNSX" ]; then timeout 120 "$DNSX" -l "$SESSION/subdomains.txt" -silent -a -aaaa -cname -resp -json -o "$dnsx_json" 2>/dev/null || true; fi
+python3 - "$DOMAIN" "$SESSION" "$dnsx_json" <<'PY'
 import json, pathlib, re, sys
-domain, session = sys.argv[1].lower(), pathlib.Path(sys.argv[2])
+domain, session, dnsx_path = sys.argv[1].lower(), pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
 def as_list(value):
     if value is None:
         return []
@@ -85,7 +94,7 @@ def as_list(value):
         return [str(item) for item in value if item]
     return [str(value)]
 cname_rows, dns_rows = [], []
-for line in (session / "raw" / "dnsx.jsonl").read_text(errors="ignore").splitlines():
+for line in dnsx_path.read_text(errors="ignore").splitlines():
     try:
         item = json.loads(line)
     except Exception:
@@ -109,12 +118,12 @@ PY
 awk '{print $1}' "$SESSION/cname_records.txt" 2>/dev/null | sort -u | head -n 200 > "$SESSION/takeover_probe_hosts.txt"
 if [ -n "$SUBZY" ] && [ -s "$SESSION/takeover_probe_hosts.txt" ]; then timeout 120 "$SUBZY" run --targets "$SESSION/takeover_probe_hosts.txt" --hide_fails --timeout 10 > "$SESSION/subzy_takeovers.txt" 2>/dev/null || true; fi
 { awk '{print $1}' "$SESSION/live_hosts.txt" 2>/dev/null | sed 's#^https\?://##; s#/.*##'; awk '{print $1}' "$SESSION/subdomains.txt" 2>/dev/null; } | sort -u | head -n 500 > "$SESSION/tls_probe_hosts.txt"
-if [ -n "$TLSX" ] && [ -s "$SESSION/tls_probe_hosts.txt" ]; then timeout 120 "$TLSX" -l "$SESSION/tls_probe_hosts.txt" -silent -san -cn -json -o "$SESSION/raw/tlsx.jsonl" 2>/dev/null || true; fi
-python3 - "$DOMAIN" "$SESSION" <<'PY'
+if [ -n "$TLSX" ] && [ -s "$SESSION/tls_probe_hosts.txt" ]; then timeout 120 "$TLSX" -l "$SESSION/tls_probe_hosts.txt" -silent -san -cn -json -o "$tlsx_json" 2>/dev/null || true; fi
+python3 - "$DOMAIN" "$SESSION" "$tlsx_json" <<'PY'
 import json, pathlib, re, sys
-domain, session = sys.argv[1].lower(), pathlib.Path(sys.argv[2])
+domain, session, tlsx_path = sys.argv[1].lower(), pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
 hosts = set()
-for line in (session / "raw" / "tlsx.jsonl").read_text(errors="ignore").splitlines():
+for line in tlsx_path.read_text(errors="ignore").splitlines():
     try:
         text = json.dumps(json.loads(line))
     except Exception:
@@ -130,14 +139,17 @@ PY
 Target-domain family probing remains bounded to `[DOMAIN]` and hosts ending in `.[DOMAIN]`. Also record compact sibling-domain candidates from linked hosts; do not probe the broad `sibling-domain-candidates.txt` set. Deep mode may run a tiny explicit liveness check only for brand-linked sibling hosts written to `brand-sibling-probe-candidates.txt`; same-TLD-only repeat evidence stays record-only.
 ```bash
 DOMAIN="[DOMAIN]"; SESSION="[SESSION]"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/bob-deep-recon-family.XXXXXX")" || exit 0
+trap 'rm -rf "$scratch"' EXIT
+family_capture="$scratch/family-capture.txt"
 { printf "https://%s\nhttps://www.%s\n" "$DOMAIN" "$DOMAIN"; awk '{print $1}' "$SESSION/live_hosts.txt" 2>/dev/null | head -n 10; } | sort -u > "$SESSION/family_seeds.txt"
-: > "$SESSION/raw/family_raw.txt"
-while read -r u; do timeout 10 curl -ksSIL "$u" 2>/dev/null >> "$SESSION/raw/family_raw.txt" || true; timeout 10 curl -ksSL "$u" 2>/dev/null | head -c 300000 >> "$SESSION/raw/family_raw.txt" || true; done < "$SESSION/family_seeds.txt"
-python3 - "$DOMAIN" "$SESSION" <<'PY'
+: > "$family_capture"
+while read -r u; do timeout 10 curl -ksSIL "$u" 2>/dev/null >> "$family_capture" || true; timeout 10 curl -ksSL "$u" 2>/dev/null | head -c 300000 >> "$family_capture" || true; done < "$SESSION/family_seeds.txt"
+python3 - "$DOMAIN" "$family_capture" "$SESSION" <<'PY'
 import collections, pathlib, re, sys
-domain, session = sys.argv[1].lower(), pathlib.Path(sys.argv[2])
-raw = (session / "raw" / "family_raw.txt").read_text(errors="ignore")
-hosts = re.findall(r'https?://([A-Za-z0-9.-]+\.[A-Za-z]{2,})', raw)
+domain, capture_path, session = sys.argv[1].lower(), pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
+capture = capture_path.read_text(errors="ignore")
+hosts = re.findall(r'https?://([A-Za-z0-9.-]+\.[A-Za-z]{2,})', capture)
 deny = ("zendesk","intercom","statuspage","shopify","salesforce","hubspot","marketo","okta","google","googleapis","gstatic","doubleclick","facebook","instagram","linkedin","x.com","twitter","youtube","vimeo","cloudfront","amazonaws","stripe","paypal","segment","sentry","datadog")
 counts = collections.Counter(h.lower().strip(".") for h in hosts)
 target_label = re.sub(r'[^a-z0-9]', '', domain.split(".", 1)[0])
@@ -204,16 +216,19 @@ PY
 6. JS extraction and endpoint clustering
 ```bash
 DOMAIN="[DOMAIN]"; SESSION="[SESSION]"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/bob-deep-recon-js.XXXXXX")" || exit 0
+trap 'rm -rf "$scratch"' EXIT
+js_capture="$scratch/js-capture.txt"
 grep -Eai '\.js([?#].*)?$' "$SESSION/all_urls.txt" 2>/dev/null | sort -u | head -n 60 > "$SESSION/js_urls.txt" || true
-: > "$SESSION/raw/js_raw.txt"
-while read -r u; do timeout 10 curl -ksSL "$u" 2>/dev/null | head -c 500000 >> "$SESSION/raw/js_raw.txt" || true; printf "\n/* %s */\n" "$u" >> "$SESSION/raw/js_raw.txt"; done < "$SESSION/js_urls.txt"
-python3 - "$SESSION" <<'PY'
+: > "$js_capture"
+while read -r u; do timeout 10 curl -ksSL "$u" 2>/dev/null | head -c 500000 >> "$js_capture" || true; printf "\n/* %s */\n" "$u" >> "$js_capture"; done < "$SESSION/js_urls.txt"
+python3 - "$SESSION" "$js_capture" <<'PY'
 import pathlib, re, sys
-session = pathlib.Path(sys.argv[1])
-raw = (session / "raw" / "js_raw.txt").read_text(errors="ignore")
-endpoints = sorted(set(re.findall(r'https?://[^\s"\'<>]+|/[A-Za-z0-9_./?=&%-]{4,}', raw)))
-secrets = sorted(set(s.strip() for s in re.findall(r'(?i)(?:api[_-]?key|token|secret|client[_-]?secret|authorization|bearer)[^,\n]{0,120}', raw) if len(s) < 180))
-jwt_candidates = sorted(set(re.findall(r'\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b', raw)))
+session, capture_path = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+capture = capture_path.read_text(errors="ignore")
+endpoints = sorted(set(re.findall(r'https?://[^\s"\'<>]+|/[A-Za-z0-9_./?=&%-]{4,}', capture)))
+secrets = sorted(set(s.strip() for s in re.findall(r'(?i)(?:api[_-]?key|token|secret|client[_-]?secret|authorization|bearer)[^,\n]{0,120}', capture) if len(s) < 180))
+jwt_candidates = sorted(set(re.findall(r'\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b', capture)))
 clusters = []
 for pattern in ("/api/", "/graphql", "/admin", "/auth", "/oauth", "/upload", "/billing", "/checkout", "/export", "/invite"):
     hits = [e for e in endpoints if pattern.lower() in e.lower()]
@@ -457,7 +472,7 @@ Use this backward-compatible attack surface schema:
 Rules for `attack_surface.json`:
 - Required per-surface fields remain: `id`, `hosts`, `tech_stack`, `endpoints`, `interesting_params`, `nuclei_hits`, and `priority`.
 - Optional enrichment fields are additive: `surface_type`, `bug_class_hints`, `high_value_flows`, `evidence`, and `ranking`. Omit optional fields only without support.
-- Promote only evidence-backed surfaces; raw discovery noise belongs in files under `[SESSION]/raw`, not JSON.
+- Promote only evidence-backed surfaces; bulky collection noise belongs in temporary scratch, not JSON.
 - Never copy raw secret values or JWT-looking strings from `js_secrets.txt` or `jwt_candidates.txt` into JSON; record counts and local artifact names only.
 - Populate hints from evidence, not guesses: object IDs -> `idor`/`authz`; URL fetch/import/image params -> `ssrf`; upload/file paths -> `upload`; checkout/refund/coupon/plan flows -> `business_logic`; token/OAuth/JWKS/callback paths and JWT-shaped candidates -> `jwt_oauth`; GraphQL endpoints -> `graphql`; dangling CNAME patterns -> `takeover`.
 - Prioritize auth flows, object IDs, admin/debug paths, uploads, GraphQL, payments, API/mobile backends, JS-disclosed key material, JWT candidates, takeover candidates, nuclei hits, and concrete tech/CVE leads.

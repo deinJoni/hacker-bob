@@ -57,11 +57,15 @@ MCP_OWNED_PATTERNS = [
     re.compile(r"^live-dead-ends-w\d+-a\d+\.jsonl$"),
 ]
 
-# Files that agents are allowed to write directly
+# Files that agents are allowed to write directly. JSON entries here are
+# compact recon/report artifacts; bulky raw captures remain blocked by name on
+# the read side and should not be written as ad hoc session files.
 AGENT_ALLOWED_EXACT = {
     "chains.md",
     "report.md",
     "attack_surface.json",
+    "deep-summary.json",
+    "recon-summary.json",
     "scope-warnings.log",
     "deny-list.txt",
 }

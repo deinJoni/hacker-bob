@@ -21,7 +21,7 @@ mkdir -p "[SESSION]" && { for t in subfinder nuclei curl python3; do command -v 
 : > "[SESSION]/subdomains.txt"
 timeout 45 sh -c 'command -v subfinder >/dev/null && subfinder -d "$1" -silent -all' sh "[DOMAIN]" 2>/dev/null >> "[SESSION]/subdomains.txt" || true
 printf "%s\nwww.%s\n" "[DOMAIN]" "[DOMAIN]" >> "[SESSION]/subdomains.txt"
-sort -u "[SESSION]/subdomains.txt" | head -n 800 > "[SESSION]/subdomains.tmp" && mv "[SESSION]/subdomains.tmp" "[SESSION]/subdomains.txt"
+tmp="$(mktemp "${TMPDIR:-/tmp}/bob-recon-subdomains.XXXXXX")" && sort -u "[SESSION]/subdomains.txt" | head -n 800 > "$tmp" && mv "$tmp" "[SESSION]/subdomains.txt"; rm -f "${tmp:-}"
 ```
 3. Live hosts
 ```bash
@@ -32,14 +32,17 @@ if [ ! -s "[SESSION]/live_hosts.txt" ]; then printf "https://%s\nhttps://www.%s\
 ```
 4. First-party family discovery
 ```bash
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/bob-recon-family.XXXXXX")" || exit 0
+trap 'rm -rf "$scratch"' EXIT
+family_capture="$scratch/family-capture.txt"
 { printf "https://%s\nhttps://www.%s\n" "[DOMAIN]" "[DOMAIN]"; awk '{print $1}' "[SESSION]/live_hosts.txt" 2>/dev/null | head -n 2; } | sort -u > "[SESSION]/family_seeds.txt"
-: > "[SESSION]/family_raw.txt"
-while read -r u; do timeout 8 curl -ksSIL "$u" 2>/dev/null >> "[SESSION]/family_raw.txt" || true; timeout 8 curl -ksSL "$u" 2>/dev/null | head -c 150000 >> "[SESSION]/family_raw.txt" || true; done < "[SESSION]/family_seeds.txt"
-python3 - "[DOMAIN]" "[SESSION]" <<'PY'
+: > "$family_capture"
+while read -r u; do timeout 8 curl -ksSIL "$u" 2>/dev/null >> "$family_capture" || true; timeout 8 curl -ksSL "$u" 2>/dev/null | head -c 150000 >> "$family_capture" || true; done < "[SESSION]/family_seeds.txt"
+python3 - "[DOMAIN]" "$family_capture" "[SESSION]" <<'PY'
 import collections, pathlib, re, sys
-domain, session = sys.argv[1].lower(), pathlib.Path(sys.argv[2])
-raw = (session / "family_raw.txt").read_text(errors="ignore")
-hosts = re.findall(r'https?://([A-Za-z0-9.-]+\.[A-Za-z]{2,})', raw)
+domain, capture_path, session = sys.argv[1].lower(), pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
+capture = capture_path.read_text(errors="ignore")
+hosts = re.findall(r'https?://([A-Za-z0-9.-]+\.[A-Za-z]{2,})', capture)
 deny = ("zendesk","intercom","statuspage","shopify","salesforce","hubspot","marketo","okta","googleapis","gstatic","doubleclick","facebook","instagram","linkedin","x.com","twitter","youtube","vimeo")
 tld = domain.rsplit(".", 1)[-1]
 counts = collections.Counter(h.lower().strip(".") for h in hosts)
@@ -77,16 +80,19 @@ if command -v nuclei >/dev/null; then timeout 480 nuclei -l "[SESSION]/live_urls
 ```
 7. JS endpoints and compact summaries
 ```bash
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/bob-recon-js.XXXXXX")" || exit 0
+trap 'rm -rf "$scratch"' EXIT
+js_capture="$scratch/js-capture.txt"
 grep -Eai '\.js([?#].*)?$' "[SESSION]/all_urls.txt" 2>/dev/null | sort -u | head -n 8 > "[SESSION]/js_urls.txt" || true
-: > "[SESSION]/js_raw.txt"
-while read -r u; do timeout 6 curl -ksSL "$u" 2>/dev/null | head -c 250000 >> "[SESSION]/js_raw.txt" || true; printf "\n/* %s */\n" "$u" >> "[SESSION]/js_raw.txt"; done < "[SESSION]/js_urls.txt"
-python3 - "[SESSION]" <<'PY'
+: > "$js_capture"
+while read -r u; do timeout 6 curl -ksSL "$u" 2>/dev/null | head -c 250000 >> "$js_capture" || true; printf "\n/* %s */\n" "$u" >> "$js_capture"; done < "[SESSION]/js_urls.txt"
+python3 - "[SESSION]" "$js_capture" <<'PY'
 import json, pathlib, re, sys
-session = pathlib.Path(sys.argv[1])
-raw = (session / "js_raw.txt").read_text(errors="ignore")
-endpoints = sorted(set(re.findall(r'https?://[^\s"\'<>]+|/[A-Za-z0-9_./?=&%-]{4,}', raw)))
-secrets = sorted(set(s.strip() for s in re.findall(r'(?i)(?:api[_-]?key|token|secret|client[_-]?secret|authorization)[^,\n]{0,120}', raw) if len(s) < 180))
-jwt_candidates = sorted(set(re.findall(r'\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b', raw)))
+session, capture_path = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+capture = capture_path.read_text(errors="ignore")
+endpoints = sorted(set(re.findall(r'https?://[^\s"\'<>]+|/[A-Za-z0-9_./?=&%-]{4,}', capture)))
+secrets = sorted(set(s.strip() for s in re.findall(r'(?i)(?:api[_-]?key|token|secret|client[_-]?secret|authorization)[^,\n]{0,120}', capture) if len(s) < 180))
+jwt_candidates = sorted(set(re.findall(r'\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b', capture)))
 (session / "js_endpoints.txt").write_text("\n".join(endpoints[:400]) + ("\n" if endpoints else ""))
 (session / "js_secrets.txt").write_text("\n".join(secrets[:100]) + ("\n" if secrets else ""))
 (session / "jwt_candidates.txt").write_text("\n".join(jwt_candidates[:50]) + ("\n" if jwt_candidates else ""))

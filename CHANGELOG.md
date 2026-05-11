@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-05-12
+
+### Recon guard compatibility
+
+- Updated normal and deep recon prompts to keep bulky collection captures in temporary scratch outside `~/bounty-agent-sessions`, while preserving compact session artifacts for downstream routing.
+- Removed guard-blocked recon scratch names such as `subdomains.tmp`, `family_raw.txt`, `js_raw.txt`, and deep recon `[SESSION]/raw/*` paths from the generated Claude and Codex recon contracts.
+- Kept MCP-owned session boundaries intact: compact recon summaries are readable, `surface-leads.json` remains write-protected outside MCP-owned flows, and raw proof/body/dump-style artifacts remain blocked.
+- Added hook and prompt-contract tests that exercise compact recon JSON allowlists and prevent recon prompts from reintroducing guard-blocked session scratch paths.
+- Release notes: [docs/releases/v1.3.2.md](docs/releases/v1.3.2.md).
+
 ## [1.3.1] - 2026-05-11
 
 ### Runtime-owned wave starts
