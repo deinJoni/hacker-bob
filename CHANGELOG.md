@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-05-11
+
+### Runtime-owned wave starts
+
+- Added `bounty_start_next_wave` so normal HUNT/EXPLORE wave assignment policy now lives in the MCP runtime instead of orchestrator prompt prose.
+- Added the pure wave planner for standard bucket ordering, open requeue coverage, lead-surface follow-up, assignment caps, dedupe, and stable `aN` labels.
+- Moved automatic deep lead promotion into the new next-wave starter, leaving `bounty_promote_surface_leads` for explicit operator use.
+- Updated HUNT -> CHAIN gating, prompts, manifests, generated Claude/Codex artifacts, and tests so normal waves use the runtime-owned result instead of manual assignment calculation.
+- Rewrote the README into a cleaner user-facing guide and removed install instructions aimed at users' coding assistants.
+- Release notes: [docs/releases/v1.3.1.md](docs/releases/v1.3.1.md).
+
 ## [1.3.0] - 2026-05-10
 
 ### Capability hypergraph
