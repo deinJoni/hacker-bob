@@ -70,6 +70,11 @@ const CODEX_SKILL_SPECS = Object.freeze({
     name: "bob-export",
     description: "Create a Hacker Bob post-release improvement bundle for the currently installed Bob version.",
   }),
+  egress: Object.freeze({
+    output_path: path.join("adapters", "codex", "skills", "bob-egress", "SKILL.md"),
+    name: "bob-egress",
+    description: "List, add, test, enable, disable, or remove Hacker Bob egress profiles from Codex.",
+  }),
 });
 
 function renderFrontmatter(spec) {
@@ -350,6 +355,28 @@ function renderExportSkill() {
   ].join("\n");
 }
 
+function renderEgressSkill() {
+  return [
+    "# Hacker Bob Egress",
+    "",
+    "Use this when the operator asks to list, add, test, enable, disable, or remove Hacker Bob egress profiles from Codex.",
+    "",
+    "**Input:** `$ARGUMENTS` (`list`, `add <name>`, `test <name>`, `enable <name>`, `disable <name>`, or `remove <name>`)",
+    "",
+    "Run from the project root:",
+    "```bash",
+    "node ./mcp/lib/egress-cli.js \"$PWD\" $ARGUMENTS",
+    "```",
+    "",
+    "Rules:",
+    "- If no subcommand is provided, use `list`.",
+    "- For `add <name>`, prefer an environment variable reference such as `--proxy-env BOB_EGRESS_GR_RESIDENTIAL_PROXY`; do not ask the operator to paste credentials into chat.",
+    "- For `remove <name>`, ask the operator to confirm removal, then rerun with `--yes` only after confirmation.",
+    "- Report profile names, enabled status, region, description, and whether a proxy is configured. Never print proxy URLs or credentials.",
+    "",
+  ].join("\n");
+}
+
 function renderCodexSkill(skillId, options = {}) {
   const spec = CODEX_SKILL_SPECS[skillId];
   if (!spec) throw new Error(`Missing Codex skill spec for ${skillId}`);
@@ -358,6 +385,8 @@ function renderCodexSkill(skillId, options = {}) {
     body = renderCodexPromptBody(spec.role_id, roleBody(spec.role_id, options), options);
   } else if (skillId === "export") {
     body = renderExportSkill();
+  } else if (skillId === "egress") {
+    body = renderEgressSkill();
   } else {
     body = renderUpdateSkill();
   }

@@ -396,8 +396,8 @@ test("codex adapter installs direct skills and doctor checks MCP wiring", () => 
       targetAbs: workspace,
       serverPath: path.join(workspace, "mcp", "server.js"),
     });
-    assert.equal(install.skills, 5);
-    assert.equal(install.commands, 5);
+    assert.equal(install.skills, 6);
+    assert.equal(install.commands, 6);
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".codex-plugin", "plugin.json")));
     const manifest = JSON.parse(fs.readFileSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".codex-plugin", "plugin.json"), "utf8"));
     assert.equal(Object.prototype.hasOwnProperty.call(manifest, "skills"), false);
@@ -406,12 +406,14 @@ test("codex adapter installs direct skills and doctor checks MCP wiring", () => 
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-debug", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-update", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-export", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-egress", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "hunt", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "bob-hunt", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "hacker-bob-hunt", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "hacker-bob-hunt", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-hunt.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-export.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-egress.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".agents", "plugins", "marketplace.json")));
 
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".mcp.json"), "utf8"));
@@ -441,9 +443,11 @@ test("codex adapter installs direct skills and doctor checks MCP wiring", () => 
     assert.equal(removed.dry_run, false);
     assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-hunt", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-export", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-egress", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".mcp.json")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-hunt.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-export.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-egress.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".agents", "plugins", "marketplace.json")));
   } finally {
     if (originalCodexHome === undefined) {

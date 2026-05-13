@@ -71,6 +71,12 @@ const COMMAND_SPECS = Object.freeze({
     description: "Create a Hacker Bob post-release improvement bundle.",
     argumentHint: "[no arguments]",
   }),
+  egress: Object.freeze({
+    file: "bob-egress.md",
+    skill: "bob-egress",
+    description: "Manage Hacker Bob egress profiles.",
+    argumentHint: "[list|add <name>|test <name>|enable <name>|disable <name>|remove <name>]",
+  }),
 });
 
 function pluginSourceRoot(sourceRoot) {

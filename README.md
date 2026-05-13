@@ -118,6 +118,7 @@ Claude Code commands:
 /bob-debug                   # inspect the latest local run
 /bob-update                  # preview and install the latest release
 /bob-export                  # create a release-scoped improvement bundle
+/bob-egress                  # manage operator-controlled egress profiles
 ```
 
 Codex uses the same command names with a `$` prefix:
@@ -128,6 +129,7 @@ $bob-status
 $bob-debug
 $bob-update
 $bob-export
+$bob-egress
 ```
 
 For install diagnostics:

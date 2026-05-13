@@ -29,7 +29,7 @@ claude mcp list
 
 If `hacker-bob doctor` reports a missing or mismatched `.mcp.json` entry, rerun the install command for that project directory.
 
-For Codex installs, check that `.codex/plugins/hacker-bob/.codex-plugin/plugin.json`, `.codex/plugins/hacker-bob/.mcp.json`, `~/.codex/skills/bob-{hunt,status,debug,update}/SKILL.md`, `.agents/plugins/marketplace.json`, and the doctor `codex_plugin_activation` and `codex_global_skills` checks are present. For generic MCP installs, check `.hacker-bob/generic-mcp/hacker-bob.md` and the root `.mcp.json`.
+For Codex installs, check that `.codex/plugins/hacker-bob/.codex-plugin/plugin.json`, `.codex/plugins/hacker-bob/.mcp.json`, `~/.codex/skills/bob-{hunt,status,debug,update,export,egress}/SKILL.md`, `.agents/plugins/marketplace.json`, and the doctor `codex_plugin_activation` and `codex_global_skills` checks are present. For generic MCP installs, check `.hacker-bob/generic-mcp/hacker-bob.md` and the root `.mcp.json`.
 
 ## Codex Skills Are Missing
 
@@ -41,7 +41,7 @@ cd /path/to/your/project
 codex
 ```
 
-The install should print `Codex plugin cache/config activated for MCP discovery`. Then look for `$bob-hunt`, `$bob-status`, `$bob-debug`, `$bob-update`, and `$bob-export`. If they still do not appear, run:
+The install should print `Codex plugin cache/config activated for MCP discovery`. Then look for `$bob-hunt`, `$bob-status`, `$bob-debug`, `$bob-update`, `$bob-export`, and `$bob-egress`. If they still do not appear, run:
 
 ```bash
 hacker-bob doctor /path/to/your/project --adapter codex --json
@@ -62,6 +62,14 @@ npx -y hacker-bob@latest install /path/to/your/project
 Then restart Claude Code in that project.
 
 For Codex installs, use `$bob-update`. For generic MCP installs, run `hacker-bob update /path/to/your/project --adapter generic-mcp` from a shell and reload the host config.
+
+## Egress Command Is Missing
+
+Claude installs expose `/bob-egress`; Codex installs expose `$bob-egress`. After installing or updating, restart the selected host CLI in the target project. If the command is still missing in Codex, rerun:
+
+```bash
+npx -y hacker-bob@latest install /path/to/your/project --adapter codex
+```
 
 ## Legacy Metadata Warning
 

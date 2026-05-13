@@ -244,10 +244,12 @@ test("Codex plugin manifest and direct skills expose portable Bob contracts", ()
   const status = readFile("adapters/codex/skills/bob-status/SKILL.md");
   const debug = readFile("adapters/codex/skills/bob-debug/SKILL.md");
   const exportSkill = readFile("adapters/codex/skills/bob-export/SKILL.md");
+  const egressSkill = readFile("adapters/codex/skills/bob-egress/SKILL.md");
   assert.equal(parseFrontmatter(hunt, "adapters/codex/skills/bob-hunt/SKILL.md").name, "bob-hunt");
   assert.equal(parseFrontmatter(status, "adapters/codex/skills/bob-status/SKILL.md").name, "bob-status");
   assert.equal(parseFrontmatter(debug, "adapters/codex/skills/bob-debug/SKILL.md").name, "bob-debug");
   assert.equal(parseFrontmatter(exportSkill, "adapters/codex/skills/bob-export/SKILL.md").name, "bob-export");
+  assert.equal(parseFrontmatter(egressSkill, "adapters/codex/skills/bob-egress/SKILL.md").name, "bob-egress");
   assert.match(hunt, /bounty_finalize_hunter_run/);
   assert.match(hunt, /Codex Agent Mapping/);
   assert.match(hunt, /Codex Worker Role Contracts/);
@@ -259,11 +261,13 @@ test("Codex plugin manifest and direct skills expose portable Bob contracts", ()
   assert.match(hunt, /wait_agent/);
   assert.match(hunt, /close_agent/);
   assert.match(hunt, /host_agent_id -> w\[wave\]\/a\[agent\]\/surface_id/);
-  assert.doesNotMatch(hunt + status + debug + exportSkill, /CLAUDE_PROJECT_DIR|mcp__bountyagent__|\/bob:|\bClaude\b|Agent\(subagent_type|subagent_type|run_in_background|\bTask\b|SubagentStop/);
+  assert.doesNotMatch(hunt + status + debug + exportSkill + egressSkill, /CLAUDE_PROJECT_DIR|mcp__bountyagent__|\/bob:|\bClaude\b|Agent\(subagent_type|subagent_type|run_in_background|\bTask\b|SubagentStop/);
   assert.match(status, /mcp\/lib\/update-check\.js/);
   assert.match(exportSkill, /mcp\/lib\/bob-export\.js/);
   assert.match(exportSkill, /no v1 flags/);
   assert.match(exportSkill, /does not hunt, resume sessions, or interact with targets/);
+  assert.match(egressSkill, /mcp\/lib\/egress-cli\.js/);
+  assert.match(egressSkill, /Never print proxy URLs or credentials/);
 
   for (const [roleId, spec] of Object.entries(CODEX_ROLE_SPECS)) {
     assert.equal(spec.agent_type, "worker", `${roleId} must map to a Codex worker`);

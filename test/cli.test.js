@@ -97,6 +97,7 @@ test("CLI installs and doctors the Codex adapter without Claude files", () => {
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-debug", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-update", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-export", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-egress", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "hunt", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "bob-hunt", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "hacker-bob-hunt", "SKILL.md")));
@@ -105,6 +106,7 @@ test("CLI installs and doctors the Codex adapter without Claude files", () => {
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-debug.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-update.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-export.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-egress.md")));
     const marketplace = JSON.parse(fs.readFileSync(path.join(workspace, ".agents", "plugins", "marketplace.json"), "utf8"));
     const marketplaceEntry = marketplace.plugins.find((plugin) => plugin.name === "hacker-bob");
     assert.equal(marketplaceEntry.source.path, "./.codex/plugins/hacker-bob");
@@ -153,6 +155,37 @@ test("CLI installs and doctors the Codex adapter without Claude files", () => {
     assert.ok(result.checks.some((check) => check.id === "codex_plugin_commands" && check.status === "ok"));
     assert.ok(result.checks.some((check) => check.id === "codex_plugin_marketplace" && check.status === "ok"));
     assert.ok(!result.checks.some((check) => check.id.startsWith("claude_")));
+
+    const egressOutput = execFileSync(process.execPath, [
+      path.join(workspace, "mcp", "lib", "egress-cli.js"),
+      workspace,
+      "add",
+      "operator",
+      "--proxy-env",
+      "BOB_EGRESS_OPERATOR_PROXY",
+      "--region",
+      "EU",
+      "--json",
+    ], {
+      cwd: workspace,
+      env: { ...process.env, HOME: tempHome },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    assert.equal(JSON.parse(egressOutput).profile.name, "operator");
+    const egressList = JSON.parse(execFileSync(process.execPath, [
+      path.join(workspace, "mcp", "lib", "egress-cli.js"),
+      workspace,
+      "list",
+      "--json",
+    ], {
+      cwd: workspace,
+      env: { ...process.env, HOME: tempHome },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }));
+    assert.ok(egressList.profiles.some((profile) => profile.name === "operator" && profile.proxy_configured));
+    assert.doesNotMatch(JSON.stringify(egressList), /BOB_EGRESS_OPERATOR_PROXY|proxy\.example|secret/);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(tempHome, { recursive: true, force: true });
@@ -237,8 +270,10 @@ test("CLI uninstall of one adapter preserves remaining adapters and shared runti
     assert.equal(result.remove_shared, false);
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".mcp.json")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-hunt.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-egress.md")));
     assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-hunt", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-export", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-egress", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".agents", "plugins", "marketplace.json")));
     assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "plugins", "cache", "hacker-bob-local", "hacker-bob")));
     assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "config.toml")));

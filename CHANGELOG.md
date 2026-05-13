@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [1.3.4] - 2026-05-14
+
+### Codex adapter parity
+
+- Added `$bob-egress` as a Codex direct skill and plugin command wrapper so Codex users can list, add, test, enable, disable, and remove operator egress profiles without switching to Claude Code.
+- Moved the egress profile command implementation into shared runtime code at `mcp/lib/egress-cli.js`, with the Claude `/bob-egress` hook delegating to the same helper.
+- Kept host-specific environment fallback in the Claude adapter wrapper so shared runtime code stays host-neutral.
+- Updated install, doctor, uninstall, prompt-contract, CLI, and install-smoke coverage for the new Codex egress surface.
+- Release notes: [docs/releases/v1.3.4.md](docs/releases/v1.3.4.md).
+
 ## [1.3.3] - 2026-05-13
 
 ### Session contract hardening
