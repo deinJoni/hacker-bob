@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-05-13
+
+### Session contract hardening
+
+- Tightened hunter and orchestrator contracts so web hunters log a completion-status `bounty_log_technique_attempt` before finalization, and finalization failures explicitly direct agents to repair either the structured handoff or the missing technique-attempt log.
+- Required `steps[]` on `bounty_write_chain_attempt` examples so CHAIN -> VERIFY transitions preserve the replay or rejection path for every terminal chain decision.
+- Clarified that reporters must write the canonical session `report.md` before calling `bounty_report_written`; analytics now distinguishes SUBMIT grades with a missing canonical report path from ordinary missing-report states.
+- Clamped oversized `bounty_read_http_audit` limits to the release cap instead of rejecting otherwise valid audit-summary reads.
+- Regenerated Claude and Codex prompt artifacts and added regression tests for the new session-contract expectations.
+- Release notes: [docs/releases/v1.3.3.md](docs/releases/v1.3.3.md).
+
 ## [1.3.2] - 2026-05-12
 
 ### Recon guard compatibility
