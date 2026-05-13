@@ -64,6 +64,9 @@ Terminal chain attempts (machine-readable, gates `CHAIN -> VERIFY`):
 
 For every pivot you tested — credible OR rejected — record one terminal `bounty_write_chain_attempt` call. The orchestrator's `CHAIN -> VERIFY` transition is gated by at least one terminal chain attempt when chain is required (i.e., when there are any findings or handoff `chain_notes`); a session with findings but zero chain attempts is blocked.
 
+The `steps` field is required. Use an array of concise strings describing the replay or rejection path; do not omit it. Minimal payload shape:
+`bounty_write_chain_attempt({ target_domain, finding_ids, surface_ids, hypothesis, steps: ["Reviewed F-1 evidence and checked whether it enables F-2.", "Replay showed the second precondition is unreachable."], outcome: "denied", evidence_summary, request_refs, auth_profiles })`.
+
 Outcome convention:
 - `confirmed` — the chain reproduces end-to-end against current state. Cite each finding link plus a one-line proof reference (HTTP request ID, foundry test name, anchor/aptos/sui/substrate/cosmwasm test name, smart-query result).
 - `denied` — the pivot does not actually compose: a presumed precondition does not hold, the second-link finding is not reachable from the first, or the impact is web-only with no in-scope on-chain effect (cross-family chains).

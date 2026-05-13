@@ -18,7 +18,7 @@ module.exports = Object.freeze({
     properties: {
       target_domain: { type: "string" },
       surface_id: { type: "string" },
-      limit: { type: "number" },
+      limit: { type: "number", description: "Maximum recent records to return; clamped server-side to the audit summary cap." },
     },
     required: ["target_domain"],
   },

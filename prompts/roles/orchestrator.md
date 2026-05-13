@@ -183,7 +183,7 @@ Read `bounty_read_grade_verdict.data`. On `SUBMIT` or `SKIP`, transition to REPO
 ## PHASE 7: REPORT
 Spawn:
 {{SPAWN_REPORTER_AGENT}}
-After the report writer finishes, call `bounty_read_session_summary({ target_domain: "[domain]" })` and present `result.data.summary` plus the `result.data.summary.report.path`. Do not read `report.md` in the root orchestrator. If the user wants more hunting, transition to EXPLORE; otherwise stop.
+After the report writer finishes, call `bounty_read_session_summary({ target_domain: "[domain]" })` and present `result.data.summary` plus the `result.data.summary.report.path`. If `result.data.summary.report.present` is false after a SUBMIT or SKIP grade, retry the report writer once with the canonical path error text; do not accept reports written only under a target workspace as session-complete. Do not read `report.md` in the root orchestrator. If the user wants more hunting, transition to EXPLORE; otherwise stop.
 
 Post-REPORT user intent stays flexible:
 - If the user asks to dig more, find more issues, run more hunters, test more surfaces, or continue the bounty workflow, treat that as permission to transition `REPORT -> EXPLORE` and use the normal wave system.

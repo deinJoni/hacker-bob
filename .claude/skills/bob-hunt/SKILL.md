@@ -203,14 +203,14 @@ Handoff token: [only this agent's handoff_token from wave-start result.data.assi
 Capability pack: [assignment.capability_pack]. Brief profile: [assignment.brief_profile]. Hunter agent: [assignment.hunter_agent]. Context budget: [assignment.context_budget].
 First action: call bounty_read_hunter_brief({ target_domain: '[domain]', wave: 'w[wave]', agent: 'a[agent]', egress_profile: '[egress_profile]', block_internal_hosts: [block_internal_hosts] }) and use .data, including run_context.context_budget and technique_packs.selected.
 Use surface_type, bug_class_hints, high_value_flows, evidence, surface_limits, coverage_summary, traffic_summary, audit_summary, circuit_breaker_summary, ranking_summary, intel_hints, static_scan_hints, and technique_packs.selected as prioritization inputs for this one assigned surface.
-Call bounty_read_technique_pack(mode="full") only with target_domain/wave/agent/surface_id for relevant selected summaries, and bounty_log_technique_attempt for selections, skips, attempts, and outcomes.
+Call bounty_read_technique_pack(mode="full") only with target_domain/wave/agent/surface_id for relevant selected summaries, and bounty_log_technique_attempt for selections, skips, attempts, and outcomes. Before finalizing, ensure one completion-status technique attempt is logged for this surface.
 Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. Pass these exact values as egress_profile and block_internal_hosts on every bounty_http_scan call.
 Prefer traffic_summary endpoints, replay through bounty_http_scan with target_domain and egress_profile, log bounty_log_coverage after meaningful tests, and log before switching away from promising traffic-derived endpoints.
 New token-contract scans must use bounty_import_static_artifact then bounty_static_scan; never scan arbitrary paths.
 Checkpoint mode: [normal|paranoid|yolo].
 Auth: call bounty_list_auth_profiles, use attacker profile for primary testing, victim profile for IDOR/access-control confirmation, legacy auth as a single profile, or unauthenticated testing if auth is absent.
 Geofence rule: after 3+ consecutive INTERNAL_ERROR, timeout, connection reset, or network_unreachable_target results on target-owned hosts, log blocked/unreachable coverage and dead-end context, write or prepare the handoff, and request orchestrator egress rotation instead of retrying.
-Final: call bounty_write_wave_handoff exactly once with target_domain, wave, agent, surface_id, surface_status, handoff_token, summary, optional chain_notes, content, and any dead_ends / waf_blocked_endpoints / lead_surface_ids. Then call bounty_finalize_hunter_run with target_domain, wave, agent, and surface_id. If finalization fails, fix the structured handoff and retry finalization. After finalization succeeds, emit `BOB_HUNTER_DONE {"target_domain":"[domain]","wave":"w[wave]","agent":"a[agent]","surface_id":"[surface_id]"}` for Claude compatibility.
+Final: if no completion-status technique attempt has been logged, call bounty_log_technique_attempt first. Then call bounty_write_wave_handoff exactly once with target_domain, wave, agent, surface_id, surface_status, handoff_token, summary, optional chain_notes, content, and any dead_ends / waf_blocked_endpoints / lead_surface_ids. Then call bounty_finalize_hunter_run with target_domain, wave, agent, and surface_id. If finalization fails, fix the structured handoff or missing technique-attempt log and retry finalization. After finalization succeeds, emit `BOB_HUNTER_DONE {"target_domain":"[domain]","wave":"w[wave]","agent":"a[agent]","surface_id":"[surface_id]"}` for Claude compatibility.
 ")
 ```
 
@@ -274,7 +274,7 @@ Call `bounty_transition_phase({ target_domain, to_phase: "CHAIN" })`.
 
 Spawn:
 ```
-Agent(subagent_type: "chain-builder", name: "chain", prompt: "Domain: [domain]. Egress profile: [egress_profile]. Session: ~/bounty-agent-sessions/[domain]. Read findings, wave handoffs, auth profiles, HTTP audit, and prior chain attempts through MCP. Test plausible chains with bounty_http_scan as needed, passing egress_profile on every scan, and write every outcome through bounty_write_chain_attempt. Do not read findings.md, chains.md, or markdown handoffs.")
+Agent(subagent_type: "chain-builder", name: "chain", prompt: "Domain: [domain]. Egress profile: [egress_profile]. Session: ~/bounty-agent-sessions/[domain]. Read findings, wave handoffs, auth profiles, HTTP audit, and prior chain attempts through MCP. Test plausible chains with bounty_http_scan as needed, passing egress_profile on every scan, and write every outcome through bounty_write_chain_attempt with the required steps array. Do not read findings.md, chains.md, or markdown handoffs.")
 ```
 After completion, call `bounty_transition_phase({ target_domain, to_phase: "VERIFY" })`. If MCP blocks this transition for missing terminal chain attempts, retry the chain-builder once with the blocker text. Use `override_reason` only when the operator explicitly accepts proceeding without terminal chain evidence. `override_reason` is rejected outside HUNT->CHAIN and CHAIN->VERIFY — do not pass it on other transitions; the MCP returns INVALID_ARGUMENTS and the call wastes a turn.
 
@@ -331,9 +331,9 @@ Read `bounty_read_grade_verdict.data`. On `SUBMIT` or `SKIP`, transition to REPO
 ## PHASE 7: REPORT
 Spawn:
 ```
-Agent(subagent_type: "report-writer", name: "reporter", prompt: "Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Call bounty_read_findings, bounty_read_chain_attempts, bounty_read_verification_round({ target_domain: '[domain]', round: 'final' }), bounty_read_evidence_packs, and bounty_read_grade_verdict, then write report.md. For SUBMIT, include only confirmed chain evidence. For SKIP/no reportables, write a concise no-findings closeout with verification, chain-attempt, and blocker summary.")
+Agent(subagent_type: "report-writer", name: "reporter", prompt: "Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Call bounty_read_findings, bounty_read_chain_attempts, bounty_read_verification_round({ target_domain: '[domain]', round: 'final' }), bounty_read_evidence_packs, and bounty_read_grade_verdict, then write the canonical ~/bounty-agent-sessions/[domain]/report.md. For SUBMIT, include only confirmed chain evidence. For SKIP/no reportables, write a concise no-findings closeout with verification, chain-attempt, and blocker summary.")
 ```
-After the report writer finishes, call `bounty_read_session_summary({ target_domain: "[domain]" })` and present `result.data.summary` plus the `result.data.summary.report.path`. Do not read `report.md` in the root orchestrator. If the user wants more hunting, transition to EXPLORE; otherwise stop.
+After the report writer finishes, call `bounty_read_session_summary({ target_domain: "[domain]" })` and present `result.data.summary` plus the `result.data.summary.report.path`. If `result.data.summary.report.present` is false after a SUBMIT or SKIP grade, retry the report writer once with the canonical path error text; do not accept reports written only under a target workspace as session-complete. Do not read `report.md` in the root orchestrator. If the user wants more hunting, transition to EXPLORE; otherwise stop.
 
 Post-REPORT user intent stays flexible:
 - If the user asks to dig more, find more issues, run more hunters, test more surfaces, or continue the bounty workflow, treat that as permission to transition `REPORT -> EXPLORE` and use the normal wave system.

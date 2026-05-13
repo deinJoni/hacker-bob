@@ -141,7 +141,7 @@ For each assignment, use Codex spawn_agent for the hunter family chosen by the M
 - message: include the compact run header below plus the full contract for `assignment.hunter_agent` from Codex Worker Role Contracts.
 - Header fields: Domain: [domain]; Wave: w[wave]; Agent: a[agent]; Surface: [surface_id]; Capability pack: [assignment.capability_pack]; Brief profile: [assignment.brief_profile]; Hunter agent: [assignment.hunter_agent]; Context budget: [assignment.context_budget]; Egress profile: [egress_profile]; Block internal hosts: [block_internal_hosts]; Handoff token: [only this agent's handoff_token from wave-start result.data.assignments]; Checkpoint mode: [normal|paranoid|yolo].
 - First action inside the worker: call bounty_read_hunter_brief({ target_domain: '[domain]', wave: 'w[wave]', agent: 'a[agent]', egress_profile: '[egress_profile]', block_internal_hosts: [block_internal_hosts] }) and use .data.run_context.context_budget plus .data.technique_packs.selected when present.
-- For web hunters, call bounty_read_technique_pack(mode="full") only with target_domain/wave/agent/surface_id for relevant selected summaries, and bounty_log_technique_attempt for selections, skips, attempts, and outcomes.
+- For web hunters, call bounty_read_technique_pack(mode="full") only with target_domain/wave/agent/surface_id for relevant selected summaries, and bounty_log_technique_attempt for selections, skips, attempts, and outcomes. Before finalizing, ensure one completion-status technique attempt is logged for this surface.
 - Track the local mapping `host_agent_id -> w[wave]/a[agent]/surface_id`; Bob's `aN` value is authoritative even if Codex displays a different nickname.
 - Respect Codex capacity. Launch only as many workers as the host accepts, keep the rest queued, and start queued assignments only after completed agents are closed.
 - Do not set `fork_context: true` when also setting `agent_type`; use a direct worker spawn unless Codex requires a different host default.
@@ -197,7 +197,7 @@ Spawn:
 ```text
 Use Codex spawn_agent for chain-builder -> Codex worker.
 - agent_type: "worker"
-- message: `Bob role: chain-builder. Domain: [domain]. Session: ~/bounty-agent-sessions/[domain].` Include the full `chain` contract from Codex Worker Role Contracts.
+- message: `Bob role: chain-builder. Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Every bounty_write_chain_attempt call must include the required steps array.` Include the full `chain` contract from Codex Worker Role Contracts.
 Wait with `wait_agent`, validate expected output, then `close_agent`.
 ```
 After completion, call `bounty_transition_phase({ target_domain, to_phase: "VERIFY" })`. If MCP blocks this transition for missing terminal chain attempts, retry the chain-builder once with the blocker text. Use `override_reason` only when the operator explicitly accepts proceeding without terminal chain evidence. `override_reason` is rejected outside HUNT->CHAIN and CHAIN->VERIFY — do not pass it on other transitions; the MCP returns INVALID_ARGUMENTS and the call wastes a turn.
@@ -281,10 +281,10 @@ Spawn:
 ```text
 Use Codex spawn_agent for report-writer -> Codex worker.
 - agent_type: "worker"
-- message: `Bob role: report-writer. Domain: [domain]. Session: ~/bounty-agent-sessions/[domain].` Include the full `reporter` contract from Codex Worker Role Contracts.
+- message: `Bob role: report-writer. Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Write the canonical ~/bounty-agent-sessions/[domain]/report.md before calling bounty_report_written.` Include the full `reporter` contract from Codex Worker Role Contracts.
 Wait with `wait_agent`, read the report, then `close_agent`.
 ```
-After the report writer finishes, call `bounty_read_session_summary({ target_domain: "[domain]" })` and present `result.data.summary` plus the `result.data.summary.report.path`. Do not read `report.md` in the root orchestrator. If the user wants more hunting, transition to EXPLORE; otherwise stop.
+After the report writer finishes, call `bounty_read_session_summary({ target_domain: "[domain]" })` and present `result.data.summary` plus the `result.data.summary.report.path`. If `result.data.summary.report.present` is false after a SUBMIT or SKIP grade, retry the report writer once with the canonical path error text; do not accept reports written only under a target workspace as session-complete. Do not read `report.md` in the root orchestrator. If the user wants more hunting, transition to EXPLORE; otherwise stop.
 
 Post-REPORT user intent stays flexible:
 - If the user asks to dig more, find more issues, run more hunters, test more surfaces, or continue the bounty workflow, treat that as permission to transition `REPORT -> EXPLORE` and use the normal wave system.
@@ -997,7 +997,7 @@ Never record these as standalone findings: missing security headers, SPF/DKIM/DM
 Record proven findings immediately using `bounty_record_finding` with all fields: target_domain, wave ("w[N]"), agent ("a[N]"), surface_id, auth_profile when applicable, title, severity (`critical|high|medium|low|info`), cwe, endpoint, description, proof_of_concept (FULL — do not truncate), response_evidence, impact, validated (true).
 Severity guidance: `critical` = RCE/admin takeover/mass prod data compromise; `high` = strong auth bypass/IDOR with sensitive data/stored XSS/injection/privesc; `medium` = real but narrower auth/CSRF/XSS; `low` = informative but still reportable.
 
-Before stopping, make exactly one final `bounty_write_wave_handoff` call for your assigned surface, then call `bounty_finalize_hunter_run` with the same `target_domain`, `wave`, `agent`, and `surface_id`. Do not manually create orchestrator-consumed handoff files.
+Before stopping, first ensure this assigned surface has at least one completion-status `bounty_log_technique_attempt` entry (`status: "validated"`, `"attempted"`, `"failed"`, `"skipped"`, or `"not_applicable"`) with non-empty evidence. Then make exactly one final `bounty_write_wave_handoff` call for your assigned surface, then call `bounty_finalize_hunter_run` with the same `target_domain`, `wave`, `agent`, and `surface_id`. Do not manually create orchestrator-consumed handoff files.
 - Required fields: `target_domain`, `wave` (`wN`), `agent` (`aN`), `surface_id`, `surface_status`, `content`
 - Also required: `handoff_token` from your spawn prompt and a concise `summary` of what you tested and concluded.
 - Set `surface_status` to `complete` only if the assigned surface is actually exhausted for this wave. Use `partial` if more work on that surface should be requeued.
@@ -1021,7 +1021,7 @@ Handoff field limits (enforced by `bounty_write_wave_handoff`; oversize values a
 - For `surface_type: smart_contract`, the MCP server also rejects `surface_status: complete` unless either a finding was recorded for this surface or `bypass_attempts` contains at least one entry. `chain_notes` is freeform context only and does NOT satisfy this requirement.
 - `content` is freeform markdown for humans. It is not parsed downstream.
 - `lead_surface_ids` must contain only IDs that already exist in the provided `attack_surface.json.surfaces[].id` list. Put useful unassigned leads in compact `surface_leads` entries with evidence, confidence, and score.
-- After the handoff write succeeds, call `bounty_finalize_hunter_run`. If finalization fails, fix the structured handoff and retry finalization before stopping.
+- After the handoff write succeeds, call `bounty_finalize_hunter_run`. If finalization says the technique-attempt log is missing, call `bounty_log_technique_attempt` with a real completion status and concise evidence, then retry finalization before stopping.
 - After finalization succeeds, finish with exactly one machine-readable marker line for host compatibility: `BOB_HUNTER_DONE {"target_domain":"[domain]","wave":"wN","agent":"aN","surface_id":"[surface_id]"}`.
 - Final text must stay summary-only. Do not include raw requests, raw responses, cookies, tokens, authorization headers, or other secrets in the final message.
 END hunter CONTRACT
@@ -1446,6 +1446,9 @@ A chain is credible only when:
 Terminal chain attempts (machine-readable, gates `CHAIN -> VERIFY`):
 
 For every pivot you tested — credible OR rejected — record one terminal `bounty_write_chain_attempt` call. The orchestrator's `CHAIN -> VERIFY` transition is gated by at least one terminal chain attempt when chain is required (i.e., when there are any findings or handoff `chain_notes`); a session with findings but zero chain attempts is blocked.
+
+The `steps` field is required. Use an array of concise strings describing the replay or rejection path; do not omit it. Minimal payload shape:
+`bounty_write_chain_attempt({ target_domain, finding_ids, surface_ids, hypothesis, steps: ["Reviewed F-1 evidence and checked whether it enables F-2.", "Replay showed the second precondition is unreachable."], outcome: "denied", evidence_summary, request_refs, auth_profiles })`.
 
 Outcome convention:
 - `confirmed` — the chain reproduces end-to-end against current state. Cite each finding link plus a one-line proof reference (HTTP request ID, foundry test name, anchor/aptos/sui/substrate/cosmwasm test name, smart-query result).
@@ -2053,7 +2056,7 @@ If `bounty_read_grade_verdict` returns `SKIP` or final verification has no repor
 
 For closeouts, distinguish "exhausted" from "blocked by missing prereqs". Read `bounty_read_session_summary({ target_domain }).summary.blocked_prereqs` — if `total_blocked_surfaces > 0`, write a "Blocked by missing prerequisites" section listing each `by_kind[]` entry with its kind, identifier_hint (when set), surface_count, surface_ids, and example_reason. The operator's next action is registering the missing material and calling `bounty_clear_terminal_block` per surface. Without this section, a no-findings report reads as "exhausted" when reality is "blocked, classified, requires operator action".
 
-After writing `report.md`, call `bounty_report_written({ target_domain })` so analytics emits the `report_written` pipeline event.
+After writing the canonical session report at `~/bounty-agent-sessions/[domain]/report.md`, call `bounty_report_written({ target_domain })` so analytics emits the `report_written` pipeline event. If you also write per-finding files under a target workspace, still write the consolidated canonical `report.md` first; a pointer to those files is acceptable only as extra content inside the canonical report.
 
 Write `~/bounty-agent-sessions/[domain]/report.md` with:
 

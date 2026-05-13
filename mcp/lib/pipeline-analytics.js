@@ -1474,9 +1474,19 @@ function analyzeSession(targetDomain, { cutoffMs = null, limit = DEFAULT_LIMIT, 
   }
 
   if (phaseAtLeast(artifacts.state.phase, "REPORT") && !artifacts.report.present) {
-    issues.push(issue("missing_report", "needs_attention", "Session reached REPORT but report.md is not present.", {
-      phase: artifacts.state.phase,
-    }));
+    const submitWithoutCanonicalReport = artifacts.grade.verdict === "SUBMIT";
+    issues.push(issue(
+      submitWithoutCanonicalReport ? "report_pending_canonical_path" : "missing_report",
+      "needs_attention",
+      submitWithoutCanonicalReport
+        ? "Session reached REPORT with SUBMIT grade, but canonical report.md is not present."
+        : "Session reached REPORT but report.md is not present.",
+      {
+        phase: artifacts.state.phase,
+        grade_verdict: artifacts.grade.verdict,
+        canonical_report_path: artifacts.report.path,
+      },
+    ));
   }
 
   const toolCalls = toolHealth.totals.calls;
@@ -1750,6 +1760,7 @@ function actionForBottleneck(bottleneck) {
     missing_evidence: "Run the evidence agent and validate evidence packs before grading or reporting.",
     missing_grade: "Write a valid grade verdict before report completion.",
     missing_report: "Write report.md or move the session out of REPORT if report writing is still pending.",
+    report_pending_canonical_path: "Write or move the consolidated report to the canonical session report.md path, then call bounty_report_written.",
     stale_pending_wave: "Re-enter resume flow for the stale pending wave and reconcile handoffs.",
   };
   return {

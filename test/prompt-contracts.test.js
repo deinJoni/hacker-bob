@@ -648,6 +648,7 @@ test("hunter prompt teaches the blocked_prereqs[] policy and orchestrator handle
   const reporterPrompt = readFile("prompts/roles/reporter.md");
   assert.match(reporterPrompt, /Blocked by missing prerequisites/, "reporter prompt missing blocked-prereqs section guidance");
   assert.match(reporterPrompt, /bounty_report_written/, "reporter prompt missing bounty_report_written call");
+  assert.match(reporterPrompt, /canonical session report/, "reporter prompt must require canonical report.md path");
 });
 
 test("bob-spec loader is wired into the hunter brief", () => {
@@ -2550,6 +2551,8 @@ test("hunter and orchestrator prompts keep the structured handoff contract expli
   assert.match(hunterPrompt, /full_pack_read_limit/);
   assert.match(hunterPrompt, /bounty_log_technique_attempt/);
   assert.match(hunterPrompt, /Every call requires a valid `status` and non-empty `evidence`; include `outcome` when the attempt has a concrete result/);
+  assert.match(hunterPrompt, /completion-status `bounty_log_technique_attempt`/);
+  assert.match(hunterPrompt, /If finalization says the technique-attempt log is missing/);
   assert.match(hunterPrompt, /technique-pack-reads\.jsonl/);
   assert.match(hunterPrompt, /never write `technique-attempts\.jsonl` or `technique-pack-reads\.jsonl` through Bash/);
   assert.match(orchestratorPrompt, /bounty_read_hunter_brief\(\{ target_domain:[\s\S]*egress_profile:[\s\S]*block_internal_hosts/);
@@ -2668,6 +2671,8 @@ test("chain.md instructs bounty_write_chain_attempt for every SC pivot with term
     assert.match(prompt, new RegExp(`\`${outcome}\``), `chain.md must enumerate ${outcome} outcome`);
   }
   assert.match(prompt, /CHAIN -> VERIFY/, "chain.md must reference the gate it satisfies");
+  assert.match(prompt, /The `steps` field is required/, "chain.md must explicitly call out the required steps field");
+  assert.match(prompt, /steps: \[/, "chain.md must include a steps example in the payload shape");
   assert.match(prompt, /No credible chains[\s\S]*not_applicable/, "chain.md must instruct writing not_applicable when no chain exists, to clear the gate");
   assert.match(prompt, /SC pivots specifically.*proof_reference.*MUST cite/, "chain.md must require sc_evidence-anchored proof_reference for SC pivots");
 });

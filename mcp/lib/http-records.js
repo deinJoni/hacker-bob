@@ -252,6 +252,14 @@ function summarizeHttpAuditRecords(records, { surface = null, limit = HTTP_AUDIT
   };
 }
 
+function normalizeHttpAuditSummaryLimit(value) {
+  if (value == null) return HTTP_AUDIT_SUMMARY_MAX_ITEMS;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error("limit must be a finite number");
+  }
+  return Math.max(0, Math.min(HTTP_AUDIT_SUMMARY_MAX_ITEMS, Math.trunc(value)));
+}
+
 function isCircuitBreakerFailure(record) {
   if (record.status === 403 || record.status === 429) return true;
   if (["request_error", "network_unreachable_target"].includes(record.scope_decision) && /timeout|abort|econnreset|connection reset/i.test(record.error || "")) return true;
@@ -623,9 +631,7 @@ function importHttpTraffic(args, { rankAttackSurfaces = null } = {}) {
 
 function readHttpAudit(args, { readAttackSurfaceStrict = null } = {}) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
-  const limit = args.limit == null
-    ? HTTP_AUDIT_SUMMARY_MAX_ITEMS
-    : assertInteger(args.limit, "limit", { min: 0, max: HTTP_AUDIT_SUMMARY_MAX_ITEMS });
+  const limit = normalizeHttpAuditSummaryLimit(args.limit);
   let surface = null;
   if (args.surface_id != null) {
     if (!readAttackSurfaceStrict) {
@@ -661,6 +667,7 @@ module.exports = {
   normalizeHttpAuditRecord,
   normalizeImportedTrafficEntry,
   normalizeTrafficImportEntries,
+  normalizeHttpAuditSummaryLimit,
   normalizeTrafficRecord,
   queryKeysFromUrl,
   readHttpAudit,

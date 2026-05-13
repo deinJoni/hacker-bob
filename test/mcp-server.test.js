@@ -5302,6 +5302,28 @@ test("bounty_report_written rejects when report.md is absent", () => {
   });
 });
 
+test("pipeline analytics distinguishes SUBMIT grade with missing canonical report path", () => {
+  withTempHome(() => {
+    const domain = "report-path.example.com";
+    seedSessionState(domain, { phase: "REPORT", hunt_wave: 1 });
+    const gradePaths = gradeArtifactPaths(domain);
+    writeFileAtomic(gradePaths.json, `${JSON.stringify({
+      version: 1,
+      target_domain: domain,
+      verdict: "SUBMIT",
+      total_score: 80,
+      findings: [],
+    }, null, 2)}\n`);
+
+    const analytics = JSON.parse(readPipelineAnalytics({ target_domain: domain }));
+    const pending = analytics.bottlenecks.find((b) => b.code === "report_pending_canonical_path");
+    assert.ok(pending, "SUBMIT without canonical report should use the specific report-path warning");
+    assert.equal(analytics.bottlenecks.some((b) => b.code === "missing_report"), false);
+    const nextAction = analytics.next_actions.find((action) => /report_pending_canonical_path/.test(action.reason));
+    assert.match(nextAction.action, /canonical session report\.md/);
+  });
+});
+
 test("low_coverage analytics fires on closed_pct (not coverage_pct) so terminally_blocked surfaces count as closed", () => {
   withTempHome(() => {
     const domain = "low-cov.example.com";
@@ -12801,6 +12823,12 @@ test("bounty_http_scan writes audit entries for success, HTTP error, timeout, an
       assert.equal(audit.summary.scope_blocked, 1);
       assert.equal(audit.summary.network_unreachable_target, 1);
       assert.equal(audit.summary.egress.by_profile.default, 4);
+      const clampedAudit = JSON.parse(readHttpAudit({ target_domain: domain, limit: 9999 }));
+      assert.equal(clampedAudit.summary.cap, 40);
+      assert.equal(clampedAudit.summary.shown, 4);
+      const clampedEnvelope = await executeTool("bounty_read_http_audit", { target_domain: domain, limit: 9999 });
+      assert.equal(clampedEnvelope.ok, true);
+      assert.equal(clampedEnvelope.data.summary.cap, 40);
       assert.ok(fs.existsSync(httpAuditJsonlPath(domain)));
     });
   });

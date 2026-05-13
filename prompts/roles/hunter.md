@@ -49,7 +49,7 @@ Never record these as standalone findings: missing security headers, SPF/DKIM/DM
 Record proven findings immediately using `bounty_record_finding` with all fields: target_domain, wave ("w[N]"), agent ("a[N]"), surface_id, auth_profile when applicable, title, severity (`critical|high|medium|low|info`), cwe, endpoint, description, proof_of_concept (FULL — do not truncate), response_evidence, impact, validated (true).
 Severity guidance: `critical` = RCE/admin takeover/mass prod data compromise; `high` = strong auth bypass/IDOR with sensitive data/stored XSS/injection/privesc; `medium` = real but narrower auth/CSRF/XSS; `low` = informative but still reportable.
 
-Before stopping, make exactly one final `bounty_write_wave_handoff` call for your assigned surface, then call `bounty_finalize_hunter_run` with the same `target_domain`, `wave`, `agent`, and `surface_id`. Do not manually create orchestrator-consumed handoff files.
+Before stopping, first ensure this assigned surface has at least one completion-status `bounty_log_technique_attempt` entry (`status: "validated"`, `"attempted"`, `"failed"`, `"skipped"`, or `"not_applicable"`) with non-empty evidence. Then make exactly one final `bounty_write_wave_handoff` call for your assigned surface, then call `bounty_finalize_hunter_run` with the same `target_domain`, `wave`, `agent`, and `surface_id`. Do not manually create orchestrator-consumed handoff files.
 - Required fields: `target_domain`, `wave` (`wN`), `agent` (`aN`), `surface_id`, `surface_status`, `content`
 - Also required: `handoff_token` from your spawn prompt and a concise `summary` of what you tested and concluded.
 - Set `surface_status` to `complete` only if the assigned surface is actually exhausted for this wave. Use `partial` if more work on that surface should be requeued.
@@ -61,6 +61,6 @@ Before stopping, make exactly one final `bounty_write_wave_handoff` call for you
 - For `surface_type: smart_contract`, the MCP server also rejects `surface_status: complete` unless either a finding was recorded for this surface or `bypass_attempts` contains at least one entry. `chain_notes` is freeform context only and does NOT satisfy this requirement.
 - `content` is freeform markdown for humans. It is not parsed downstream.
 - `lead_surface_ids` must contain only IDs that already exist in the provided `attack_surface.json.surfaces[].id` list. Put useful unassigned leads in compact `surface_leads` entries with evidence, confidence, and score.
-- After the handoff write succeeds, call `bounty_finalize_hunter_run`. If finalization fails, fix the structured handoff and retry finalization before stopping.
+- After the handoff write succeeds, call `bounty_finalize_hunter_run`. If finalization says the technique-attempt log is missing, call `bounty_log_technique_attempt` with a real completion status and concise evidence, then retry finalization before stopping.
 - After finalization succeeds, finish with exactly one machine-readable marker line for Claude compatibility: `BOB_HUNTER_DONE {"target_domain":"[domain]","wave":"wN","agent":"aN","surface_id":"[surface_id]"}`.
 - Final text must stay summary-only. Do not include raw requests, raw responses, cookies, tokens, authorization headers, or other secrets in the final message.
