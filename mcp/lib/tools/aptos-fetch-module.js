@@ -47,7 +47,7 @@ async function handler(args) {
 
 module.exports = Object.freeze({
   name: "bounty_aptos_fetch_module",
-  description: "Read-only Aptos REST GET /accounts/{address}/module/{module_name} through the public REST fallback ladder. Returns the module's ABI (functions, structs, friends) and bytecode length plus the ledger_version the read was anchored at. Used by Aptos hunters to enumerate exposed entry functions, capability types, and friend relationships before constructing exploit hypotheses.",
+  description: "Read-only Aptos REST GET /accounts/{address}/module/{module_name} through the DNS-pinned direct public HTTPS REST fallback ladder. DNS-private/private endpoints and egress_profile proxy routing are unsupported by default; endpoint_used is redacted. Returns the module's ABI (functions, structs, friends) and bytecode length plus the ledger_version the read was anchored at. Used by Aptos hunters to enumerate exposed entry functions, capability types, and friend relationships before constructing exploit hypotheses.",
   inputSchema: {
     "type": "object",
     "properties": {
@@ -69,5 +69,4 @@ module.exports = Object.freeze({
   scope_required: false,
   sensitive_output: false,
   session_artifacts_written: [],
-  hook_required: false,
 });

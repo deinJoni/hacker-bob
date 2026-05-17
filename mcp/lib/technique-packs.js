@@ -38,11 +38,12 @@ const {
 } = require("./surface-router.js");
 const {
   appendJsonlLine,
+  readFileUtf8,
   withSessionLock,
 } = require("./storage.js");
 const {
   safeAppendPipelineEventDirect,
-} = require("./pipeline-analytics.js");
+} = require("./pipeline-events.js");
 const {
   resourceCandidatePaths,
 } = require("./runtime-resources.js");
@@ -638,7 +639,7 @@ function readTechniquePackReadRecordsFromJsonl(domain) {
   if (!fs.existsSync(filePath)) {
     return [];
   }
-  const content = fs.readFileSync(filePath, "utf8");
+  const content = readFileUtf8(filePath, { label: "technique-pack-reads.jsonl" });
   if (!content.trim()) {
     return [];
   }
@@ -965,7 +966,7 @@ function readTechniqueAttemptRecordsFromJsonl(domain) {
   if (!fs.existsSync(filePath)) {
     return [];
   }
-  const content = fs.readFileSync(filePath, "utf8");
+  const content = readFileUtf8(filePath, { label: "technique-attempts.jsonl" });
   if (!content.trim()) {
     return [];
   }

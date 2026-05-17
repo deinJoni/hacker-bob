@@ -106,7 +106,7 @@ module.exports = Object.freeze({
       },
       block_internal_hosts: {
         type: "boolean",
-        description: "Forwarded to bounty_http_scan. Defaults to false.",
+        description: "Forwarded to bounty_http_scan. When omitted, the session's persisted effective policy is used by bounty_http_scan.",
       },
       egress_profile: {
         type: "string",
@@ -123,7 +123,7 @@ module.exports = Object.freeze({
   network_access: true,
   browser_access: false,
   scope_required: true,
+  scope_url_fields: ["base_url"],
   sensitive_output: true,
   session_artifacts_written: ["auth-differential-results.json"],
-  hook_required: true,
 });

@@ -27,6 +27,14 @@ bounty_read_verification_context({ target_domain })
 ```
 Use `.data` from successful MCP responses. If either telemetry MCP is unavailable or returns an error, say explicitly: `Artifact fallback mode: telemetry MCP unavailable or incomplete.` Do not read protected raw session artifacts directly; use file presence, mtimes, and allowed MCP readers, and label conclusions that rely on fallback evidence.
 
+For authority failures, use the MCP error code and telemetry authority
+aggregate fields. Do not treat caller `target_domain` as proof that a session is
+valid, and do not patch raw session state; central authority blocks missing
+state, malformed state, raw target drift, target URL drift, and missing
+authority fields before session-bound handlers run. Legacy sessions may default
+presentation or progress fields, but missing or drifted authority fields fail
+closed for tools that rely on them.
+
 Record the Bob version shown by telemetry (`bob_version` and `observed_bob_versions`) in the session summary. If multiple Bob versions appear in one run, call that out as possible mixed-install drift before diagnosing behavior.
 
 ## Read-Only Validation

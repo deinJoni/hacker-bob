@@ -31,6 +31,13 @@ bounty_wave_status({ target_domain })
 bounty_read_verification_context({ target_domain })
 ```
 
+If a read returns an authority error, report it as a session-integrity blocker.
+Do not treat the supplied `target_domain` as sufficient authority, and do not
+inspect or repair raw `state.json`; session-bound MCP tools must authorize
+against the initialized session record. Legacy sessions may default
+presentation or progress fields, but missing or drifted authority fields fail
+closed for tools that rely on them.
+
 Then use the following only if needed for concise status fields:
 - `bounty_read_wave_handoffs({ target_domain })` when a wave is pending or wave health is unclear.
 - `bounty_read_findings({ target_domain })` for finding IDs/severity counts when analytics is incomplete.

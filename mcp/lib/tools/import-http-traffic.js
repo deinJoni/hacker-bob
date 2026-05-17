@@ -24,7 +24,7 @@ module.exports = Object.freeze({
       },
       "block_internal_hosts": {
         "type": "boolean",
-        "description": "When true, reject imported localhost, private/link-local IP ranges, .internal/.local names, and cloud metadata hosts. Defaults to false."
+        "description": "When true, reject imported localhost, private/link-local IP ranges, .internal/.local names, and cloud metadata hosts. When omitted, Bob uses the session's persisted effective policy when state exists."
       },
       "entries": {
         "oneOf": [
@@ -60,6 +60,5 @@ module.exports = Object.freeze({
   scope_required: true,
   sensitive_output: false,
   session_artifacts_written: ["traffic.jsonl"],
-  hook_required: false,
   importHttpTraffic,
 });

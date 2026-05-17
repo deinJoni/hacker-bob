@@ -60,5 +60,4 @@ module.exports = Object.freeze({
   scope_required: false,
   sensitive_output: false,
   session_artifacts_written: ["chain-tree.jsonl"],
-  hook_required: false,
 });

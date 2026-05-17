@@ -10,13 +10,16 @@ const {
 } = require("./validation.js");
 const {
   buildWaveHandoffsDocument,
-} = require("./waves.js");
+} = require("./wave-handoff-store.js");
 const {
   loadWaveAssignments,
 } = require("./assignments.js");
 const {
   sessionDir,
 } = require("./paths.js");
+const {
+  readJsonFile,
+} = require("./storage.js");
 
 const EVIDENCE_MODE = "evidence";
 
@@ -77,7 +80,7 @@ function evaluateEvidenceCompletion(marker) {
   const statePath = path.join(sessionDir(targetDomain), "state.json");
   let state;
   try {
-    state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    state = readJsonFile(statePath, { label: "state.json" });
   } catch (error) {
     return {
       ok: false,
@@ -146,7 +149,7 @@ const {
 } = require("./tool-telemetry.js");
 const {
   safeRecordHunterStoppedPipelineEvent,
-} = require("./pipeline-analytics.js");
+} = require("./pipeline-events.js");
 
 const TECHNIQUE_ATTEMPT_COMPLETION_STATUSES = new Set([
   "attempted",

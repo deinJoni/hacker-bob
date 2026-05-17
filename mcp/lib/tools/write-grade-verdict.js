@@ -1,6 +1,6 @@
 "use strict";
 
-const { writeGradeVerdict } = require("../findings.js");
+const { writeGradeVerdict } = require("../grade-verdict-store.js");
 
 module.exports = Object.freeze({
   name: "bounty_write_grade_verdict",
@@ -92,5 +92,4 @@ module.exports = Object.freeze({
   scope_required: false,
   sensitive_output: false,
   session_artifacts_written: ["grade.json","grade.md"],
-  hook_required: false,
 });

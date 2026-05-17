@@ -16,6 +16,7 @@ First call `bounty_read_verification_context({ target_domain })`.
 - If schema is v1, read findings through `bounty_read_findings`, read round 1 through `bounty_read_verification_round(round="brutalist")`, and preserve the legacy pass-through rule.
 - If schema is v2, this is an independent round: read findings through `bounty_read_findings` and chain attempts through `bounty_read_chain_attempts`, but do NOT read brutalist, do NOT read adjudication, and do NOT infer diffs. Cover exactly the current snapshot finding IDs using `current_attempt_id` and `snapshot_hash` from the context.
 Use `bounty_read_http_audit` if recent request history helps distinguish stale auth, repeated 403/429/timeout failures, or already-confirmed replay behavior.
+For web replays, keep the response `egress_profile_identity_hash` visible in reasoning when present; it must match the session-bound egress identity for the injected `egress_profile`.
 
 Per-finding re-run procedure: look up `finding.capability_pack` in the **Capability pack verifier table** at the end of this prompt. The table tells you the runner (`replay_tool`), the matching `sample_type`, the fresh-state field to omit, and any required disambiguation read. The verifier prompt does not branch on `chain_family` — the pack manifest carries the dispatch.
 
@@ -23,8 +24,8 @@ For each finding:
 
 1. Look up the routed pack and its `verifier` block.
 2. Add `replay_context` only for actual v2 `verification_replay` runner calls: `{ purpose: "verification_replay", verification_attempt_id: current_attempt_id, verification_snapshot_hash: snapshot_hash, round: "balanced", finding_id }`. Omit `replay_context` for v1 and for ordinary non-replay reads.
-3. **Web (`replay_tool: "bounty_http_scan"`)**: call `bounty_list_auth_profiles` first, then `bounty_http_scan` with `target_domain`, the request from the finding's PoC, the captured `auth_profile`, and `egress_profile`. If tokens expired, note "auth expired" in reasoning — do not deny solely because of token expiry.
-4. **Smart-contract (`replay_tool: "bounty_<chain>_run"`)**: read `finding.sc_evidence` (sc_evidence stores a single `fork_block` field for every chain) and call the pack's `replay_tool` with `harness_path`, `match_test`, the chain_id (or cluster/network — see runner schema), `match_contract`, `function_signature`. Do NOT pass the pack's runner-input fresh-state parameter (omit `fork_block` for EVM/Substrate/CosmWasm, `fork_slot` for SVM, `fork_version` for Aptos, `fork_checkpoint` for Sui) so the replay runs on current state. Trust-map reads per-pack:
+3. **Web (`replay_tool: "bounty_http_scan"`)**: call `bounty_list_auth_profiles` first, then `bounty_http_scan` with `target_domain`, the request from the finding's PoC, the captured `auth_profile`, and the injected `egress_profile` and `block_internal_hosts`. Check the returned `egress_profile_identity_hash` when present; do not switch profiles to make a replay pass. If strict internal-host blocking conflicts with a proxy-backed egress profile, record the blocked prerequisite instead of retrying with weaker policy. If tokens expired, note "auth expired" in reasoning — do not deny solely because of token expiry.
+4. **Smart-contract (`replay_tool: "bounty_<chain>_run"`)**: read `finding.sc_evidence` (sc_evidence stores a single `fork_block` field for every chain) and call the pack's `replay_tool` with `harness_path`, `match_test`, the chain_id (or cluster/network — see runner schema), `match_contract`, `function_signature`. Do NOT pass the pack's runner-input fresh-state parameter (omit `fork_block` for EVM/Substrate/CosmWasm, `fork_slot` for SVM, `fork_version` for Aptos, `fork_checkpoint` for Sui) so the replay runs on current state. SC replay endpoints are direct public HTTPS only; do not route them through `egress_profile` or replace rejected endpoints with private/localnet RPC. Runner endpoint filtering is preflight-only handoff; Bob does not DNS-pin downstream CLI sockets. Trust-map reads per-pack:
    - EVM: `bounty_evm_call` / `bounty_evm_role_table` / `bounty_evm_storage_read`.
    - SVM: `bounty_svm_fetch_program` (upgrade authority) / `bounty_svm_fetch_account` (multisig data, token balances).
    - Aptos: `bounty_aptos_fetch_module` / `bounty_aptos_fetch_resource`.
@@ -66,7 +67,7 @@ For each finding:
   - `wasmd_migrate_admin_lockout` permanent brick of contract holding value → HIGH; brick of low-value contract → LOW.
   - `post_dispatch_state_consistency` (CW 2.x) → MEDIUM unless the stale state drives a balance write (HIGH).
   - `cw_multi_test_only_passes` is a partial finding — does NOT confirm a real-chain bug. Downgrade to LOW or deny unless the hunter also demonstrated on a real wasmd fork.
-- If your own run also fails with the same tooling unavailable (`<runner>_not_in_path`, `<runner>_dependency_missing`, compile failures, or `reason: "rpc_unreachable"`): pass the brutalist verdict through unchanged with reasoning that records the persistent unavailability.
+- If your own run also fails with the same tooling unavailable (`<runner>_not_in_path`, `<runner>_dependency_missing`, compile failures, `reason: "rpc_unreachable"`, a reason starting with `no_fork_endpoints`, or populated `rpc_policy_rejections[]`): pass the brutalist verdict through unchanged with reasoning that records the persistent direct-public-HTTPS RPC/REST unavailability.
 
 Focus your re-testing on findings the brutalist denied or downgraded, plus any remaining `HIGH`/`CRITICAL` findings.
 

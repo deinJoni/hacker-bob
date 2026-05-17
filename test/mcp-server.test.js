@@ -11,12 +11,18 @@ const http = require("http");
 const https = require("https");
 const os = require("os");
 const path = require("path");
+
+const REMOVED_HOOK_AUTHORITY_FIELD = ["hook", "required"].join("_");
+
 const serverModule = require("../mcp/server.js");
 const {
-  computeAdjudicationPlanHash,
-  runWithReplaySafety,
   VERIFICATION_REPLAY_LEASE_TTL_MS,
-} = require("../mcp/lib/verification.js");
+  replayExecutionPolicy,
+  runWithReplaySafety,
+} = require("../mcp/lib/verification-replay-safety.js");
+const {
+  computeAdjudicationPlanHash,
+} = require("../mcp/lib/verification-contracts.js");
 const {
   verificationReplayLeaseDir,
 } = require("../mcp/lib/paths.js");
@@ -57,9 +63,14 @@ const {
 } = require("../mcp/lib/http-records.js");
 const {
   acquireSessionLock,
+  DEFAULT_ARTIFACT_READ_MAX_BYTES,
+  loadJsonDocumentStrict,
+  readFileUtf8,
   readSessionLockSnapshot,
   removeStaleSessionLock,
   trimJsonlFile,
+  withSessionLock,
+  writeFileExclusiveAtomic,
 } = require("../mcp/lib/storage.js");
 const {
   safeFetch,
@@ -85,6 +96,19 @@ const {
   resolveResourcePath,
   runtimeClient,
 } = require("../mcp/lib/runtime-resources.js");
+const {
+  candidateAuthDomains,
+} = require("../mcp/lib/auth.js");
+const {
+  appendPipelineEventDirect,
+} = require("../mcp/lib/pipeline-events.js");
+const {
+  attachHandoffOrigin,
+  BLOCKED_PREREQ_KIND_VALUES,
+  HANDOFF_PROVENANCE_MODEL,
+  normalizeBlockedPrereqs,
+  validateWaveHandoffPayload,
+} = require("../mcp/lib/wave-handoff-contracts.js");
 
 const ROOT = path.join(__dirname, "..");
 const PACKAGE_VERSION = require("../package.json").version;
@@ -92,118 +116,210 @@ const PACKAGE_VERSION = require("../package.json").version;
 const {
   TOOLS,
   TOOL_MANIFEST,
+  executeTool,
+  startServer,
+} = serverModule;
+const {
   SESSION_LOCK_STALE_MS,
+} = require("../mcp/lib/constants.js");
+const {
   assertSafeDomain,
-  validateScanUrl,
-  appendJsonlLine,
-  applyWaveMerge,
   attackSurfacePath,
-  autoSignup,
-  authStore,
-  buildHeaderProfile,
-  buildVerificationAdjudication,
-  buildCircuitBreakerSummary,
-  buildCoverageSummaryForSurface,
   chainAttemptsJsonlPath,
   coverageJsonlPath,
   evidencePackPaths,
-  executeTool,
-  finalizeHunterRun,
   findingsJsonlPath,
   findingsMarkdownPath,
-  getContextBudget,
   gradeArtifactPaths,
-  initSession,
-  importHttpTraffic,
-  logCoverage,
-  migrateAuthJson,
-  normalizeEvidencePacksDocument,
-  bountyPublicIntel,
-  readChainAttempts,
-  readChainAttemptsFromJsonl,
-  readEvidencePacks,
-  readScopeExclusions,
-  readSessionSummary,
-  readSessionState,
-  readStateSummary,
-  routeSurfaces,
-  setOperatorNote,
-  clearOperatorNote,
-  clearTerminalBlock,
-  reportWritten,
-  readCoverageRecordsFromJsonl,
-  readHttpAudit,
-  readHttpAuditRecordsFromJsonl,
-  readPipelineAnalytics,
-  readPipelineEvents,
-  readSessionArtifactSummary,
-  readSurfaceLeads,
-  readTrafficRecordsFromJsonl,
-  compactSessionState,
-  listFindings,
-  listAuthProfiles,
-  loadTechniqueRegistry,
-  mergeWaveHandoffs,
-  logTechniqueAttempt,
+  handoffSigningKeyPath,
   httpAuditJsonlPath,
-  importStaticArtifact,
   pipelineEventsJsonlPath,
   publicIntelPath,
-  rankAttackSurfaces,
-  readFindings,
-  readGradeVerdict,
-  readVerificationRound,
-  readVerificationContext,
-  refreshVerificationManifest,
-  readWaveHandoffs,
-  recordFinding,
-  recordSurfaceLeads,
-  redactUrlSensitiveValues,
   reportMarkdownPath,
-  resolveAuthJsonPath,
   sessionDir,
   sessionLockPath,
   sessionsRoot,
-  startNextWave,
-  startWave,
   statePath,
   staticArtifactImportDir,
   staticArtifactPath,
   staticArtifactsJsonlPath,
-  staticScan,
   staticScanResultsJsonlPath,
   surfaceLeadsPath,
   surfaceRoutesPath,
-  tempEmail,
-  transitionPhase,
+  techniqueAttemptsJsonlPath,
+  techniquePackReadsJsonlPath,
   trafficJsonlPath,
-  verificationRoundPaths,
   verificationAdjudicationPath,
   verificationAttemptsDir,
   verificationManifestPath,
+  verificationRoundPaths,
   verificationSnapshotPath,
-  waveHandoffStatus,
-  waveStatus,
-  writeChainAttempt,
-  writeEvidencePacks,
+} = require("../mcp/lib/paths.js");
+const {
+  appendJsonlLine,
   writeFileAtomic,
-  writeGradeVerdict,
-  writeHandoff,
-  writeVerificationRound,
-  writeWaveHandoff,
-  filterExclusionsByHosts,
-  readHunterBrief,
-  readCapabilityPlaybook,
+} = require("../mcp/lib/storage.js");
+const {
+  clearOperatorNote,
+  clearTerminalBlock,
+  initSession,
+  readSessionState,
+  reportWritten,
+  setOperatorNote,
+  readStateSummary,
+  transitionPhase,
+} = require("../mcp/lib/session-state.js");
+const {
+  compactSessionState,
+} = require("../mcp/lib/session-state-contracts.js");
+const {
+  readSessionSummary,
+} = require("../mcp/lib/session-summary.js");
+const {
+  routeSurfaces,
+} = require("../mcp/lib/surface-router.js");
+const {
+  buildCoverageSummaryForSurface,
+  computeCoverageRequeueSurfaceIds,
+  logCoverage,
+  normalizeCoverageRecord,
+  readCoverageRecordsFromJsonl,
+} = require("../mcp/lib/coverage.js");
+const {
+  buildCircuitBreakerSummary,
+  normalizeHttpAuditRecord,
+  normalizeTrafficRecord,
+  readHttpAuditRecordsFromJsonl,
+  readTrafficRecordsFromJsonl,
+} = require("../mcp/lib/http-records.js");
+const {
   readStaticArtifactRecordsFromJsonl,
   readStaticScanResultsFromJsonl,
+  summarizeStaticScanHints,
+} = require("../mcp/lib/static-artifacts.js");
+const {
+  validateScanUrl,
+} = require("../mcp/lib/url-surface.js");
+const {
+  listFindings,
+  normalizeGradeVerdictDocument,
+  normalizeVerificationRoundDocument,
+  readFindings,
+  readFindingsFromJsonl,
+  readGradeVerdict,
+  readVerificationRound,
+  recordFinding,
+  renderFindingMarkdownEntry,
+  renderGradeVerdictMarkdown,
+  renderVerificationRoundMarkdown,
+  summarizeFindings,
+  writeGradeVerdict,
+  writeVerificationRound,
+} = require("../mcp/lib/findings.js");
+const {
+  normalizeFindingRecord,
+} = require("../mcp/lib/finding-contracts.js");
+const {
+  normalizeEvidencePacksDocument,
+  readEvidencePacks,
+  renderEvidencePacksMarkdown,
+  writeEvidencePacks,
+} = require("../mcp/lib/evidence.js");
+const {
+  buildVerificationAdjudication,
+  readVerificationContext,
+  refreshVerificationManifest,
+} = require("../mcp/lib/verification.js");
+const {
+  readChainAttempts,
+  readChainAttemptsFromJsonl,
+  writeChainAttempt,
+} = require("../mcp/lib/chain-attempts.js");
+const {
+  rankAttackSurfaces,
+} = require("../mcp/lib/ranking.js");
+const {
+  assertHttpScopeDomain,
+  filterExclusionsByHosts,
+  readScopeExclusions,
+  validateHttpScanScope,
+} = require("../mcp/lib/scope.js");
+const {
+  readHunterBrief,
+  resolveHunterKnowledge,
+} = require("../mcp/lib/hunter-brief.js");
+const {
+  readCapabilityPlaybook,
+} = require("../mcp/lib/capability-playbooks.js");
+const {
+  getContextBudget,
+} = require("../mcp/lib/context-budget.js");
+const {
+  loadTechniqueRegistry,
+  logTechniqueAttempt,
   readTechniqueAttemptRecordsFromJsonl,
   readTechniquePack,
   readTechniquePackReadRecordsFromJsonl,
-  promoteSurfaceLeads,
   selectTechniquePacks,
-  techniqueAttemptsJsonlPath,
-  techniquePackReadsJsonlPath,
-} = serverModule;
+} = require("../mcp/lib/technique-packs.js");
+const {
+  authStore,
+  buildHeaderProfile,
+  listAuthProfiles,
+  migrateAuthJson,
+  readAuthJson,
+  resolveAuthJsonPath,
+} = require("../mcp/lib/auth.js");
+const {
+  tempEmail,
+} = require("../mcp/lib/temp-email.js");
+const {
+  autoSignup,
+  signupDetect,
+} = require("../mcp/lib/signup.js");
+const {
+  finalizeHunterRun,
+} = require("../mcp/lib/hunter-completion.js");
+const {
+  applyWaveMerge,
+  mergeWaveHandoffs,
+  readWaveHandoffs,
+  startNextWave,
+  startWave,
+  waveHandoffStatus,
+  waveStatus,
+  writeHandoff,
+  writeWaveHandoff,
+} = require("../mcp/lib/waves.js");
+const {
+  readPipelineAnalytics,
+  readPipelineEvents,
+  readSessionArtifactSummary,
+} = require("../mcp/lib/pipeline-analytics.js");
+const {
+  promoteSurfaceLeads,
+  readSurfaceLeads,
+  recordSurfaceLeads,
+} = require("../mcp/lib/surface-leads.js");
+const {
+  importHttpTraffic,
+} = require("../mcp/lib/tools/import-http-traffic.js");
+const {
+  bountyPublicIntel,
+} = require("../mcp/lib/tools/public-intel.js");
+const {
+  importStaticArtifact,
+} = require("../mcp/lib/tools/import-static-artifact.js");
+const {
+  readHttpAudit,
+} = require("../mcp/lib/tools/read-http-audit.js");
+const {
+  staticScan,
+} = require("../mcp/lib/tools/static-scan.js");
+const {
+  redactTextSensitiveValues,
+  redactUrlSensitiveValues,
+} = require("../mcp/redaction.js");
 
 const EXPECTED_TOOL_NAMES = [
   "bounty_http_scan",
@@ -373,6 +489,205 @@ function withEnv(overrides, fn) {
   }
 }
 
+test("PSL-backed HTTP scope rejects public suffix tokens and isolates tenant domains", () => {
+  assert.throws(
+    () => assertHttpScopeDomain("co.uk"),
+    /registrable domain, not only a public suffix/,
+  );
+  assert.throws(
+    () => assertHttpScopeDomain("github.io"),
+    /registrable domain, not only a public suffix/,
+  );
+
+  assert.equal(assertHttpScopeDomain("foo.github.io"), "foo.github.io");
+  const allowed = validateHttpScanScope("https://app.foo.github.io/login", "foo.github.io");
+  assert.equal(allowed.allowed, true);
+  assert.equal(allowed.registrable_domain, "foo.github.io");
+  assert.equal(allowed.public_suffix, "github.io");
+  assert.equal(allowed.public_suffix_source, "psl");
+
+  assert.throws(
+    () => validateHttpScanScope("https://bar.github.io/login", "foo.github.io"),
+    /outside target_domain foo\.github\.io/,
+  );
+});
+
+test("HTTP scope normalizes IDN hostnames to ASCII before PSL lookup", () => {
+  const asciiDomain = "xn--85x722f.com.cn";
+  assert.equal(assertHttpScopeDomain("食狮.com.cn"), asciiDomain);
+
+  const decision = validateHttpScanScope("https://食狮.com.cn/path", "食狮.com.cn");
+  assert.equal(decision.allowed, true);
+  assert.equal(decision.host, asciiDomain);
+  assert.equal(decision.target_domain, asciiDomain);
+  assert.equal(decision.registrable_domain, asciiDomain);
+  assert.equal(decision.public_suffix, "com.cn");
+});
+
+test("HTTP scope rejects malformed, internal, IP, and public-suffix-only domains", () => {
+  for (const domain of ["localhost", "foo.local", "foo.internal", "127.0.0.1", "bad_label_.com", "com"]) {
+    assert.throws(
+      () => assertHttpScopeDomain(domain),
+      /target_domain/,
+      domain,
+    );
+  }
+});
+
+test("local PSL overlay can add stale public suffixes without network refresh", () => {
+  withTempHome((home) => {
+    const overlayPath = path.join(home, "psl-overlay.txt");
+    fs.writeFileSync(overlayPath, "# local operator overlay\nplatform.example\n", "utf8");
+
+    withEnv({ BOB_PSL_OVERLAY_FILE: overlayPath }, () => {
+      assert.throws(
+        () => assertHttpScopeDomain("platform.example"),
+        /registrable domain, not only a public suffix/,
+      );
+      assert.equal(assertHttpScopeDomain("tenant.platform.example"), "tenant.platform.example");
+
+      const decision = validateHttpScanScope(
+        "https://app.tenant.platform.example/login",
+        "tenant.platform.example",
+      );
+      assert.equal(decision.allowed, true);
+      assert.equal(decision.registrable_domain, "tenant.platform.example");
+      assert.equal(decision.public_suffix, "platform.example");
+      assert.equal(decision.public_suffix_source, "operator_overlay");
+      assert.equal(decision.psl_overlay_file, overlayPath);
+
+      assert.throws(
+        () => validateHttpScanScope("https://other.platform.example/login", "tenant.platform.example"),
+        /outside target_domain tenant\.platform\.example/,
+      );
+    });
+  });
+});
+
+test("local PSL overlay cache reloads when the overlay file changes", () => {
+  withTempHome((home) => {
+    const overlayPath = path.join(home, "psl-overlay-reload.txt");
+    fs.writeFileSync(overlayPath, "platform.example\n", "utf8");
+
+    withEnv({ BOB_PSL_OVERLAY_FILE: overlayPath }, () => {
+      assert.throws(
+        () => assertHttpScopeDomain("platform.example"),
+        /registrable domain, not only a public suffix/,
+      );
+
+      fs.writeFileSync(overlayPath, "newplatform.example\n", "utf8");
+      const future = new Date(Date.now() + 5000);
+      fs.utimesSync(overlayPath, future, future);
+
+      assert.throws(
+        () => assertHttpScopeDomain("newplatform.example"),
+        /registrable domain, not only a public suffix/,
+      );
+    });
+  });
+});
+
+test("HTTP audit logs local PSL overlay source for allowed scoped requests", async () => {
+  await withTempHome(async (home) => {
+    const overlayPath = path.join(home, "psl-overlay.txt");
+    const domain = "tenant.platform.example";
+    fs.writeFileSync(overlayPath, "# local operator overlay\nplatform.example\n", "utf8");
+    seedSessionState(domain);
+
+    await withEnv({ BOB_PSL_OVERLAY_FILE: overlayPath }, async () => {
+      await withMockSafeFetch({
+        [`https://app.${domain}/ok`]: { status: 200, statusText: "OK", body: "ok" },
+        [`https://app.${domain}/fail`]: { error: new Error("connection reset") },
+      }, async () => {
+        const result = await executeTool("bounty_http_scan", {
+          target_domain: domain,
+          method: "GET",
+          url: `https://app.${domain}/ok`,
+          response_mode: "status_only",
+        });
+
+        assert.equal(result.ok, true);
+        const missingAuth = await executeTool("bounty_http_scan", {
+          target_domain: domain,
+          method: "GET",
+          url: `https://app.${domain}/missing-auth`,
+          auth_profile: "missing",
+          response_mode: "status_only",
+        });
+        assert.equal(missingAuth.ok, false);
+        assert.equal(missingAuth.error.code, "AUTH_MISSING");
+
+        const requestError = await executeTool("bounty_http_scan", {
+          target_domain: domain,
+          method: "GET",
+          url: `https://app.${domain}/fail`,
+          response_mode: "status_only",
+        });
+        assert.equal(requestError.ok, false);
+
+        const records = readHttpAuditRecordsFromJsonl(domain);
+        assert.equal(records.length, 3);
+        for (const record of records) {
+          assert.equal(record.registrable_domain, domain);
+          assert.equal(record.public_suffix, "platform.example");
+          assert.equal(record.public_suffix_source, "operator_overlay");
+          assert.equal(record.psl_overlay_file, overlayPath);
+        }
+        assert.deepEqual(records.map((record) => record.scope_decision), [
+          "allowed",
+          "auth_missing",
+          "network_unreachable_target",
+        ]);
+        const audit = JSON.parse(readHttpAudit({ target_domain: domain }));
+        const okSummary = audit.summary.recent.find((record) => record.url.endsWith("/ok"));
+        assert.equal(okSummary.public_suffix_source, "operator_overlay");
+        assert.equal(okSummary.psl_overlay_file, overlayPath);
+      });
+    });
+  });
+});
+
+test("bounty_init_session validates PSL-backed target_domain before writing state", async () => {
+  await withTempHome(async () => {
+    const publicSuffix = await executeTool("bounty_init_session", {
+      target_domain: "github.io",
+      target_url: "https://foo.github.io",
+    });
+    assert.equal(publicSuffix.ok, false);
+    assert.equal(publicSuffix.error.code, "INVALID_ARGUMENTS");
+    assert.match(publicSuffix.error.message, /registrable domain, not only a public suffix/);
+
+    const offTargetUrl = await executeTool("bounty_init_session", {
+      target_domain: "foo.github.io",
+      target_url: "https://bar.github.io",
+    });
+    assert.equal(offTargetUrl.ok, false);
+    assert.equal(offTargetUrl.error.code, "SCOPE_BLOCKED");
+    assert.match(offTargetUrl.error.message, /outside target_domain foo\.github\.io/);
+  });
+});
+
+test("scoped tool policy normalizes IDN target_domain before handlers run", async () => {
+  await withTempHome(async () => {
+    const asciiDomain = "xn--85x722f.com.cn";
+    seedSessionState(asciiDomain);
+    await withMockSafeFetch({
+      [`https://${asciiDomain}/ok`]: { status: 200, statusText: "OK", body: "ok" },
+    }, async (requestedUrls) => {
+      const result = await executeTool("bounty_http_scan", {
+        target_domain: "食狮.com.cn",
+        method: "GET",
+        url: "https://食狮.com.cn/ok",
+        response_mode: "status_only",
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.data.status, 200);
+      assert.deepEqual(requestedUrls, [`https://${asciiDomain}/ok`]);
+    });
+  });
+});
+
 function withTempTechniqueKnowledge(document, fn) {
   return withTempTechniqueKnowledgeText(`${JSON.stringify(document, null, 2)}\n`, fn);
 }
@@ -496,20 +811,32 @@ function seedSessionState(domain, overrides = {}) {
   fs.mkdirSync(dir, { recursive: true });
   const state = {
     target: domain,
-    target_url: "https://example.com",
+    target_url: `https://${domain}`,
     deep_mode: false,
+    checkpoint_mode: "normal",
+    block_internal_hosts: false,
+    block_internal_hosts_source: "legacy_default",
     phase: "HUNT",
     hunt_wave: 0,
     pending_wave: null,
     total_findings: 0,
     explored: [],
+    terminally_blocked: [],
+    prereq_registry_snapshots: [],
+    blocked_prereq_history: [],
+    terminal_block_clear_history: [],
     dead_ends: [],
     waf_blocked_endpoints: [],
     lead_surface_ids: [],
     scope_exclusions: [],
     hold_count: 0,
     auth_status: "pending",
+    ...legacyEgressStateFields(),
     operator_note: null,
+    verification_schema_version: null,
+    verification_attempt_id: null,
+    verification_snapshot_hash: null,
+    verification_entered_at: null,
     ...overrides,
   };
   writeFileAtomic(statePath(domain), `${JSON.stringify(state, null, 2)}\n`);
@@ -589,6 +916,34 @@ function expectedWebContextBudget() {
     candidate_pack_limit: 5,
     full_pack_read_limit: 2,
     attempt_log_required: true,
+  };
+}
+
+function defaultEgressStateFields() {
+  return {
+    ...egressProfiles.egressProfileIdentityFields(egressProfiles.resolveEgressProfile("default")),
+    egress_profile_identity_bound_at: null,
+    egress_profile_identity_bind_source: null,
+    egress_profile_legacy_migration: null,
+  };
+}
+
+function legacyEgressStateFields() {
+  return {
+    egress_profile: "default",
+    egress_region: null,
+    proxy_configured: false,
+    egress_profile_identity_hash: null,
+    egress_profile_identity_version: null,
+    egress_profile_identity_source: {
+      proxy_url_source: "none",
+      proxy_env_var: null,
+      proxy_url_redacted: null,
+      resolved_proxy: null,
+    },
+    egress_profile_identity_bound_at: null,
+    egress_profile_identity_bind_source: null,
+    egress_profile_legacy_migration: null,
   };
 }
 
@@ -972,20 +1327,32 @@ async function withMockSafeFetch(routes, fn, { dnsRecords = {} } = {}) {
   }
 }
 
-function runScopeGuard(command, { home, env = {} }) {
-  return spawnSync("bash", [path.join(__dirname, "..", ".claude", "hooks", "scope-guard.sh")], {
-    input: JSON.stringify({ tool_input: { command } }),
-    encoding: "utf8",
-    env: { ...process.env, HOME: home, ...env },
+async function withMockSmartContractRpcLookup(dnsRecords, fn) {
+  const {
+    setSmartContractRpcLookupForTesting,
+  } = require("../mcp/lib/sc-egress-policy.js");
+  setSmartContractRpcLookupForTesting((hostname, options, callback) => {
+    const cb = typeof options === "function" ? options : callback;
+    const records = dnsRecords[hostname] || [{ address: "93.184.216.34", family: 4 }];
+    cb(null, Array.isArray(records) ? records : [records]);
   });
+  try {
+    return await fn();
+  } finally {
+    setSmartContractRpcLookupForTesting(null);
+  }
 }
 
-function runMcpScopeGuard(toolInput, { home, env = {} }) {
-  return spawnSync("bash", [path.join(__dirname, "..", ".claude", "hooks", "scope-guard-mcp.sh")], {
-    input: JSON.stringify({ tool_input: toolInput }),
-    encoding: "utf8",
-    env: { ...process.env, HOME: home, ...env },
-  });
+async function withMockSmartContractHttpRequest(handler, fn) {
+  const {
+    setSmartContractHttpRequestForTesting,
+  } = require("../mcp/lib/sc-http-client.js");
+  setSmartContractHttpRequestForTesting(handler);
+  try {
+    return await fn();
+  } finally {
+    setSmartContractHttpRequestForTesting(null);
+  }
 }
 
 function runHunterSubagentStop(payload, { home, env = {} }) {
@@ -998,138 +1365,10 @@ function runHunterSubagentStop(payload, { home, env = {} }) {
 
 test("mcp server public exports remain stable", () => {
   assert.deepEqual(Object.keys(serverModule).sort(), [
-    "SESSION_LOCK_STALE_MS",
     "TOOLS",
     "TOOL_MANIFEST",
-    "appendJsonlLine",
-    "applyWaveMerge",
-    "assertSafeDomain",
-    "attackSurfacePath",
-    "authStore",
-    "autoSignup",
-    "bountyPublicIntel",
-    "buildCircuitBreakerSummary",
-    "buildCoverageSummaryForSurface",
-    "buildHeaderProfile",
-    "buildVerificationAdjudication",
-    "chainAttemptsJsonlPath",
-    "clearOperatorNote",
-    "clearTerminalBlock",
-    "compactSessionState",
-    "computeCoverageRequeueSurfaceIds",
-    "coverageJsonlPath",
-    "evidencePackPaths",
     "executeTool",
-    "filterExclusionsByHosts",
-    "finalizeHunterRun",
-    "findingsJsonlPath",
-    "findingsMarkdownPath",
-    "getContextBudget",
-    "gradeArtifactPaths",
-    "httpAuditJsonlPath",
-    "importHttpTraffic",
-    "importStaticArtifact",
-    "initSession",
-    "listAuthProfiles",
-    "listFindings",
-    "loadTechniqueRegistry",
-    "logCoverage",
-    "logTechniqueAttempt",
-    "mergeWaveHandoffs",
-    "migrateAuthJson",
-    "normalizeCoverageRecord",
-    "normalizeEvidencePacksDocument",
-    "normalizeFindingRecord",
-    "normalizeGradeVerdictDocument",
-    "normalizeHttpAuditRecord",
-    "normalizeSessionStateDocument",
-    "normalizeStringArray",
-    "normalizeTrafficRecord",
-    "pipelineEventsJsonlPath",
-    "promoteSurfaceLeads",
-    "publicIntelPath",
-    "rankAttackSurfaces",
-    "readAuthJson",
-    "readCapabilityPlaybook",
-    "readChainAttempts",
-    "readChainAttemptsFromJsonl",
-    "readCoverageRecordsFromJsonl",
-    "readEvidencePacks",
-    "readFindings",
-    "readFindingsFromJsonl",
-    "readGradeVerdict",
-    "readHttpAudit",
-    "readHttpAuditRecordsFromJsonl",
-    "readHunterBrief",
-    "readPipelineAnalytics",
-    "readPipelineEvents",
-    "readScopeExclusions",
-    "readSessionArtifactSummary",
-    "readSessionState",
-    "readSessionSummary",
-    "readStateSummary",
-    "readStaticArtifactRecordsFromJsonl",
-    "readStaticScanResultsFromJsonl",
-    "readSurfaceLeads",
-    "readTechniqueAttemptRecordsFromJsonl",
-    "readTechniquePack",
-    "readTechniquePackReadRecordsFromJsonl",
-    "readTrafficRecordsFromJsonl",
-    "readVerificationContext",
-    "readVerificationRound",
-    "readWaveHandoffs",
-    "recordFinding",
-    "recordSurfaceLeads",
-    "redactUrlSensitiveValues",
-    "refreshVerificationManifest",
-    "renderEvidencePacksMarkdown",
-    "renderFindingMarkdownEntry",
-    "renderGradeVerdictMarkdown",
-    "renderVerificationRoundMarkdown",
-    "reportMarkdownPath",
-    "reportWritten",
-    "resolveAuthJsonPath",
-    "resolveHunterKnowledge",
-    "routeSurfaces",
-    "selectTechniquePacks",
-    "sessionDir",
-    "sessionLockPath",
-    "sessionsRoot",
-    "setOperatorNote",
-    "signupDetect",
-    "startNextWave",
     "startServer",
-    "startWave",
-    "statePath",
-    "staticArtifactImportDir",
-    "staticArtifactPath",
-    "staticArtifactsJsonlPath",
-    "staticScan",
-    "staticScanResultsJsonlPath",
-    "summarizeFindings",
-    "summarizeStaticScanHints",
-    "surfaceLeadsPath",
-    "surfaceRoutesPath",
-    "techniqueAttemptsJsonlPath",
-    "techniquePackReadsJsonlPath",
-    "tempEmail",
-    "trafficJsonlPath",
-    "transitionPhase",
-    "validateScanUrl",
-    "verificationAdjudicationPath",
-    "verificationAttemptsDir",
-    "verificationManifestPath",
-    "verificationRoundPaths",
-    "verificationSnapshotPath",
-    "waveHandoffStatus",
-    "waveStatus",
-    "writeChainAttempt",
-    "writeEvidencePacks",
-    "writeFileAtomic",
-    "writeGradeVerdict",
-    "writeHandoff",
-    "writeVerificationRound",
-    "writeWaveHandoff",
   ]);
 });
 
@@ -1169,6 +1408,7 @@ test("MCP tool manifest exposes required policy metadata for every tool", () => 
     const metadata = TOOL_MANIFEST[tool.name];
     assert.ok(metadata, `${tool.name} missing manifest metadata`);
     assert.ok(Array.isArray(metadata.role_bundles) && metadata.role_bundles.length > 0);
+    assert.equal(Object.isFrozen(metadata.role_bundles), true, `${tool.name} role_bundles should be frozen`);
     assert.equal(typeof metadata.mutating, "boolean");
     assert.equal(typeof metadata.global_preapproval, "boolean");
     assert.equal(typeof metadata.network_access, "boolean");
@@ -1176,9 +1416,20 @@ test("MCP tool manifest exposes required policy metadata for every tool", () => 
     assert.equal(typeof metadata.scope_required, "boolean");
     assert.equal(typeof metadata.sensitive_output, "boolean");
     assert.ok(Array.isArray(metadata.session_artifacts_written));
-    assert.equal(typeof metadata.hook_required, "boolean");
+    assert.equal(
+      Object.isFrozen(metadata.session_artifacts_written),
+      true,
+      `${tool.name} session_artifacts_written should be frozen`,
+    );
+    assert.equal(Object.prototype.hasOwnProperty.call(metadata, REMOVED_HOOK_AUTHORITY_FIELD), false);
     assert.ok(metadata.capability_id === null || typeof metadata.capability_id === "string");
+    assert.ok(Array.isArray(metadata.scope_url_fields));
+    assert.equal(Object.isFrozen(metadata.scope_url_fields), true, `${tool.name} scope_url_fields should be frozen`);
+    assert.equal(Object.isFrozen(tool.inputSchema), true, `${tool.name} inputSchema should be frozen`);
   }
+  const httpScanSchema = TOOLS.find((tool) => tool.name === "bounty_http_scan").inputSchema;
+  assert.equal(Object.isFrozen(httpScanSchema.properties), true);
+  assert.equal(Object.isFrozen(httpScanSchema.required), true);
 });
 
 test("MCP tool registry exposes capability metadata for metric and eval tools", () => {
@@ -1292,7 +1543,11 @@ test("MCP per-tool modules preserve representative tool behavior", () => {
   assert.equal(TOOL_MANIFEST.bounty_http_scan.network_access, true);
   assert.equal(TOOL_MANIFEST.bounty_http_scan.global_preapproval, true);
   assert.equal(TOOL_MANIFEST.bounty_http_scan.scope_required, true);
-  assert.equal(TOOL_MANIFEST.bounty_http_scan.hook_required, true);
+  assert.deepEqual(TOOL_MANIFEST.bounty_http_scan.scope_url_fields, []);
+  assert.deepEqual(TOOL_MANIFEST.bounty_run_doc_delta.scope_url_fields, ["base_url"]);
+  assert.deepEqual(TOOL_MANIFEST.bounty_run_auth_differential.scope_url_fields, ["base_url"]);
+  assert.deepEqual(TOOL_MANIFEST.bounty_signup_detect.scope_url_fields, ["target_url"]);
+  assert.deepEqual(TOOL_MANIFEST.bounty_auto_signup.scope_url_fields, ["signup_url"]);
   assert.equal(TOOL_MANIFEST.bounty_read_tool_telemetry.mutating, false);
   assert.equal(TOOL_MANIFEST.bounty_read_tool_telemetry.global_preapproval, false);
   assert.deepEqual(TOOL_MANIFEST.bounty_read_tool_telemetry.role_bundles, ["orchestrator"]);
@@ -1309,7 +1564,6 @@ test("MCP per-tool modules preserve representative tool behavior", () => {
   assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.browser_access, false);
   assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.scope_required, false);
   assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.sensitive_output, false);
-  assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.hook_required, false);
   assert.deepEqual(TOOL_MANIFEST.bounty_record_surface_leads.session_artifacts_written, ["surface-leads.json"]);
   assert.deepEqual(TOOL_MANIFEST.bounty_read_surface_leads.role_bundles, ["hunter-web", "orchestrator"]);
   assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.mutating, false);
@@ -1318,7 +1572,6 @@ test("MCP per-tool modules preserve representative tool behavior", () => {
   assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.browser_access, false);
   assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.scope_required, false);
   assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.sensitive_output, false);
-  assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.hook_required, false);
   assert.deepEqual(TOOL_MANIFEST.bounty_read_surface_leads.session_artifacts_written, []);
   assert.deepEqual(TOOL_MANIFEST.bounty_promote_surface_leads.role_bundles, ["orchestrator"]);
   assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.mutating, true);
@@ -1327,7 +1580,6 @@ test("MCP per-tool modules preserve representative tool behavior", () => {
   assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.browser_access, false);
   assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.scope_required, false);
   assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.sensitive_output, false);
-  assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.hook_required, false);
   assert.deepEqual(TOOL_MANIFEST.bounty_promote_surface_leads.session_artifacts_written, ["surface-leads.json", "attack_surface.json", "state.json"]);
   assert.deepEqual(TOOL_MANIFEST.bounty_get_context_budget.role_bundles, ["hunter-shared", "orchestrator"]);
   assert.equal(TOOL_MANIFEST.bounty_get_context_budget.mutating, false);
@@ -1373,7 +1625,6 @@ test("MCP tool registry validation rejects incomplete or inconsistent entries", 
     scope_required: false,
     sensitive_output: false,
     session_artifacts_written: [],
-    hook_required: false,
   };
 
   assert.equal(
@@ -1383,6 +1634,21 @@ test("MCP tool registry validation rejects incomplete or inconsistent entries", 
   assert.equal(
     buildToolRegistry({ toolModules: [{ ...completeModule, capability_id: "C2_doc_vs_behavior" }] })[0].capability_id,
     "C2_doc_vs_behavior",
+  );
+  assert.throws(
+    () => buildToolRegistry({ toolModules: [{ ...completeModule, [REMOVED_HOOK_AUTHORITY_FIELD]: false }] }),
+    /removed hook authority metadata/,
+  );
+  assert.deepEqual(
+    buildToolRegistry({
+      toolModules: [{
+        ...completeModule,
+        inputSchema: { type: "object", properties: { target_domain: { type: "string" }, base_url: { type: "string" } } },
+        scope_required: true,
+        scope_url_fields: ["base_url"],
+      }],
+    })[0].scope_url_fields,
+    ["base_url"],
   );
 
   assert.throws(
@@ -1420,6 +1686,24 @@ test("MCP tool registry validation rejects incomplete or inconsistent entries", 
       toolModules: [{ ...completeModule, role_bundles: ["mystery"] }],
     }),
     /unknown role bundle mystery/,
+  );
+
+  assert.throws(
+    () => buildToolRegistry({
+      toolModules: [{ ...completeModule, scope_url_fields: ["base_url"] }],
+    }),
+    /unknown scope_url_fields item base_url/,
+  );
+
+  assert.throws(
+    () => buildToolRegistry({
+      toolModules: [{
+        ...completeModule,
+        inputSchema: { type: "object", properties: { base_url: { type: "string" } } },
+        scope_url_fields: ["base_url"],
+      }],
+    }),
+    /declares scope_url_fields without scope_required/,
   );
 
   for (const capability_id of ["", " C2_doc_vs_behavior", "-bad", "bad space", "a".repeat(129), null, 42]) {
@@ -1475,6 +1759,12 @@ test("executeTool rejects unknown top-level arguments while allowing nested map-
     assert.equal(unknown.ok, false);
     assert.equal(unknown.error.code, "INVALID_ARGUMENTS");
     assert.match(unknown.error.message, /surprise is not allowed/);
+
+    const init = await executeTool("bounty_init_session", {
+      target_domain: "example.com",
+      target_url: "https://example.com",
+    });
+    assert.equal(init.ok, true);
 
     const traffic = await executeTool("bounty_import_http_traffic", {
       target_domain: "example.com",
@@ -1575,6 +1865,7 @@ test("executeTool returns standard envelopes and recursively validates schema ar
     assert.equal(badEntries.error.code, "INVALID_ARGUMENTS");
     assert.match(badEntries.error.message, /entries must be array/);
 
+    seedSessionState("example.com");
     const traffic = await executeTool("bounty_import_http_traffic", {
       target_domain: "example.com",
       source: "har",
@@ -1592,9 +1883,85 @@ test("executeTool returns standard envelopes and recursively validates schema ar
   });
 });
 
+test("executeTool enforces target URL scope for direct and composite HTTP tools", async () => {
+  await withTempHome(async () => {
+    seedSessionState("example.com");
+    await withMockSafeFetch({
+      "https://api.example.com/ok": { status: 200, statusText: "OK", body: "ok" },
+    }, async (requestedUrls) => {
+      const allowed = await executeTool("bounty_http_scan", {
+        target_domain: "example.com",
+        method: "GET",
+        url: "https://api.example.com/ok",
+        response_mode: "status_only",
+      });
+      assert.equal(allowed.ok, true);
+
+      const directBlocked = await executeTool("bounty_http_scan", {
+        target_domain: "example.com",
+        method: "GET",
+        url: "https://api.other.test/secret",
+        response_mode: "status_only",
+      });
+      assert.equal(directBlocked.ok, false);
+      assert.equal(directBlocked.error.code, "SCOPE_BLOCKED");
+      assert.match(directBlocked.error.message, /outside target_domain example\.com/);
+
+      const invalidScopeRoot = await executeTool("bounty_http_scan", {
+        target_domain: "com",
+        method: "GET",
+        url: "https://example.com/secret",
+        response_mode: "status_only",
+      });
+      assert.equal(invalidScopeRoot.ok, false);
+      assert.equal(invalidScopeRoot.error.code, "INVALID_ARGUMENTS");
+      assert.match(invalidScopeRoot.error.message, /registrable domain/);
+
+      const internalScopeRoot = await executeTool("bounty_http_scan", {
+        target_domain: "127.0.0.1",
+        method: "GET",
+        url: "http://127.0.0.1/secret",
+        response_mode: "status_only",
+      });
+      assert.equal(internalScopeRoot.ok, false);
+      assert.equal(internalScopeRoot.error.code, "INVALID_ARGUMENTS");
+      assert.match(internalScopeRoot.error.message, /public DNS domain/);
+
+      const docDeltaBlocked = await executeTool("bounty_run_doc_delta", {
+        target_domain: "example.com",
+        base_url: "https://docs.other.test",
+      });
+      assert.equal(docDeltaBlocked.ok, false);
+      assert.equal(docDeltaBlocked.error.code, "SCOPE_BLOCKED");
+      assert.match(docDeltaBlocked.error.message, /base_url is outside target scope/);
+
+      const authDifferentialBlocked = await executeTool("bounty_run_auth_differential", {
+        target_domain: "example.com",
+        base_url: "https://auth.other.test",
+        endpoints: ["/api/me"],
+        auth_profiles: ["attacker", "victim"],
+      });
+      assert.equal(authDifferentialBlocked.ok, false);
+      assert.equal(authDifferentialBlocked.error.code, "SCOPE_BLOCKED");
+      assert.match(authDifferentialBlocked.error.message, /base_url is outside target scope/);
+
+      const signupBlocked = await executeTool("bounty_signup_detect", {
+        target_domain: "example.com",
+        target_url: "https://signup.other.test",
+      });
+      assert.equal(signupBlocked.ok, false);
+      assert.equal(signupBlocked.error.code, "SCOPE_BLOCKED");
+      assert.match(signupBlocked.error.message, /target_url is outside target scope/);
+
+      assert.deepEqual(requestedUrls, ["https://api.example.com/ok"]);
+    });
+  });
+});
+
 test("executeTool writes telemetry rows for success and dispatcher failure modes", async () => {
   await withTempHome(async () => {
     await withEnv({ BOUNTY_TELEMETRY: undefined, BOUNTY_TELEMETRY_DIR: undefined }, async () => {
+      seedSessionState("example.com");
       const success = await executeTool("bounty_list_auth_profiles", { target_domain: "example.com" });
       assert.equal(success.ok, true);
 
@@ -1611,7 +1978,7 @@ test("executeTool writes telemetry rows for success and dispatcher failure modes
       assert.equal(invalid.error.code, "INVALID_ARGUMENTS");
 
       const thrown = await executeTool("bounty_read_session_state", { target_domain: "missing.example" });
-      assert.equal(thrown.error.code, "NOT_FOUND");
+      assert.equal(thrown.error.code, "STATE_CONFLICT");
 
       const blocked = await executeTool("bounty_http_scan", {
         method: "GET",
@@ -1647,8 +2014,8 @@ test("executeTool writes telemetry rows for success and dispatcher failure modes
       assert.match(rows[2].error_message, /entries must be array/);
 
       assert.equal(rows[3].tool, "bounty_read_session_state");
-      assert.equal(rows[3].error_code, "NOT_FOUND");
-      assert.match(rows[3].error_message, /Missing session state/);
+      assert.equal(rows[3].error_code, "STATE_CONFLICT");
+      assert.match(rows[3].error_message, /Session authority is missing/);
 
       assert.equal(rows[4].tool, "bounty_http_scan");
       assert.equal(rows[4].error_code, "SCOPE_BLOCKED");
@@ -1661,6 +2028,7 @@ test("executeTool writes telemetry rows for success and dispatcher failure modes
 
 test("tool telemetry can be disabled and writer failures never change envelopes", async () => {
   await withTempHome(async () => {
+    seedSessionState("example.com");
     await withEnv({ BOUNTY_TELEMETRY: "0", BOUNTY_TELEMETRY_DIR: undefined }, async () => {
       const result = await executeTool("bounty_list_auth_profiles", { target_domain: "example.com" });
       assert.equal(result.ok, true);
@@ -1669,6 +2037,7 @@ test("tool telemetry can be disabled and writer failures never change envelopes"
   });
 
   await withTempHome(async () => {
+    seedSessionState("example.com");
     const blockingPath = path.join(os.tmpdir(), `bountyagent-telemetry-block-${process.pid}-${Date.now()}`);
     fs.writeFileSync(blockingPath, "not a directory\n");
     try {
@@ -1683,6 +2052,150 @@ test("tool telemetry can be disabled and writer failures never change envelopes"
     } finally {
       fs.rmSync(blockingPath, { force: true });
     }
+  });
+});
+
+test("central session authority blocks raw target and target_url drift before handlers", async () => {
+  await withTempHome(async () => {
+    const domain = "authority-drift.example.com";
+    const init = await executeTool("bounty_init_session", {
+      target_domain: domain,
+      target_url: `https://${domain}`,
+    });
+    assert.equal(init.ok, true);
+
+    const rawTargetDrift = JSON.parse(fs.readFileSync(statePath(domain), "utf8"));
+    rawTargetDrift.target = "other.example.com";
+    fs.writeFileSync(statePath(domain), `${JSON.stringify(rawTargetDrift, null, 2)}\n`, "utf8");
+
+    const targetResult = await executeTool("bounty_read_session_state", { target_domain: domain });
+    assert.equal(targetResult.ok, false);
+    assert.equal(targetResult.error.code, "SCOPE_BLOCKED");
+    assert.equal(targetResult.error.details.authority.authority_error_code, "raw_target_drift");
+    assert.equal(targetResult.error.details.authority.authority_result, "blocked");
+
+    rawTargetDrift.target = domain;
+    rawTargetDrift.target_url = "https://outside.example.net";
+    rawTargetDrift.egress_profile = "vpn-us";
+    rawTargetDrift.egress_region = "us";
+    rawTargetDrift.proxy_configured = true;
+    rawTargetDrift.egress_profile_identity_hash = "authority-telemetry-poison";
+    rawTargetDrift.egress_profile_identity_version = 1;
+    fs.writeFileSync(statePath(domain), `${JSON.stringify(rawTargetDrift, null, 2)}\n`, "utf8");
+
+    const urlResult = await executeTool("bounty_read_session_state", { target_domain: domain });
+    assert.equal(urlResult.ok, false);
+    assert.equal(urlResult.error.code, "SCOPE_BLOCKED");
+    assert.equal(urlResult.error.details.authority.authority_error_code, "target_url_drift");
+
+    const telemetryRows = readJsonl(toolTelemetryPath())
+      .filter((row) => row.tool === "bounty_read_session_state");
+    assert.equal(telemetryRows.length, 2);
+    assert.deepEqual(
+      telemetryRows.map((row) => row.authority.authority_error_code),
+      ["raw_target_drift", "target_url_drift"],
+    );
+    assert.equal(JSON.stringify(telemetryRows).includes("outside.example.net"), false);
+    assert.equal(JSON.stringify(telemetryRows).includes("authority-telemetry-poison"), false);
+
+    const telemetrySummary = await executeTool("bounty_read_tool_telemetry", { limit: 10 });
+    assert.equal(telemetrySummary.ok, true);
+    assert.equal(JSON.stringify(telemetrySummary).includes("authority-telemetry-poison"), false);
+  });
+});
+
+test("central session authority shadow mode is bounded to missing read-only sessions", async () => {
+  await withTempHome(async () => {
+    const missing = await executeTool("bounty_read_session_state", {
+      target_domain: "missing-authority.example.com",
+    });
+    assert.equal(missing.ok, false);
+    assert.equal(missing.error.code, "STATE_CONFLICT");
+    assert.equal(missing.error.details.authority.authority_error_code, "no_session");
+    assert.equal(missing.error.details.authority.authority_shadowed, false);
+  });
+
+  await withTempHome(async () => {
+    await withEnv({ BOB_SESSION_AUTHORITY_MODE: "shadow" }, async () => {
+      const readOnly = await executeTool("bounty_read_session_state", {
+        target_domain: "shadow-missing.example.com",
+      });
+      assert.equal(readOnly.ok, false);
+      assert.equal(readOnly.error.code, "NOT_FOUND");
+      assert.equal(readOnly.error.message.includes(process.env.HOME), false);
+      assert.equal(readOnly.error.message.includes("bounty-agent-sessions"), false);
+
+      const mutating = await executeTool("bounty_log_coverage", {
+        target_domain: "shadow-missing.example.com",
+        wave: "w1",
+        agent: "a1",
+        surface_id: "surface-a",
+        entries: [],
+      });
+      assert.equal(mutating.ok, false);
+      assert.equal(mutating.error.code, "STATE_CONFLICT");
+      assert.equal(mutating.error.details.authority.authority_shadowed, false);
+
+      const rows = readJsonl(toolTelemetryPath());
+      const readRow = rows.find((row) => row.tool === "bounty_read_session_state");
+      const writeRow = rows.find((row) => row.tool === "bounty_log_coverage");
+      assert.equal(readRow.authority.authority_result, "shadow_blocked");
+      assert.equal(readRow.authority.authority_error_code, "no_session");
+      assert.equal(readRow.authority.authority_shadowed, true);
+      assert.equal(JSON.stringify(readRow).includes(process.env.HOME), false);
+      assert.equal(JSON.stringify(readRow).includes("bounty-agent-sessions"), false);
+      assert.equal(writeRow.authority.authority_result, "blocked");
+      assert.equal(writeRow.authority.authority_error_code, "no_session");
+      assert.equal(writeRow.authority.authority_shadowed, false);
+    });
+  });
+});
+
+test("central session authority does not persist raw invalid target_domain telemetry", async () => {
+  await withTempHome(async () => {
+    const hostileTarget = "https://example.com/?access_token=secret";
+    const result = await executeTool("bounty_read_session_state", {
+      target_domain: hostileTarget,
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.error.details.authority.authority_error_code, "normalization_failed");
+    assert.equal(result.error.details.authority.argument_target_domain, null);
+
+    const rows = readJsonl(toolTelemetryPath());
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].target_domain, null);
+    assert.equal(rows[0].authority.argument_target_domain, null);
+    assert.equal(JSON.stringify(rows[0]).includes(hostileTarget), false);
+    assert.equal(JSON.stringify(rows[0]).includes("secret"), false);
+  });
+});
+
+test("central session authority records allowed bootstrap and initialized-session telemetry", async () => {
+  await withTempHome(async () => {
+    const init = await executeTool("bounty_init_session", {
+      target_domain: "Telemetry-Authority.Example.COM.",
+      target_url: "https://telemetry-authority.example.com",
+    });
+    assert.equal(init.ok, true);
+    assert.equal(init.data.state.target, "telemetry-authority.example.com");
+
+    const read = await executeTool("bounty_read_session_state", {
+      target_domain: "telemetry-authority.example.com",
+    });
+    assert.equal(read.ok, true);
+
+    const rows = readJsonl(toolTelemetryPath());
+    const initRow = rows.find((row) => row.tool === "bounty_init_session");
+    const readRow = rows.find((row) => row.tool === "bounty_read_session_state");
+    assert.equal(initRow.authority.authority_class, "bootstrap_session");
+    assert.equal(initRow.authority.authority_source, "bootstrap");
+    assert.equal(initRow.authority.authority_result, "allowed");
+    assert.equal(initRow.authority.authority_target_domain, "telemetry-authority.example.com");
+    assert.equal(readRow.authority.authority_class, "initialized_session_read");
+    assert.equal(readRow.authority.authority_source, "session_state");
+    assert.equal(readRow.authority.authority_result, "allowed");
+    assert.equal(readRow.authority.authority_session_present, true);
+    assert.equal(readRow.authority.authority_match, true);
   });
 });
 
@@ -1772,7 +2285,22 @@ test("tool telemetry reader summarizes at read time and skips malformed lines", 
       surface_id: null,
       registry: null,
     };
-    appendToolTelemetryEvent({ ...base, tool: "bounty_http_scan", elapsed_ms: 10 }, { env });
+    const allowedHttpAuthority = {
+      authority_version: 1,
+      authority_class: "scoped_http_network",
+      authority_mode: "enforce",
+      authority_source: "session_state",
+      authority_result: "allowed",
+      authority_error_code: "none",
+      authority_block_reason: "none",
+      authority_shadowed: false,
+    };
+    appendToolTelemetryEvent({
+      ...base,
+      tool: "bounty_http_scan",
+      elapsed_ms: 10,
+      authority: allowedHttpAuthority,
+    }, { env });
     appendToolTelemetryEvent({
       ...base,
       tool: "bounty_http_scan",
@@ -1783,15 +2311,42 @@ test("tool telemetry reader summarizes at read time and skips malformed lines", 
       wave: "w1",
       agent: "a1",
       surface_id: "surface-a",
+      authority: {
+        ...allowedHttpAuthority,
+        authority_result: "blocked",
+        authority_error_code: "scoped_url_drift",
+        authority_block_reason: "scoped_url_drift",
+      },
     }, { env });
-    appendToolTelemetryEvent({ ...base, tool: "bounty_http_scan", elapsed_ms: 30 }, { env });
+    const egressTelemetryHash = "a".repeat(64);
+    appendToolTelemetryEvent({
+      ...base,
+      tool: "bounty_http_scan",
+      elapsed_ms: 30,
+      egress_profile: "operator-eu",
+      egress_region: "EU",
+      proxy_configured: true,
+      egress_profile_identity_hash: egressTelemetryHash,
+      egress_profile_identity_version: 1,
+      authority: allowedHttpAuthority,
+    }, { env });
     appendToolTelemetryEvent({
       ...base,
       tool: "bounty_read_session_state",
       ok: false,
       elapsed_ms: 40,
       error_code: "NOT_FOUND",
-      error_message: "Missing session state",
+      error_message: "Missing session state /tmp/bounty-agent-sessions/example.com/state.json https://example.com/?token=raw-secret-token",
+      authority: {
+        authority_version: 1,
+        authority_class: "initialized_session_read",
+        authority_mode: "enforce",
+        authority_source: "session_state",
+        authority_result: "blocked",
+        authority_error_code: "no_session",
+        authority_block_reason: "no_session",
+        authority_shadowed: false,
+      },
     }, { env });
     appendToolTelemetryEvent({
       ...base,
@@ -1799,11 +2354,62 @@ test("tool telemetry reader summarizes at read time and skips malformed lines", 
       bob_version: "1.2.2",
       target_domain: "other.example",
       elapsed_ms: 50,
+      authority: {
+        ...allowedHttpAuthority,
+        authority_version: 2,
+      },
+    }, { env });
+    appendToolTelemetryEvent({
+      ...base,
+      tool: "bounty_read_session_state",
+      ok: false,
+      elapsed_ms: 60,
+      target_domain: "https://example.com/?access_token=raw-target-secret",
+      egress_profile: "https://user:pass@proxy.example",
+      egress_region: "region?token=raw-region-secret",
+      egress_profile_identity_hash: "not-a-hash-secret",
+      error_code: "LEGACY",
+      error_message: "legacy row",
+    }, { env });
+    appendToolTelemetryEvent({
+      ...base,
+      tool: "bounty_auth_store",
+      ok: false,
+      elapsed_ms: 70,
+      target_domain: "https://sensitive.example/?token=raw-sensitive-target",
+      error_code: "LEGACY_SENSITIVE",
+      error_message: "customer email exposed in response",
+      registry: { sensitive_output: true },
+    }, { env });
+    appendToolTelemetryEvent({
+      ...base,
+      bob_version: "https://version.example/?token=raw-bob-version-secret",
+      ts: "https://ts.example/?token=raw-ts-secret",
+      tool: "https://tool.example/?token=raw-tool-secret",
+      ok: false,
+      elapsed_ms: 80,
+      target_domain: "poison.example",
+      wave: "w1?token=raw-wave-secret",
+      agent: "a1?token=raw-agent-secret",
+      surface_id: "https://surface.example/?token=raw-surface-secret",
+      error_code: "ERR?token=raw-error-code-secret",
+      error_message: "failed https://example.com/admin/reset",
+      authority: {
+        authority_version: "https://authority.example/?token=raw-authority-version-secret",
+        authority_class: "https://authority.example/?token=raw-authority-class-secret",
+        authority_mode: "enforce",
+        authority_source: "session_state",
+        authority_result: "blocked",
+        authority_error_code: "https://authority.example/?token=raw-authority-error-secret",
+        authority_block_reason: "/tmp/bounty-agent-sessions/raw-authority-reason-secret/state.json",
+        authority_shadowed: false,
+      },
     }, { env });
     fs.appendFileSync(toolTelemetryPath(env), "{not-json\n", "utf8");
 
     const summary = readToolTelemetry({ target_domain: "example.com", limit: 2 }, { env });
     assert.equal(summary.enabled, true);
+    assert.equal(summary.telemetry_path, "[telemetry-dir]/tool-events.jsonl");
     assert.equal(summary.bob_version, PACKAGE_VERSION);
     assert.deepEqual(summary.observed_bob_versions, ["1.2.1"]);
     assert.equal(summary.total_events, 4);
@@ -1816,6 +2422,26 @@ test("tool telemetry reader summarizes at read time and skips malformed lines", 
       SCOPE_BLOCKED: 1,
       NOT_FOUND: 1,
     });
+    assert.deepEqual(summary.authority, {
+      total_events: 4,
+      by_version: { 1: 4 },
+      by_class: {
+        scoped_http_network: 3,
+        initialized_session_read: 1,
+      },
+      by_result: {
+        allowed: 2,
+        blocked: 2,
+      },
+      by_error_code: {
+        none: 2,
+        scoped_url_drift: 1,
+        no_session: 1,
+      },
+    });
+    assert.deepEqual(summary.totals.authority, summary.authority);
+    assert.equal(JSON.stringify(summary).includes("raw-secret-token"), false);
+    assert.equal(JSON.stringify(summary).includes("bounty-agent-sessions"), false);
 
     const httpSummary = summary.tools.find((toolSummary) => toolSummary.tool === "bounty_http_scan");
     assert.ok(httpSummary);
@@ -1826,15 +2452,62 @@ test("tool telemetry reader summarizes at read time and skips malformed lines", 
     assert.deepEqual(httpSummary.latency_ms, { p50: 20, p95: 30 });
     assert.deepEqual(httpSummary.error_codes, { SCOPE_BLOCKED: 1 });
     assert.equal(httpSummary.last_call.elapsed_ms, 30);
+    assert.equal(httpSummary.last_call.egress_profile, "operator-eu");
+    assert.equal(httpSummary.last_call.egress_profile_identity_hash, egressTelemetryHash);
+    assert.equal(httpSummary.last_call.egress_profile_identity_version, 1);
+    assert.equal(httpSummary.last_call.proxy_configured, true);
+    assert.deepEqual(httpSummary.authority.by_result, { allowed: 2, blocked: 1 });
+    assert.deepEqual(httpSummary.authority.by_error_code, { none: 2, scoped_url_drift: 1 });
     assert.equal(httpSummary.recent_failures.length, 1);
     assert.equal(httpSummary.recent_failures[0].error_message, "blocked");
+    assert.deepEqual(httpSummary.recent_failures[0].authority, {
+      authority_version: 1,
+      authority_class: "scoped_http_network",
+      authority_mode: "enforce",
+      authority_source: "session_state",
+      authority_result: "blocked",
+      authority_error_code: "scoped_url_drift",
+      authority_block_reason: "scoped_url_drift",
+      authority_shadowed: false,
+    });
 
     const filtered = readToolTelemetry({ tool: "bounty_http_scan" }, { env });
+    assert.equal(filtered.telemetry_path, "[telemetry-dir]/tool-events.jsonl");
     assert.equal(filtered.total_events, 4);
     assert.deepEqual(filtered.observed_bob_versions, ["1.2.1", "1.2.2"]);
     assert.equal(filtered.tools.length, 1);
     assert.equal(filtered.tools[0].tool, "bounty_http_scan");
     assert.equal(filtered.tools[0].calls, 4);
+    assert.deepEqual(filtered.authority.by_version, { 1: 3, 2: 1 });
+    const unfiltered = readToolTelemetry({ limit: 5 }, { env });
+    const unfilteredJson = JSON.stringify(unfiltered);
+    assert.equal(unfilteredJson.includes("raw-target-secret"), false);
+    assert.equal(unfilteredJson.includes("user:pass"), false);
+    assert.equal(unfilteredJson.includes("raw-region-secret"), false);
+    assert.equal(unfilteredJson.includes("not-a-hash-secret"), false);
+    assert.equal(unfilteredJson.includes("customer email exposed"), false);
+    assert.equal(unfilteredJson.includes("raw-tool-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-wave-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-agent-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-surface-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-error-code-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-bob-version-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-ts-secret"), false);
+    assert.equal(unfilteredJson.includes("/admin/reset"), false);
+    assert.equal(unfilteredJson.includes("raw-authority-version-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-authority-class-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-authority-error-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-authority-reason-secret"), false);
+
+    const poisonedFilter = readToolTelemetry({
+      target_domain: "https://example.com/?access_token=reader-filter-secret",
+      tool: "bounty_http_scan?token=reader-tool-secret",
+    }, { env });
+    assert.equal(poisonedFilter.total_events, 0);
+    assert.equal(poisonedFilter.filters.target_domain, null);
+    assert.equal(poisonedFilter.filters.tool, null);
+    assert.equal(JSON.stringify(poisonedFilter).includes("reader-filter-secret"), false);
+    assert.equal(JSON.stringify(poisonedFilter).includes("reader-tool-secret"), false);
   } finally {
     fs.rmSync(telemetryRoot, { recursive: true, force: true });
   }
@@ -1880,7 +2553,7 @@ test("tool telemetry reader can include filtered hunter run telemetry summaries"
       run_type: "hunter",
       status: "blocked",
       block_code: "malformed_marker",
-      target_domain: "other.example",
+      target_domain: "https://other.example/?token=raw-agent-target-secret",
       wave: "w2",
       agent: "a1",
       surface_id: "surface-x",
@@ -1889,6 +2562,34 @@ test("tool telemetry reader can include filtered hunter run telemetry summaries"
     appendAgentRunTelemetryEvent(allowed, { env });
     appendAgentRunTelemetryEvent(missing, { env });
     appendAgentRunTelemetryEvent(other, { env });
+    fs.appendFileSync(agentRunTelemetryPath(env), `${JSON.stringify({
+      version: 1,
+      bob_version: "https://version.example/?token=raw-agent-bob-version-secret",
+      ts: "https://ts.example/?token=raw-agent-ts-secret",
+      run_id: "https://run.example/?token=raw-agent-run-id-secret",
+      run_type: "hunter?token=raw-agent-run-type-secret",
+      status: "blocked",
+      block_code: "malformed?token=raw-agent-block-secret",
+      target_domain: "poison.example",
+      wave: "w9?token=raw-agent-wave-secret",
+      agent: "a9?token=raw-agent-label-secret",
+      surface_id: "https://surface.example/?token=raw-agent-surface-secret",
+      transcript_path: "/tmp/raw-agent-transcript-secret.jsonl",
+      handoff: {
+        present: false,
+        valid: false,
+        provenance: "verified?token=raw-agent-provenance-secret",
+        surface_status: "partial?token=raw-agent-status-secret",
+      },
+      coverage: {
+        total: 1,
+        by_status: {
+          "tested?token=raw-agent-coverage-secret": 1,
+        },
+      },
+      findings: { count: 1 },
+      telemetry_source: "source?token=raw-agent-telemetry-source-secret",
+    })}\n`, "utf8");
     fs.appendFileSync(agentRunTelemetryPath(env), "{not-json\n", "utf8");
 
     const withoutRuns = readToolTelemetry({ target_domain: "example.com" }, { env });
@@ -1896,14 +2597,17 @@ test("tool telemetry reader can include filtered hunter run telemetry summaries"
 
     const summary = readToolTelemetry({ include_agent_runs: true, target_domain: "example.com", limit: 2 }, { env });
     assert.equal(summary.total_events, 0);
+    assert.equal(summary.agent_runs.telemetry_path, "[telemetry-dir]/agent-runs.jsonl");
     assert.deepEqual(summary.agent_runs.observed_bob_versions, [PACKAGE_VERSION]);
     assert.equal(summary.agent_runs.total_runs, 2);
     assert.equal(summary.agent_runs.malformed_lines, 1);
     assert.deepEqual(summary.agent_runs.totals.by_status, { allowed: 1, blocked: 1 });
     assert.deepEqual(summary.agent_runs.totals.by_block_code, { missing_handoff: 1 });
     assert.equal(summary.agent_runs.latest_run.run_id, missing.run_id);
+    assert.equal(summary.agent_runs.latest_run.transcript_path, "[transcript-path]");
     assert.equal(summary.agent_runs.recent_blocked_runs.length, 1);
     assert.equal(summary.agent_runs.recent_blocked_runs[0].block_code, "missing_handoff");
+    assert.equal(summary.agent_runs.recent_blocked_runs[0].transcript_path, "[transcript-path]");
 
     const filtered = readToolTelemetry({
       include_agent_runs: true,
@@ -1915,8 +2619,46 @@ test("tool telemetry reader can include filtered hunter run telemetry summaries"
     }, { env });
     assert.equal(filtered.agent_runs.total_runs, 1);
     assert.equal(filtered.agent_runs.latest_run.run_id, allowed.run_id);
+    assert.equal(filtered.agent_runs.latest_run.transcript_path, "[transcript-path]");
     assert.deepEqual(filtered.agent_runs.latest_run.coverage.by_status, { tested: 1, promising: 1 });
     assert.equal(filtered.agent_runs.latest_run.findings.count, 1);
+    const unfiltered = readToolTelemetry({ include_agent_runs: true, limit: 5 }, { env });
+    const unfilteredJson = JSON.stringify(unfiltered);
+    assert.equal(unfilteredJson.includes("raw-agent-target-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-agent-run-id-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-agent-run-type-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-agent-block-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-agent-wave-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-agent-label-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-agent-surface-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-agent-transcript-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-agent-bob-version-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-agent-ts-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-agent-provenance-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-agent-status-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-agent-coverage-secret"), false);
+    assert.equal(unfilteredJson.includes("raw-agent-telemetry-source-secret"), false);
+
+    const poisonedFilter = readToolTelemetry({
+      include_agent_runs: true,
+      target_domain: "https://example.com/?token=reader-agent-target-secret",
+      agent_run_type: "hunter?token=reader-type-secret",
+      wave: "w1?token=reader-wave-secret",
+      agent: "a1?token=reader-agent-secret",
+      surface_id: "surface-a?token=reader-surface-secret",
+    }, { env });
+    assert.equal(poisonedFilter.agent_runs.total_runs, 0);
+    assert.equal(poisonedFilter.agent_runs.filters.target_domain, null);
+    assert.equal(poisonedFilter.agent_runs.filters.agent_run_type, null);
+    assert.equal(poisonedFilter.agent_runs.filters.wave, null);
+    assert.equal(poisonedFilter.agent_runs.filters.agent, null);
+    assert.equal(poisonedFilter.agent_runs.filters.surface_id, null);
+    const poisonedFilterJson = JSON.stringify(poisonedFilter);
+    assert.equal(poisonedFilterJson.includes("reader-agent-target-secret"), false);
+    assert.equal(poisonedFilterJson.includes("reader-type-secret"), false);
+    assert.equal(poisonedFilterJson.includes("reader-wave-secret"), false);
+    assert.equal(poisonedFilterJson.includes("reader-agent-secret"), false);
+    assert.equal(poisonedFilterJson.includes("reader-surface-secret"), false);
   } finally {
     fs.rmSync(telemetryRoot, { recursive: true, force: true });
   }
@@ -2080,6 +2822,15 @@ test("pipeline analytics records metadata-only events for a complete synthetic r
     const analyticsText = readPipelineAnalytics({ target_domain: domain, include_events: true, limit: 100 });
     const analytics = JSON.parse(analyticsText);
     assert.equal(analytics.mode, "session");
+    assert.deepEqual(analytics.analytics_bounds, {
+      session_scan_limit: 1,
+      sessions_available: 1,
+      sessions_considered: 1,
+      sessions_truncated: false,
+      telemetry_reads_reused: false,
+      tool_events_loaded: analytics.tool_health.total_events,
+      hunter_events_loaded: analytics.hunter_health.total_runs,
+    });
     assert.equal(analytics.event_log.exists, true);
     assert.equal(analytics.event_log.backfilled, false);
     assert.equal(analytics.sessions[0].health.status, "healthy");
@@ -2222,7 +2973,10 @@ test("pipeline analytics backfills legacy sessions from artifacts without an eve
     assert.equal(fs.existsSync(pipelineEventsJsonlPath(domain)), false);
     assert.equal(sessionsRoot(), path.join(process.env.HOME, "bounty-agent-sessions"));
 
-    const artifactSummary = readSessionArtifactSummary(domain);
+    const artifactSummary = readSessionArtifactSummary(domain, { validateAuthority: true });
+    assert.equal(artifactSummary.state.checkpoint_mode, "normal");
+    assert.equal(artifactSummary.state.block_internal_hosts, false);
+    assert.equal(artifactSummary.state.block_internal_hosts_source, "legacy_default");
     assert.equal(artifactSummary.technique_attempts.total_records, 1);
     assert.equal(artifactSummary.technique_attempts.by_status.attempted, 1);
     assert.equal(artifactSummary.technique_pack_reads.full_reads, 1);
@@ -2235,16 +2989,104 @@ test("pipeline analytics backfills legacy sessions from artifacts without an eve
     const analytics = JSON.parse(readPipelineAnalytics({ target_domain: domain, include_events: true }));
     assert.equal(analytics.event_log.backfilled, true);
     assert.equal(analytics.sessions[0].health.status, "healthy");
+    assert.equal(analytics.sessions[0].checkpoint_mode, "normal");
+    assert.equal(analytics.sessions[0].block_internal_hosts, false);
+    assert.equal(analytics.sessions[0].block_internal_hosts_source, "legacy_default");
     assert.equal(analytics.sessions[0].report_present, true);
     assert.equal(analytics.sessions[0].technique_attempts.total, 1);
     assert.equal(analytics.sessions[0].technique_attempts.by_status.attempted, 1);
     assert.equal(analytics.sessions[0].technique_pack_reads.full_reads, 1);
     assert.equal(analytics.events.some((event) => event.source === "artifact_backfill"), true);
+    assert.equal(analytics.events.every((event) => event.checkpoint_mode === "normal"), true);
+    assert.equal(analytics.events.every((event) => event.block_internal_hosts === false), true);
+    assert.equal(analytics.events.every((event) => event.block_internal_hosts_source === "legacy_default"), true);
 
     const crossSession = JSON.parse(readPipelineAnalytics({ window_days: 1 }));
     assert.equal(crossSession.mode, "cross_session");
     assert.ok(crossSession.sessions.some((session) => session.target_domain === domain));
     assert.equal(crossSession.funnel.sessions_total, 1);
+  });
+});
+
+test("pipeline analytics blocks authority-invalid cross-session state exports", () => {
+  withTempHome(() => {
+    const writePoisonEvent = (domain, hash) => {
+      fs.mkdirSync(sessionDir(domain), { recursive: true });
+      fs.appendFileSync(pipelineEventsJsonlPath(domain), `${JSON.stringify({
+        version: 1,
+        bob_version: PACKAGE_VERSION,
+        ts: new Date().toISOString(),
+        target_domain: domain,
+        type: "phase_transitioned",
+        to_phase: "HUNT",
+        checkpoint_mode: "normal",
+        block_internal_hosts: true,
+        block_internal_hosts_source: "explicit_block",
+        egress_profile: "vpn-us",
+        egress_region: "us",
+        proxy_configured: true,
+        egress_profile_identity_hash: hash,
+        egress_profile_identity_version: 1,
+      })}\n`, "utf8");
+    };
+    const domain = "analytics-drift.example";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      checkpoint_mode: "normal",
+      block_internal_hosts: true,
+      block_internal_hosts_source: "explicit_block",
+      egress_profile: "vpn-us",
+      egress_region: "us",
+      proxy_configured: true,
+      egress_profile_identity_hash: "authority-sensitive-hash",
+      egress_profile_identity_version: 1,
+    });
+
+    const drifted = JSON.parse(fs.readFileSync(statePath(domain), "utf8"));
+    drifted.target_url = "https://outside.example.net";
+    fs.writeFileSync(statePath(domain), `${JSON.stringify(drifted, null, 2)}\n`, "utf8");
+    writePoisonEvent(domain, "authority-sensitive-hash");
+
+    const missingDomain = "analytics-missing-state.example";
+    writePoisonEvent(missingDomain, "missing-state-authority-hash");
+
+    const malformedDomain = "analytics-malformed-state.example";
+    fs.mkdirSync(sessionDir(malformedDomain), { recursive: true });
+    fs.writeFileSync(statePath(malformedDomain), "{not-json\n", "utf8");
+    writePoisonEvent(malformedDomain, "malformed-state-authority-hash");
+
+    const artifactSummary = readSessionArtifactSummary(domain, { validateAuthority: true });
+    assert.ok(artifactSummary.artifact_errors.includes("Session authority invalid: target_url_drift"));
+    assert.equal(artifactSummary.state.phase, null);
+    assert.equal(artifactSummary.state.block_internal_hosts, null);
+    assert.equal(artifactSummary.state.block_internal_hosts_source, null);
+    assert.equal(artifactSummary.state.egress_profile, null);
+    assert.equal(artifactSummary.state.proxy_configured, null);
+
+    const crossSession = JSON.parse(readPipelineAnalytics({ window_days: 1, include_events: true }));
+    const row = crossSession.sessions.find((session) => session.target_domain === domain);
+    assert.ok(row);
+    assert.equal(row.health.status, "blocked");
+    assert.deepEqual(row.health.reasons, ["unreadable_artifacts"]);
+    assert.equal(row.block_internal_hosts, null);
+    assert.equal(row.block_internal_hosts_source, null);
+    assert.equal(row.egress_profile_identity.egress_profile, null);
+    assert.equal(row.egress_profile_identity.proxy_configured, null);
+    assert.equal(row.latest_event.egress_profile_identity_hash, undefined);
+    assert.equal(row.latest_event.block_internal_hosts, undefined);
+    assert.equal(crossSession.events.every((event) => event.egress_profile_identity_hash == null), true);
+    assert.equal(crossSession.events.every((event) => event.block_internal_hosts == null), true);
+    assert.equal(JSON.stringify(row).includes("outside.example.net"), false);
+    assert.equal(JSON.stringify(crossSession).includes("authority-sensitive-hash"), false);
+    for (const invalidDomain of [missingDomain, malformedDomain]) {
+      const invalidRow = crossSession.sessions.find((session) => session.target_domain === invalidDomain);
+      assert.ok(invalidRow);
+      assert.equal(invalidRow.health.status, "blocked");
+      assert.equal(invalidRow.latest_event.egress_profile_identity_hash, undefined);
+      assert.equal(invalidRow.latest_event.block_internal_hosts, undefined);
+    }
+    assert.equal(JSON.stringify(crossSession).includes("missing-state-authority-hash"), false);
+    assert.equal(JSON.stringify(crossSession).includes("malformed-state-authority-hash"), false);
   });
 });
 
@@ -2277,6 +3119,28 @@ test("pipeline analytics flags blocked pending waves and malformed event lines",
     assert.ok(analytics.sessions[0].health.reasons.includes("hunter_handoff_failures"));
     assert.ok(analytics.bottlenecks.some((bottleneck) => bottleneck.code === "hunter_handoff_failures"));
     assert.ok(analytics.next_actions.some((action) => /handoffs/.test(action.action)));
+  });
+});
+
+test("pipeline event appends are reentrant under the session lock", () => {
+  withTempHome(() => {
+    const domain = "pipeline-lock.example";
+    seedSessionState(domain, { phase: "HUNT" });
+
+    withSessionLock(domain, () => {
+      const event = appendPipelineEventDirect(domain, "report_written", {
+        status: "written",
+        source: "lock-test",
+        counts: { report_size_bytes: 12 },
+      });
+      assert.equal(event.type, "report_written");
+      assert.ok(fs.existsSync(sessionLockPath(domain)));
+    });
+
+    assert.ok(!fs.existsSync(sessionLockPath(domain)));
+    const rows = readJsonl(pipelineEventsJsonlPath(domain));
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].source, "lock-test");
   });
 });
 
@@ -2577,6 +3441,23 @@ test("MCP message handler lists tools, routes calls, serializes envelopes, and w
   });
 });
 
+test("MCP message handler responds to unknown methods when id is 0", async () => {
+  const sent = [];
+  const handleMessage = createMcpMessageHandler({
+    tools: [],
+    executeTool: async () => ({ ok: true }),
+    send: (message) => sent.push(message),
+  });
+
+  await handleMessage({ jsonrpc: "2.0", id: 0, method: "missing/method" });
+
+  assert.deepEqual(sent, [{
+    jsonrpc: "2.0",
+    id: 0,
+    error: { code: -32601, message: "Method not found: missing/method" },
+  }]);
+});
+
 test("stdio transport accepts framed and raw JSON-RPC messages", () => {
   const framedOutput = [];
   const framedServer = createStdioServer({
@@ -2614,6 +3495,57 @@ test("stdio transport accepts framed and raw JSON-RPC messages", () => {
   assert.deepEqual(JSON.parse(rawOutput.join("").trim()), { jsonrpc: "2.0", id: 2, result: {} });
 });
 
+test("stdio transport counts framed Content-Length in bytes for unicode payloads", () => {
+  const output = [];
+  const server = createStdioServer({
+    tools: [],
+    executeTool: async () => ({ ok: true }),
+    stdin: { on() {} },
+    stdout: { write: (chunk) => output.push(Buffer.from(String(chunk), "utf8")) },
+    stderr: { write() {} },
+  });
+  const body = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 7,
+    method: "ping",
+    params: { marker: "unicode: snowman \u2603 and han \u6f22\u5b57" },
+  });
+  const header = Buffer.from(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n`, "ascii");
+  const bodyBytes = Buffer.from(body, "utf8");
+  const frame = Buffer.concat([header, bodyBytes]);
+  const splitAt = header.length + bodyBytes.length - 2;
+
+  server.handleChunk(frame.subarray(0, splitAt));
+  assert.equal(output.length, 0);
+  server.handleChunk(frame.subarray(splitAt));
+
+  const response = Buffer.concat(output).toString("utf8");
+  const payload = JSON.parse(response.slice(response.indexOf("\r\n\r\n") + 4));
+  assert.deepEqual(payload, { jsonrpc: "2.0", id: 7, result: {} });
+});
+
+test("stdio transport rejects oversized framed messages", () => {
+  const output = [];
+  const server = createStdioServer({
+    tools: [],
+    executeTool: async () => ({ ok: true }),
+    stdin: { on() {} },
+    stdout: { write: (chunk) => output.push(String(chunk)) },
+    stderr: { write() {} },
+    maxFrameBytes: 24,
+  });
+  const body = JSON.stringify({ jsonrpc: "2.0", id: 8, method: "ping", params: { pad: "x".repeat(40) } });
+
+  server.handleChunk(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
+
+  const response = output.join("");
+  const payload = JSON.parse(response.slice(response.indexOf("\r\n\r\n") + 4));
+  assert.equal(payload.jsonrpc, "2.0");
+  assert.equal(payload.id, null);
+  assert.equal(payload.error.code, -32600);
+  assert.match(payload.error.message, /frame exceeds 24 bytes/);
+});
+
 test("bounty_init_session creates the initial state and bounty_read_session_state returns public fields only", () => {
   withTempHome(() => {
     const domain = "example.com";
@@ -2622,6 +3554,9 @@ test("bounty_init_session creates the initial state and bounty_read_session_stat
       target: domain,
       target_url: targetUrl,
       deep_mode: false,
+      checkpoint_mode: "normal",
+      block_internal_hosts: false,
+      block_internal_hosts_source: "mode_default",
       phase: "RECON",
       hunt_wave: 0,
       pending_wave: null,
@@ -2637,6 +3572,7 @@ test("bounty_init_session creates the initial state and bounty_read_session_stat
       scope_exclusions: [],
       hold_count: 0,
       auth_status: "pending",
+      ...defaultEgressStateFields(),
       operator_note: null,
       verification_schema_version: null,
       verification_attempt_id: null,
@@ -2706,6 +3642,118 @@ test("bounty_init_session ignores .session.lock when checking if the session dir
   });
 });
 
+test("bounty_init_session persists selected-mode internal-host blocking policy", async () => {
+  await withTempHome(async () => {
+    const normal = await executeTool("bounty_init_session", {
+      target_domain: "normal.example.com",
+      target_url: "https://normal.example.com",
+    });
+    assert.equal(normal.ok, true);
+    assert.equal(normal.data.state.checkpoint_mode, "normal");
+    assert.equal(normal.data.state.block_internal_hosts, false);
+    assert.equal(normal.data.state.block_internal_hosts_source, "mode_default");
+
+    const yolo = await executeTool("bounty_init_session", {
+      target_domain: "yolo.example.com",
+      target_url: "https://yolo.example.com",
+      checkpoint_mode: "yolo",
+    });
+    assert.equal(yolo.ok, true);
+    assert.equal(yolo.data.state.block_internal_hosts, false);
+    assert.equal(yolo.data.state.block_internal_hosts_source, "mode_default");
+
+    const paranoid = await executeTool("bounty_init_session", {
+      target_domain: "paranoid.example.com",
+      target_url: "https://paranoid.example.com",
+      checkpoint_mode: "paranoid",
+    });
+    assert.equal(paranoid.ok, true);
+    assert.equal(paranoid.data.state.checkpoint_mode, "paranoid");
+    assert.equal(paranoid.data.state.block_internal_hosts, true);
+    assert.equal(paranoid.data.state.block_internal_hosts_source, "paranoid_default");
+    const paranoidSummary = JSON.parse(readStateSummary({ target_domain: "paranoid.example.com" })).state;
+    assert.equal(paranoidSummary.block_internal_hosts, true);
+    assert.equal(paranoidSummary.block_internal_hosts_source, "paranoid_default");
+    const paranoidSessionSummary = JSON.parse(readSessionSummary({ target_domain: "paranoid.example.com" })).summary;
+    assert.equal(paranoidSessionSummary.block_internal_hosts, true);
+
+    const allow = await executeTool("bounty_init_session", {
+      target_domain: "allow.example.com",
+      target_url: "https://allow.example.com",
+      checkpoint_mode: "paranoid",
+      allow_internal_hosts: true,
+    });
+    assert.equal(allow.ok, true);
+    assert.equal(allow.data.state.block_internal_hosts, false);
+    assert.equal(allow.data.state.block_internal_hosts_source, "explicit_allow");
+
+    const forced = await executeTool("bounty_init_session", {
+      target_domain: "forced.example.com",
+      target_url: "https://forced.example.com",
+      checkpoint_mode: "normal",
+      block_internal_hosts: true,
+    });
+    assert.equal(forced.ok, true);
+    assert.equal(forced.data.state.block_internal_hosts, true);
+    assert.equal(forced.data.state.block_internal_hosts_source, "explicit_block");
+
+    const conflicting = await executeTool("bounty_init_session", {
+      target_domain: "conflict.example.com",
+      target_url: "https://conflict.example.com",
+      block_internal_hosts: true,
+      allow_internal_hosts: true,
+    });
+    assert.equal(conflicting.ok, false);
+    assert.equal(conflicting.error.code, "INVALID_ARGUMENTS");
+    assert.match(conflicting.error.message, /cannot both be true/);
+  });
+});
+
+test("bounty_init_session rejects proxy-backed sessions that would claim internal-host blocking", async () => {
+  await withTempHome(async () => {
+    const document = {
+      version: 1,
+      profiles: [
+        egressProfiles.defaultEgressProfile(),
+        {
+          name: "operator-eu",
+          proxy_url: "${BOB_EGRESS_OPERATOR_PROXY}",
+          region: "EU",
+          description: "Operator egress profile",
+          enabled: true,
+        },
+      ],
+    };
+
+    await withRepoEgressConfig(document, async () => {
+      await withEnv({ BOB_EGRESS_OPERATOR_PROXY: "http://proxy.example:8080" }, async () => {
+        const rejected = await executeTool("bounty_init_session", {
+          target_domain: "proxy-paranoid.example.com",
+          target_url: "https://proxy-paranoid.example.com",
+          checkpoint_mode: "paranoid",
+          egress_profile: "operator-eu",
+        });
+        assert.equal(rejected.ok, false);
+        assert.equal(rejected.error.code, "SCOPE_BLOCKED");
+        assert.match(rejected.error.message, /block_internal_hosts cannot be enforced with proxy-backed egress_profile "operator-eu"/);
+        assert.equal(fs.existsSync(statePath("proxy-paranoid.example.com")), false);
+
+        const allowed = await executeTool("bounty_init_session", {
+          target_domain: "proxy-allow.example.com",
+          target_url: "https://proxy-allow.example.com",
+          checkpoint_mode: "paranoid",
+          allow_internal_hosts: true,
+          egress_profile: "operator-eu",
+        });
+        assert.equal(allowed.ok, true);
+        assert.equal(allowed.data.state.proxy_configured, true);
+        assert.equal(allowed.data.state.block_internal_hosts, false);
+        assert.equal(allowed.data.state.block_internal_hosts_source, "explicit_allow");
+      });
+    });
+  });
+});
+
 test("missing session state errors surface on read and mutating state tools", () => {
   withTempHome(() => {
     const domain = "example.com";
@@ -2739,6 +3787,9 @@ test("legacy state normalization is applied while unknown fields remain on disk 
         target: domain,
         target_url: "https://example.com",
         deep_mode: false,
+        checkpoint_mode: "normal",
+        block_internal_hosts: false,
+        block_internal_hosts_source: "legacy_default",
         phase: "RECON",
         hunt_wave: 0,
         pending_wave: null,
@@ -2754,6 +3805,7 @@ test("legacy state normalization is applied while unknown fields remain on disk 
         scope_exclusions: [],
         hold_count: 0,
         auth_status: "pending",
+        ...legacyEgressStateFields(),
         operator_note: null,
         verification_schema_version: null,
         verification_attempt_id: null,
@@ -3687,6 +4739,9 @@ test("bounty_start_wave validates inputs, writes assignments, and updates pendin
     const expectedState = {
       target: domain,
       deep_mode: false,
+      checkpoint_mode: "normal",
+      block_internal_hosts: false,
+      block_internal_hosts_source: "legacy_default",
       phase: "HUNT",
       hunt_wave: 1,
       pending_wave: 2,
@@ -3698,6 +4753,7 @@ test("bounty_start_wave validates inputs, writes assignments, and updates pendin
       lead_surface_ids: [],
       hold_count: 0,
       auth_status: "pending",
+      ...legacyEgressStateFields(),
       operator_note: null,
       verification_schema_version: null,
       verification_attempt_id: null,
@@ -3747,16 +4803,21 @@ test("bounty_start_wave validates inputs, writes assignments, and updates pendin
       assignments_path: path.join(sessionDir(domain), "wave-2-assignments.json"),
       state: expectedState,
     });
-    const assignmentDoc = JSON.parse(fs.readFileSync(path.join(sessionDir(domain), "wave-2-assignments.json"), "utf8"));
-    assert.ok(assignmentDoc.assignments.every((assignment) => /^[a-f0-9]{64}$/.test(assignment.handoff_token_sha256)));
-    assert.ok(assignmentDoc.assignments.every((assignment) => assignment.capability_pack === "web"));
+	    const assignmentDoc = JSON.parse(fs.readFileSync(path.join(sessionDir(domain), "wave-2-assignments.json"), "utf8"));
+	    assert.equal(assignmentDoc.version, 1);
+	    assert.equal(assignmentDoc.handoff_tokens_required, true);
+	    assert.equal(assignmentDoc.handoff_provenance_model, HANDOFF_PROVENANCE_MODEL);
+	    assert.ok(assignmentDoc.assignments.every((assignment) => /^[a-f0-9]{64}$/.test(assignment.handoff_token_sha256)));
+	    assert.ok(assignmentDoc.assignments.every((assignment) => assignment.handoff_token_required === true));
+	    assert.ok(assignmentDoc.assignments.every((assignment) => assignment.capability_pack === "web"));
     assert.ok(assignmentDoc.assignments.every((assignment) => assignment.capability_pack_version === 1));
     assert.ok(assignmentDoc.assignments.every((assignment) => assignment.hunter_agent === "hunter-agent"));
     assert.ok(assignmentDoc.assignments.every((assignment) => assignment.brief_profile === "web"));
     for (const assignment of assignmentDoc.assignments) {
       assert.deepEqual(assignment.context_budget, expectedWebContextBudget());
-    }
-    assert.doesNotMatch(JSON.stringify(assignmentDoc), new RegExp(result.assignments[0].handoff_token));
+	    }
+	    assert.equal(fs.existsSync(handoffSigningKeyPath(domain)), true);
+	    assert.doesNotMatch(JSON.stringify(assignmentDoc), new RegExp(result.assignments[0].handoff_token));
     assert.deepEqual(
       JSON.parse(fs.readFileSync(surfaceRoutesPath(domain), "utf8")).routes.map((route) => route.surface_id),
       ["surface-a", "surface-b"],
@@ -4348,10 +5409,11 @@ test("bounty_apply_wave_merge merges state, findings, requeues, and scope exclus
       unexpected_agents: [],
       is_complete: true,
     });
-    assert.deepEqual(result.merge, {
-      received_agents: ["a1", "a2"],
-      invalid_agents: [],
-      unexpected_agents: [],
+	    assert.deepEqual(result.merge, {
+	      received_agents: ["a1", "a2"],
+	      invalid_agents: [],
+	      invalid_handoffs: [],
+	      unexpected_agents: [],
       completed_surface_ids: ["surface-a"],
       partial_surface_ids: ["surface-b"],
       missing_surface_ids: [],
@@ -5471,6 +6533,43 @@ test("bounty_write_wave_handoff rejects unassigned or mismatched handoffs", () =
   });
 });
 
+test("wave handoff contract normalizes blocked prereqs and validates assignment identity", () => {
+  assert.ok(BLOCKED_PREREQ_KIND_VALUES.includes("auth_missing"));
+  assert.deepEqual(
+    attachHandoffOrigin(normalizeBlockedPrereqs([{
+      kind: "auth_missing",
+      identifier_hint: "attacker",
+      reason: "Registered attacker profile was not available to the hunter.",
+    }]), { agent: "a1", surfaceId: "surface-a" }),
+    [{
+      kind: "auth_missing",
+      identifier_hint: "attacker",
+      reason: "Registered attacker profile was not available to the hunter.",
+      agent: "a1",
+      surface_id: "surface-a",
+    }],
+  );
+
+  assert.throws(
+    () => validateWaveHandoffPayload({
+      target_domain: "example.com",
+      wave: "w1",
+      agent: "a2",
+      surface_id: "surface-a",
+      surface_status: "complete",
+      summary: "wrong agent",
+    }, {
+      targetDomain: "example.com",
+      wave: "w1",
+      agent: "a1",
+      surfaceId: "surface-a",
+      effectiveSurfaceType: "web",
+      findingsForRun: [],
+    }),
+    /handoff agent does not match assignment/,
+  );
+});
+
 test("bounty_record_finding rejects partial or invalid wave metadata and still allows null/null", () => {
   withTempHome(() => {
     const domain = "example.com";
@@ -5658,6 +6757,26 @@ test("bounty_write_wave_handoff writes matching markdown and json with normalize
       waf_blocked_endpoints: [],
       lead_surface_ids: [],
     });
+  });
+});
+
+test("bounty_write_wave_handoff rejects oversized markdown content", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
+
+    assert.throws(
+      () => writeWaveHandoff({
+        target_domain: domain,
+        wave: "w1",
+        agent: "a1",
+        surface_id: "surface-a",
+        surface_status: "complete",
+        summary: "Oversized handoff summary.",
+        content: "x".repeat(120001),
+      }),
+      /content must be at most 120000 characters/,
+    );
   });
 });
 
@@ -6245,8 +7364,9 @@ test("tokenized wave handoffs require the correct token and report verified prov
     assert.equal(started.ok, true);
     const token = started.data.assignments[0].handoff_token;
     const assignmentText = fs.readFileSync(path.join(sessionDir(domain), "wave-1-assignments.json"), "utf8");
-    assert.doesNotMatch(assignmentText, new RegExp(token));
-    assert.match(assignmentText, /handoff_token_sha256/);
+	    assert.doesNotMatch(assignmentText, new RegExp(token));
+	    assert.match(assignmentText, /handoff_token_sha256/);
+	    assert.match(assignmentText, /handoff_token_required/);
 
     const missing = await executeTool("bounty_write_wave_handoff", {
       target_domain: domain,
@@ -6288,6 +7408,15 @@ test("tokenized wave handoffs require the correct token and report verified prov
     });
     assert.equal(written.ok, true);
     assert.equal(written.data.provenance, "verified");
+    assert.equal(written.data.provenance_model, HANDOFF_PROVENANCE_MODEL);
+    const keyPath = handoffSigningKeyPath(domain);
+    assert.equal(fs.existsSync(keyPath), true);
+    assert.equal(fs.statSync(keyPath).mode & 0o777, 0o600);
+    const handoffText = fs.readFileSync(path.join(sessionDir(domain), "handoff-w1-a1.json"), "utf8");
+    assert.doesNotMatch(handoffText, new RegExp(token));
+	    assert.match(handoffText, /"provenance_model": "session_file_hmac_v1"/);
+	    assert.match(handoffText, /"provenance_assignment_hash": "[0-9a-f]{64}"/);
+	    assert.match(handoffText, /"provenance_signature"/);
 
     const handoffs = await executeTool("bounty_read_wave_handoffs", {
       target_domain: domain,
@@ -6312,9 +7441,136 @@ test("tokenized wave handoffs require the correct token and report verified prov
   });
 });
 
+test("tampered tokenized handoff JSON is invalid and cannot complete the surface", async () => {
+  await withTempHome(async () => {
+    const domain = "example.com";
+    seedSessionState(domain, { phase: "HUNT", hunt_wave: 0 });
+    seedAttackSurface(domain, ["surface-a"]);
+
+    const started = await executeTool("bounty_start_wave", {
+      target_domain: domain,
+      wave_number: 1,
+      assignments: [{ agent: "a1", surface_id: "surface-a" }],
+    });
+    assert.equal(started.ok, true);
+    const token = started.data.assignments[0].handoff_token;
+
+    const written = await executeTool("bounty_write_wave_handoff", {
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      surface_status: "complete",
+      handoff_token: token,
+      summary: "Tested the assigned surface.",
+      content: "# handoff",
+    });
+    assert.equal(written.ok, true);
+
+    const handoffPath = path.join(sessionDir(domain), "handoff-w1-a1.json");
+    const tampered = JSON.parse(fs.readFileSync(handoffPath, "utf8"));
+    tampered.summary = "Tampered after MCP write.";
+    writeFileAtomic(handoffPath, `${JSON.stringify(tampered, null, 2)}\n`);
+
+    const handoffs = await executeTool("bounty_read_wave_handoffs", {
+      target_domain: domain,
+      wave_number: 1,
+    });
+    assert.equal(handoffs.ok, true);
+    assert.deepEqual(handoffs.data.handoffs, []);
+    assert.equal(handoffs.data.invalid_handoffs.length, 1);
+    assert.match(handoffs.data.invalid_handoffs[0].error, /signature does not match/);
+
+    const merged = await executeTool("bounty_apply_wave_merge", {
+      target_domain: domain,
+      wave_number: 1,
+      force_merge: false,
+    });
+    assert.equal(merged.ok, true);
+    assert.equal(merged.data.status, "merged");
+    assert.deepEqual(merged.data.merge.invalid_agents, ["a1"]);
+    assert.deepEqual(merged.data.merge.completed_surface_ids, []);
+    assert.deepEqual(merged.data.merge.requeue_surface_ids, ["surface-a"]);
+    const state = JSON.parse(fs.readFileSync(statePath(domain), "utf8"));
+    assert.deepEqual(state.explored, []);
+  });
+});
+
+test("tokenized assignment cannot downgrade to legacy by losing its token hash", async () => {
+  await withTempHome(async () => {
+    const domain = "example.com";
+    seedSessionState(domain, { phase: "HUNT", hunt_wave: 0 });
+    seedAttackSurface(domain, ["surface-a"]);
+
+    const started = await executeTool("bounty_start_wave", {
+      target_domain: domain,
+      wave_number: 1,
+      assignments: [{ agent: "a1", surface_id: "surface-a" }],
+    });
+    assert.equal(started.ok, true);
+
+    const assignmentsPath = path.join(sessionDir(domain), "wave-1-assignments.json");
+    const assignmentDoc = JSON.parse(fs.readFileSync(assignmentsPath, "utf8"));
+    delete assignmentDoc.assignments[0].handoff_token_sha256;
+    writeFileAtomic(assignmentsPath, `${JSON.stringify(assignmentDoc, null, 2)}\n`);
+
+    const attempted = await executeTool("bounty_write_wave_handoff", {
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      surface_status: "complete",
+      handoff_token: started.data.assignments[0].handoff_token,
+      summary: "Tested the assigned surface.",
+      content: "# handoff",
+    });
+    assert.equal(attempted.ok, false);
+    assert.equal(attempted.error.code, "STATE_CONFLICT");
+    assert.match(attempted.error.message, /missing handoff_token_sha256/);
+  });
+});
+
+test("tokenized handoff provenance rejects permissive signing key files", async () => {
+  await withTempHome(async () => {
+    const domain = "example.com";
+    seedSessionState(domain, { phase: "HUNT", hunt_wave: 0 });
+    seedAttackSurface(domain, ["surface-a"]);
+
+    const started = await executeTool("bounty_start_wave", {
+      target_domain: domain,
+      wave_number: 1,
+      assignments: [{ agent: "a1", surface_id: "surface-a" }],
+    });
+    assert.equal(started.ok, true);
+
+    const written = await executeTool("bounty_write_wave_handoff", {
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      surface_status: "complete",
+      handoff_token: started.data.assignments[0].handoff_token,
+      summary: "Tested the assigned surface.",
+      content: "# handoff",
+    });
+    assert.equal(written.ok, true);
+
+    fs.chmodSync(handoffSigningKeyPath(domain), 0o644);
+    const handoffs = await executeTool("bounty_read_wave_handoffs", {
+      target_domain: domain,
+      wave_number: 1,
+    });
+    assert.equal(handoffs.ok, true);
+    assert.deepEqual(handoffs.data.handoffs, []);
+    assert.equal(handoffs.data.invalid_handoffs.length, 1);
+    assert.match(handoffs.data.invalid_handoffs[0].error, /owner-only 0600/);
+  });
+});
+
 test("bounty_finalize_hunter_run blocks missing invalid and mismatched handoffs", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
+    seedSessionState(domain, { phase: "HUNT", hunt_wave: 1, pending_wave: 1 });
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
 
     const missing = await executeTool("bounty_finalize_hunter_run", {
@@ -6495,6 +7751,7 @@ test("bounty_finalize_hunter_run allows valid handoff and records metadata-only 
 test("bounty_finalize_hunter_run enforces web technique attempt requirement", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
+    seedSessionState(domain, { phase: "HUNT", hunt_wave: 1, pending_wave: 1 });
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
     writeWaveHandoff({
       target_domain: domain,
@@ -7196,6 +8453,50 @@ test("appendJsonlLine retention keeps the newest records", () => {
   });
 });
 
+test("readFileUtf8 rejects artifacts beyond the configured read cap", () => {
+  withTempHome((tempHome) => {
+    const filePath = path.join(tempHome, "oversized.jsonl");
+    fs.writeFileSync(filePath, "x".repeat(33), "utf8");
+
+    assert.equal(readFileUtf8(filePath, { maxBytes: 33 }), "x".repeat(33));
+    assert.throws(
+      () => readFileUtf8(filePath, { label: "oversized.jsonl", maxBytes: 32 }),
+      /oversized\.jsonl exceeds read cap of 32 bytes/,
+    );
+    assert.ok(DEFAULT_ARTIFACT_READ_MAX_BYTES > 32);
+  });
+});
+
+test("JSONL retention can recover files beyond the normal read cap", () => {
+  withTempHome((tempHome) => {
+    const logPath = path.join(tempHome, "recover-retention.jsonl");
+    fs.writeFileSync(
+      logPath,
+      `${JSON.stringify({ index: 0, pad: "x".repeat(DEFAULT_ARTIFACT_READ_MAX_BYTES) })}\n${JSON.stringify({ index: 1 })}\n`,
+      "utf8",
+    );
+
+    assert.throws(() => readFileUtf8(logPath), /recover-retention\.jsonl exceeds read cap/);
+    assert.deepEqual(trimJsonlFile(logPath, 1), { trimmed: true, total: 2, retained: 1 });
+    assert.deepEqual(
+      fs.readFileSync(logPath, "utf8").trim().split("\n").map((line) => JSON.parse(line).index),
+      [1],
+    );
+  });
+});
+
+test("loadJsonDocumentStrict reports oversized JSON as a read-cap failure", () => {
+  withTempHome((tempHome) => {
+    const filePath = path.join(tempHome, "large.json");
+    fs.writeFileSync(filePath, JSON.stringify({ pad: "x".repeat(DEFAULT_ARTIFACT_READ_MAX_BYTES) }), "utf8");
+
+    assert.throws(
+      () => loadJsonDocumentStrict(filePath, "large JSON"),
+      /large JSON exceeds read cap/,
+    );
+  });
+});
+
 test("coverage log retention keeps newest records under the session cap", () => {
   withTempHome(() => {
     const domain = "example.com";
@@ -7503,12 +8804,13 @@ test("bounty_merge_wave_handoffs merges valid handoffs and dedupes optional arra
 
     const merged = JSON.parse(mergeWaveHandoffs({ target_domain: domain, wave_number: 2 }));
 
-    assert.deepEqual(merged, {
-      assignments_total: 2,
-      handoffs_total: 2,
-      received_agents: ["a1", "a2"],
-      invalid_agents: [],
-      unexpected_agents: [],
+	    assert.deepEqual(merged, {
+	      assignments_total: 2,
+	      handoffs_total: 2,
+	      received_agents: ["a1", "a2"],
+	      invalid_agents: [],
+	      invalid_handoffs: [],
+	      unexpected_agents: [],
       completed_surface_ids: ["surface-a"],
       partial_surface_ids: ["surface-b"],
       missing_surface_ids: [],
@@ -7546,12 +8848,17 @@ test("bounty_merge_wave_handoffs requeues missing and invalid assigned handoffs 
 
     const merged = JSON.parse(mergeWaveHandoffs({ target_domain: domain, wave_number: 3 }));
 
-    assert.deepEqual(merged, {
-      assignments_total: 2,
-      handoffs_total: 2,
-      received_agents: [],
-      invalid_agents: ["a1"],
-      unexpected_agents: ["a9"],
+	    assert.deepEqual(merged, {
+	      assignments_total: 2,
+	      handoffs_total: 2,
+	      received_agents: [],
+	      invalid_agents: ["a1"],
+	      invalid_handoffs: [{
+	        agent: "a1",
+	        surface_id: "surface-a",
+	        error: "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
+	      }],
+	      unexpected_agents: ["a9"],
       completed_surface_ids: [],
       partial_surface_ids: [],
       missing_surface_ids: ["surface-b"],
@@ -7966,7 +9273,7 @@ test("normalizeFindingRecord backfills capability_pack metadata for legacy web r
   // carry capability_pack. Read-side derives the pack triple from
   // surface_type so downstream consumers never see null and don't need to
   // re-implement the surface_type→pack mapping.
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   const legacyFinding = normalizeFindingRecord({
     id: "F-1",
     target_domain: "example.com",
@@ -7991,7 +9298,7 @@ test("normalizeFindingRecord backfills capability_pack metadata for legacy SC ro
   // Legacy SC findings carry sc_evidence.chain_family. Backfill must derive
   // the right pack — smart_contract_evm for chain_family="evm",
   // smart_contract_substrate for chain_family="substrate", etc.
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   const legacyEvm = normalizeFindingRecord({
     id: "F-1",
     target_domain: "example.com",
@@ -8175,7 +9482,7 @@ test("findings.md mirror surfaces the routed capability pack for triage", () => 
 });
 
 test("normalizeFindingRecord forbids sc_evidence on legacy null-surface rows (back-compat smuggling)", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   // A legacy row may have surface_type=null. The original guard forbade
   // sc_evidence only on surface_type="web", so a malicious or buggy row
   // could carry SC replay data while being routed as web by verifiers.
@@ -8321,7 +9628,7 @@ test("bounty_record_finding accepts SVM sc_evidence with chain_family='svm' and 
 });
 
 test("sc_evidence rejects chain_family='svm' with EVM-style 0x address", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   assert.throws(() => normalizeFindingRecord({
     id: "F-1",
     target_domain: "example.com",
@@ -8349,7 +9656,7 @@ test("sc_evidence rejects chain_family='svm' with EVM-style 0x address", () => {
 });
 
 test("sc_evidence rejects chain_family='evm' with base58 svm pubkey", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   assert.throws(() => normalizeFindingRecord({
     id: "F-1",
     target_domain: "example.com",
@@ -8377,7 +9684,7 @@ test("sc_evidence rejects chain_family='evm' with base58 svm pubkey", () => {
 });
 
 test("sc_evidence rejects chain_family='svm' with unknown cluster", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   assert.throws(() => normalizeFindingRecord({
     id: "F-1",
     target_domain: "example.com",
@@ -8405,7 +9712,7 @@ test("sc_evidence rejects chain_family='svm' with unknown cluster", () => {
 });
 
 test("sc_evidence rejects chain_family='svm' with base58 alphabet violation (0/O/I/l)", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   // "0" is not in the base58 alphabet — a pubkey that contains it must be rejected.
   // System Program prefix with one '0' substituted in.
   assert.throws(() => normalizeFindingRecord({
@@ -8435,7 +9742,7 @@ test("sc_evidence rejects chain_family='svm' with base58 alphabet violation (0/O
 });
 
 test("sc_evidence rejects unknown chain_family value", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   assert.throws(() => normalizeFindingRecord({
     id: "F-1",
     target_domain: "example.com",
@@ -8463,7 +9770,7 @@ test("sc_evidence rejects unknown chain_family value", () => {
 });
 
 test("sc_evidence chain_family defaults to 'evm' when omitted (back-compat)", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   // A legacy row may have no chain_family field at all. The normalizer
   // defaults to 'evm' so existing findings.jsonl rows keep validating.
   const finding = normalizeFindingRecord({
@@ -8530,7 +9837,7 @@ test("foundry runner translates Success/Failure to Pass/Fail and caps tests[] at
 });
 
 test("sc_evidence svm pubkey rejects strings that pass alphabet but decode to <32 bytes", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   // 32 chars of valid base58 alphabet that are NOT leading-1s decode to ~23 bytes
   // (32 * log2(58) / 8 ≈ 23.4). The alphabet+length regex passes; the decode-length
   // check must catch it. Use a deterministic 32-char string with no leading "1".
@@ -8647,7 +9954,7 @@ test("bounty_record_finding accepts Sui sc_evidence with chain_family='sui' and 
 });
 
 test("sc_evidence normalizes Move shorthand address (0x1) to canonical 64-hex form", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   // Aptos prints framework addresses as shorthand: "0x1" is the std lib,
   // canonically "0x000...001". The normalizer must left-pad so two findings
   // recorded against "0x1" and "0x0000...0001" share the same dedupe key.
@@ -8680,7 +9987,7 @@ test("sc_evidence normalizes Move shorthand address (0x1) to canonical 64-hex fo
 });
 
 test("sc_evidence rejects chain_family='aptos' with unknown network", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   assert.throws(() => normalizeFindingRecord({
     id: "F-1",
     target_domain: "example.com",
@@ -8708,7 +10015,7 @@ test("sc_evidence rejects chain_family='aptos' with unknown network", () => {
 });
 
 test("sc_evidence rejects chain_family='sui' with unknown network", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   assert.throws(() => normalizeFindingRecord({
     id: "F-1",
     target_domain: "example.com",
@@ -8736,7 +10043,7 @@ test("sc_evidence rejects chain_family='sui' with unknown network", () => {
 });
 
 test("sc_evidence rejects Move family with non-hex address", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   // Aptos hunter accidentally pasted a base58 svm pubkey. Move normalizer
   // must reject because address fails the 0x+hex regex.
   assert.throws(() => normalizeFindingRecord({
@@ -8766,7 +10073,7 @@ test("sc_evidence rejects Move family with non-hex address", () => {
 });
 
 test("sc_evidence rejects Move family with empty 0x address (no hex chars)", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   // 0x with zero hex chars is technically not a Move address (Aptos shorthand
   // requires at least one hex char). Regex {1,64} prevents the empty case.
   assert.throws(() => normalizeFindingRecord({
@@ -8796,7 +10103,7 @@ test("sc_evidence rejects Move family with empty 0x address (no hex chars)", () 
 });
 
 test("sc_evidence rejects chain_family='aptos' with integer chain_id (must be string network)", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   // Aptos has an integer chain_id (1 = mainnet) used for replay protection,
   // but our schema keys RPC pools by network NAME. Reject integers to avoid
   // ambiguity with EVM chain_id integer convention.
@@ -8917,7 +10224,7 @@ test("bounty_record_finding accepts CosmWasm sc_evidence with chain_family='cosm
 });
 
 test("sc_evidence rejects chain_family='substrate' with unknown network", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   assert.throws(() => normalizeFindingRecord({
     id: "F-1",
     target_domain: "example.com",
@@ -8945,7 +10252,7 @@ test("sc_evidence rejects chain_family='substrate' with unknown network", () => 
 });
 
 test("sc_evidence rejects chain_family='cosmwasm' with unknown network", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   assert.throws(() => normalizeFindingRecord({
     id: "F-1",
     target_domain: "example.com",
@@ -8973,7 +10280,7 @@ test("sc_evidence rejects chain_family='cosmwasm' with unknown network", () => {
 });
 
 test("sc_evidence rejects chain_family='substrate' with EVM 0x... address (alphabet violation)", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   // SS58 alphabet excludes 0/O/I/l, so an EVM address fails the base58 check.
   assert.throws(() => normalizeFindingRecord({
     id: "F-1",
@@ -9002,7 +10309,7 @@ test("sc_evidence rejects chain_family='substrate' with EVM 0x... address (alpha
 });
 
 test("sc_evidence rejects chain_family='substrate' with too-short SS58", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   // 30 chars is below the 45-char SS58 length floor.
   assert.throws(() => normalizeFindingRecord({
     id: "F-1",
@@ -9031,7 +10338,7 @@ test("sc_evidence rejects chain_family='substrate' with too-short SS58", () => {
 });
 
 test("sc_evidence rejects chain_family='cosmwasm' with bad bech32 checksum", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   // Last 6 chars of valid bech32 mutated to break the polymod checksum.
   assert.throws(() => normalizeFindingRecord({
     id: "F-1",
@@ -9060,7 +10367,7 @@ test("sc_evidence rejects chain_family='cosmwasm' with bad bech32 checksum", () 
 });
 
 test("sc_evidence rejects chain_family='cosmwasm' with EVM 0x... address (no bech32 separator)", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   assert.throws(() => normalizeFindingRecord({
     id: "F-1",
     target_domain: "example.com",
@@ -9088,7 +10395,7 @@ test("sc_evidence rejects chain_family='cosmwasm' with EVM 0x... address (no bec
 });
 
 test("sc_evidence rejects chain_family='cosmwasm' with mixed-case bech32 (spec violation)", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   // BIP-0173 explicitly forbids mixed-case in bech32; either fully lowercase
   // or fully uppercase is allowed, but never both. We mirror that rule.
   assert.throws(() => normalizeFindingRecord({
@@ -9118,7 +10425,7 @@ test("sc_evidence rejects chain_family='cosmwasm' with mixed-case bech32 (spec v
 });
 
 test("sc_evidence svm pubkey accepts the 32-char System Program (all-zero pubkey)", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   // 11111111111111111111111111111111 — 32 chars, base58-decodes to 32 zero
   // bytes. The System Program is a legitimate Solana pubkey at 32 chars.
   // The new decode-length check must not regress on this fixture.
@@ -9404,26 +10711,443 @@ test("sui rpc pool resolves network ladders and rejects private hosts", () => {
   assert.ok(mainnet.every((url) => url.startsWith("https://")), "all endpoints are https");
   const testnet = resolveSuiRpcEndpoints("testnet");
   assert.ok(testnet.length >= 1, "testnet has at least one endpoint");
-  // localnet has empty default — operators set BOB_SUI_RPCS_LOCALNET. The
-  // resolve function should still return [] without throwing.
+  // localnet has no public RPC default; env overrides stay ignored until a
+  // recorded per-family opt-in policy exists.
   const localnet = resolveSuiRpcEndpoints("localnet");
   assert.deepEqual(localnet, []);
   assert.equal(isPublicHttpsUrl("https://fullnode.mainnet.sui.io:443"), true);
   assert.equal(isPublicHttpsUrl("http://localhost:9000"), false);
 });
 
-test("sui rpc pool env override is read with BOB_SUI_RPCS_<NETWORK>", () => {
+test("sui rpc pool env override is read with BOB_SUI_RPCS_<NETWORK> while localnet stays unsupported by default", () => {
   const { resolveSuiRpcEndpoints, envKeyForNetwork } = require("../mcp/lib/sui-rpc-pool.js");
   assert.equal(envKeyForNetwork("mainnet"), "BOB_SUI_RPCS_MAINNET");
-  const previous = process.env.BOB_SUI_RPCS_LOCALNET;
-  process.env.BOB_SUI_RPCS_LOCALNET = "https://localnet-override.example.com:9000";
+  withEnv({
+    BOB_SUI_RPCS_MAINNET: "https://override.example.com/rpc",
+    BOB_SUI_RPCS_LOCALNET: "https://localnet-override.example.com:9000",
+  }, () => {
+    const mainnet = resolveSuiRpcEndpoints("mainnet");
+    assert.equal(mainnet[0], "https://override.example.com/rpc", "public HTTPS env override is tried first");
+    assert.deepEqual(resolveSuiRpcEndpoints("localnet"), [], "localnet RPC override is ignored until an explicit opt-in policy exists");
+  });
+});
+
+test("smart-contract RPC pools enforce HTTPS/public-host policy on env overrides", () => {
+  const { resolveEvmRpcEndpoints } = require("../mcp/lib/evm-rpc-pool.js");
+  const { resolveSvmRpcEndpoints } = require("../mcp/lib/svm-rpc-pool.js");
+  const { resolveAptosRpcEndpoints } = require("../mcp/lib/aptos-rpc-pool.js");
+  const { resolveSuiRpcEndpoints } = require("../mcp/lib/sui-rpc-pool.js");
+  const { resolveSubstrateRpcEndpoints } = require("../mcp/lib/substrate-rpc-pool.js");
+  const { resolveCosmwasmRpcEndpoints } = require("../mcp/lib/cosmwasm-rpc-pool.js");
+
+  withEnv({
+    BOB_EVM_RPCS_1: "http://public.example/rpc,https://127.0.0.1/rpc,https://public-rpc.example/rpc",
+    BOB_SVM_RPCS_MAINNET_BETA: "http://public.example/rpc,https://10.0.0.5/rpc,https://svm-rpc.example/rpc",
+    BOB_SVM_RPCS_LOCALNET: "https://svm-localnet.example/rpc",
+    BOB_APTOS_RPCS_MAINNET: "http://public.example/v1,https://192.168.1.2/v1,https://aptos-rpc.example/v1",
+    BOB_APTOS_RPCS_LOCALNET: "https://aptos-localnet.example/v1",
+    BOB_SUI_RPCS_LOCALNET: "https://sui-localnet.example/rpc",
+    BOB_SUBSTRATE_RPCS_LOCALNET: "https://substrate-localnet.example/rpc",
+    BOB_COSMWASM_RPCS_LOCALNET: "https://cosmwasm-localnet.example",
+  }, () => {
+    assert.equal(resolveEvmRpcEndpoints(1)[0], "https://public-rpc.example/rpc");
+    assert.equal(resolveSvmRpcEndpoints("mainnet-beta")[0], "https://svm-rpc.example/rpc");
+    assert.deepEqual(resolveSvmRpcEndpoints("localnet"), []);
+    assert.equal(resolveAptosRpcEndpoints("mainnet")[0], "https://aptos-rpc.example/v1");
+    assert.deepEqual(resolveAptosRpcEndpoints("localnet"), []);
+    assert.deepEqual(resolveSuiRpcEndpoints("localnet"), []);
+    assert.deepEqual(resolveSubstrateRpcEndpoints("localnet"), []);
+    assert.deepEqual(resolveCosmwasmRpcEndpoints("localnet"), []);
+  });
+});
+
+test("smart-contract egress policy blocks DNS-private RPC endpoints before fetch and redacts secrets", async () => {
+  const { isPublicHttpsUrl } = require("../mcp/lib/sc-egress-policy.js");
+  const { isBlockedInternalHost } = require("../mcp/lib/url-surface.js");
+  assert.equal(isPublicHttpsUrl("https://198.18.0.1/rpc"), false);
+  assert.equal(isPublicHttpsUrl("https://[2001:db8::1]/rpc"), false);
+  assert.equal(isPublicHttpsUrl("https://[64:ff9b::0a00:1]/rpc"), false);
+  assert.equal(isPublicHttpsUrl("https://[64:ff9b:1::1]/rpc"), false);
+  assert.equal(isPublicHttpsUrl("https://[2002:0a00:0001::]/rpc"), false);
+  assert.equal(isPublicHttpsUrl("https://[3fff::1]/rpc"), false);
+  assert.equal(isPublicHttpsUrl("https://[5f00::1]/rpc"), false);
+  assert.equal(isBlockedInternalHost("fe80::1%eth0"), true);
+
+  let called = false;
+  await withMockSmartContractHttpRequest(async () => {
+    called = true;
+    return { ok: true, status: 200, text: JSON.stringify({ jsonrpc: "2.0", id: 1, result: "0x1" }) };
+  }, async () => {
+    const secret = "rpc-secret-token";
+    const result = await withMockSmartContractRpcLookup({
+      "rpc.example.test": [{ address: "198.18.0.9", family: 4 }],
+    }, () => executeTool("bounty_evm_call", {
+      chain_id: 1,
+      to: "0x" + "11".repeat(20),
+      data: "0x",
+      endpoints: [`https://rpc.example.test/rpc?api_key=${secret}`],
+    }));
+    assert.equal(result.ok, false);
+    assert.equal(called, false, "HTTP request must not run after DNS-private policy rejection");
+    assert.match(result.error.message, /no public HTTPS RPC endpoints/);
+    assert.equal(result.error.details.rpc_policy_rejections[0].reason, "blocked_internal_dns_address");
+    assert.match(result.error.details.rpc_policy_rejections[0].endpoint, /api_key=REDACTED/);
+    assert.doesNotMatch(JSON.stringify(result), new RegExp(secret));
+  });
+});
+
+test("smart-contract HTTP client pins the request lookup to the preflight DNS answer", async () => {
+  const { requestPublicHttpsText } = require("../mcp/lib/sc-http-client.js");
+  let observedAddress = null;
+  const response = await withMockSmartContractRpcLookup({
+    "rpc.example.test": [{ address: "93.184.216.34", family: 4 }],
+  }, () => withMockSmartContractHttpRequest(async (_url, request) => {
+    assert.equal(request.hostname, "rpc.example.test");
+    assert.deepEqual(request.pinned_addresses, [{ address: "93.184.216.34", family: 4 }]);
+    request.pinned_lookup("rpc.example.test", {}, (error, address, family) => {
+      assert.ifError(error);
+      observedAddress = address;
+      assert.equal(address, "93.184.216.34");
+      assert.equal(family, 4);
+    });
+    request.pinned_lookup("evil.example.test", {}, (error) => {
+      assert.match(error.message, /unexpected host/);
+    });
+    return { ok: true, status: 200, text: "ok" };
+  }, () => requestPublicHttpsText("https://rpc.example.test/rpc", { maxBytes: 8 })));
+  assert.equal(response.ok, true);
+  assert.equal(response.text, "ok");
+  assert.equal(observedAddress, "93.184.216.34");
+});
+
+test("smart-contract HTTP client pins IPv6 answers", async () => {
+  const { requestPublicHttpsText } = require("../mcp/lib/sc-http-client.js");
+  let observedAddress = null;
+  const response = await withMockSmartContractRpcLookup({
+    "rpc-v6.example.test": [{ address: "2606:4700:4700::1111", family: 6 }],
+  }, () => withMockSmartContractHttpRequest(async (_url, request) => {
+    assert.equal(request.hostname, "rpc-v6.example.test");
+    request.pinned_lookup("rpc-v6.example.test", { family: 6 }, (error, address, family) => {
+      assert.ifError(error);
+      observedAddress = address;
+      assert.equal(address, "2606:4700:4700::1111");
+      assert.equal(family, 6);
+    });
+    return { ok: true, status: 200, text: "ok-v6" };
+  }, () => requestPublicHttpsText("https://rpc-v6.example.test/rpc")));
+  assert.equal(response.ok, true);
+  assert.equal(response.text, "ok-v6");
+  assert.equal(observedAddress, "2606:4700:4700::1111");
+});
+
+test("smart-contract HTTP client fails closed after its byte cap", async () => {
+  const { requestPublicHttpsText } = require("../mcp/lib/sc-http-client.js");
+  let requestDestroyed = false;
+  let responseDestroyed = false;
+  const requestImpl = (requestOptions, callback) => {
+    const req = new EventEmitter();
+    req.write = () => {};
+    req.setTimeout = () => req;
+    req.destroy = () => {
+      requestDestroyed = true;
+      process.nextTick(() => req.emit("error", Object.assign(new Error("socket closed"), { code: "ECONNRESET" })));
+    };
+    req.end = () => {
+      process.nextTick(() => {
+        requestOptions.lookup("rpc.example.test", {}, (error, address, family) => {
+          assert.ifError(error);
+          assert.equal(address, "93.184.216.34");
+          assert.equal(family, 4);
+        });
+        const resp = new EventEmitter();
+        resp.statusCode = 200;
+        resp.headers = { "content-type": "text/plain" };
+        resp.destroy = () => {
+          responseDestroyed = true;
+        };
+        callback(resp);
+        resp.emit("data", Buffer.from("abcdef"));
+        resp.emit("data", Buffer.from("ignored"));
+        resp.emit("end");
+      });
+    };
+    return req;
+  };
+
+  await assert.rejects(() => withMockSmartContractRpcLookup({
+    "rpc.example.test": [{ address: "93.184.216.34", family: 4 }],
+  }, () => requestPublicHttpsText("https://rpc.example.test/rpc", {
+    maxBytes: 4,
+    requestImpl,
+  })), /SC HTTP response exceeded 4 bytes/);
+  assert.equal(requestDestroyed, true);
+  assert.equal(responseDestroyed, true);
+});
+
+test("smart-contract HTTP client does not follow redirects", async () => {
+  const { requestPublicHttpsText } = require("../mcp/lib/sc-http-client.js");
+  let calls = 0;
+  const response = await withMockSmartContractRpcLookup({
+    "rpc.example.test": [{ address: "93.184.216.34", family: 4 }],
+  }, () => withMockSafeFetch((url, request) => {
+    calls += 1;
+    assert.equal(request.agent, false);
+    assert.equal(url, "https://rpc.example.test:443/rpc");
+    return {
+      status: 302,
+      headers: { location: "https://attacker.example.test/rpc" },
+      body: "redirect",
+    };
+  }, () => requestPublicHttpsText("https://rpc.example.test/rpc"), {
+    dnsRecords: {
+      "rpc.example.test": [{ address: "93.184.216.34", family: 4 }],
+      "attacker.example.test": [{ address: "93.184.216.35", family: 4 }],
+    },
+  }));
+  assert.equal(response.ok, false);
+  assert.equal(response.status, 302);
+  assert.equal(response.text, "redirect");
+  assert.equal(calls, 1);
+});
+
+test("smart-contract egress policy blocks DNS rebinding before pinned HTTP request", async () => {
+  const { requestPublicHttpsText } = require("../mcp/lib/sc-http-client.js");
+  let called = false;
+  await assert.rejects(
+    () => withMockSmartContractRpcLookup({
+      "rpc-rebind.example.test": [{ address: "10.0.0.5", family: 4 }],
+    }, () => withMockSmartContractHttpRequest(async () => {
+      called = true;
+      return { ok: true, status: 200, text: "should not happen" };
+    }, () => requestPublicHttpsText("https://rpc-rebind.example.test/rpc"))),
+    /Blocked internal\/private DNS address/,
+  );
+  assert.equal(called, false, "pinned HTTP request must not run after private DNS preflight");
+
+  let nat64Called = false;
+  await assert.rejects(
+    () => withMockSmartContractRpcLookup({
+      "rpc-nat64.example.test": [{ address: "64:ff9b::0a00:0001", family: 6 }],
+    }, () => withMockSmartContractHttpRequest(async () => {
+      nat64Called = true;
+      return { ok: true, status: 200, text: "should not happen" };
+    }, () => requestPublicHttpsText("https://rpc-nat64.example.test/rpc"))),
+    /Blocked internal\/private DNS address/,
+  );
+  assert.equal(nat64Called, false, "NAT64 private IPv4 DNS answers must not reach HTTP request");
+});
+
+test("smart-contract egress policy bounds DNS lookup time before fetch", async () => {
+  const { filterResolvedPublicRpcEndpoints } = require("../mcp/lib/sc-egress-policy.js");
+  const started = Date.now();
+  const result = await filterResolvedPublicRpcEndpoints(["https://slow-rpc.example.test/rpc"], {
+    lookup: () => {},
+    dnsTimeoutMs: 5,
+  });
+  assert.deepEqual(result.endpoints, []);
+  assert.equal(result.rejected.length, 1);
+  assert.equal(result.rejected[0].reason, "dns_lookup_failed");
+  assert.match(result.rejected[0].message, /DNS lookup timed out/);
+  assert.ok(Date.now() - started < 1000, "DNS timeout should be bounded");
+});
+
+test("smart-contract egress policy redacts malformed endpoint secrets and strips proxy env for runners", () => {
+  const {
+    directSmartContractSubprocessEnv,
+    redactRpcEndpoint,
+  } = require("../mcp/lib/sc-egress-policy.js");
+  const secret = "rpc-secret-token";
+  const redacted = redactRpcEndpoint(`not-a-url api_key=${secret}#fragment`);
+  assert.doesNotMatch(redacted, new RegExp(secret));
+  assert.doesNotMatch(redacted, /fragment/);
+
+  const previous = {
+    HTTPS_PROXY: process.env.HTTPS_PROXY,
+    http_proxy: process.env.http_proxy,
+    ANCHOR_PROVIDER_URL: process.env.ANCHOR_PROVIDER_URL,
+    SOLANA_URL: process.env.SOLANA_URL,
+    APTOS_NODE_URL: process.env.APTOS_NODE_URL,
+    SUI_FULLNODE_URL: process.env.SUI_FULLNODE_URL,
+    COSMOS_REST_URL: process.env.COSMOS_REST_URL,
+    BOB_ETHERSCAN_API_KEY: process.env.BOB_ETHERSCAN_API_KEY,
+    NPM_TOKEN: process.env.NPM_TOKEN,
+  };
+  process.env.HTTPS_PROXY = "http://proxy.example:8080";
+  process.env.http_proxy = "http://proxy.example:8081";
+  process.env.ANCHOR_PROVIDER_URL = "http://127.0.0.1:8899";
+  process.env.SOLANA_URL = "http://127.0.0.1:8899";
+  process.env.APTOS_NODE_URL = "http://127.0.0.1:8080";
+  process.env.SUI_FULLNODE_URL = "http://127.0.0.1:9000";
+  process.env.COSMOS_REST_URL = "http://127.0.0.1:1317";
+  process.env.BOB_ETHERSCAN_API_KEY = "etherscan-secret";
+  process.env.NPM_TOKEN = "npm-secret";
   try {
-    const result = resolveSuiRpcEndpoints("localnet");
-    assert.equal(result[0], "https://localnet-override.example.com:9000", "env override populates the empty localnet ladder");
+    const env = directSmartContractSubprocessEnv({
+      HTTPS_PROXY: "http://override.example:8080",
+      API_KEY: "extra-secret",
+      BOB_SVM_FORK_URL: "https://rpc.example/rpc?token=fork-secret",
+      BOB_APTOS_FORK_URL: "https://aptos.example/v1?api_key=fork-secret",
+      BOB_EVM_RPCS_1: "https://alchemy.example/v2/path-secret",
+      MAINNET_RPC_URL: "https://rpc.example/private",
+      SUI_FULLNODE_URL: "https://sui.example/private",
+    });
+    assert.equal(env.HTTPS_PROXY, undefined);
+    assert.equal(env.http_proxy, undefined);
+    assert.equal(env.BOB_ETHERSCAN_API_KEY, undefined);
+    assert.equal(env.NPM_TOKEN, undefined);
+    assert.equal(env.API_KEY, undefined);
+    assert.equal(env.BOB_SVM_FORK_URL, "https://rpc.example/rpc?token=fork-secret");
+    assert.equal(env.BOB_APTOS_FORK_URL, "https://aptos.example/v1?api_key=fork-secret");
+    assert.equal(env.BOB_EVM_RPCS_1, undefined);
+    assert.equal(env.MAINNET_RPC_URL, undefined);
+    assert.equal(env.ANCHOR_PROVIDER_URL, undefined);
+    assert.equal(env.SOLANA_URL, undefined);
+    assert.equal(env.APTOS_NODE_URL, undefined);
+    assert.equal(env.SUI_FULLNODE_URL, undefined);
+    assert.equal(env.COSMOS_REST_URL, undefined);
+    if (process.env.PATH) assert.equal(env.PATH, process.env.PATH);
   } finally {
-    if (previous === undefined) delete process.env.BOB_SUI_RPCS_LOCALNET;
-    else process.env.BOB_SUI_RPCS_LOCALNET = previous;
+    if (previous.HTTPS_PROXY === undefined) delete process.env.HTTPS_PROXY;
+    else process.env.HTTPS_PROXY = previous.HTTPS_PROXY;
+    if (previous.http_proxy === undefined) delete process.env.http_proxy;
+    else process.env.http_proxy = previous.http_proxy;
+    if (previous.ANCHOR_PROVIDER_URL === undefined) delete process.env.ANCHOR_PROVIDER_URL;
+    else process.env.ANCHOR_PROVIDER_URL = previous.ANCHOR_PROVIDER_URL;
+    if (previous.SOLANA_URL === undefined) delete process.env.SOLANA_URL;
+    else process.env.SOLANA_URL = previous.SOLANA_URL;
+    if (previous.APTOS_NODE_URL === undefined) delete process.env.APTOS_NODE_URL;
+    else process.env.APTOS_NODE_URL = previous.APTOS_NODE_URL;
+    if (previous.SUI_FULLNODE_URL === undefined) delete process.env.SUI_FULLNODE_URL;
+    else process.env.SUI_FULLNODE_URL = previous.SUI_FULLNODE_URL;
+    if (previous.COSMOS_REST_URL === undefined) delete process.env.COSMOS_REST_URL;
+    else process.env.COSMOS_REST_URL = previous.COSMOS_REST_URL;
+    if (previous.BOB_ETHERSCAN_API_KEY === undefined) delete process.env.BOB_ETHERSCAN_API_KEY;
+    else process.env.BOB_ETHERSCAN_API_KEY = previous.BOB_ETHERSCAN_API_KEY;
+    if (previous.NPM_TOKEN === undefined) delete process.env.NPM_TOKEN;
+    else process.env.NPM_TOKEN = previous.NPM_TOKEN;
   }
+});
+
+test("smart-contract source fetch errors redact Etherscan API keys from response bodies", async () => {
+  const { fetchVerifiedSource } = require("../mcp/lib/evm-source.js");
+  const secret = "etherscan-body-secret";
+  await withMockSmartContractHttpRequest(async (url) => {
+    const urlText = String(url);
+    if (urlText.includes("sourcify.dev")) {
+      return { ok: false, status: 404, text: "not found" };
+    }
+    return {
+      ok: false,
+      status: 403,
+      text: `Invalid API Key ${secret}`,
+    };
+  }, async () => {
+    const result = await withEnv({ BOB_ETHERSCAN_API_KEY: secret }, () => withMockSmartContractRpcLookup({
+      "sourcify.dev": [{ address: "93.184.216.34", family: 4 }],
+      "api.etherscan.io": [{ address: "93.184.216.35", family: 4 }],
+    }, () => fetchVerifiedSource({
+      domain: `etherscan-redaction-${crypto.randomBytes(4).toString("hex")}.example`,
+      chainId: 1,
+      address: "0x" + "12".repeat(20),
+      force: true,
+    })));
+    assert.equal(result.ok, false);
+    assert.doesNotMatch(JSON.stringify(result), new RegExp(secret));
+    assert.match(JSON.stringify(result), /Invalid API Key REDACTED/);
+  });
+});
+
+test("every smart-contract client and fork runner uses the shared DNS-aware egress policy", () => {
+  const policyFiles = [
+    "mcp/lib/evm-client.js",
+    "mcp/lib/svm-client.js",
+    "mcp/lib/aptos-client.js",
+    "mcp/lib/sui-client.js",
+    "mcp/lib/substrate-client.js",
+    "mcp/lib/cosmwasm-client.js",
+    "mcp/lib/foundry-runner.js",
+    "mcp/lib/anchor-runner.js",
+    "mcp/lib/aptos-runner.js",
+    "mcp/lib/sui-runner.js",
+    "mcp/lib/substrate-runner.js",
+    "mcp/lib/cosmwasm-runner.js",
+  ];
+  for (const file of policyFiles) {
+    const source = fs.readFileSync(path.join(ROOT, file), "utf8");
+    assert.match(source, /filterResolvedPublicRpcEndpoints/, `${file} must apply DNS-aware SC RPC policy`);
+    assert.match(source, /redactRpcEndpoint/, `${file} must redact RPC endpoints in returned evidence`);
+    assert.doesNotMatch(source, /filter\(isPublicHttpsUrl\)/, `${file} must not silently drop back to sync-only endpoint filtering`);
+  }
+  const nodeHttpFiles = [
+    "mcp/lib/evm-client.js",
+    "mcp/lib/svm-client.js",
+    "mcp/lib/aptos-client.js",
+    "mcp/lib/sui-client.js",
+    "mcp/lib/substrate-client.js",
+    "mcp/lib/cosmwasm-client.js",
+    "mcp/lib/evm-source.js",
+  ];
+  for (const file of nodeHttpFiles) {
+    const source = fs.readFileSync(path.join(ROOT, file), "utf8");
+    assert.match(source, /requestPublicHttpsText/, `${file} must use the shared pinned SC HTTPS client`);
+    assert.doesNotMatch(source, /\bfetch\s*\(/, `${file} must not use ambient fetch for SC HTTP`);
+  }
+  const pinnedHttpSource = fs.readFileSync(path.join(ROOT, "mcp/lib/sc-http-client.js"), "utf8");
+  assert.match(pinnedHttpSource, /https\.request/, "SC HTTP client must own the direct HTTPS socket");
+  assert.match(pinnedHttpSource, /lookup:\s*pinnedLookup/, "SC HTTP client must pass the pinned lookup into the HTTPS request");
+  assert.match(pinnedHttpSource, /agent:\s*false/, "SC HTTP client must not reuse https.globalAgent sockets");
+  const runnerFiles = [
+    "mcp/lib/foundry-runner.js",
+    "mcp/lib/halmos-runner.js",
+    "mcp/lib/anchor-runner.js",
+    "mcp/lib/aptos-runner.js",
+    "mcp/lib/sui-runner.js",
+    "mcp/lib/substrate-runner.js",
+    "mcp/lib/cosmwasm-runner.js",
+  ];
+  for (const file of runnerFiles) {
+    const source = fs.readFileSync(path.join(ROOT, file), "utf8");
+    assert.match(source, /directSmartContractSubprocessEnv/, `${file} must strip proxy env from direct-only SC subprocesses`);
+    assert.match(source, /redactRpcEndpointText/, `${file} must redact raw subprocess excerpts`);
+    assert.doesNotMatch(source, /env:\s*\{\s*\.\.\.process\.env/, `${file} must not inherit proxy env wholesale`);
+  }
+  for (const file of ["mcp/lib/aptos-client.js", "mcp/lib/cosmwasm-client.js"]) {
+    const source = fs.readFileSync(path.join(ROOT, file), "utf8");
+    assert.match(source, /requestPublicHttpsText\(url/, `${file} must re-check and pin the constructed REST URL before request`);
+  }
+});
+
+test("smart-contract runner parsers redact endpoint secrets from structured failures", () => {
+  const { summarizeForgeJson } = require("../mcp/lib/foundry-runner.js");
+  const { summarizeHalmosOutput } = require("../mcp/lib/halmos-runner.js");
+  const secret = "parser-secret-token";
+  const endpoint = `https://rpc.example/rpc?api_key=${secret}`;
+
+  const forge = summarizeForgeJson({
+    Suite: {
+      test_results: {
+        testLeak: {
+          status: "Failure",
+          reason: `reverted while reading ${endpoint}`,
+          counterexample: { endpoint },
+        },
+      },
+    },
+  });
+  assert.equal(forge.tests[0].status, "Fail");
+  assert.doesNotMatch(JSON.stringify(forge), new RegExp(secret));
+  assert.match(JSON.stringify(forge), /api_key=REDACTED/);
+
+  const halmos = summarizeHalmosOutput({
+    results: [{
+      test: "testLeak",
+      status: "Fail",
+      counterexample: { endpoint },
+    }],
+  });
+  assert.equal(halmos.tests[0].status, "Fail");
+  assert.doesNotMatch(JSON.stringify(halmos), new RegExp(secret));
+  assert.match(JSON.stringify(halmos), /api_key=REDACTED/);
 });
 
 test("parseMoveTestStdout parses Move unit test output line-by-line", () => {
@@ -9468,6 +11192,46 @@ test("parseMoveTestStdout captures inline failure reason from Sui-style '; ABORT
   assert.equal(r.ok, true);
   assert.equal(r.tests[1].status, "Fail");
   assert.match(r.tests[1].reason || "", /ABORTED at code 100/);
+});
+
+test("parseMoveTestStdout redacts endpoint secrets in failure reasons", () => {
+  const { parseMoveTestStdout } = require("../mcp/lib/move-test-output.js");
+  const secret = "move-parser-secret";
+  const stdout = [
+    "Running Move unit tests",
+    `[ FAIL    ] 0x0::game::test_replay; failed against https://rpc.example/rpc?api_key=${secret}`,
+    "Test result: FAILED. Total tests: 1; passed: 0; failed: 1",
+  ].join("\n");
+  const r = parseMoveTestStdout(stdout);
+  assert.equal(r.ok, true);
+  assert.doesNotMatch(JSON.stringify(r), new RegExp(secret));
+  assert.match(r.tests[0].reason || "", /api_key=REDACTED/);
+});
+
+test("smart-contract text redaction handles JSON, bearer, path secrets, and preserves non-secret hashes", () => {
+  const pathSecret = "pathSecret1234567890abcdef";
+  const bearer = "bearerSecret123";
+  const jsonSecret = "jsonSecret123";
+  const redacted = redactTextSensitiveValues([
+    `rpc=https://eth-mainnet.g.alchemy.com/v2/${pathSecret}`,
+    "short=https://rpc.example/project/abc1234",
+    "marked=https://rpc.example/pathTokenAbc123",
+    `{"api_key":"${jsonSecret}"}`,
+    `Authorization: Bearer ${bearer}`,
+    "assertion failed at line #42",
+    "#[derive(Debug)]",
+  ].join("\n"));
+  assert.doesNotMatch(redacted, new RegExp(pathSecret));
+  assert.doesNotMatch(redacted, new RegExp(bearer));
+  assert.doesNotMatch(redacted, new RegExp(jsonSecret));
+  assert.doesNotMatch(redacted, /abc1234/);
+  assert.doesNotMatch(redacted, /pathTokenAbc123/);
+  assert.match(redacted, /\/v2\/REDACTED/);
+  assert.match(redacted, /\/project\/REDACTED/);
+  assert.match(redacted, /"api_key":"REDACTED"/);
+  assert.match(redacted, /Authorization: REDACTED/);
+  assert.match(redacted, /line #42/);
+  assert.match(redacted, /#\[derive\(Debug\)\]/);
 });
 
 test("parseMoveTestStdout caps tests[] at 100 and sets truncated", () => {
@@ -9589,6 +11353,42 @@ test("sui-client normalizes Move shorthand 0x2 to canonical 64-hex form", () => 
   assert.equal(normalizeMoveAddress("0x2"), "0x" + "0".repeat(63) + "2");
 });
 
+test("Aptos and CosmWasm REST clients append paths before query-bearing endpoint secrets", async () => {
+  const { getAccountResource } = require("../mcp/lib/aptos-client.js");
+  const { getContractInfo } = require("../mcp/lib/cosmwasm-client.js");
+  const requested = [];
+  await withMockSmartContractHttpRequest(async (url) => {
+    requested.push(String(url));
+    return {
+      ok: true,
+      status: 200,
+      headers: {},
+      text: "{}",
+    };
+  }, async () => {
+    await withMockSmartContractRpcLookup({
+      "aptos.example.test": [{ address: "93.184.216.34", family: 4 }],
+      "cosmos.example.test": [{ address: "93.184.216.35", family: 4 }],
+    }, async () => {
+      await getAccountResource({
+        network: "mainnet",
+        address: "0x1",
+        resourceType: "0x1::coin::CoinStore<0x1::aptos_coin::AptosCoin>",
+        endpoints: ["https://aptos.example.test/v1?api_key=aptos-secret"],
+      });
+      await getContractInfo({
+        network: "osmosis",
+        address: "osmo1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5z5tpwxqergd3c8g7rusq4z5ese",
+        endpoints: ["https://cosmos.example.test/cosmos?api_key=cosmos-secret"],
+      });
+    });
+  });
+  assert.match(requested[0], /^https:\/\/aptos\.example\.test\/v1\/accounts\//);
+  assert.match(requested[0], /\?api_key=aptos-secret$/);
+  assert.match(requested[1], /^https:\/\/cosmos\.example\.test\/cosmos\/cosmwasm\/wasm\/v1\/contract\//);
+  assert.match(requested[1], /\?api_key=cosmos-secret$/);
+});
+
 test("hunter-brief summarizeRpcPoolForBrief dispatches to aptos and sui pool summaries", () => {
   const { summarizeRpcPoolForBrief } = require("../mcp/lib/evm-rpc-pool.js");
   const aptos = summarizeRpcPoolForBrief("aptos", "mainnet");
@@ -9599,6 +11399,18 @@ test("hunter-brief summarizeRpcPoolForBrief dispatches to aptos and sui pool sum
   assert.equal(sui.chain_family, "sui");
   assert.equal(sui.network, "mainnet");
   assert.ok(Array.isArray(sui.endpoints) && sui.endpoints.length >= 1, "sui mainnet pool surfaces endpoints");
+});
+
+test("hunter-brief RPC pool summaries redact credentialed operator endpoints", () => {
+  const { summarizeRpcPoolForBrief } = require("../mcp/lib/evm-rpc-pool.js");
+  const secret = "brief-secret-token";
+  withEnv({
+    BOB_EVM_RPCS_1: `https://user:pass@rpc.example/rpc?api_key=${secret}`,
+  }, () => {
+    const evm = summarizeRpcPoolForBrief("evm", 1);
+    assert.equal(evm.endpoints[0], "https://REDACTED:REDACTED@rpc.example/rpc?api_key=REDACTED");
+    assert.doesNotMatch(JSON.stringify(evm), new RegExp(secret));
+  });
 });
 
 test("hunter-brief summarizeRpcPoolForBrief dispatches to substrate and cosmwasm pool summaries", () => {
@@ -9641,6 +11453,26 @@ test("parseCargoTestStdout parses cargo unit test output line-by-line", () => {
   assert.match(r.tests[1].reason || "", /panicked at assertion failed/);
   assert.equal(r.tests[2].status, "Skipped");
   assert.equal(r.tests[2].status_raw, "ignored");
+});
+
+test("parseCargoTestStdout redacts endpoint secrets in failure reasons", () => {
+  const { parseCargoTestStdout } = require("../mcp/lib/cargo-test-output.js");
+  const secret = "cargo-parser-secret";
+  const stdout = [
+    "running 1 test",
+    "test tests::leaks ... FAILED",
+    "",
+    "failures:",
+    "",
+    "---- tests::leaks stdout ----",
+    `thread panicked after querying https://rpc.example/rpc?token=${secret}`,
+    "",
+    "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s",
+  ].join("\n");
+  const r = parseCargoTestStdout(stdout);
+  assert.equal(r.ok, true);
+  assert.doesNotMatch(JSON.stringify(r), new RegExp(secret));
+  assert.match(r.tests[0].reason || "", /token=REDACTED/);
 });
 
 test("parseCargoTestStdout caps tests[] at 100 and sets truncated", () => {
@@ -9784,7 +11616,7 @@ test("cosmwasm runner rejects harness without Cargo.toml at root", async () => {
 });
 
 test("bech32 mixed-case rejection happens at findings layer with stable error shape", () => {
-  const { normalizeBech32Address } = require("../mcp/lib/findings.js");
+  const { normalizeBech32Address } = require("../mcp/lib/finding-contracts.js");
   // BIP-0173 forbids mixed-case bech32 — the spec is explicit. We test the
   // normalizer directly so it's clear which layer enforces this.
   assert.equal(normalizeBech32Address("Osmo1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5z5tpwxqergd3c8g7rusq4z5ese"), null);
@@ -9816,7 +11648,7 @@ test("cosmwasm-client rejects malformed bech32", () => {
 });
 
 test("sc_evidence rejects EVM-canonical 40-hex address when chain_family is aptos or sui", () => {
-  const { normalizeFindingRecord } = require("../mcp/lib/findings.js");
+  const { normalizeFindingRecord } = require("../mcp/lib/finding-contracts.js");
   // A hunter pastes Vitalik's address (or any 0x + 40 hex EVM address) into a
   // Move-family sc_evidence. Without the EVM-shape rejection, the address
   // would silently be left-padded to 64 hex and stored as a Move address
@@ -10039,7 +11871,7 @@ test("bounty_read_findings, bounty_list_findings, and bounty_wave_status return 
         errors: 0,
         scope_blocked: 0,
         network_unreachable_target: 0,
-        egress: { by_profile: {}, by_region: {} },
+        egress: { by_profile: {}, by_region: {}, by_identity_hash: {}, unbound: 0, identities: [] },
         geofence_warning: { threshold: 3, warning: false, code: null, note: null, hosts: [] },
         recent: [],
       },
@@ -10134,7 +11966,7 @@ test("bounty_list_findings and bounty_wave_status keep their external shapes whi
         errors: 0,
         scope_blocked: 0,
         network_unreachable_target: 0,
-        egress: { by_profile: {}, by_region: {} },
+        egress: { by_profile: {}, by_region: {}, by_identity_hash: {}, unbound: 0, identities: [] },
         geofence_warning: { threshold: 3, warning: false, code: null, note: null, hosts: [] },
         recent: [],
       },
@@ -10963,6 +12795,30 @@ test("verification v2 rejects changed inputs after snapshot at write/adjudicatio
   });
 });
 
+test("verification v2 rejects self-corrupted snapshot artifacts before coverage use", () => {
+  withTempHome(() => {
+    const domain = "corrupt-snapshot.example.com";
+    enterVerifyV2(domain);
+    const context = JSON.parse(readVerificationContext({ target_domain: domain }));
+    const snapshotPath = verificationSnapshotPath(domain);
+    const snapshot = JSON.parse(fs.readFileSync(snapshotPath, "utf8"));
+    writeFileAtomic(snapshotPath, `${JSON.stringify({
+      ...snapshot,
+      finding_ids: ["F-2"],
+    }, null, 2)}\n`);
+
+    assert.throws(() => writeVerificationRound({
+      target_domain: domain,
+      round: "brutalist",
+      notes: null,
+      verification_attempt_id: context.current_attempt_id,
+      verification_snapshot_hash: context.snapshot_hash,
+      round_profile: "brutalist",
+      results: [v2VerificationResult("F-2")],
+    }), /Current VERIFY v2 snapshot artifact hash mismatch/);
+  });
+});
+
 test("verification v2 read context marks current-attempt round coverage corruption stale", () => {
   withTempHome(() => {
     const domain = "corrupt-round.example.com";
@@ -11167,6 +13023,7 @@ test("existing v1 verification artifacts pin VERIFY transition to v1 for the ses
 test("replay-capable tools require context only for verification and evidence replay purposes", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
+    seedSessionState(domain);
     const missingContext = await executeTool("bounty_http_scan", {
       target_domain: domain,
       method: "GET",
@@ -11259,6 +13116,81 @@ test("acquire never calls openSync(wx) on the lease path", async () => {
     } finally {
       fs.openSync = originalOpenSync;
     }
+  });
+});
+
+test("replayExecutionPolicy without a domain does not scan active lease directories", () => {
+  const originalExistsSync = fs.existsSync;
+  let touchedLeaseDir = false;
+  fs.existsSync = function patchedExistsSync(target) {
+    if (String(target).includes("verification-replay-leases")) {
+      touchedLeaseDir = true;
+    }
+    return originalExistsSync.apply(fs, arguments);
+  };
+  try {
+    const policy = replayExecutionPolicy();
+    assert.ok(policy.length > 0);
+    assert.ok(policy.every((pack) => Array.isArray(pack.active_leases) && pack.active_leases.length === 0));
+  } finally {
+    fs.existsSync = originalExistsSync;
+  }
+  assert.equal(touchedLeaseDir, false);
+});
+
+test("verification replay safety rejects stale snapshots before acquiring leases", async () => {
+  await withTempHome(async () => {
+    const domain = "stale-replay-snapshot.example.com";
+    enterVerifyV2(domain);
+    const context = JSON.parse(readVerificationContext({ target_domain: domain }));
+    const replayContext = replayContextFromVerificationContext(context);
+    seedFinding(domain, {
+      title: "Second finding changes VERIFY input",
+      endpoint: "/api/changed-after-snapshot",
+      proof_of_concept: "curl https://example.com/api/changed-after-snapshot",
+      response_evidence: "{\"changed\":true}",
+    });
+
+    await assert.rejects(
+      () => runWithReplaySafety(
+        { name: "bounty_http_scan" },
+        { target_domain: domain, replay_context: replayContext },
+        () => "should not run",
+      ),
+      /VERIFY input changed after snapshot/,
+    );
+    assert.equal(fs.existsSync(replayLeaseFileFor(domain, replayContext)), false);
+  });
+});
+
+test("verification replay policy events preserve acquired event shape and active lease count", async () => {
+  await withTempHome(async () => {
+    const domain = "lease-event-shape.example.com";
+    enterVerifyV2(domain);
+    const context = JSON.parse(readVerificationContext({ target_domain: domain }));
+    const replayContext = replayContextFromVerificationContext(context);
+
+    assert.equal(
+      await runWithReplaySafety(
+        { name: "bounty_http_scan" },
+        { target_domain: domain, replay_context: replayContext },
+        async () => "ok",
+      ),
+      "ok",
+    );
+
+    const rows = readJsonl(pipelineEventsJsonlPath(domain));
+    const event = rows.find((row) => row.type === "verification_replay_policy_applied");
+    assert.ok(event);
+    assert.equal(event.phase, "VERIFY");
+    assert.equal(event.status, "lease_acquired");
+    assert.equal(event.source, "bounty_http_scan");
+    assert.equal(event.verification_attempt_id, replayContext.verification_attempt_id);
+    assert.equal(event.verification_snapshot_hash, replayContext.verification_snapshot_hash);
+    assert.equal(event.capability_pack, "web");
+    assert.equal(event.lease_scope, "attempt_pack");
+    assert.equal(event.replay_purpose, "verification_replay");
+    assert.deepEqual(event.counts, { active_leases: 1 });
   });
 });
 
@@ -11379,6 +13311,49 @@ test("verification replay leases reject simulated cross-process locks and clean 
   });
 });
 
+test("verification replay leases do not clean expired leases from live owners", async () => {
+  await withTempHome(async () => {
+    const domain = "lease-expired-live-owner.example.com";
+    enterVerifyV2(domain);
+    const context = JSON.parse(readVerificationContext({ target_domain: domain }));
+    const replayContext = replayContextFromVerificationContext(context);
+    const leasePath = replayLeaseFileFor(domain, replayContext);
+    fs.mkdirSync(path.dirname(leasePath), { recursive: true });
+    const leaseId = path.basename(leasePath, ".json");
+    writeFileAtomic(leasePath, `${JSON.stringify({
+      version: 1,
+      lease_id: leaseId,
+      target_domain: domain,
+      tool: "bounty_http_scan",
+      capability_pack: "web",
+      lease_scope: "attempt_pack",
+      replay_purpose: "verification_replay",
+      verification_attempt_id: replayContext.verification_attempt_id,
+      verification_snapshot_hash: replayContext.verification_snapshot_hash,
+      round: replayContext.round,
+      finding_id: replayContext.finding_id,
+      acquired_at: new Date(Date.now() - VERIFICATION_REPLAY_LEASE_TTL_MS - 1000).toISOString(),
+      expires_at: new Date(Date.now() - 1000).toISOString(),
+      pid: process.pid,
+    }, null, 2)}\n`);
+
+    let handlerEntered = false;
+    await assert.rejects(
+      () => runWithReplaySafety(
+        { name: "bounty_http_scan" },
+        { target_domain: domain, replay_context: replayContext },
+        () => {
+          handlerEntered = true;
+          return "should not run";
+        },
+      ),
+      /Replay lease busy/,
+    );
+    assert.equal(handlerEntered, false);
+    assert.equal(fs.existsSync(leasePath), true);
+  });
+});
+
 test("externally-created empty lease is cleaned up and acquired", async () => {
   await withTempHome(async () => {
     const domain = "lease-empty-external.example.com";
@@ -11417,6 +13392,35 @@ test("externally-created empty lease is cleaned up and acquired", async () => {
 
     await wrapperPromise;
     assert.equal(fs.existsSync(leasePath), false);
+  });
+});
+
+test("lease release does not remove a replacement lease owned by another process", async () => {
+  await withTempHome(async () => {
+    const domain = "lease-release-replacement.example.com";
+    enterVerifyV2(domain);
+    const context = JSON.parse(readVerificationContext({ target_domain: domain }));
+    const replayContext = replayContextFromVerificationContext(context);
+    const leasePath = replayLeaseFileFor(domain, replayContext);
+
+    const result = await runWithReplaySafety(
+      { name: "bounty_http_scan" },
+      { target_domain: domain, replay_context: replayContext },
+      async () => {
+        const replacement = {
+          ...JSON.parse(fs.readFileSync(leasePath, "utf8")),
+          lease_id: "replacement-lease",
+          acquired_at: new Date(Date.now() + 1).toISOString(),
+          expires_at: new Date(Date.now() + VERIFICATION_REPLAY_LEASE_TTL_MS).toISOString(),
+          pid: 999999,
+        };
+        writeFileAtomic(leasePath, `${JSON.stringify(replacement, null, 2)}\n`);
+        return "ok";
+      },
+    );
+
+    assert.equal(result, "ok");
+    assert.equal(JSON.parse(fs.readFileSync(leasePath, "utf8")).lease_id, "replacement-lease");
   });
 });
 
@@ -11761,6 +13765,7 @@ test("bounty_write_grade_verdict writes grade.json and grade.md and accepts empt
 test("bounty_write_grade_verdict requires valid final verification before grading", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
+    seedSessionState(domain);
     seedFinding(domain);
 
     const result = await executeTool("bounty_write_grade_verdict", {
@@ -12021,6 +14026,7 @@ test("bounty_read_grade_verdict hard-fails on missing or malformed JSON", () => 
 test("bounty_read_grade_verdict rejects grade artifacts when final verification is missing", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
+    seedSessionState(domain);
     seedFinding(domain);
     const paths = gradeArtifactPaths(domain);
     fs.mkdirSync(path.dirname(paths.json), { recursive: true });
@@ -12083,6 +14089,7 @@ test("bounty_auth_store writes v2 auth.json with attacker profile", async () => 
   try {
     const sessionsDir = path.join(tempHome, "bounty-agent-sessions");
     fs.mkdirSync(path.join(sessionsDir, "target.com"), { recursive: true });
+    seedSessionState("target.com");
 
     const result = await executeTool("bounty_auth_store", {
       target_domain: "target.com",
@@ -12116,6 +14123,7 @@ test("bounty_auth_store adds victim profile to existing v2 auth.json", async () 
     const sessionsDir = path.join(tempHome, "bounty-agent-sessions");
     const targetDir = path.join(sessionsDir, "target.com");
     fs.mkdirSync(targetDir, { recursive: true });
+    seedSessionState("target.com");
 
     // Write attacker first
     await executeTool("bounty_auth_store", {
@@ -12148,6 +14156,7 @@ test("bounty_auth_store adds victim profile to existing v2 auth.json", async () 
 
 test("bounty_auth_store accepts arbitrary profile names without clobbering existing profiles", async () => {
   await withTempHome(async () => {
+    seedSessionState("target.com");
     await executeTool("bounty_auth_store", {
       target_domain: "target.com",
       profile_name: "attacker",
@@ -12174,6 +14183,7 @@ test("bounty_auth_store migrates legacy auth.json", async () => {
     const sessionsDir = path.join(tempHome, "bounty-agent-sessions");
     const targetDir = path.join(sessionsDir, "target.com");
     fs.mkdirSync(targetDir, { recursive: true });
+    seedSessionState("target.com");
 
     // Write legacy format (flat object, no version)
     fs.writeFileSync(path.join(targetDir, "auth.json"), JSON.stringify({
@@ -12210,6 +14220,7 @@ test("bounty_auth_store stores credentials alongside headers", async () => {
   try {
     const sessionsDir = path.join(tempHome, "bounty-agent-sessions");
     fs.mkdirSync(path.join(sessionsDir, "target.com"), { recursive: true });
+    seedSessionState("target.com");
 
     await executeTool("bounty_auth_store", {
       target_domain: "target.com",
@@ -12235,6 +14246,7 @@ test("bounty_auth_store writes and migrates auth.json with 0600 permissions", as
     const targetDir = path.join(tempHome, "bounty-agent-sessions", "target.com");
     const authPath = path.join(targetDir, "auth.json");
     fs.mkdirSync(targetDir, { recursive: true });
+    seedSessionState("target.com");
 
     await executeTool("bounty_auth_store", {
       target_domain: "target.com",
@@ -12262,6 +14274,7 @@ test("bounty_auth_store reports persistence failures instead of claiming success
   process.env.HOME = tempHome;
   try {
     const authPath = path.join(tempHome, "bounty-agent-sessions", "target.com", "auth.json");
+    seedSessionState("target.com");
     fs.mkdirSync(authPath, { recursive: true });
 
     const envelope = await executeTool("bounty_auth_store", {
@@ -12284,6 +14297,7 @@ test("bounty_auth_store reports persistence failures instead of claiming success
 
 test("bounty_auth_store preserves concurrent attacker and victim profile writes", async () => {
   await withTempHome(async () => {
+    seedSessionState("target.com");
     await Promise.all([
       executeTool("bounty_auth_store", {
         target_domain: "target.com",
@@ -12308,6 +14322,7 @@ test("bounty_list_auth_profiles redacts secrets while reporting profile status",
   const previousHome = process.env.HOME;
   process.env.HOME = tempHome;
   try {
+    seedSessionState("target.com");
     await executeTool("bounty_auth_store", {
       target_domain: "target.com",
       profile_name: "attacker",
@@ -12330,8 +14345,37 @@ test("bounty_list_auth_profiles redacts secrets while reporting profile status",
   }
 });
 
+test("candidateAuthDomains binds auth lookup to the request host", () => {
+  assert.deepEqual(
+    candidateAuthDomains("target.com", "https://api.target.com/private"),
+    ["target.com"],
+  );
+  assert.deepEqual(
+    candidateAuthDomains("api.target.com", "https://api.target.com/private"),
+    ["api.target.com"],
+  );
+  assert.deepEqual(
+    candidateAuthDomains("api.target.com", "https://target.com/private"),
+    [],
+  );
+  assert.deepEqual(
+    candidateAuthDomains("target.com", "https://api.other.com/private"),
+    [],
+  );
+  assert.deepEqual(
+    candidateAuthDomains("Target.COM.", "https://API.Target.COM./private"),
+    ["target.com"],
+  );
+  assert.deepEqual(
+    candidateAuthDomains("target.com", null),
+    ["target.com"],
+  );
+});
+
 test("bounty_http_scan resolves auth by explicit target_domain and first-party subdomain only", async () => {
   await withTempHome(async () => {
+    seedSessionState("target.com");
+    seedSessionState("missing.com");
     await executeTool("bounty_auth_store", {
       target_domain: "target.com",
       profile_name: "attacker",
@@ -12343,7 +14387,7 @@ test("bounty_http_scan resolves auth by explicit target_domain and first-party s
       headers: { Authorization: "Bearer other-token" },
     });
     const listed = JSON.parse(listAuthProfiles({ target_domain: "api.target.com" }));
-    assert.equal(listed.has_attacker, true);
+    assert.equal(listed.has_attacker, false);
 
     await withMockSafeFetch((url, requestOptions) => ({
       status: requestOptions.headers.Authorization === "Bearer target-token" ? 200 : 401,
@@ -12369,54 +14413,60 @@ test("bounty_http_scan resolves auth by explicit target_domain and first-party s
       assert.equal(blocked.ok, false);
       assert.equal(blocked.error.code, "AUTH_MISSING");
       assert.match(blocked.error.message, /auth_profile "attacker" requested but not found/);
+
+      const crossHost = await executeTool("bounty_http_scan", {
+        target_domain: "target.com",
+        method: "GET",
+        url: "https://api.other.com/private",
+        auth_profile: "attacker",
+        response_mode: "status_only",
+      });
+      assert.equal(crossHost.ok, false);
+      assert.equal(crossHost.error.code, "SCOPE_BLOCKED");
+      assert.match(crossHost.error.message, /outside target_domain target\.com/);
       assert.deepEqual(requestedUrls, ["https://api.target.com/private"]);
     });
   });
 });
 
 test("bounty_evm_call resolves the latest block via eth_blockNumber and returns block_used", async () => {
-  const originalFetch = global.fetch;
-  try {
-    let callCount = 0;
-    global.fetch = async (_url, opts) => {
-      callCount += 1;
-      const body = JSON.parse(opts.body);
-      if (body.method === "eth_call") {
-        return {
-          ok: true,
-          status: 200,
-          headers: { get: () => "application/json" },
-          text: async () => JSON.stringify({ jsonrpc: "2.0", id: body.id, result: "0x" + "00".repeat(31) + "01" }),
-          body: null,
-        };
-      }
-      if (body.method === "eth_blockNumber") {
-        // Return decimal 19_500_000 in hex
-        return {
-          ok: true,
-          status: 200,
-          headers: { get: () => "application/json" },
-          text: async () => JSON.stringify({ jsonrpc: "2.0", id: body.id, result: "0x129a8c0" }),
-          body: null,
-        };
-      }
-      return { ok: false, status: 500, text: async () => "" };
-    };
-
-    const result = await executeTool("bounty_evm_call", {
+  let callCount = 0;
+  await withMockSmartContractHttpRequest(async (_url, request) => {
+    callCount += 1;
+    const body = JSON.parse(request.body);
+    if (body.method === "eth_call") {
+      return {
+        ok: true,
+        status: 200,
+        headers: { "content-type": "application/json" },
+        text: JSON.stringify({ jsonrpc: "2.0", id: body.id, result: "0x" + "00".repeat(31) + "01" }),
+      };
+    }
+    if (body.method === "eth_blockNumber") {
+      // Return decimal 19_500_000 in hex
+      return {
+        ok: true,
+        status: 200,
+        headers: { "content-type": "application/json" },
+        text: JSON.stringify({ jsonrpc: "2.0", id: body.id, result: "0x129a8c0" }),
+      };
+    }
+    return { ok: false, status: 500, text: "" };
+  }, async () => {
+    const result = await withMockSmartContractRpcLookup({
+      "eth.llamarpc.com": [{ address: "93.184.216.34", family: 4 }],
+    }, () => executeTool("bounty_evm_call", {
       chain_id: 1,
       to: "0x" + "11".repeat(20),
       data: "0x70a08231" + "00".repeat(32),
       endpoints: ["https://eth.llamarpc.com"],
-    });
+    }));
     assert.equal(result.ok, true);
     assert.equal(result.data.block, "latest");
     // Hex 0x129a8c0 = 19_507_392
     assert.equal(result.data.block_used, 19_507_392);
     assert.ok(callCount >= 2, "expected at least one eth_call and one eth_blockNumber");
-  } finally {
-    global.fetch = originalFetch;
-  }
+  });
 });
 
 // ── bounty_temp_email tests ──
@@ -12617,6 +14667,7 @@ test("auto-signup result normalization fails ambiguous states and preserves diag
 
 test("bounty_auto_signup returns ok true manual fallback when browser automation is unavailable", async () => {
   await withTempHome(async () => {
+    seedSessionState("example.com");
     const originalResolve = Module._resolveFilename;
     Module._resolveFilename = function patchedResolve(request, parent, isMain, options) {
       if (request === "patchright") {
@@ -12644,10 +14695,131 @@ test("bounty_auto_signup returns ok true manual fallback when browser automation
   });
 });
 
-test("bounty_auto_signup optionally blocks internal signup URLs before browser launch and lets third-party signup URLs through", async () => {
+test("bounty_auto_signup rejects raw proxy arguments and uses egress profiles only", async () => {
+  await withTempHome(async () => {
+    seedSessionState("example.com");
+    const rawProxySecret = ["browser", "proxy", "secret"].join("-");
+    const rawProxy = ["http://user:", rawProxySecret, "@proxy.example:8080"].join("");
+    const rejected = await executeTool("bounty_auto_signup", {
+      target_domain: "example.com",
+      signup_url: "https://example.com/signup",
+      email: "a@example.test",
+      password: "Password123!",
+      proxy: rawProxy,
+    });
+
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.error.code, "INVALID_ARGUMENTS");
+    assert.doesNotMatch(JSON.stringify(rejected), new RegExp(rawProxySecret));
+
+    const document = {
+      version: 1,
+      profiles: [
+        egressProfiles.defaultEgressProfile(),
+        {
+          name: "browser-eu",
+          proxy_url: "${BOB_EGRESS_BROWSER_PROXY}",
+          region: "EU",
+          description: "Browser automation proxy",
+          enabled: true,
+        },
+      ],
+    };
+
+    await withRepoEgressConfig(document, async () => {
+      await withEnv({ BOB_EGRESS_BROWSER_PROXY: rawProxy }, async () => {
+        const originalResolve = Module._resolveFilename;
+        Module._resolveFilename = function patchedResolve(request, parent, isMain, options) {
+          if (request === "patchright") {
+            throw new Error("Cannot find module 'patchright'");
+          }
+          return originalResolve.call(this, request, parent, isMain, options);
+        };
+        try {
+          const result = await executeTool("bounty_auto_signup", {
+            target_domain: "example.com",
+            signup_url: "https://example.com/signup",
+            email: "a@example.test",
+            password: "Password123!",
+            egress_profile: "browser-eu",
+          });
+
+          assert.equal(result.ok, true);
+          assert.equal(result.data.egress_profile, "browser-eu");
+          assert.equal(result.data.egress_region, "EU");
+          assert.equal(result.data.proxy_configured, true);
+          assert.match(result.data.egress_profile_identity_hash, /^[a-f0-9]{64}$/);
+          assert.equal(result.data.reason, "patchright_unavailable");
+          assert.doesNotMatch(JSON.stringify(result), new RegExp(rawProxySecret));
+        } finally {
+          Module._resolveFilename = originalResolve;
+        }
+      });
+    });
+  });
+});
+
+test("bounty_signup_detect uses egress profiles and rejects proxy-backed strict mode", async () => {
+  await withTempHome(async () => {
+    seedSessionState("example.com");
+    const rawProxySecret = ["signup", "detect", "proxy", "secret"].join("-");
+    const proxyAuthority = ["user", rawProxySecret].join(":");
+    const document = {
+      version: 1,
+      profiles: [
+        egressProfiles.defaultEgressProfile(),
+        {
+          name: "detect-eu",
+          proxy_url: "${BOB_EGRESS_DETECT_PROXY}",
+          region: "EU",
+          description: "Signup detection proxy",
+          enabled: true,
+        },
+      ],
+    };
+
+    await withRepoEgressConfig(document, async () => {
+      await withEnv({ BOB_EGRESS_DETECT_PROXY: ["http://", proxyAuthority, "@proxy.example:8080"].join("") }, async () => {
+        let sawAgent = false;
+        await withMockSafeFetch((url, requestOptions) => {
+          sawAgent = sawAgent || !!requestOptions.agent;
+          return { status: 404, statusText: "Not Found", body: "missing" };
+        }, async () => {
+          const result = await executeTool("bounty_signup_detect", {
+            target_domain: "example.com",
+            target_url: "https://example.com",
+            egress_profile: "detect-eu",
+          });
+
+          assert.equal(result.ok, true);
+          assert.equal(result.data.egress_profile, "detect-eu");
+          assert.equal(result.data.egress_region, "EU");
+          assert.equal(result.data.proxy_configured, true);
+          assert.match(result.data.egress_profile_identity_hash, /^[a-f0-9]{64}$/);
+          assert.equal(sawAgent, true);
+          assert.doesNotMatch(JSON.stringify(result), new RegExp(rawProxySecret));
+        });
+
+        const strict = await executeTool("bounty_signup_detect", {
+          target_domain: "example.com",
+          target_url: "https://example.com",
+          egress_profile: "detect-eu",
+          block_internal_hosts: true,
+        });
+        assert.equal(strict.ok, false);
+        assert.equal(strict.error.code, "SCOPE_BLOCKED");
+        assert.match(strict.error.message, /block_internal_hosts cannot be enforced with proxy-backed egress_profile "detect-eu"/);
+        assert.match(strict.error.details.egress_profile_identity_hash, /^[a-f0-9]{64}$/);
+        assert.doesNotMatch(JSON.stringify(strict), new RegExp(rawProxySecret));
+      });
+    });
+  });
+});
+
+test("bounty_auto_signup blocks internal and off-target signup URLs before browser launch", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
-    fs.mkdirSync(sessionDir(domain), { recursive: true });
+    seedSessionState(domain);
 
     const internalBlocked = await executeTool("bounty_auto_signup", {
       target_domain: domain,
@@ -12658,35 +14830,35 @@ test("bounty_auto_signup optionally blocks internal signup URLs before browser l
     });
     assert.equal(internalBlocked.ok, false);
     assert.equal(internalBlocked.error.code, "SCOPE_BLOCKED");
-    assert.equal(internalBlocked.error.details.success, false);
     assert.equal(internalBlocked.error.details.scope_decision, "blocked");
-    assert.equal(internalBlocked.error.details.fallback, "manual");
-    assert.match(internalBlocked.error.message, /Blocked internal\/private host/);
+    assert.equal(internalBlocked.error.details.host, "127.0.0.1");
+    assert.match(internalBlocked.error.message, /outside target_domain example\.com/);
 
-    const thirdParty = await executeTool("bounty_auto_signup", {
+    const offTarget = await executeTool("bounty_auto_signup", {
       target_domain: domain,
       signup_url: "https://third-party.example.net/signup",
       email: "a@example.test",
       password: "Password123!",
     });
-    assert.equal(thirdParty.ok, true);
-    assert.equal(thirdParty.data.success, false);
-    assert.equal(thirdParty.data.fallback, "manual");
-    assert.notEqual(thirdParty.data.scope_decision, "blocked");
+    assert.equal(offTarget.ok, false);
+    assert.equal(offTarget.error.code, "SCOPE_BLOCKED");
+    assert.equal(offTarget.error.details.scope_decision, "blocked");
+    assert.equal(offTarget.error.details.host, "third-party.example.net");
+    assert.match(offTarget.error.message, /outside target_domain example\.com/);
   });
 });
 
-test("bounty_auto_signup blocks DNS-private signup hosts before browser availability checks", async () => {
+test("bounty_auto_signup refuses strict internal-host mode before browser availability checks", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
-    fs.mkdirSync(sessionDir(domain), { recursive: true });
+    seedSessionState(domain);
 
     const originalResolve = Module._resolveFilename;
     let patchrightResolveCalls = 0;
     Module._resolveFilename = function patchedResolve(request, parent, isMain, options) {
       if (request === "patchright") {
         patchrightResolveCalls += 1;
-        throw new Error("Patchright resolution should not run after a DNS scope block");
+        throw new Error("Patchright resolution should not run after a strict browser policy block");
       }
       return originalResolve.call(this, request, parent, isMain, options);
     };
@@ -12695,7 +14867,7 @@ test("bounty_auto_signup blocks DNS-private signup hosts before browser availabi
       await withMockSafeFetch({}, async (requestedUrls) => {
         const result = await executeTool("bounty_auto_signup", {
           target_domain: domain,
-          signup_url: "https://signup.public.test/register",
+          signup_url: "https://signup.example.com/register",
           email: "a@example.test",
           password: "Password123!",
           block_internal_hosts: true,
@@ -12703,33 +14875,79 @@ test("bounty_auto_signup blocks DNS-private signup hosts before browser availabi
 
         assert.equal(result.ok, false);
         assert.equal(result.error.code, "SCOPE_BLOCKED");
-        assert.match(result.error.message, /Blocked internal\/private DNS address/);
+        assert.match(result.error.message, /block_internal_hosts cannot be enforced for browser auto-signup/);
         assert.equal(result.error.details.scope_decision, "blocked");
         assert.equal(result.error.details.fallback, "manual");
+        assert.equal(result.error.details.reason, "strict_internal_hosts_unsupported_browser");
         assert.deepEqual(requestedUrls, []);
         assert.equal(patchrightResolveCalls, 0);
-      }, { dnsRecords: { "signup.public.test": [{ address: "10.0.0.5", family: 4 }] } });
+      }, { dnsRecords: { "signup.example.com": [{ address: "10.0.0.5", family: 4 }] } });
     } finally {
       Module._resolveFilename = originalResolve;
     }
   });
 });
 
-test("bounty_auto_signup treats non-policy DNS preflight failures as manual fallback", async () => {
+test("bounty_auto_signup uses persisted paranoid policy for manual fallback before browser availability checks", async () => {
   await withTempHome(async () => {
-    const result = await withMockSafeFetch({}, async () => executeTool("bounty_auto_signup", {
+    const domain = "paranoid-signup.example.com";
+    const init = await executeTool("bounty_init_session", {
+      target_domain: domain,
+      target_url: `https://${domain}`,
+      checkpoint_mode: "paranoid",
+    });
+    assert.equal(init.ok, true);
+
+    const originalResolve = Module._resolveFilename;
+    let patchrightResolveCalls = 0;
+    Module._resolveFilename = function patchedResolve(request, parent, isMain, options) {
+      if (request === "patchright") {
+        patchrightResolveCalls += 1;
+        throw new Error("Patchright resolution should not run after an effective strict browser policy block");
+      }
+      return originalResolve.call(this, request, parent, isMain, options);
+    };
+
+    try {
+      await withMockSafeFetch({}, async (requestedUrls) => {
+        const result = await executeTool("bounty_auto_signup", {
+          target_domain: domain,
+          signup_url: `https://signup.${domain}/register`,
+          email: "a@example.test",
+          password: "Password123!",
+        });
+
+        assert.equal(result.ok, false);
+        assert.equal(result.error.code, "SCOPE_BLOCKED");
+        assert.match(result.error.message, /block_internal_hosts cannot be enforced for browser auto-signup/);
+        assert.equal(result.error.details.block_internal_hosts, true);
+        assert.equal(result.error.details.block_internal_hosts_source, "paranoid_default");
+        assert.equal(result.error.details.reason, "strict_internal_hosts_unsupported_browser");
+        assert.deepEqual(requestedUrls, []);
+        assert.equal(patchrightResolveCalls, 0);
+      });
+    } finally {
+      Module._resolveFilename = originalResolve;
+    }
+  });
+});
+
+test("bounty_auto_signup treats non-policy egress profile failures as manual fallback", async () => {
+  await withTempHome(async () => {
+    seedSessionState("example.com");
+    const result = await executeTool("bounty_auto_signup", {
       target_domain: "example.com",
-      signup_url: "https://signup.public.test/register",
+      signup_url: "https://signup.example.com/register",
       email: "a@example.test",
       password: "Password123!",
-      block_internal_hosts: true,
-    }), { dnsRecords: { "signup.public.test": [] } });
+      egress_profile: "missing-profile",
+    });
 
     assert.equal(result.ok, true);
     assert.equal(result.data.success, false);
     assert.equal(result.data.fallback, "manual");
-    assert.equal(result.data.reason, "automation_unavailable");
-    assert.match(result.data.message, /DNS lookup returned no addresses/);
+    assert.equal(result.data.reason, "egress_profile_unavailable");
+    assert.match(result.data.message, /egress profile "missing-profile" was not found/);
     assert.notEqual(result.data.scope_decision, "blocked");
   });
 });
@@ -12759,6 +14977,7 @@ test("migrateAuthJson handles null/undefined", () => {
 test("bounty_http_scan writes audit entries for success, HTTP error, timeout, and scope-blocked requests", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
+    seedSessionState(domain);
     const timeoutError = new Error("The operation was aborted");
     timeoutError.name = "AbortError";
 
@@ -12837,6 +15056,7 @@ test("bounty_http_scan writes audit entries for success, HTTP error, timeout, an
 test("bounty_http_scan records selected egress profile and passes a proxy agent without storing proxy URLs", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
+    seedSessionState(domain);
     const rawProxySecret = ["raw", "proxy", "secret"].join("-");
     const proxyAuthority = ["user", rawProxySecret].join(":");
     const document = {
@@ -12889,8 +15109,392 @@ test("bounty_http_scan records selected egress profile and passes a proxy agent 
   });
 });
 
+test("bounty_init_session binds egress profile identity without storing proxy secrets", async () => {
+  await withTempHome(async () => {
+    const domain = "egress-init.example.com";
+    const rawProxySecret = ["init", "proxy", "secret"].join("-");
+    const proxyAuthority = ["user", rawProxySecret].join(":");
+    const document = {
+      version: 1,
+      profiles: [
+        egressProfiles.defaultEgressProfile(),
+        {
+          name: "operator-eu",
+          proxy_url: "${BOB_EGRESS_OPERATOR_PROXY}",
+          region: "EU",
+          description: "Operator egress profile",
+          enabled: true,
+        },
+      ],
+    };
+
+    await withRepoEgressConfig(document, async () => {
+      await withEnv({ BOB_EGRESS_OPERATOR_PROXY: ["http://", proxyAuthority, "@proxy.example:8080"].join("") }, async () => {
+        const result = await executeTool("bounty_init_session", {
+          target_domain: domain,
+          target_url: `https://${domain}`,
+          egress_profile: "operator-eu",
+        });
+
+        assert.equal(result.ok, true);
+        assert.equal(result.data.state.egress_profile, "operator-eu");
+        assert.equal(result.data.state.egress_region, "EU");
+        assert.equal(result.data.state.proxy_configured, true);
+        assert.match(result.data.state.egress_profile_identity_hash, /^[a-f0-9]{64}$/);
+        assert.equal(result.data.state.egress_profile_identity_version, 1);
+        assert.equal(result.data.state.egress_profile_identity_source.proxy_env_var, "BOB_EGRESS_OPERATOR_PROXY");
+        assert.doesNotMatch(JSON.stringify(result), new RegExp(rawProxySecret));
+
+        const rawState = fs.readFileSync(statePath(domain), "utf8");
+        assert.doesNotMatch(rawState, new RegExp(rawProxySecret));
+        const events = readJsonl(pipelineEventsJsonlPath(domain));
+        assert.equal(events[0].type, "session_started");
+        assert.equal(events[0].egress_profile_identity_hash, result.data.state.egress_profile_identity_hash);
+        assert.doesNotMatch(JSON.stringify(events), new RegExp(rawProxySecret));
+      });
+    });
+  });
+});
+
+test("default egress identity hash is stable unless identity version changes", () => {
+  withTempHome(() => {
+    const profile = egressProfiles.resolveEgressProfile("default");
+    assert.equal(egressProfiles.EGRESS_PROFILE_IDENTITY_VERSION, 1);
+    assert.equal(
+      profile.egress_profile_identity_hash,
+      "791de81d33f4f1d790cd2d1f9f800ba238072914b6f37aaa4739c7b34a398acc",
+    );
+  });
+});
+
+test("egress-bound HTTP scans require initialized session state", async () => {
+  await withTempHome(async () => {
+    const domain = "egress-no-session.example.com";
+    await withMockSafeFetch(() => {
+      throw new Error("network should not be reached without egress binding");
+    }, async (requestedUrls) => {
+      const result = await executeTool("bounty_http_scan", {
+        target_domain: domain,
+        method: "GET",
+        url: `https://${domain}/ok`,
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.error.code, "STATE_CONFLICT");
+      assert.match(result.error.message, /Session authority is missing/);
+      assert.deepEqual(requestedUrls, []);
+    });
+  });
+});
+
+test("scope-blocked HTTP scans keep the bound egress identity in audit and telemetry", async () => {
+  await withTempHome(async () => {
+    const domain = "egress-scope-block.example.com";
+    const init = await executeTool("bounty_init_session", {
+      target_domain: domain,
+      target_url: `https://${domain}`,
+    });
+    assert.equal(init.ok, true);
+    const boundHash = init.data.state.egress_profile_identity_hash;
+
+    await withMockSafeFetch(() => {
+      throw new Error("network should not be reached for scope-blocked requests");
+    }, async (requestedUrls) => {
+      const result = await executeTool("bounty_http_scan", {
+        target_domain: domain,
+        method: "GET",
+        url: "http://127.0.0.1/admin",
+        block_internal_hosts: true,
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.error.code, "SCOPE_BLOCKED");
+      assert.equal(result.error.details.egress_profile_identity_hash, boundHash);
+      assert.deepEqual(requestedUrls, []);
+    });
+
+    const records = readHttpAuditRecordsFromJsonl(domain);
+    assert.equal(records.length, 1);
+    assert.equal(records[0].scope_decision, "blocked");
+    assert.equal(records[0].egress_profile_identity_hash, boundHash);
+
+    const telemetryRows = readJsonl(toolTelemetryPath())
+      .filter((row) => row.tool === "bounty_http_scan");
+    assert.equal(telemetryRows.length, 1);
+    assert.equal(telemetryRows[0].egress_profile_identity_hash, boundHash);
+  });
+});
+
+test("scope-blocked HTTP scans still reject initialized-session egress drift", async () => {
+  await withTempHome(async () => {
+    const domain = "egress-scope-drift.example.com";
+    const document = {
+      version: 1,
+      profiles: [
+        egressProfiles.defaultEgressProfile(),
+        {
+          name: "operator-eu",
+          proxy_url: null,
+          region: "EU",
+          description: "Operator direct EU profile",
+          enabled: true,
+        },
+      ],
+    };
+
+    await withRepoEgressConfig(document, async () => {
+      const init = await executeTool("bounty_init_session", {
+        target_domain: domain,
+        target_url: `https://${domain}`,
+      });
+      assert.equal(init.ok, true);
+
+      await withMockSafeFetch(() => {
+        throw new Error("network should not be reached for scope-blocked drift");
+      }, async (requestedUrls) => {
+        const result = await executeTool("bounty_http_scan", {
+          target_domain: domain,
+          method: "GET",
+          url: "http://127.0.0.1/admin",
+          egress_profile: "operator-eu",
+          block_internal_hosts: true,
+        });
+        assert.equal(result.ok, false);
+        assert.equal(result.error.code, "STATE_CONFLICT");
+        assert.match(result.error.message, /egress profile drift/);
+        assert.deepEqual(requestedUrls, []);
+      });
+    });
+
+    assert.deepEqual(readHttpAuditRecordsFromJsonl(domain), []);
+  });
+});
+
+test("scope-blocked HTTP scans migrate legacy egress identity before audit", async () => {
+  await withTempHome(async () => {
+    const domain = "legacy-scope-block.example.com";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      ...legacyEgressStateFields(),
+    });
+
+    await withMockSafeFetch(() => {
+      throw new Error("network should not be reached for legacy scope block");
+    }, async (requestedUrls) => {
+      const result = await executeTool("bounty_http_scan", {
+        target_domain: domain,
+        method: "GET",
+        url: "http://127.0.0.1/admin",
+        block_internal_hosts: true,
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.error.code, "SCOPE_BLOCKED");
+      assert.match(result.error.details.egress_profile_identity_hash, /^[a-f0-9]{64}$/);
+      assert.deepEqual(requestedUrls, []);
+    });
+
+    const state = JSON.parse(fs.readFileSync(statePath(domain), "utf8"));
+    assert.match(state.egress_profile_identity_hash, /^[a-f0-9]{64}$/);
+    assert.equal(state.egress_profile_identity_bind_source, "legacy_migration");
+    assert.equal(state.egress_profile_legacy_migration.source, "bounty_http_scan_scope_blocked");
+    const records = readHttpAuditRecordsFromJsonl(domain);
+    assert.equal(records.length, 1);
+    assert.equal(records[0].scope_decision, "blocked");
+    assert.equal(records[0].egress_profile_identity_hash, state.egress_profile_identity_hash);
+  });
+});
+
+test("session egress identity permits credential rotation but rejects route drift", async () => {
+  await withTempHome(async () => {
+    const domain = "egress-drift.example.com";
+    const firstSecret = ["first", "proxy", "secret"].join("-");
+    const secondSecret = ["second", "proxy", "secret"].join("-");
+    const document = {
+      version: 1,
+      profiles: [
+        egressProfiles.defaultEgressProfile(),
+        {
+          name: "operator-eu",
+          proxy_url: "${BOB_EGRESS_OPERATOR_PROXY}",
+          region: "EU",
+          description: "Operator egress profile",
+          enabled: true,
+        },
+      ],
+    };
+
+    await withRepoEgressConfig(document, async () => {
+      await withEnv({ BOB_EGRESS_OPERATOR_PROXY: `http://user:${firstSecret}@proxy.example:8080` }, async () => {
+        const init = await executeTool("bounty_init_session", {
+          target_domain: domain,
+          target_url: `https://${domain}`,
+          egress_profile: "operator-eu",
+        });
+        assert.equal(init.ok, true);
+      });
+
+      const boundHash = JSON.parse(fs.readFileSync(statePath(domain), "utf8")).egress_profile_identity_hash;
+
+      await withEnv({ BOB_EGRESS_OPERATOR_PROXY: `http://user:${secondSecret}@proxy.example:8080` }, async () => {
+        await withMockSafeFetch({
+          [`https://${domain}/ok`]: { status: 200, statusText: "OK", body: "ok" },
+        }, async () => {
+          const rotated = await executeTool("bounty_http_scan", {
+            target_domain: domain,
+            method: "GET",
+            url: `https://${domain}/ok`,
+            egress_profile: "operator-eu",
+            response_mode: "status_only",
+          });
+          assert.equal(rotated.ok, true);
+          assert.equal(rotated.data.egress_profile_identity_hash, boundHash);
+          assert.doesNotMatch(JSON.stringify(rotated), new RegExp(secondSecret));
+          assert.doesNotMatch(fs.readFileSync(statePath(domain), "utf8"), new RegExp(secondSecret));
+          assert.doesNotMatch(
+            JSON.stringify(readJsonl(pipelineEventsJsonlPath(domain))),
+            new RegExp(secondSecret),
+          );
+          assert.doesNotMatch(
+            JSON.stringify(readHttpAuditRecordsFromJsonl(domain)),
+            new RegExp(secondSecret),
+          );
+        });
+      });
+
+      await withEnv({ BOB_EGRESS_OPERATOR_PROXY: `http://user:${secondSecret}@other-proxy.example:8080` }, async () => {
+        await withMockSafeFetch(() => {
+          throw new Error("network should not be reached after egress drift");
+        }, async (requestedUrls) => {
+          const drifted = await executeTool("bounty_http_scan", {
+            target_domain: domain,
+            method: "GET",
+            url: `https://${domain}/ok`,
+            egress_profile: "operator-eu",
+          });
+          assert.equal(drifted.ok, false);
+          assert.equal(drifted.error.code, "STATE_CONFLICT");
+          assert.match(drifted.error.message, /egress profile drift/);
+          assert.equal(drifted.error.details.expected.egress_profile_identity_hash, boundHash);
+          assert.deepEqual(requestedUrls, []);
+          assert.doesNotMatch(JSON.stringify(drifted), new RegExp(secondSecret));
+        });
+      });
+
+      const telemetryRows = readJsonl(toolTelemetryPath())
+        .filter((row) => row.tool === "bounty_http_scan");
+      assert.ok(telemetryRows.some((row) => row.egress_profile_identity_hash === boundHash));
+      const driftTelemetry = telemetryRows.find((row) => row.error_code === "STATE_CONFLICT");
+      assert.ok(driftTelemetry);
+      assert.equal(driftTelemetry.egress_profile_identity_hash, boundHash);
+      assert.doesNotMatch(JSON.stringify(telemetryRows), new RegExp(secondSecret));
+    });
+  });
+});
+
+test("legacy sessions snapshot egress identity on first egress-bound request", async () => {
+  await withTempHome(async () => {
+    const domain = "legacy-egress.example.com";
+    seedSessionState(domain, { phase: "HUNT" });
+    appendJsonlLine(pipelineEventsJsonlPath(domain), {
+      version: 1,
+      bob_version: PACKAGE_VERSION,
+      ts: "2026-05-15T00:00:00.000Z",
+      target_domain: domain,
+      type: "coverage_logged",
+      counts: { coverage: 1 },
+      source: "legacy_fixture",
+    });
+
+    await withMockSafeFetch({
+      [`https://${domain}/ok`]: { status: 200, statusText: "OK", body: "ok" },
+    }, async () => {
+      const result = await executeTool("bounty_http_scan", {
+        target_domain: domain,
+        method: "GET",
+        url: `https://${domain}/ok`,
+        response_mode: "status_only",
+      });
+      assert.equal(result.ok, true);
+      assert.match(result.data.egress_profile_identity_hash, /^[a-f0-9]{64}$/);
+    });
+
+    const state = JSON.parse(fs.readFileSync(statePath(domain), "utf8"));
+    assert.equal(state.egress_profile, "default");
+    assert.match(state.egress_profile_identity_hash, /^[a-f0-9]{64}$/);
+    assert.match(state.egress_profile_identity_bound_at, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(state.egress_profile_identity_bind_source, "legacy_migration");
+    assert.deepEqual(state.egress_profile_legacy_migration.previous, {
+      egress_profile: "default",
+      egress_region: null,
+      proxy_configured: false,
+      egress_profile_identity_hash: null,
+      egress_profile_identity_version: null,
+    });
+    const records = readHttpAuditRecordsFromJsonl(domain);
+    assert.equal(records[0].egress_profile_identity_hash, state.egress_profile_identity_hash);
+    const analytics = JSON.parse(readPipelineAnalytics({ target_domain: domain }));
+    assert.equal(
+      analytics.sessions[0].egress_profile_identity.egress_profile_identity_hash,
+      state.egress_profile_identity_hash,
+    );
+    assert.equal(
+      analytics.sessions[0].egress.by_identity_hash[state.egress_profile_identity_hash],
+      1,
+    );
+    const events = readJsonl(pipelineEventsJsonlPath(domain));
+    assert.ok(events.some((event) => (
+      event.type === "egress_identity_bound" &&
+      event.legacy_migration === true &&
+      event.egress_profile_identity_hash === state.egress_profile_identity_hash
+    )));
+    const normalizedEvents = readPipelineEvents(domain).events;
+    const legacyEvent = normalizedEvents.find((event) => event.source === "legacy_fixture");
+    assert.ok(legacyEvent);
+    assert.equal(legacyEvent.egress_profile_identity_hash, state.egress_profile_identity_hash);
+  });
+});
+
+test("bounty_http_scan rejects env-resolved proxy query secrets", async () => {
+  await withTempHome(async () => {
+    seedSessionState("example.com");
+    const rawProxySecret = ["env", "query", "proxy", "secret"].join("-");
+    const document = {
+      version: 1,
+      profiles: [
+        egressProfiles.defaultEgressProfile(),
+        {
+          name: "env-query-secret",
+          proxy_url: "${BOB_EGRESS_QUERY_PROXY}",
+          region: "EU",
+          description: null,
+          enabled: true,
+        },
+      ],
+    };
+
+    await withRepoEgressConfig(document, async () => {
+      await withEnv({ BOB_EGRESS_QUERY_PROXY: `http://proxy.example:8080/?token=${rawProxySecret}` }, async () => {
+        await withMockSafeFetch(() => {
+          throw new Error("network should not be reached");
+        }, async (requestedUrls) => {
+          const result = await executeTool("bounty_http_scan", {
+            target_domain: "example.com",
+            method: "GET",
+            url: "https://example.com/ok",
+            egress_profile: "env-query-secret",
+          });
+          assert.equal(result.ok, false);
+          assert.equal(result.error.code, "INTERNAL_ERROR");
+          assert.match(result.error.message, /query strings or fragments are not supported/);
+          assert.doesNotMatch(JSON.stringify(result), new RegExp(rawProxySecret));
+          assert.deepEqual(requestedUrls, []);
+        });
+      });
+    });
+  });
+});
+
 test("bounty_http_scan rejects invalid egress profiles before sending network requests and redacts proxy credentials", async () => {
   await withTempHome(async () => {
+    seedSessionState("example.com");
     const rawProxySecret = ["do", "not", "leak", "proxy", "secret"].join("-");
     const proxyAuthority = ["user", rawProxySecret].join(":");
     const document = {
@@ -12899,8 +15503,8 @@ test("bounty_http_scan rejects invalid egress profiles before sending network re
         egressProfiles.defaultEgressProfile(),
         { name: "disabled", proxy_url: "${BOB_EGRESS_DISABLED_PROXY}", region: "EU", description: null, enabled: false },
         { name: "missing-env", proxy_url: "${BOB_EGRESS_MISSING_PROXY}", region: "EU", description: null, enabled: true },
-        { name: "unsupported", proxy_url: ["ftp://", proxyAuthority, "@proxy.example:21"].join(""), region: "EU", description: null, enabled: true },
-        { name: "malformed", proxy_url: ["http://", proxyAuthority, "@"].join(""), region: "EU", description: null, enabled: true },
+        { name: "unsupported", proxy_url: "ftp://proxy.example:21", region: "EU", description: null, enabled: true },
+        { name: "malformed", proxy_url: "http://", region: "EU", description: null, enabled: true },
       ],
     };
 
@@ -12932,9 +15536,141 @@ test("bounty_http_scan rejects invalid egress profiles before sending network re
   });
 });
 
+test("bounty_http_scan rejects inline proxy credentials in egress profile config", async () => {
+  await withTempHome(async () => {
+    seedSessionState("example.com");
+    const rawProxySecret = ["inline", "proxy", "secret"].join("-");
+    const proxyAuthority = ["user", rawProxySecret].join(":");
+    const document = {
+      version: 1,
+      profiles: [
+        egressProfiles.defaultEgressProfile(),
+        {
+          name: "inline-secret",
+          proxy_url: ["http://", proxyAuthority, "@proxy.example:8080"].join(""),
+          region: "EU",
+          description: null,
+          enabled: true,
+        },
+      ],
+    };
+
+    await withRepoEgressConfig(document, async () => {
+      await withMockSafeFetch(() => {
+        throw new Error("network should not be reached");
+      }, async (requestedUrls) => {
+        const result = await executeTool("bounty_http_scan", {
+          target_domain: "example.com",
+          method: "GET",
+          url: "https://example.com/ok",
+          egress_profile: "inline-secret",
+        });
+        assert.equal(result.ok, false);
+        assert.equal(result.error.code, "INTERNAL_ERROR");
+        assert.match(result.error.message, /proxy_url credentials must use an environment reference/);
+        assert.doesNotMatch(JSON.stringify(result), new RegExp(rawProxySecret));
+        assert.deepEqual(requestedUrls, []);
+      });
+    });
+  });
+});
+
+test("bounty_http_scan rejects inline proxy query secrets in egress profile config", async () => {
+  await withTempHome(async () => {
+    seedSessionState("example.com");
+    const rawProxySecret = ["query", "proxy", "secret"].join("-");
+    const document = {
+      version: 1,
+      profiles: [
+        egressProfiles.defaultEgressProfile(),
+        {
+          name: "query-secret",
+          proxy_url: `http://proxy.example:8080/?token=${rawProxySecret}`,
+          region: "EU",
+          description: null,
+          enabled: true,
+        },
+      ],
+    };
+
+    await withRepoEgressConfig(document, async () => {
+      await withMockSafeFetch(() => {
+        throw new Error("network should not be reached");
+      }, async (requestedUrls) => {
+        const result = await executeTool("bounty_http_scan", {
+          target_domain: "example.com",
+          method: "GET",
+          url: "https://example.com/ok",
+          egress_profile: "query-secret",
+        });
+        assert.equal(result.ok, false);
+        assert.equal(result.error.code, "INTERNAL_ERROR");
+        assert.match(result.error.message, /proxy_url query strings or fragments must use an environment reference/);
+        assert.doesNotMatch(JSON.stringify(result), new RegExp(rawProxySecret));
+        assert.deepEqual(requestedUrls, []);
+      });
+    });
+  });
+});
+
+test("bounty_http_scan rejects proxy egress when strict internal-host blocking is requested", async () => {
+  await withTempHome(async () => {
+    const domain = "example.com";
+    seedSessionState(domain);
+    const rawProxySecret = ["strict", "proxy", "secret"].join("-");
+    const proxyAuthority = ["user", rawProxySecret].join(":");
+    const document = {
+      version: 1,
+      profiles: [
+        egressProfiles.defaultEgressProfile(),
+        {
+          name: "operator-eu",
+          proxy_url: "${BOB_EGRESS_OPERATOR_EU_PROXY}",
+          region: "EU",
+          description: "Operator egress profile",
+          enabled: true,
+        },
+      ],
+    };
+
+    await withRepoEgressConfig(document, async () => {
+      await withEnv({ BOB_EGRESS_OPERATOR_EU_PROXY: ["http://", proxyAuthority, "@proxy.example:8080"].join("") }, async () => {
+        await withMockSafeFetch(() => {
+          throw new Error("network should not be reached");
+        }, async (requestedUrls) => {
+          const result = await executeTool("bounty_http_scan", {
+            target_domain: domain,
+            method: "GET",
+            url: "https://example.com/ok",
+            egress_profile: "operator-eu",
+            block_internal_hosts: true,
+          });
+
+          assert.equal(result.ok, false);
+          assert.equal(result.error.code, "SCOPE_BLOCKED");
+          assert.match(result.error.message, /block_internal_hosts cannot be enforced with proxy-backed egress_profile "operator-eu"/);
+          assert.equal(result.error.details.egress_profile, "operator-eu");
+          assert.equal(result.error.details.egress_region, "EU");
+          assert.deepEqual(requestedUrls, []);
+          assert.doesNotMatch(JSON.stringify(result), new RegExp(rawProxySecret));
+
+          const records = readHttpAuditRecordsFromJsonl(domain);
+          assert.equal(records.length, 1);
+          assert.equal(records[0].scope_decision, "blocked");
+          assert.equal(records[0].egress_profile, "operator-eu");
+          assert.equal(records[0].egress_region, "EU");
+          assert.match(records[0].error, /block_internal_hosts cannot be enforced/);
+          assert.doesNotMatch(JSON.stringify(records), new RegExp(rawProxySecret));
+        });
+      });
+    });
+  });
+});
+
 test("bounty_http_scan redacts persisted audit URLs while sending the original request", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
+    seedSessionState(domain);
     await withMockSafeFetch({
       "https://example.com/callback?token=secret-token&code=oauth-code&id=123": {
         status: 200,
@@ -12962,9 +15698,10 @@ test("bounty_http_scan redacts persisted audit URLs while sending the original r
   });
 });
 
-test("bounty_http_scan permits target, attack-surface, third-party, and previously deny-listed hosts so Bob can reach whatever the chain needs", async () => {
+test("bounty_http_scan permits first-party hosts and blocks off-target hosts before network requests", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
+    seedSessionState(domain);
     seedAttackSurfaces(domain, [
       { id: "surface-api", hosts: [`https://api.partner-service.com`] },
     ]);
@@ -12973,27 +15710,13 @@ test("bounty_http_scan permits target, attack-surface, third-party, and previous
 
     await withMockSafeFetch({
       "https://app.example.com/ok": { status: 200, statusText: "OK", body: "ok" },
-      "https://api.partner-service.com/v1/users": { status: 200, statusText: "OK", body: "ok" },
-      "https://crt.sh/?q=example.com": { status: 200, statusText: "OK", body: "ok" },
-      "https://crt.sh/?q=other.com": { status: 200, statusText: "OK", body: "ok" },
-      "https://third-party.example.net/api": { status: 200, statusText: "OK", body: "ok" },
       "https://blocked.example.com/admin": { status: 200, statusText: "OK", body: "ok" },
-      "http://127.0.0.1/admin": { status: 200, statusText: "OK", body: "ok" },
-      "http://metadata/latest/meta-data/": { status: 200, statusText: "OK", body: "ok" },
-      "http://service.internal/debug": { status: 200, statusText: "OK", body: "ok" },
     }, async (requestedUrls) => {
-      const targets = [
+      const allowedTargets = [
         "https://app.example.com/ok",
-        "https://api.partner-service.com/v1/users",
-        "https://crt.sh/?q=example.com",
-        "https://crt.sh/?q=other.com",
-        "https://third-party.example.net/api",
         "https://blocked.example.com/admin",
-        "http://127.0.0.1/admin",
-        "http://metadata/latest/meta-data/",
-        "http://service.internal/debug",
       ];
-      for (const url of targets) {
+      for (const url of allowedTargets) {
         const result = await executeTool("bounty_http_scan", {
           target_domain: domain,
           method: "GET",
@@ -13004,13 +15727,35 @@ test("bounty_http_scan permits target, attack-surface, third-party, and previous
         assert.equal(result.data.status, 200);
       }
 
-      assert.deepEqual(requestedUrls, targets);
+      const blockedTargets = [
+        "https://api.partner-service.com/v1/users",
+        "https://crt.sh/?q=example.com",
+        "https://crt.sh/?q=other.com",
+        "https://third-party.example.net/api",
+        "http://127.0.0.1/admin",
+        "http://metadata/latest/meta-data/",
+        "http://service.internal/debug",
+      ];
+      for (const url of blockedTargets) {
+        const result = await executeTool("bounty_http_scan", {
+          target_domain: domain,
+          method: "GET",
+          url,
+          response_mode: "status_only",
+        });
+        assert.equal(result.ok, false, `expected ${url} to be blocked`);
+        assert.equal(result.error.code, "SCOPE_BLOCKED");
+        assert.match(result.error.message, /outside target_domain example\.com/);
+      }
+
+      assert.deepEqual(requestedUrls, allowedTargets);
 
       const records = readHttpAuditRecordsFromJsonl(domain);
-      assert.equal(records.length, targets.length);
-      for (const record of records) {
-        assert.equal(record.scope_decision, "allowed");
-      }
+      assert.equal(records.length, allowedTargets.length + blockedTargets.length);
+      assert.deepEqual(
+        records.map((record) => record.scope_decision),
+        [...allowedTargets.map(() => "allowed"), ...blockedTargets.map(() => "blocked")],
+      );
     });
   });
 });
@@ -13034,6 +15779,7 @@ test("bounty_http_scan requires target_domain instead of inferring scope from ot
 test("bounty_http_scan optionally blocks internal redirect targets before fetching them", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
+    seedSessionState(domain);
     await withMockSafeFetch({
       "https://example.com/redirect": {
         status: 302,
@@ -13063,9 +15809,10 @@ test("bounty_http_scan optionally blocks internal redirect targets before fetchi
   });
 });
 
-test("bounty_http_scan follows internal redirects by default", async () => {
+test("bounty_http_scan blocks off-target redirects even when internal-host blocking is disabled", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
+    seedSessionState(domain);
     await withMockSafeFetch({
       "https://example.com/redirect": {
         status: 302,
@@ -13082,10 +15829,10 @@ test("bounty_http_scan follows internal redirects by default", async () => {
         response_mode: "status_only",
       });
 
-      assert.equal(result.ok, true);
-      assert.equal(result.data.status, 200);
-      assert.equal(result.data.final_url, "http://127.0.0.1/admin");
-      assert.deepEqual(requestedUrls, ["https://example.com/redirect", "http://127.0.0.1/admin"]);
+      assert.equal(result.ok, false);
+      assert.equal(result.error.code, "SCOPE_BLOCKED");
+      assert.match(result.error.message, /outside target_domain example\.com/);
+      assert.deepEqual(requestedUrls, ["https://example.com/redirect"]);
     });
   });
 });
@@ -13093,6 +15840,7 @@ test("bounty_http_scan follows internal redirects by default", async () => {
 test("bounty_http_scan optionally blocks public hostnames that resolve to private IPs before connecting", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
+    seedSessionState(domain);
     await withMockSafeFetch({
       "https://example.com/private-dns": { status: 200, body: "should not connect" },
     }, async (requestedUrls) => {
@@ -13111,9 +15859,86 @@ test("bounty_http_scan optionally blocks public hostnames that resolve to privat
   });
 });
 
+test("bounty_http_scan applies persisted paranoid internal-host blocking when call omits the flag", async () => {
+  await withTempHome(async () => {
+    const domain = "paranoid-http.example.com";
+    const init = await executeTool("bounty_init_session", {
+      target_domain: domain,
+      target_url: `https://${domain}`,
+      checkpoint_mode: "paranoid",
+    });
+    assert.equal(init.ok, true);
+
+    await withMockSafeFetch({
+      [`https://${domain}/private-dns`]: { status: 200, body: "should not connect" },
+    }, async (requestedUrls) => {
+      for (const args of [
+        {},
+        { block_internal_hosts: false },
+      ]) {
+        const result = await executeTool("bounty_http_scan", {
+          target_domain: domain,
+          method: "GET",
+          url: `https://${domain}/private-dns`,
+          ...args,
+        });
+        assert.equal(result.ok, false);
+        assert.equal(result.error.code, "SCOPE_BLOCKED");
+        assert.match(result.error.message, /Blocked internal\/private DNS address/);
+      }
+      assert.deepEqual(requestedUrls, []);
+    }, { dnsRecords: { [domain]: [{ address: "10.0.0.5", family: 4 }] } });
+
+    const records = readHttpAuditRecordsFromJsonl(domain);
+    assert.equal(records.length, 2);
+    assert.deepEqual(records.map((record) => record.block_internal_hosts), [true, true]);
+    assert.deepEqual(records.map((record) => record.block_internal_hosts_source), [
+      "paranoid_default",
+      "paranoid_default",
+    ]);
+    const audit = JSON.parse(readHttpAudit({ target_domain: domain }));
+    assert.equal(audit.summary.block_internal_hosts.true, 2);
+    assert.equal(audit.summary.recent[0].block_internal_hosts, true);
+    const analytics = JSON.parse(readPipelineAnalytics({ target_domain: domain }));
+    assert.equal(analytics.sessions[0].block_internal_hosts, true);
+    assert.equal(analytics.sessions[0].block_internal_hosts_source, "paranoid_default");
+    assert.equal(analytics.sessions[0].http_audit.block_internal_hosts.true, 2);
+    assert.equal(analytics.sessions[0].http_audit.block_internal_hosts.by_source.paranoid_default, 2);
+  });
+});
+
+test("bounty_http_scan blocks IPv4-embedded IPv6 DNS answers in dotted notation", async () => {
+  await withTempHome(async () => {
+    const dnsCases = [
+      "::ffff:127.0.0.1",
+      "::127.0.0.1",
+      "::ffff:169.254.169.254",
+    ];
+
+    for (const address of dnsCases) {
+      await withMockSafeFetch({
+        "https://example.com/private-dns": { status: 200, body: "should not connect" },
+      }, async (requestedUrls) => {
+        seedSessionState("example.com");
+        const result = await executeTool("bounty_http_scan", {
+          target_domain: "example.com",
+          method: "GET",
+          url: "https://example.com/private-dns",
+          block_internal_hosts: true,
+        });
+        assert.equal(result.ok, false, address);
+        assert.equal(result.error.code, "SCOPE_BLOCKED", address);
+        assert.match(result.error.message, /Blocked internal\/private DNS address/, address);
+        assert.deepEqual(requestedUrls, [], address);
+      }, { dnsRecords: { "example.com": [{ address, family: 6 }] } });
+    }
+  });
+});
+
 test("bounty_http_scan allows public hostnames that resolve to private IPs by default", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
+    seedSessionState(domain);
     await withMockSafeFetch({
       "https://example.com/private-dns": { status: 200, statusText: "OK", body: "connected" },
     }, async (requestedUrls) => {
@@ -13290,7 +16115,7 @@ test("redactUrlSensitiveValues redacts query values, credentials, and fragments"
     redactUrlSensitiveValues(inputUrl),
     expectedUrl,
   );
-  assert.equal(redactUrlSensitiveValues("not a url token=abc"), "not a url token=abc");
+  assert.equal(redactUrlSensitiveValues("not a url token=abc"), "not a url token=REDACTED");
 });
 
 test("legacy raw audit and traffic records are redacted on read", () => {
@@ -13669,15 +16494,20 @@ test("pipeline analytics surfaces egress and geofence warnings from HTTP audit",
         scope_decision: "network_unreachable_target",
         egress_profile: "default",
         egress_region: null,
+        block_internal_hosts: index === 0,
+        block_internal_hosts_source: index === 0 ? "request_override" : "mode_default",
       });
     }
 
     const analytics = JSON.parse(readPipelineAnalytics({ target_domain: domain }));
     assert.equal(analytics.sessions[0].egress.by_profile.default, 3);
+    assert.equal(analytics.sessions[0].http_audit.block_internal_hosts.true, 1);
+    assert.equal(analytics.sessions[0].http_audit.block_internal_hosts.false, 2);
+    assert.equal(analytics.sessions[0].http_audit.block_internal_hosts.by_source.request_override, 1);
     assert.equal(analytics.sessions[0].geofence_warnings.warning, true);
     assert.equal(analytics.sessions[0].geofence_warnings.code, "network_unreachable_target");
     assert.ok(analytics.bottlenecks.some((item) => item.code === "network_unreachable_target"));
-    assert.doesNotMatch(JSON.stringify(analytics), /proxy/i);
+    assert.doesNotMatch(JSON.stringify(analytics), /proxy_url|https?:\/\/|socks5/i);
   });
 });
 
@@ -13777,7 +16607,7 @@ test("public intel fetch helper enforces HackerOne allowlist and response cap", 
   }
 });
 
-test("rankAttackSurfaces adds ranking fields without removing required attack_surface fields", () => {
+test("rankAttackSurfaces returns ranking fields without mutating attack_surface.json", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAttackSurfaces(domain, [{
@@ -13793,18 +16623,14 @@ test("rankAttackSurfaces adds ranking fields without removing required attack_su
     const before = fs.readFileSync(attackSurfacePath(domain), "utf8");
     const ranked = rankAttackSurfaces(domain);
     assert.equal(ranked.surfaces.length, 1);
-    assert.ok(ranked.surfaces[0].ranking.score > 0);
-    assert.ok(ranked.surfaces[0].ranking.reasons.includes("api_or_mobile_surface"));
-    assert.equal(fs.readFileSync(attackSurfacePath(domain), "utf8"), before);
-
-    rankAttackSurfaces(domain, { write: true });
-    const surface = JSON.parse(fs.readFileSync(attackSurfacePath(domain), "utf8")).surfaces[0];
+    const surface = ranked.surfaces[0];
     for (const field of ["id", "hosts", "tech_stack", "endpoints", "interesting_params", "nuclei_hits", "priority"]) {
       assert.ok(Object.prototype.hasOwnProperty.call(surface, field), `missing ${field}`);
     }
     assert.ok(surface.ranking.score > 0);
     assert.ok(surface.ranking.reasons.includes("api_or_mobile_surface"));
     assert.ok(priorityRankForTest(surface.priority) >= priorityRankForTest("HIGH"));
+    assert.equal(fs.readFileSync(attackSurfacePath(domain), "utf8"), before);
   });
 });
 
@@ -13858,6 +16684,24 @@ test("bounty_read_hunter_brief returns surface, exclusions, and valid IDs", () =
       { agent: "a2", surface_id: "surface-b" },
     ]);
 
+    const document = {
+      version: 1,
+      profiles: [
+        egressProfiles.defaultEgressProfile(),
+        {
+          name: "operator-eu",
+          proxy_url: null,
+          region: "EU",
+          description: "Operator direct EU profile",
+          enabled: true,
+        },
+      ],
+    };
+
+    withRepoEgressConfig(document, () => {
+    const expectedEgress = egressProfiles.egressProfileIdentityFields(
+      egressProfiles.resolveEgressProfile("operator-eu"),
+    );
     const brief = JSON.parse(readHunterBrief({
       target_domain: domain,
       wave: "w1",
@@ -13871,7 +16715,13 @@ test("bounty_read_hunter_brief returns surface, exclusions, and valid IDs", () =
       phase: "HUNT",
       auth_status: "pending",
       egress_profile: "operator-eu",
+      egress_region: "EU",
+      proxy_configured: false,
+      egress_profile_identity_hash: expectedEgress.egress_profile_identity_hash,
+      egress_profile_identity_version: expectedEgress.egress_profile_identity_version,
+      checkpoint_mode: "normal",
       block_internal_hosts: true,
+      block_internal_hosts_source: "request_override",
       capability_pack: "web",
       capability_pack_version: 1,
       hunter_agent: "hunter-agent",
@@ -13908,6 +16758,34 @@ test("bounty_read_hunter_brief returns surface, exclusions, and valid IDs", () =
     assert.ok(Object.prototype.hasOwnProperty.call(brief, "static_scan_hints"), "web brief must expose static_scan_hints");
     assert.strictEqual(brief.bob_spec_status, undefined);
     assert.strictEqual(brief.rpc_pool, undefined);
+    });
+  });
+});
+
+test("bounty_read_hunter_brief reports persisted internal-host policy when omitted", () => {
+  withTempHome(() => {
+    const domain = "paranoid-brief.example.com";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 1,
+      pending_wave: 1,
+      checkpoint_mode: "paranoid",
+      block_internal_hosts: true,
+      block_internal_hosts_source: "paranoid_default",
+    });
+    seedAttackSurface(domain, ["surface-a"]);
+    seedAssignments(domain, 1, [
+      { agent: "a1", surface_id: "surface-a" },
+    ]);
+
+    const brief = JSON.parse(readHunterBrief({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+    }));
+    assert.equal(brief.run_context.checkpoint_mode, "paranoid");
+    assert.equal(brief.run_context.block_internal_hosts, true);
+    assert.equal(brief.run_context.block_internal_hosts_source, "paranoid_default");
   });
 });
 
@@ -15015,7 +17893,7 @@ test("bounty_read_technique_pack full mode enforces per-assignment read budget",
     const missingContext = await executeTool("bounty_read_technique_pack", { pack_id: "graphql", mode: "full" });
     assert.equal(missingContext.ok, false);
     assert.equal(missingContext.error.code, "INVALID_ARGUMENTS");
-    assert.match(missingContext.error.message, /full_pack_read_limit/);
+    assert.match(missingContext.error.message, /target_domain is required for session authority/);
 
     const context = {
       target_domain: domain,
@@ -15420,6 +18298,9 @@ const INTERNAL_SCAN_URLS = [
   "http://192.168.1.1/admin",
   "http://172.16.0.1/internal",
   "http://[::1]/admin",
+  "http://[::7f00:1]/admin",
+  "http://[::127.0.0.1]/admin",
+  "http://[::a9fe:a9fe]/latest/meta-data/",
   "http://[fc00::1]/admin",
   "http://[fd12:3456::1]/admin",
   "http://[fe80::1]/admin",
@@ -15459,36 +18340,63 @@ test("validateScanUrl rejects malformed URLs", () => {
   assert.throws(() => validateScanUrl("not-a-url"), /Invalid URL/);
 });
 
-test("scope guards are permissive no-ops so Bob can reach arbitrary hosts during a target run", () => {
-  withTempHome((tempHome) => {
-    const domain = "example.com";
-    seedSessionState(domain);
-    // Leftover deny-list.txt from older sessions must be ignored by the hook.
-    fs.writeFileSync(path.join(sessionDir(domain), "deny-list.txt"), "blocked.example.com\n");
+test("Claude settings register only artifact guards; scoped HTTP policy is enforced by MCP runtime", () => {
+  const { defaultClaudeSettings } = require("../adapters/claude/config.js");
+  const { mergeSettings } = require("../scripts/merge-claude-config.js");
+  const generated = defaultClaudeSettings();
+  const installed = JSON.parse(fs.readFileSync(path.join(ROOT, ".claude", "settings.json"), "utf8"));
 
-    const bashCases = [
-      'curl "https://evil.example/path?token=supersecret"',
-      'curl "https://blocked.example.com/admin"',
-      'curl "https://crt.sh/?q=other.com"',
-      "curl https://app.example.com/ok",
-    ];
-    for (const command of bashCases) {
-      const result = runScopeGuard(command, { home: tempHome });
-      assert.equal(result.status, 0, `expected ${command} to pass the bash scope guard`);
-    }
+  for (const settings of [generated, installed]) {
+    const hooksText = JSON.stringify(settings.hooks.PreToolUse || []);
+    assert.doesNotMatch(hooksText, /scope-guard/);
+    const bash = settings.hooks.PreToolUse.find((entry) => entry.matcher === "Bash");
+    assert.ok(bash, "Bash hook entry should remain for session artifact guards");
+    assert.ok(bash.hooks.some((hook) => /session-write-guard\.sh/.test(hook.command)));
+    assert.ok(bash.hooks.some((hook) => /session-read-guard\.sh/.test(hook.command)));
+    assert.equal(
+      settings.hooks.PreToolUse.some((entry) => /^mcp__bountyagent__/.test(entry.matcher || "")),
+      false,
+      "MCP tool hooks should not imply an external scope guard",
+    );
+  }
 
-    const mcpCases = [
-      { target_domain: domain, method: "GET", url: "https://third-party.example.net/api" },
-      { target_domain: domain, method: "GET", url: "https://blocked.example.com/admin" },
-      { target_domain: domain, method: "GET", url: "https://crt.sh/?q=other.com" },
-    ];
-    for (const toolInput of mcpCases) {
-      const result = runMcpScopeGuard(toolInput, { home: tempHome });
-      assert.equal(result.status, 0, `expected ${toolInput.url} to pass the MCP scope guard`);
-    }
+  for (const [toolName, metadata] of Object.entries(TOOL_MANIFEST)) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(metadata, REMOVED_HOOK_AUTHORITY_FIELD),
+      false,
+      `${toolName} must not advertise a hook authority`,
+    );
+  }
 
-    assert.equal(fs.existsSync(path.join(sessionDir(domain), "scope-warnings.log")), false);
-  });
+  const merged = mergeSettings({
+    hooks: {
+      PreToolUse: [
+        {
+          matcher: "Bash",
+          hooks: [
+            { type: "command", command: "echo existing", timeout: 1 },
+            { type: "command", command: "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/scope-guard.sh\"", timeout: 5 },
+          ],
+        },
+        {
+          matcher: "mcp__bountyagent__bounty_http_scan",
+          hooks: [
+            { type: "command", command: "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/scope-guard-mcp.sh\"", timeout: 5 },
+          ],
+        },
+      ],
+    },
+  }, generated);
+  const mergedHooksText = JSON.stringify(merged.hooks.PreToolUse || []);
+  assert.doesNotMatch(mergedHooksText, /scope-guard/);
+  assert.match(mergedHooksText, /session-write-guard\.sh/);
+  assert.match(mergedHooksText, /session-read-guard\.sh/);
+  assert.match(mergedHooksText, /echo existing/);
+  assert.equal(
+    merged.hooks.PreToolUse.some((entry) => /^mcp__bountyagent__/.test(entry.matcher || "")),
+    false,
+    "stale MCP scope hook matchers should be removed when their only hook is stale",
+  );
 });
 
 // ── Bug 5: Session lock uses owner metadata for ownership verification ──
@@ -15525,6 +18433,59 @@ test("session lock creates an atomic metadata lock file", () => {
       fs.openSync = originalOpenSync;
     }
     assert.ok(!fs.existsSync(sessionLockPath(domain)));
+  });
+});
+
+test("writeFileExclusiveAtomic preserves existing files on EEXIST", () => {
+  withTempHome((tempHome) => {
+    const filePath = path.join(tempHome, "exclusive.txt");
+    fs.writeFileSync(filePath, "original", "utf8");
+
+    assert.equal(writeFileExclusiveAtomic(filePath, "replacement"), false);
+    assert.equal(fs.readFileSync(filePath, "utf8"), "original");
+  });
+});
+
+test("withSessionLock is reentrant for synchronous same-domain callbacks", () => {
+  withTempHome(() => {
+    const domain = "reentrant-lock.example";
+    const lockPath = sessionLockPath(domain);
+    let innerSawLock = false;
+
+    withSessionLock(domain, () => {
+      assert.ok(fs.existsSync(lockPath));
+      withSessionLock(domain, () => {
+        innerSawLock = fs.existsSync(lockPath);
+      });
+      assert.ok(fs.existsSync(lockPath));
+    });
+
+    assert.equal(innerSawLock, true);
+    assert.ok(!fs.existsSync(lockPath));
+  });
+});
+
+test("withSessionLock rejects async callbacks without leaking the lock", () => {
+  withTempHome(() => {
+    const domain = "async-lock.example";
+    assert.throws(
+      () => withSessionLock(domain, async () => true),
+      /withSessionLock callback must be synchronous/,
+    );
+    assert.ok(!fs.existsSync(sessionLockPath(domain)));
+  });
+});
+
+test("session lock release removes an owned lock even if metadata is truncated", () => {
+  withTempHome(() => {
+    const domain = "truncated-lock.example";
+    const lockPath = sessionLockPath(domain);
+    const release = acquireSessionLock(domain);
+
+    fs.writeFileSync(lockPath, "", "utf8");
+    release();
+
+    assert.ok(!fs.existsSync(lockPath));
   });
 });
 
@@ -15571,6 +18532,25 @@ test("session lock stale override uses JSON timestamp and does not remove replac
 
     assert.equal(removeStaleSessionLock(lockPath, snapshot), false);
     assert.equal(JSON.parse(fs.readFileSync(lockPath, "utf8")).token, "replacement");
+  });
+});
+
+test("session lock stale detection bounds future metadata timestamps by file mtime", () => {
+  withTempHome(() => {
+    const domain = "future-lock.example";
+    const lockPath = sessionLockPath(domain);
+    fs.mkdirSync(sessionDir(domain), { recursive: true });
+
+    fs.writeFileSync(lockPath, `${JSON.stringify({
+      pid: 1,
+      hostname: "future-host",
+      timestamp: new Date(Date.now() + SESSION_LOCK_STALE_MS + 60_000).toISOString(),
+      token: "future",
+    })}\n`);
+    const staleDate = new Date(Date.now() - SESSION_LOCK_STALE_MS - 1_000);
+    fs.utimesSync(lockPath, staleDate, staleDate);
+
+    assert.equal(readSessionLockSnapshot(lockPath).isStale, true);
   });
 });
 
@@ -15759,6 +18739,7 @@ test("httpScan returns error when auth_profile is requested but not found", asyn
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-authtest-"));
   process.env.HOME = tempHome;
   try {
+    seedSessionState("example.com");
     const result = await executeTool("bounty_http_scan", {
       target_domain: "example.com",
       method: "GET",

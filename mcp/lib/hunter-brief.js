@@ -1,6 +1,5 @@
 "use strict";
 const {
-  assertBoolean,
   assertNonEmptyString,
   normalizeOptionalText,
   parseAgentId,
@@ -10,7 +9,14 @@ const {
   loadWaveAssignments,
 } = require("./assignments.js");
 const {
+  blockInternalHostsPolicyFields,
+} = require("./session-state-contracts.js");
+const {
+  blockInternalHostsRequestPolicy,
   readSessionStateStrict,
+} = require("./session-state-store.js");
+const {
+  resolveAndAssertSessionEgressIdentity,
 } = require("./session-state.js");
 const {
   readAttackSurfaceStrict,
@@ -294,9 +300,11 @@ function readHunterBrief(args) {
   const wave = parseWaveId(args.wave);
   const agent = parseAgentId(args.agent);
   const egressProfile = normalizeOptionalText(args.egress_profile, "egress_profile") || "default";
-  const blockInternalHosts = args.block_internal_hosts == null
-    ? false
-    : assertBoolean(args.block_internal_hosts, "block_internal_hosts");
+  const internalHostPolicy = blockInternalHostsRequestPolicy(domain, args);
+  const internalHostContext = blockInternalHostsPolicyFields(internalHostPolicy);
+  const { identity: egressIdentity } = resolveAndAssertSessionEgressIdentity(domain, egressProfile, {
+    source: "bounty_read_hunter_brief",
+  });
   const waveNumber = Number(wave.slice(1));
 
   // 1. Load and validate assignment
@@ -319,7 +327,7 @@ function readHunterBrief(args) {
   const isSmartContractBrief = routeMetadata.brief_profile !== "web";
   if (!isSmartContractBrief) {
     try {
-      const ranked = rankAttackSurfaces(domain, { write: false });
+      const ranked = rankAttackSurfaces(domain);
       if (ranked && Array.isArray(ranked.surfaces)) {
         surfacesForBrief = ranked.surfaces;
       }
@@ -361,8 +369,12 @@ function readHunterBrief(args) {
       target_domain: domain,
       phase: state.phase,
       auth_status: state.auth_status,
-      egress_profile: egressProfile,
-      block_internal_hosts: blockInternalHosts,
+      egress_profile: egressIdentity.egress_profile,
+      egress_region: egressIdentity.egress_region,
+      proxy_configured: egressIdentity.proxy_configured,
+      egress_profile_identity_hash: egressIdentity.egress_profile_identity_hash,
+      egress_profile_identity_version: egressIdentity.egress_profile_identity_version,
+      ...internalHostContext,
       capability_pack: routeMetadata.capability_pack,
       capability_pack_version: routeMetadata.capability_pack_version,
       hunter_agent: routeMetadata.hunter_agent,

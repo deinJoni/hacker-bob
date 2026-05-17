@@ -35,6 +35,8 @@ const DEFAULT_REPLAY_SAFETY = Object.freeze({
   lease_scope: "attempt_pack",
 });
 
+const SC_DIRECT_EGRESS_SUMMARY = "SC RPC/REST egress is direct public HTTPS only: DNS-private endpoints, private/localnet RPC, and egress_profile proxy routing are unsupported by default.";
+
 const WEB_CAPABILITY_PACK = Object.freeze({
   id: "web",
   capability_pack_version: 1,
@@ -97,7 +99,7 @@ const SMART_CONTRACT_EVM_CAPABILITY_PACK = Object.freeze({
     role_id: "hunter-evm",
     hunter_name_prefix: "hunter-evm",
     chain_id_description: "the EVM chain id (e.g., 1, 137, 10, 42161)",
-    workflow_summary: "bounty_evm_fetch_source -> read sources via Read -> bounty_evm_role_table to map the trust boundary -> scaffold a Foundry test under harness_path/test/ via Write -> bounty_foundry_run with chain_id and pinned fork_block -> record bypass_attempts[] entries citing the actual harness path + test name in attempt_summary.",
+    workflow_summary: `bounty_evm_fetch_source -> read sources via Read -> bounty_evm_role_table to map the trust boundary -> scaffold a Foundry test under harness_path/test/ via Write -> bounty_foundry_run with chain_id and pinned fork_block -> record bypass_attempts[] entries citing the actual harness path + test name in attempt_summary. ${SC_DIRECT_EGRESS_SUMMARY}`,
     cli_dependency: "forge",
     blocked_harness_kind_options: "foundry_fork or rpc_endpoint",
   }),
@@ -135,9 +137,9 @@ const SMART_CONTRACT_SVM_CAPABILITY_PACK = Object.freeze({
     role_id: "hunter-svm",
     hunter_name_prefix: "hunter-svm",
     chain_id_description: "the Solana cluster",
-    workflow_summary: "bounty_svm_fetch_program (confirm upgrade authority) -> bounty_svm_fetch_account (read multisig + state accounts) -> scaffold an Anchor test under harness_path/tests/ via Write -> bounty_anchor_run with cluster and optional pinned fork_slot -> record bypass_attempts[] entries citing the actual harness path + test description in attempt_summary.",
+    workflow_summary: `bounty_svm_fetch_program (confirm upgrade authority) -> bounty_svm_fetch_account (read multisig + state accounts) -> scaffold an Anchor test under harness_path/tests/ via Write -> bounty_anchor_run with cluster and optional pinned fork_slot -> record bypass_attempts[] entries citing the actual harness path + test description in attempt_summary. ${SC_DIRECT_EGRESS_SUMMARY}`,
     cli_dependency: "anchor",
-    blocked_harness_kind_options: "anchor_fork",
+    blocked_harness_kind_options: "anchor_fork or rpc_endpoint",
   }),
 });
 
@@ -179,9 +181,9 @@ const SMART_CONTRACT_APTOS_CAPABILITY_PACK = Object.freeze({
     role_id: "hunter-move",
     hunter_name_prefix: "hunter-aptos",
     chain_id_description: "the network name (mainnet/testnet/devnet)",
-    workflow_summary: "bounty_aptos_fetch_module (enumerate exposed_functions, structs, friends) -> bounty_aptos_fetch_resource (read capability tokens, ownership records, treasury balances) -> scaffold an `aptos move test` harness under harness_path/sources/ via Write -> bounty_aptos_run with network and optional pinned fork_version -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary.",
+    workflow_summary: `bounty_aptos_fetch_module (enumerate exposed_functions, structs, friends) -> bounty_aptos_fetch_resource (read capability tokens, ownership records, treasury balances) -> scaffold an \`aptos move test\` harness under harness_path/sources/ via Write -> bounty_aptos_run with network and optional pinned fork_version -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary. ${SC_DIRECT_EGRESS_SUMMARY}`,
     cli_dependency: "aptos",
-    blocked_harness_kind_options: "aptos_fork",
+    blocked_harness_kind_options: "aptos_fork or rpc_endpoint",
   }),
 });
 
@@ -215,9 +217,9 @@ const SMART_CONTRACT_SUI_CAPABILITY_PACK = Object.freeze({
     role_id: "hunter-move",
     hunter_name_prefix: "hunter-sui",
     chain_id_description: "the network name (mainnet/testnet/devnet/localnet)",
-    workflow_summary: "bounty_sui_fetch_package (enumerate entry functions and friend relationships) -> bounty_sui_fetch_object (inspect Owner=Immutable/Shared/AddressOwner/ObjectOwner, Move type, capability fields) -> scaffold a `sui move test` harness under harness_path/sources/ via Write -> bounty_sui_run with network and optional pinned fork_checkpoint -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary.",
+    workflow_summary: `bounty_sui_fetch_package (enumerate entry functions and friend relationships) -> bounty_sui_fetch_object (inspect Owner=Immutable/Shared/AddressOwner/ObjectOwner, Move type, capability fields) -> scaffold a \`sui move test\` harness under harness_path/sources/ via Write -> bounty_sui_run with network and optional pinned fork_checkpoint -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary. ${SC_DIRECT_EGRESS_SUMMARY}`,
     cli_dependency: "sui",
-    blocked_harness_kind_options: "sui_fork",
+    blocked_harness_kind_options: "sui_fork or rpc_endpoint",
   }),
 });
 
@@ -255,9 +257,9 @@ const SMART_CONTRACT_SUBSTRATE_CAPABILITY_PACK = Object.freeze({
     role_id: "hunter-substrate",
     hunter_name_prefix: "hunter-substrate",
     chain_id_description: "the network name (polkadot/kusama/astar/shiden/rococo/westend/localnet)",
-    workflow_summary: "bounty_substrate_fetch_runtime (confirm chain identity + spec_version) -> bounty_substrate_fetch_storage (read pallet_contracts.ContractInfoOf for code_hash and admin) -> scaffold an ink! `cargo test` harness under harness_path/ via Write (uses #[ink::test] for unit or #[ink_e2e::test] for E2E) -> bounty_substrate_run with network and optional pinned fork_block -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary.",
+    workflow_summary: `bounty_substrate_fetch_runtime (confirm chain identity + spec_version) -> bounty_substrate_fetch_storage (read pallet_contracts.ContractInfoOf for code_hash and admin) -> scaffold an ink! \`cargo test\` harness under harness_path/ via Write (uses #[ink::test] for unit or #[ink_e2e::test] for E2E) -> bounty_substrate_run with network and optional pinned fork_block -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary. ${SC_DIRECT_EGRESS_SUMMARY}`,
     cli_dependency: "cargo or substrate-contracts-node",
-    blocked_harness_kind_options: "substrate_fork",
+    blocked_harness_kind_options: "substrate_fork or rpc_endpoint",
   }),
 });
 
@@ -294,9 +296,9 @@ const SMART_CONTRACT_COSMWASM_CAPABILITY_PACK = Object.freeze({
     role_id: "hunter-cosmwasm",
     hunter_name_prefix: "hunter-cosmwasm",
     chain_id_description: "the network name (osmosis/juno/neutron/archway/sei/stargaze/terra/kava/localnet)",
-    workflow_summary: "bounty_cosmwasm_fetch_contract (confirm contract exists, capture code_id + admin) -> bounty_cosmwasm_smart_query (inspect public Config / Owner / Balance entrypoints) -> scaffold a cw-multi-test integration test under harness_path/tests/ via Write -> bounty_cosmwasm_run with network and optional pinned fork_block -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary.",
+    workflow_summary: `bounty_cosmwasm_fetch_contract (confirm contract exists, capture code_id + admin) -> bounty_cosmwasm_smart_query (inspect public Config / Owner / Balance entrypoints) -> scaffold a cw-multi-test integration test under harness_path/tests/ via Write -> bounty_cosmwasm_run with network and optional pinned fork_block -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary. ${SC_DIRECT_EGRESS_SUMMARY}`,
     cli_dependency: "cargo",
-    blocked_harness_kind_options: "cosmwasm_fork",
+    blocked_harness_kind_options: "cosmwasm_fork or rpc_endpoint",
   }),
 });
 
@@ -327,7 +329,7 @@ const HUNTER_ROLES = Object.freeze({
   "hunter-evm": Object.freeze({
     role_id: "hunter-evm",
     name: "hunter-evm-agent",
-    description: "EVM smart-contract bug bounty hunter — spawned per smart_contract surface, scaffolds and runs Foundry tests against the public RPC ladder",
+    description: "EVM smart-contract bug bounty hunter — spawned per smart_contract surface, scaffolds and runs Foundry tests against the direct public HTTPS RPC ladder",
     color: "magenta",
     role_bundles: Object.freeze(["hunter-shared", "hunter-evm"]),
     prompt_body_filename: "hunter-evm.md",
@@ -335,7 +337,7 @@ const HUNTER_ROLES = Object.freeze({
   "hunter-svm": Object.freeze({
     role_id: "hunter-svm",
     name: "hunter-svm-agent",
-    description: "SVM (Solana) smart-contract bug bounty hunter — spawned per smart_contract surface with chain_family=svm, scaffolds and runs Anchor tests against the public Solana RPC ladder",
+    description: "SVM (Solana) smart-contract bug bounty hunter — spawned per smart_contract surface with chain_family=svm, scaffolds and runs Anchor tests against the direct public HTTPS Solana RPC ladder",
     color: "cyan",
     role_bundles: Object.freeze(["hunter-shared", "hunter-svm"]),
     prompt_body_filename: "hunter-svm.md",
@@ -343,7 +345,7 @@ const HUNTER_ROLES = Object.freeze({
   "hunter-move": Object.freeze({
     role_id: "hunter-move",
     name: "hunter-move-agent",
-    description: "Move (Aptos + Sui) smart-contract bug bounty hunter — spawned per smart_contract surface with chain_family in {aptos, sui}, scaffolds and runs aptos move test or sui move test against the public Move RPC ladders",
+    description: "Move (Aptos + Sui) smart-contract bug bounty hunter — spawned per smart_contract surface with chain_family in {aptos, sui}, scaffolds and runs aptos move test or sui move test against direct public HTTPS Move RPC/REST ladders",
     color: "blue",
     role_bundles: Object.freeze(["hunter-shared", "hunter-move"]),
     prompt_body_filename: "hunter-move.md",
@@ -351,7 +353,7 @@ const HUNTER_ROLES = Object.freeze({
   "hunter-substrate": Object.freeze({
     role_id: "hunter-substrate",
     name: "hunter-substrate-agent",
-    description: "Substrate / ink! smart-contract bug bounty hunter — spawned per smart_contract surface with chain_family=substrate, scaffolds and runs cargo test on ink! contracts against the public Substrate JSON-RPC ladder",
+    description: "Substrate / ink! smart-contract bug bounty hunter — spawned per smart_contract surface with chain_family=substrate, scaffolds and runs cargo test on ink! contracts against the direct public HTTPS Substrate JSON-RPC ladder",
     color: "pink",
     role_bundles: Object.freeze(["hunter-shared", "hunter-substrate"]),
     prompt_body_filename: "hunter-substrate.md",
@@ -359,7 +361,7 @@ const HUNTER_ROLES = Object.freeze({
   "hunter-cosmwasm": Object.freeze({
     role_id: "hunter-cosmwasm",
     name: "hunter-cosmwasm-agent",
-    description: "CosmWasm smart-contract bug bounty hunter — spawned per smart_contract surface with chain_family=cosmwasm, scaffolds and runs cargo test with cw-multi-test against the public CosmWasm REST ladder",
+    description: "CosmWasm smart-contract bug bounty hunter — spawned per smart_contract surface with chain_family=cosmwasm, scaffolds and runs cargo test with cw-multi-test against the direct public HTTPS CosmWasm REST ladder",
     color: "yellow",
     role_bundles: Object.freeze(["hunter-shared", "hunter-cosmwasm"]),
     prompt_body_filename: "hunter-cosmwasm.md",
@@ -666,6 +668,7 @@ function capabilityPackForLegacyFinding({ surface_type: surfaceType, sc_evidence
 module.exports = {
   CAPABILITY_PACKS,
   DEFAULT_CONTEXT_BUDGET,
+  DEFAULT_REPLAY_SAFETY,
   HUNTER_ROLES,
   WEB_SURFACE_TYPES,
   capabilityPackForLegacyFinding,

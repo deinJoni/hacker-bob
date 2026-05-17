@@ -4,15 +4,11 @@ const fs = require("fs");
 const {
   AUTH_STATUS_VALUES,
   PHASE_VALUES,
-  SESSION_PUBLIC_STATE_FIELDS,
 } = require("./constants.js");
 const {
   assertEnumValue,
   assertBoolean,
-  assertInteger,
   assertNonEmptyString,
-  normalizeOptionalText,
-  normalizeStringArray,
 } = require("./validation.js");
 const {
   sessionDir,
@@ -28,11 +24,15 @@ const {
   ToolError,
 } = require("./envelope.js");
 const {
-  safeAppendPipelineEventDirect,
-} = require("./pipeline-analytics.js");
+  resolveEgressProfile,
+} = require("./egress-profiles.js");
 const {
-  validateNoSensitiveMaterial,
-} = require("./sensitive-material.js");
+  safeAppendPipelineEventDirect,
+} = require("./pipeline-events.js");
+const {
+  assertHttpScopeDomain,
+  validateHttpScanScope,
+} = require("./scope.js");
 const {
   computeChainToVerifyGate,
   computeHuntToChainGate,
@@ -40,366 +40,161 @@ const {
   formatTransitionBlockers,
 } = require("./phase-gates.js");
 
-const OPERATOR_NOTE_MAX_CHARS = 1000;
+const {
+  assertOperatorNote,
+  blockInternalHostsPolicyFields,
+  buildInitialSessionState,
+  compactSessionState,
+  deriveBlockInternalHostsPolicy,
+  egressProfileStateFields,
+  publicSessionState,
+} = require("./session-state-contracts.js");
+const {
+  readSessionStateStrict,
+  sessionStateMissing,
+  writeSessionStateDocument,
+} = require("./session-state-store.js");
 
 function verificationLib() {
   return require("./verification.js");
 }
 
-function validateOperatorNoteText(note, fieldName) {
-  if (note.length > OPERATOR_NOTE_MAX_CHARS) {
-    throw new Error(`${fieldName} must be at most ${OPERATOR_NOTE_MAX_CHARS} characters`);
+function assertBlockInternalHostsCompatibleWithEgress(policy, profile) {
+  if (!policy || policy.block_internal_hosts !== true || !profile || profile.proxy_configured !== true) {
+    return;
   }
-  validateNoSensitiveMaterial(note, fieldName, { maxTextChars: OPERATOR_NOTE_MAX_CHARS + 1 });
-  return note;
+  const identityFields = egressProfileStateFields(profile);
+  throw new ToolError(
+    ERROR_CODES.SCOPE_BLOCKED,
+    `block_internal_hosts cannot be enforced with proxy-backed egress_profile "${profile.name}" because target DNS and routing may be resolved outside Bob. Use egress_profile "default" or allow_internal_hosts for authorized internal/lab programs.`,
+    {
+      ...identityFields,
+      ...blockInternalHostsPolicyFields(policy),
+    },
+  );
 }
 
-function normalizeOperatorNote(value, fieldName = "operator_note") {
-  const note = normalizeOptionalText(value, fieldName);
-  return note == null ? null : validateOperatorNoteText(note, fieldName);
-}
+function assertSessionEgressIdentity(domain, profile, { source = "egress_request" } = {}) {
+  const identityFields = egressProfileStateFields(profile);
+  let bound = false;
 
-function assertOperatorNote(value, fieldName = "operator_note") {
-  return validateOperatorNoteText(assertNonEmptyString(value, fieldName), fieldName);
-}
-
-// state.terminally_blocked carries one entry per terminally-blocked surface,
-// each with the blocker tuples (kind + identifier_hint + reason) that drove
-// promotion. Kind validation here is intentionally soft — the tuple was
-// already through normalizeBlockedPrereqs at handoff write time and through
-// the merge promotion logic before landing in state. State validation only
-// guards structural invariants so analytics / report writers can trust the
-// shape without re-walking handoff JSONs.
-function normalizeTerminallyBlocked(value, fieldName = "terminally_blocked") {
-  if (value == null) return [];
-  if (!Array.isArray(value)) {
-    throw new Error(`${fieldName} must be an array`);
-  }
-  const seenSurfaceIds = new Set();
-  return value.map((entry, index) => {
-    if (entry == null || typeof entry !== "object" || Array.isArray(entry)) {
-      throw new Error(`${fieldName}[${index}] must be an object`);
-    }
-    const surfaceId = assertNonEmptyString(entry.surface_id, `${fieldName}[${index}].surface_id`);
-    if (seenSurfaceIds.has(surfaceId)) {
-      throw new Error(`${fieldName} contains duplicate surface_id ${surfaceId}; one closure entry per surface`);
-    }
-    seenSurfaceIds.add(surfaceId);
-    const blockedAtWave = assertInteger(entry.blocked_at_wave, `${fieldName}[${index}].blocked_at_wave`, { min: 1 });
-    if (!Array.isArray(entry.blockers) || entry.blockers.length === 0) {
-      throw new Error(`${fieldName}[${index}].blockers must be a non-empty array`);
-    }
-    const blockers = entry.blockers.map((blocker, blockerIndex) => {
-      if (blocker == null || typeof blocker !== "object" || Array.isArray(blocker)) {
-        throw new Error(`${fieldName}[${index}].blockers[${blockerIndex}] must be an object`);
-      }
-      const result = {
-        kind: assertNonEmptyString(blocker.kind, `${fieldName}[${index}].blockers[${blockerIndex}].kind`),
-      };
-      if (blocker.identifier_hint != null) {
-        result.identifier_hint = assertNonEmptyString(
-          blocker.identifier_hint,
-          `${fieldName}[${index}].blockers[${blockerIndex}].identifier_hint`,
-        );
-      }
-      if (blocker.reason != null) {
-        result.reason = assertNonEmptyString(
-          blocker.reason,
-          `${fieldName}[${index}].blockers[${blockerIndex}].reason`,
-        );
-      }
-      return result;
-    });
-    return {
-      surface_id: surfaceId,
-      blocked_at_wave: blockedAtWave,
-      blockers,
-    };
-  });
-}
-
-function terminallyBlockedSurfaceIds(state) {
-  const list = Array.isArray(state.terminally_blocked) ? state.terminally_blocked : [];
-  return list.map((entry) => entry.surface_id);
-}
-
-function buildInitialSessionState(domain, targetUrl, { deepMode = false } = {}) {
-  return {
-    target: domain,
-    target_url: targetUrl,
-    deep_mode: deepMode,
-    phase: "RECON",
-    hunt_wave: 0,
-    pending_wave: null,
-    total_findings: 0,
-    explored: [],
-    terminally_blocked: [],
-    prereq_registry_snapshots: [],
-    blocked_prereq_history: [],
-    terminal_block_clear_history: [],
-    dead_ends: [],
-    waf_blocked_endpoints: [],
-    lead_surface_ids: [],
-    scope_exclusions: [],
-    hold_count: 0,
-    auth_status: "pending",
-    operator_note: null,
-    verification_schema_version: null,
-    verification_attempt_id: null,
-    verification_snapshot_hash: null,
-    verification_entered_at: null,
-  };
-}
-
-// state.prereq_registry_snapshots stores per-wave registry HANDLE SETS so
-// the loop detector can reason about whether the specific material that
-// would unblock a surface (e.g., the "attacker" auth profile) was added
-// since the surface got stuck — not just whether ANY profile was added.
-// Counts collapsed unrelated additions into "growth" and gave irrelevant
-// blockers permanent amnesty. Snapshot captured at wave start (before
-// hunters dispatch), not merge time, so the comparison reflects "what
-// the hunter could have used".
-function normalizePrereqRegistrySnapshots(value, fieldName = "prereq_registry_snapshots") {
-  if (value == null) return [];
-  if (!Array.isArray(value)) {
-    throw new Error(`${fieldName} must be an array`);
-  }
-  return value.map((entry, index) => {
-    if (entry == null || typeof entry !== "object" || Array.isArray(entry)) {
-      throw new Error(`${fieldName}[${index}] must be an object`);
-    }
-    return {
-      wave: assertInteger(entry.wave, `${fieldName}[${index}].wave`, { min: 1 }),
-      auth_handles: normalizeStringArray(entry.auth_handles, `${fieldName}[${index}].auth_handles`),
-      egress_handles: normalizeStringArray(entry.egress_handles, `${fieldName}[${index}].egress_handles`),
-    };
-  });
-}
-
-// state.terminal_block_clear_history records every operator-driven clear:
-// when, why, and what was cleared. Stored in state.json (atomic write)
-// rather than relying on the best-effort pipeline event for audit
-// durability. The loop detector uses these clear epochs to filter
-// blocked_prereq_history so a re-block starts a fresh recurrence count
-// without erasing prior debugging data.
-function normalizeTerminalBlockClearHistory(value, fieldName = "terminal_block_clear_history") {
-  if (value == null) return [];
-  if (!Array.isArray(value)) {
-    throw new Error(`${fieldName} must be an array`);
-  }
-  return value.map((entry, index) => {
-    if (entry == null || typeof entry !== "object" || Array.isArray(entry)) {
-      throw new Error(`${fieldName}[${index}] must be an object`);
-    }
-    const result = {
-      surface_id: assertNonEmptyString(entry.surface_id, `${fieldName}[${index}].surface_id`),
-      cleared_at_wave: assertInteger(entry.cleared_at_wave, `${fieldName}[${index}].cleared_at_wave`, { min: 0 }),
-      cleared_at_ts: assertNonEmptyString(entry.cleared_at_ts, `${fieldName}[${index}].cleared_at_ts`),
-      reason: assertNonEmptyString(entry.reason, `${fieldName}[${index}].reason`),
-    };
-    if (entry.previously_blocked_at_wave != null) {
-      result.previously_blocked_at_wave = assertInteger(
-        entry.previously_blocked_at_wave,
-        `${fieldName}[${index}].previously_blocked_at_wave`,
-        { min: 1 },
-      );
-    }
-    if (Array.isArray(entry.previous_blockers)) {
-      result.previous_blockers = entry.previous_blockers.map((blocker, blockerIndex) => {
-        if (blocker == null || typeof blocker !== "object" || Array.isArray(blocker)) {
-          throw new Error(`${fieldName}[${index}].previous_blockers[${blockerIndex}] must be an object`);
-        }
-        const blockerResult = {
-          kind: assertNonEmptyString(blocker.kind, `${fieldName}[${index}].previous_blockers[${blockerIndex}].kind`),
+  try {
+    withSessionLock(domain, () => {
+      const { raw, state } = readSessionStateStrict(domain);
+      if (!state.egress_profile_identity_hash) {
+        const migratedAt = new Date().toISOString();
+        const nextState = {
+          ...state,
+          ...identityFields,
+          egress_profile_identity_bound_at: migratedAt,
+          egress_profile_identity_bind_source: "legacy_migration",
+          egress_profile_legacy_migration: {
+            migrated_at: migratedAt,
+            source,
+            previous_unbound: true,
+            previous: {
+              egress_profile: state.egress_profile,
+              egress_region: state.egress_region,
+              proxy_configured: state.proxy_configured,
+              egress_profile_identity_hash: state.egress_profile_identity_hash,
+              egress_profile_identity_version: state.egress_profile_identity_version,
+            },
+          },
         };
-        if (blocker.identifier_hint != null) {
-          blockerResult.identifier_hint = assertNonEmptyString(
-            blocker.identifier_hint,
-            `${fieldName}[${index}].previous_blockers[${blockerIndex}].identifier_hint`,
-          );
-        }
-        if (blocker.reason != null) {
-          blockerResult.reason = assertNonEmptyString(
-            blocker.reason,
-            `${fieldName}[${index}].previous_blockers[${blockerIndex}].reason`,
-          );
-        }
-        return blockerResult;
-      });
-    }
-    return result;
-  });
-}
+        writeSessionStateDocument(domain, raw, nextState);
+        safeAppendPipelineEventDirect(domain, "egress_identity_bound", {
+          phase: state.phase,
+          status: "bound",
+          source,
+          legacy_migration: true,
+          ...identityFields,
+        });
+        bound = true;
+        return;
+      }
 
-// state.blocked_prereq_history is the merge-validated record of blocker
-// tuples per wave per surface. Replaces raw handoff JSON reads in the
-// promotion path: handoffs go through schema/runtime validation at write
-// time, but reading them again at merge time bypasses that validation.
-// Cleared entries are kept; the loop detector uses
-// state.terminal_block_clear_history to skip them.
-function normalizeBlockedPrereqHistory(value, fieldName = "blocked_prereq_history") {
-  if (value == null) return [];
-  if (!Array.isArray(value)) {
-    throw new Error(`${fieldName} must be an array`);
-  }
-  return value.map((entry, index) => {
-    if (entry == null || typeof entry !== "object" || Array.isArray(entry)) {
-      throw new Error(`${fieldName}[${index}] must be an object`);
-    }
-    const result = {
-      wave: assertInteger(entry.wave, `${fieldName}[${index}].wave`, { min: 1 }),
-      surface_id: assertNonEmptyString(entry.surface_id, `${fieldName}[${index}].surface_id`),
-      kind: assertNonEmptyString(entry.kind, `${fieldName}[${index}].kind`),
-    };
-    if (entry.identifier_hint != null) {
-      result.identifier_hint = assertNonEmptyString(entry.identifier_hint, `${fieldName}[${index}].identifier_hint`);
-    }
-    if (entry.reason != null) {
-      result.reason = assertNonEmptyString(entry.reason, `${fieldName}[${index}].reason`);
-    }
-    return result;
-  });
-}
-
-function publicSessionState(state) {
-  return SESSION_PUBLIC_STATE_FIELDS.reduce((result, field) => {
-    result[field] = state[field];
-    return result;
-  }, {});
-}
-
-function compactSessionState(state) {
-  return {
-    target: state.target,
-    deep_mode: state.deep_mode === true,
-    phase: state.phase,
-    hunt_wave: state.hunt_wave,
-    pending_wave: state.pending_wave,
-    total_findings: state.total_findings,
-    explored_count: (state.explored || []).length,
-    terminally_blocked_count: (state.terminally_blocked || []).length,
-    dead_ends_count: (state.dead_ends || []).length,
-    waf_blocked_count: (state.waf_blocked_endpoints || []).length,
-    lead_surface_ids: state.lead_surface_ids || [],
-    hold_count: state.hold_count,
-    auth_status: state.auth_status,
-    operator_note: state.operator_note,
-    verification_schema_version: state.verification_schema_version,
-    verification_attempt_id: state.verification_attempt_id,
-    verification_snapshot_hash: state.verification_snapshot_hash,
-    verification_entered_at: state.verification_entered_at,
-  };
-}
-
-function normalizeSessionStateDocument(document, requestedDomain) {
-  if (document == null || typeof document !== "object" || Array.isArray(document)) {
-    throw new Error("expected object");
-  }
-
-  if (document.target != null) {
-    assertNonEmptyString(document.target, "target");
-  }
-
-  const normalized = {
-    target: requestedDomain,
-    target_url: assertNonEmptyString(document.target_url, "target_url"),
-    deep_mode: document.deep_mode == null
-      ? false
-      : assertBoolean(document.deep_mode, "deep_mode"),
-    phase: assertEnumValue(document.phase, PHASE_VALUES, "phase"),
-    hunt_wave: document.hunt_wave == null
-      ? 0
-      : assertInteger(document.hunt_wave, "hunt_wave", { min: 0 }),
-    pending_wave: document.pending_wave == null
-      ? null
-      : assertInteger(document.pending_wave, "pending_wave", { min: 1 }),
-    total_findings: document.total_findings == null
-      ? 0
-      : assertInteger(document.total_findings, "total_findings", { min: 0 }),
-    explored: normalizeStringArray(document.explored, "explored"),
-    terminally_blocked: normalizeTerminallyBlocked(document.terminally_blocked, "terminally_blocked"),
-    prereq_registry_snapshots: normalizePrereqRegistrySnapshots(document.prereq_registry_snapshots, "prereq_registry_snapshots"),
-    blocked_prereq_history: normalizeBlockedPrereqHistory(document.blocked_prereq_history, "blocked_prereq_history"),
-    terminal_block_clear_history: normalizeTerminalBlockClearHistory(document.terminal_block_clear_history, "terminal_block_clear_history"),
-    dead_ends: normalizeStringArray(document.dead_ends, "dead_ends"),
-    waf_blocked_endpoints: normalizeStringArray(document.waf_blocked_endpoints, "waf_blocked_endpoints"),
-    lead_surface_ids: normalizeStringArray(document.lead_surface_ids, "lead_surface_ids"),
-    scope_exclusions: normalizeStringArray(document.scope_exclusions, "scope_exclusions"),
-    hold_count: document.hold_count == null
-      ? 0
-      : assertInteger(document.hold_count, "hold_count", { min: 0 }),
-    auth_status: document.auth_status == null
-      ? "pending"
-      : assertEnumValue(document.auth_status, AUTH_STATUS_VALUES, "auth_status"),
-    operator_note: normalizeOperatorNote(document.operator_note, "operator_note"),
-    verification_schema_version: document.verification_schema_version == null
-      ? null
-      : assertInteger(document.verification_schema_version, "verification_schema_version", { min: 1, max: 2 }),
-    verification_attempt_id: normalizeOptionalText(document.verification_attempt_id, "verification_attempt_id"),
-    verification_snapshot_hash: normalizeOptionalText(document.verification_snapshot_hash, "verification_snapshot_hash"),
-    verification_entered_at: normalizeOptionalText(document.verification_entered_at, "verification_entered_at"),
-  };
-
-  // Disjointness invariant: a surface is either explored (hunter declared
-  // complete) OR terminally_blocked (system promoted on stuck loop with no
-  // registry delta). Both at once would let consumers double-count or pick
-  // the wrong closure reason. Fail loud rather than silently dedupe.
-  const exploredSet = new Set(normalized.explored);
-  const collisions = normalized.terminally_blocked
-    .map((entry) => entry.surface_id)
-    .filter((id) => exploredSet.has(id));
-  if (collisions.length > 0) {
-    throw new Error(`state.explored and state.terminally_blocked must be disjoint; overlapping surface_id(s): ${collisions.join(", ")}`);
-  }
-
-  return normalized;
-}
-
-function readSessionStateStrict(domain) {
-  const normalizedDomain = assertNonEmptyString(domain, "target_domain");
-  const filePath = statePath(normalizedDomain);
-
-  if (!fs.existsSync(filePath)) {
-    throw new Error(`Missing session state: ${filePath}`);
-  }
-
-  let parsed;
-  try {
-    parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      if (
+        state.egress_profile_identity_hash !== identityFields.egress_profile_identity_hash ||
+        state.egress_profile_identity_version !== identityFields.egress_profile_identity_version
+      ) {
+        throw new ToolError(
+          ERROR_CODES.STATE_CONFLICT,
+          `egress profile drift for ${domain}: session is bound to ${state.egress_profile} (${state.egress_profile_identity_hash}); requested ${identityFields.egress_profile} (${identityFields.egress_profile_identity_hash})`,
+          {
+            target_domain: domain,
+            expected: {
+              egress_profile: state.egress_profile,
+              egress_region: state.egress_region,
+              proxy_configured: state.proxy_configured,
+              egress_profile_identity_hash: state.egress_profile_identity_hash,
+              egress_profile_identity_version: state.egress_profile_identity_version,
+            },
+            requested: identityFields,
+          },
+        );
+      }
+    });
   } catch (error) {
-    throw new Error(`Malformed session state: ${filePath} (${error.message || String(error)})`);
+    if (!sessionStateMissing(error)) throw error;
+    throw new ToolError(
+      ERROR_CODES.STATE_CONFLICT,
+      `egress profile identity requires an initialized session for ${domain}; call bounty_init_session before egress-bound requests`,
+      {
+        target_domain: domain,
+        requested: {
+          egress_profile: identityFields.egress_profile,
+          egress_region: identityFields.egress_region,
+          proxy_configured: identityFields.proxy_configured,
+          egress_profile_identity_hash: identityFields.egress_profile_identity_hash,
+          egress_profile_identity_version: identityFields.egress_profile_identity_version,
+        },
+      },
+    );
   }
 
-  try {
-    return {
-      dir: sessionDir(normalizedDomain),
-      path: filePath,
-      raw: parsed,
-      state: normalizeSessionStateDocument(parsed, normalizedDomain),
-    };
-  } catch (error) {
-    throw new Error(`Malformed session state: ${filePath} (${error.message || String(error)})`);
-  }
-}
-
-function composeSessionStateDocument(rawDocument, state) {
   return {
-    ...rawDocument,
-    ...publicSessionState(state),
+    ...identityFields,
+    session_state_present: true,
+    session_identity_bound: bound,
   };
 }
 
-function writeSessionStateDocument(domain, rawDocument, state) {
-  const filePath = statePath(domain);
-  const nextDocument = composeSessionStateDocument(rawDocument, state);
-  writeFileAtomic(filePath, `${JSON.stringify(nextDocument, null, 2)}\n`);
-  return nextDocument;
+function resolveAndAssertSessionEgressIdentity(domain, requestedProfile = "default", options = {}) {
+  const profile = resolveEgressProfile(requestedProfile, options);
+  const identity = assertSessionEgressIdentity(domain, profile, {
+    source: options.source || "egress_request",
+  });
+  return { profile, identity };
 }
 
 function initSession(args) {
-  const domain = assertNonEmptyString(args.target_domain, "target_domain");
+  let domain;
+  try {
+    domain = assertHttpScopeDomain(args.target_domain);
+  } catch (error) {
+    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, error.message || String(error));
+  }
   const targetUrl = assertNonEmptyString(args.target_url, "target_url");
+  try {
+    validateHttpScanScope(targetUrl, domain);
+  } catch (error) {
+    throw new ToolError(ERROR_CODES.SCOPE_BLOCKED, error.message || String(error), error.details);
+  }
   const deepMode = args.deep_mode == null ? false : assertBoolean(args.deep_mode, "deep_mode");
+  let internalHostPolicy;
+  try {
+    internalHostPolicy = deriveBlockInternalHostsPolicy({
+      checkpointMode: args.checkpoint_mode,
+      blockInternalHosts: args.block_internal_hosts,
+      allowInternalHosts: args.allow_internal_hosts,
+      legacyDefault: false,
+    });
+  } catch (error) {
+    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, error.message || String(error));
+  }
+  const requestedEgressProfile = args.egress_profile == null
+    ? "default"
+    : assertNonEmptyString(args.egress_profile, "egress_profile");
 
   return withSessionLock(domain, () => {
     const dir = sessionDir(domain);
@@ -412,12 +207,23 @@ function initSession(args) {
       throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Session directory is not empty: ${dir}`);
     }
 
-    const state = buildInitialSessionState(domain, targetUrl, { deepMode });
+    const egressProfile = resolveEgressProfile(requestedEgressProfile);
+    assertBlockInternalHostsCompatibleWithEgress(internalHostPolicy, egressProfile);
+    const egressFields = egressProfileStateFields(egressProfile);
+    const state = buildInitialSessionState(domain, targetUrl, {
+      deepMode,
+      egressProfile,
+      blockInternalHostsPolicy: internalHostPolicy,
+    });
     writeFileAtomic(filePath, `${JSON.stringify(state, null, 2)}\n`);
     safeAppendPipelineEventDirect(domain, "session_started", {
       phase: state.phase,
       source: "bounty_init_session",
       deep_mode: state.deep_mode,
+      checkpoint_mode: state.checkpoint_mode,
+      block_internal_hosts: state.block_internal_hosts,
+      block_internal_hosts_source: state.block_internal_hosts_source,
+      ...egressFields,
     });
 
     return JSON.stringify({
@@ -596,6 +402,11 @@ function transitionPhase(args) {
       phase: toPhase,
       status: "transitioned",
       source: "bounty_transition_phase",
+      egress_profile: nextState.egress_profile,
+      egress_region: nextState.egress_region,
+      proxy_configured: nextState.proxy_configured,
+      egress_profile_identity_hash: nextState.egress_profile_identity_hash,
+      egress_profile_identity_version: nextState.egress_profile_identity_version,
       counts: {
         hold_count: nextState.hold_count,
       },
@@ -758,20 +569,14 @@ function reportWritten(args) {
 }
 
 module.exports = {
-  buildInitialSessionState,
+  assertBlockInternalHostsCompatibleWithEgress,
   clearOperatorNote,
   clearTerminalBlock,
-  compactSessionState,
-  composeSessionStateDocument,
   initSession,
-  normalizeSessionStateDocument,
   reportWritten,
+  resolveAndAssertSessionEgressIdentity,
   setOperatorNote,
-  publicSessionState,
   readSessionState,
-  readSessionStateStrict,
   readStateSummary,
-  terminallyBlockedSurfaceIds,
   transitionPhase,
-  writeSessionStateDocument,
 };

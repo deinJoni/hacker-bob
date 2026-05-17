@@ -70,31 +70,11 @@ function defaultGlobalMcpPermissions() {
     .map(mcpPermissionForTool);
 }
 
-function scopeMcpHookMatcher(toolName) {
-  return {
-    matcher: mcpPermissionForTool(toolName),
-    hooks: [{
-      type: "command",
-      command: `bash "${PROJECT_DIR_EXPR}/.claude/hooks/scope-guard-mcp.sh"`,
-      timeout: 5,
-    }],
-  };
-}
-
 function defaultPreToolUseHooks() {
-  const hookRequired = Object.entries(TOOL_MANIFEST)
-    .filter(([, metadata]) => metadata.hook_required)
-    .map(([toolName]) => scopeMcpHookMatcher(toolName));
-
   return [
     {
       matcher: "Bash",
       hooks: [
-        {
-          type: "command",
-          command: `bash "${PROJECT_DIR_EXPR}/.claude/hooks/scope-guard.sh"`,
-          timeout: 5,
-        },
         {
           type: "command",
           command: `bash "${PROJECT_DIR_EXPR}/.claude/hooks/session-write-guard.sh"`,
@@ -127,7 +107,6 @@ function defaultPreToolUseHooks() {
         },
       ],
     },
-    ...hookRequired,
   ];
 }
 

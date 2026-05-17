@@ -49,7 +49,11 @@ Run a status check before a full hunt if you want to confirm the integration is 
 
 Only run Bob against targets, accounts, applications, APIs, and infrastructure you own or are explicitly authorized to test. Read the target program's scope and rules of engagement before starting a hunt.
 
-Bob does not prove authorization, enforce a program policy, or guarantee containment. By default, supported HTTP tooling does not block localhost, private networks, internal hostnames, or cloud metadata-style hostnames. That default keeps local labs, VPN scopes, internal programs, and authorized pivots usable, but it also means you must choose targets carefully. For tools that support it, pass `block_internal_hosts: true` when you need that restriction.
+Bob does not prove authorization, enforce a program policy, or guarantee containment. For session-bound MCP tools, caller `target_domain` is only a lookup key: Bob authorizes against initialized session state, validates the stored `target` and `target_url`, and rejects drift before handlers run. Bob's MCP-scoped HTTP tools additionally require a public `target_domain` and only send first-party target-host requests; browser auto-signup routes page HTTP requests through a target-host guard but refuses effective `block_internal_hosts: true` because Chromium resolves network destinations outside Bob's safeFetch transport. Bob does not control arbitrary host shell commands, unrelated browser activity, or external recon binaries. By default, `normal`, `yolo`, and compatible legacy sessions allow public first-party hostnames that resolve to private infrastructure; `paranoid` sessions default to direct-egress DNS/private-address blocking unless the operator starts the session with `--allow-internal-hosts` for an explicitly authorized internal/lab program. First-party host scope is not DNS-rebinding or SSRF protection. Bob uses the packaged Public Suffix List via `psl` to reject public-suffix-only `target_domain` values and isolate registrable tenant domains. If that packaged list is stale, an operator can set `BOB_PSL_OVERLAY_FILE` to a local suffix file before running Bob; overlay matches are recorded in HTTP audit rows with `public_suffix_source` and `psl_overlay_file`, and the overlay is not a per-request bypass. For tools that support it, pass `--block-internal-hosts` or `block_internal_hosts: true` when you need local DNS/private-address blocking outside paranoid mode. The effective value is persisted in state and HTTP audit rows. That stricter mode is only available on direct egress, not proxy-backed egress profiles where target DNS and routing happen outside Bob.
+
+Bob binds the selected `egress_profile` to the session at `bounty_init_session` and records a redacted `egress_profile_identity_hash` in state, HTTP audit, hunter briefs, signup responses, pipeline events, and analytics. Egress-bound HTTP and signup tools require initialized session state; legacy sessions may default presentation/progress fields, but missing or drifted authority fields such as `target`, `target_url`, internal-host policy, or egress identity fail closed for tools that rely on them. Bob hashes the profile name, region, proxy-configured bit, proxy route, and env/source identity, excluding raw credentials and description text; credential rotation on the same proxy route is allowed, but profile, route, or source drift fails closed.
+
+Smart-contract RPC/REST tools use a separate direct-only model: shipped public ladders, explicit `endpoints` / `fork_urls`, and `BOB_<FAMILY>_RPCS_<NETWORK>` env overrides must be public HTTPS endpoints. Bob filters localhost/private/internal literals and performs bounded DNS private-address preflight for SC endpoints. Bob-owned Node SC reads and EVM source fetches then pin the HTTPS socket lookup to one of those preflighted public DNS answers. Fork runners are different: Foundry, Anchor, Aptos, Sui, Substrate, CosmWasm, and Halmos subprocesses run with proxy/RPC/secret env scrubbed, then receive only runner-created fork URL env or CLI args that came from preflighted public endpoints; Bob does not control or DNS-pin the downstream CLI socket. SC RPC does not use `egress_profile` proxy routing, and private/localnet RPC is unsupported by default until a per-family opt-in policy exists. Returned endpoint evidence and policy rejections redact credentials and query values.
 
 If your Claude Code workflow uses `--dangerously-skip-permissions`, use it only in a dedicated workspace for authorized security testing.
 
@@ -238,6 +242,7 @@ Detailed guides:
 - [First Run](docs/FIRST_RUN.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Adapters](docs/ADAPTERS.md)
+- [Package surfaces](docs/PACKAGE_SURFACES.md)
 - [Roadmap](docs/ROADMAP.md)
 
 ## Data And Security Model
@@ -257,6 +262,7 @@ For local development on Bob itself:
 ```bash
 npm test
 npm run release:check
+npm run release:check:dependencies
 ```
 
 To push the current checkout into a separate test workspace:

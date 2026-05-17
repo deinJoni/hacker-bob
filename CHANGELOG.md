@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [1.3.5] - 2026-05-17
+
+### Runtime contracts and release gates
+
+- Narrowed `mcp/server.js` to the runtime MCP facade: `TOOLS`, `TOOL_MANIFEST`, `executeTool`, and `startServer`. Internal tests now import lower-level contracts from their owning modules.
+- Clarified the egress policy boundary: raw shell recon is not claimed as Bob-enforced containment, MCP-scoped HTTP tools remain the runtime policy authority, no-op scope guard hooks were removed from generated settings, browser auto-signup now uses egress profiles and refuses strict internal-host mode, and `block_internal_hosts` now rejects proxy-backed HTTP egress profiles because proxy-side DNS/routing cannot be verified by Bob.
+- Extracted shared contract/store modules for session state, findings, verification rounds, wave handoffs, grade verdicts, pipeline events, and session authority.
+- Added clean release/package gates, dependency freshness checks, package-surface documentation, and a generated authority inventory freshness check.
+- Suppressed stale Claude statusline update hints after local installs and clarified the hint text as an update target instead of a current-version label.
+- Release notes: [docs/releases/v1.3.5.md](docs/releases/v1.3.5.md).
+
 ## [1.3.4] - 2026-05-14
 
 ### Codex adapter parity

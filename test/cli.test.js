@@ -614,6 +614,10 @@ test("CLI doctor --json returns stable machine-readable checks", () => {
     const result = JSON.parse(output);
     assert.equal(result.ok, true);
     assert.equal(result.target, workspace);
+    assert.equal(
+      result.checks.find((check) => check.id === "claude_mcp_dependency_proxy_agent").status,
+      "ok",
+    );
     for (const id of [
       "node_version",
       "target_directory",

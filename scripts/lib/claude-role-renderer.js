@@ -60,8 +60,8 @@ const CLAUDE_LAUNCH_TEMPLATES = Object.freeze({
     "First action: call bounty_read_hunter_brief({ target_domain: '[domain]', wave: 'w[wave]', agent: 'a[agent]', egress_profile: '[egress_profile]', block_internal_hosts: [block_internal_hosts] }) and use .data, including run_context.context_budget and technique_packs.selected.",
     "Use surface_type, bug_class_hints, high_value_flows, evidence, surface_limits, coverage_summary, traffic_summary, audit_summary, circuit_breaker_summary, ranking_summary, intel_hints, static_scan_hints, and technique_packs.selected as prioritization inputs for this one assigned surface.",
     "Call bounty_read_technique_pack(mode=\"full\") only with target_domain/wave/agent/surface_id for relevant selected summaries, and bounty_log_technique_attempt for selections, skips, attempts, and outcomes. Before finalizing, ensure one completion-status technique attempt is logged for this surface.",
-    "Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. Pass these exact values as egress_profile and block_internal_hosts on every bounty_http_scan call.",
-    "Prefer traffic_summary endpoints, replay through bounty_http_scan with target_domain and egress_profile, log bounty_log_coverage after meaningful tests, and log before switching away from promising traffic-derived endpoints.",
+    "Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. Pass these exact values as egress_profile and block_internal_hosts on every bounty_http_scan call. If strict internal-host blocking conflicts with a proxy-backed egress profile, record the blocked prerequisite instead of retrying.",
+    "Prefer traffic_summary endpoints, replay through bounty_http_scan with target_domain, egress_profile, and block_internal_hosts, log bounty_log_coverage after meaningful tests, and log before switching away from promising traffic-derived endpoints.",
     "New token-contract scans must use bounty_import_static_artifact then bounty_static_scan; never scan arbitrary paths.",
     "Checkpoint mode: [normal|paranoid|yolo].",
     "Auth: call bounty_list_auth_profiles, use attacker profile for primary testing, victim profile for IDOR/access-control confirmation, legacy auth as a single profile, or unauthenticated testing if auth is absent.",
@@ -76,27 +76,27 @@ const CLAUDE_LAUNCH_TEMPLATES = Object.freeze({
   // prompt regeneration; no per-pack template lives inline here anymore.
   "{{SPAWN_CHAIN_AGENT}}": [
     "```",
-    "Agent(subagent_type: \"chain-builder\", name: \"chain\", prompt: \"Domain: [domain]. Egress profile: [egress_profile]. Session: ~/bounty-agent-sessions/[domain]. Read findings, wave handoffs, auth profiles, HTTP audit, and prior chain attempts through MCP. Test plausible chains with bounty_http_scan as needed, passing egress_profile on every scan, and write every outcome through bounty_write_chain_attempt with the required steps array. Do not read findings.md, chains.md, or markdown handoffs.\")",
+    "Agent(subagent_type: \"chain-builder\", name: \"chain\", prompt: \"Domain: [domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. Session: ~/bounty-agent-sessions/[domain]. Read findings, wave handoffs, auth profiles, HTTP audit, and prior chain attempts through MCP. Test plausible chains with bounty_http_scan as needed, passing egress_profile and block_internal_hosts on every scan, and write every outcome through bounty_write_chain_attempt with the required steps array. Do not read findings.md, chains.md, or markdown handoffs.\")",
     "```",
   ].join("\n"),
   "{{SPAWN_BRUTALIST_VERIFIER}}": [
     "```",
-    "Agent(subagent_type: \"brutalist-verifier\", name: \"brutalist\", prompt: \"Session: ~/bounty-agent-sessions/[domain]. Egress profile: [egress_profile]. First call bounty_read_verification_context({ target_domain }); for v2 use current_attempt_id and snapshot_hash on writes and verification_replay context, cover exactly the snapshot findings, then write only through bounty_write_verification_round(round='brutalist').\")",
+    "Agent(subagent_type: \"brutalist-verifier\", name: \"brutalist\", prompt: \"Session: ~/bounty-agent-sessions/[domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. First call bounty_read_verification_context({ target_domain }); for v2 use current_attempt_id and snapshot_hash on writes and verification_replay context, pass egress_profile and block_internal_hosts on replay HTTP tools, cover exactly the snapshot findings, then write only through bounty_write_verification_round(round='brutalist').\")",
     "```",
   ].join("\n"),
   "{{SPAWN_BALANCED_VERIFIER}}": [
     "```",
-    "Agent(subagent_type: \"balanced-verifier\", name: \"balanced\", prompt: \"Session: ~/bounty-agent-sessions/[domain]. Egress profile: [egress_profile]. First call bounty_read_verification_context({ target_domain }). If v1, read brutalist and preserve the legacy cascade. If v2, do not read brutalist or adjudication; use current_attempt_id and snapshot_hash, pass verification_replay context on replay tools, cover exactly snapshot findings, then write only through bounty_write_verification_round(round='balanced').\")",
+    "Agent(subagent_type: \"balanced-verifier\", name: \"balanced\", prompt: \"Session: ~/bounty-agent-sessions/[domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. First call bounty_read_verification_context({ target_domain }). If v1, read brutalist and preserve the legacy cascade. If v2, do not read brutalist or adjudication; use current_attempt_id and snapshot_hash, pass verification_replay context plus egress_profile and block_internal_hosts on replay HTTP tools, cover exactly snapshot findings, then write only through bounty_write_verification_round(round='balanced').\")",
     "```",
   ].join("\n"),
   "{{SPAWN_FINAL_VERIFIER}}": [
     "```",
-    "Agent(subagent_type: \"final-verifier\", name: \"final-verify\", prompt: \"Session: ~/bounty-agent-sessions/[domain]. Egress profile: [egress_profile]. First call bounty_read_verification_context({ target_domain }). If v2, consume adjudication_context.adjudication_plan_hash from bounty_read_verification_context, do not compute diffs, pass verification_replay context on replay tools, and write round='final' with verification_attempt_id, verification_snapshot_hash, and adjudication_plan_hash. If v1, read balanced and use the legacy final cascade.\")",
+    "Agent(subagent_type: \"final-verifier\", name: \"final-verify\", prompt: \"Session: ~/bounty-agent-sessions/[domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. First call bounty_read_verification_context({ target_domain }). If v2, consume adjudication_context.adjudication_plan_hash from bounty_read_verification_context, do not compute diffs, pass verification_replay context plus egress_profile and block_internal_hosts on replay HTTP tools, and write round='final' with verification_attempt_id, verification_snapshot_hash, and adjudication_plan_hash. If v1, read balanced and use the legacy final cascade.\")",
     "```",
   ].join("\n"),
   "{{SPAWN_EVIDENCE_AGENT}}": [
     "```",
-    "Agent(subagent_type: \"evidence-agent\", name: \"evidence\", prompt: \"Domain: [domain]. Egress profile: [egress_profile]. Session: ~/bounty-agent-sessions/[domain]. Call bounty_read_verification_context, bounty_read_findings, bounty_read_verification_round({ target_domain: '[domain]', round: 'final' }), bounty_read_http_audit, and bounty_list_auth_profiles; for v2 pass evidence_replay context on replay tools and rely on MCP to bind evidence to final_verification_hash; write only through bounty_write_evidence_packs.\")",
+    "Agent(subagent_type: \"evidence-agent\", name: \"evidence\", prompt: \"Domain: [domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. Session: ~/bounty-agent-sessions/[domain]. Call bounty_read_verification_context, bounty_read_findings, bounty_read_verification_round({ target_domain: '[domain]', round: 'final' }), bounty_read_http_audit, and bounty_list_auth_profiles; for v2 pass evidence_replay context plus egress_profile and block_internal_hosts on replay HTTP tools and rely on MCP to bind evidence to final_verification_hash; write only through bounty_write_evidence_packs.\")",
     "```",
   ].join("\n"),
   "{{SPAWN_GRADER_AGENT}}": [
@@ -118,7 +118,7 @@ const CLAUDE_ROLE_SPECS = Object.freeze({
     output_path: path.join(".claude", "skills", "bob-hunt", "SKILL.md"),
     name: "bob-hunt",
     disable_model_invocation: true,
-    argument_hint: "[target-url | resume <domain> [force-merge]] [--deep] [--egress <profile>]",
+    argument_hint: "[target-url | resume <domain> [force-merge]] [--no-auth] [--normal|--paranoid|--yolo] [--deep] [--egress <profile>] [--block-internal-hosts|--allow-internal-hosts]",
     local_tools: Object.freeze(["Task", "Read"]),
   }),
   status: Object.freeze({
@@ -381,7 +381,7 @@ function renderClaudePromptBody(roleId, body, { root = DEFAULT_ROOT } = {}) {
   if (roleId === "status") {
     document = document.replace(
       "{{STATUS_UPDATE_CACHE_COMMAND}}",
-      'node "$CLAUDE_PROJECT_DIR/.claude/hooks/bob-update.js" status "$CLAUDE_PROJECT_DIR" --json',
+      'node "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/bob-update.js" status "${CLAUDE_PROJECT_DIR:-$PWD}" --json',
     );
   }
   document = document

@@ -1,6 +1,13 @@
 "use strict";
 
 const { writeWaveHandoff } = require("../waves.js");
+const {
+  BLOCKED_PREREQ_IDENTIFIER_HINT_LONG_HEX_PATTERN,
+  BLOCKED_PREREQ_IDENTIFIER_HINT_PATTERN,
+  BYPASS_ATTEMPT_CONDITION_MIN_CHARS,
+  BYPASS_ATTEMPT_SUMMARY_MIN_CHARS,
+  WAVE_HANDOFF_CONTENT_MAX_CHARS,
+} = require("../wave-handoff-contracts.js");
 
 module.exports = Object.freeze({
   name: "bounty_write_wave_handoff",
@@ -101,7 +108,8 @@ module.exports = Object.freeze({
               "type": "string",
               "minLength": 1,
               "maxLength": 64,
-              "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$",
+              "pattern": BLOCKED_PREREQ_IDENTIFIER_HINT_PATTERN.source,
+              "not": { "pattern": BLOCKED_PREREQ_IDENTIFIER_HINT_LONG_HEX_PATTERN.source },
               "description": "Optional. Registry handle (e.g., auth profile name 'attacker', egress profile name 'us-west-egress') that would resolve this prereq when added. Omit when no specific registry handle is identified. Restricted to lowercase alphanumerics + ._- and screened for long-hex / secret-shaped values."
             },
             "reason": { "type": "string", "minLength": 1, "maxLength": 240 },
@@ -118,8 +126,8 @@ module.exports = Object.freeze({
           "type": "object",
           "required": ["condition", "attempt_summary", "outcome"],
           "properties": {
-            "condition": { "type": "string", "minLength": 4, "maxLength": 120 },
-            "attempt_summary": { "type": "string", "minLength": 30, "maxLength": 500 },
+            "condition": { "type": "string", "minLength": BYPASS_ATTEMPT_CONDITION_MIN_CHARS, "maxLength": 120 },
+            "attempt_summary": { "type": "string", "minLength": BYPASS_ATTEMPT_SUMMARY_MIN_CHARS, "maxLength": 500 },
             "outcome": {
               "type": "string",
               "enum": ["no_finding", "partial_evidence", "finding_recorded", "blocked"]
@@ -130,7 +138,8 @@ module.exports = Object.freeze({
         }
       },
       "content": {
-        "type": "string"
+        "type": "string",
+        "maxLength": WAVE_HANDOFF_CONTENT_MAX_CHARS
       },
       "dead_ends": {
         "type": "array",
@@ -193,5 +202,4 @@ module.exports = Object.freeze({
   scope_required: false,
   sensitive_output: false,
   session_artifacts_written: ["handoff-wN-aN.json","handoff-wN-aN.md"],
-  hook_required: false,
 });

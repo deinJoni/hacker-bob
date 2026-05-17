@@ -14,7 +14,7 @@ function readInvariantRunsHandler(args) {
 module.exports = Object.freeze({
   name: "bounty_read_invariant_runs",
   description:
-    "Read the per-target invariant-runs.jsonl corpus. Each record carries finding_hash, template_id, slot_values, contract_name, function_name, test_path, outcome (test_passed, test_failed, fork_blocked, forge_missing, no_template, unknown), and the captured Foundry result. Filter by outcome (e.g. test_failed for counterexamples that need follow-up) or template_id.",
+    "Read the per-target invariant-runs.jsonl corpus. Reads reject symlinked or hard-linked corpus files, and use descriptor-bound no-follow reads where the platform exposes O_NOFOLLOW; without O_NOFOLLOW, static symlinks are rejected before open but malicious same-UID concurrent final-entry replacement and in-place regular-file mutation outside Bob's cooperative session lock remain unsupported. Each record carries finding_hash, template_id, slot_values, contract_name, function_name, test_path, outcome (test_passed, test_failed, fork_blocked, forge_missing, no_template, unknown), and the captured Foundry result. Filter by outcome (e.g. test_failed for counterexamples that need follow-up) or template_id.",
   inputSchema: {
     type: "object",
     properties: {
@@ -34,5 +34,4 @@ module.exports = Object.freeze({
   scope_required: false,
   sensitive_output: false,
   session_artifacts_written: [],
-  hook_required: false,
 });

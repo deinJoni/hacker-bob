@@ -1,6 +1,6 @@
 "use strict";
 
-const { writeVerificationRound } = require("../findings.js");
+const { writeVerificationRound } = require("../verification-round-store.js");
 
 module.exports = Object.freeze({
   name: "bounty_write_verification_round",
@@ -164,5 +164,4 @@ module.exports = Object.freeze({
   scope_required: false,
   sensitive_output: false,
   session_artifacts_written: ["brutalist.json","balanced.json","verified-final.json","verification-manifest.json"],
-  hook_required: false,
 });

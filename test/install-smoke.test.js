@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { getAdapter } = require("../adapters/index.js");
+const update = require("../mcp/lib/update-check.js");
 
 const ROOT = path.join(__dirname, "..");
 const CLI = path.join(ROOT, "bin", "hacker-bob.js");
@@ -19,11 +20,25 @@ test("installer copies a require-able complete MCP runtime", () => {
   fs.mkdirSync(workspace, { recursive: true });
 
   try {
+    update.writeUpdateCache(workspace, {
+      schema_version: 1,
+      package_name: "hacker-bob",
+      install_target: workspace,
+      installed_version: "1.0.0",
+      latest_version: "1.3.0",
+      update_available: true,
+      legacy_install: false,
+      checked_at: new Date(1000).toISOString(),
+      checked_at_ms: 1000,
+      error: null,
+    }, { homeDir: tempHome });
+
     execFileSync(path.join(ROOT, "install.sh"), [workspace], {
       cwd: ROOT,
       env: { ...process.env, HOME: tempHome },
       stdio: "pipe",
     });
+    assert.equal(update.readUpdateCache(workspace, { homeDir: tempHome }), null);
 
     const installedServer = path.join(workspace, "mcp", "server.js");
     assert.ok(fs.existsSync(installedServer));
@@ -31,6 +46,9 @@ test("installer copies a require-able complete MCP runtime", () => {
     assert.ok(fs.existsSync(path.join(workspace, "mcp", "lib", "dispatch.js")));
     assert.ok(fs.existsSync(path.join(workspace, "mcp", "lib", "tools", "index.js")));
     assert.ok(fs.existsSync(path.join(workspace, "mcp", "lib", "egress-profiles.js")));
+    assert.ok(fs.existsSync(path.join(workspace, "mcp", "node_modules", "psl", "dist", "psl.cjs")));
+    assert.ok(fs.existsSync(path.join(workspace, "mcp", "node_modules", "proxy-agent", "dist", "index.js")));
+    assert.ok(fs.existsSync(path.join(workspace, "mcp", "node_modules", "punycode", "punycode.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-update.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-egress.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-export.md")));
@@ -83,10 +101,55 @@ test("installer copies a require-able complete MCP runtime", () => {
     assert.equal(installMeta.package_name, "hacker-bob");
     assert.equal(installMeta.install_target, workspace);
 
+    const statuslinePath = path.join(workspace, ".claude", "hooks", "bounty-statusline.js");
+    const nestedWorkspaceDir = path.join(workspace, "nested");
+    fs.mkdirSync(nestedWorkspaceDir, { recursive: true });
+    const runStatusline = () => execFileSync(process.execPath, [statuslinePath], {
+      cwd: nestedWorkspaceDir,
+      env: { ...process.env, HOME: tempHome, CLAUDE_PROJECT_DIR: workspace },
+      input: JSON.stringify({
+        model: { display_name: "Claude" },
+        workspace: { current_dir: nestedWorkspaceDir },
+      }),
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    update.writeUpdateCache(workspace, {
+      schema_version: 1,
+      package_name: "hacker-bob",
+      install_target: workspace,
+      installed_version: "1.0.0",
+      latest_version: "1.3.0",
+      update_available: true,
+      legacy_install: false,
+      checked_at: new Date().toISOString(),
+      checked_at_ms: Date.now(),
+      error: null,
+    }, { homeDir: tempHome });
+    assert.doesNotMatch(runStatusline(), /Bob 1\.3\.0|Update Bob|bob-update/);
+
+    update.writeUpdateCache(workspace, {
+      schema_version: 1,
+      package_name: "hacker-bob",
+      install_target: workspace,
+      installed_version: PACKAGE_VERSION,
+      latest_version: "99.0.0",
+      update_available: true,
+      legacy_install: false,
+      checked_at: new Date().toISOString(),
+      checked_at_ms: Date.now(),
+      error: null,
+    }, { homeDir: tempHome });
+    assert.match(runStatusline(), /Update Bob to 99\.0\.0: \/bob-update/);
+
     execFileSync(process.execPath, [
       "-e",
       [
         "const server = require(process.argv[1]);",
+        "const installedRequire = require('module').createRequire(process.argv[1]);",
+        "installedRequire('psl');",
+        "installedRequire('proxy-agent');",
         "if (!Array.isArray(server.TOOLS) || server.TOOLS.length !== 104) process.exit(2);",
         "if (!server.TOOLS.some((tool) => tool.name === 'bounty_list_auth_profiles')) process.exit(3);",
         "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_tool_telemetry')) process.exit(6);",
@@ -107,7 +170,8 @@ test("installer copies a require-able complete MCP runtime", () => {
         "if (!server.TOOLS.some((tool) => tool.name === 'bounty_get_context_budget')) process.exit(21);",
         "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_verification_context')) process.exit(22);",
         "if (!server.TOOLS.some((tool) => tool.name === 'bounty_build_verification_adjudication')) process.exit(23);",
-        "Promise.resolve(server.executeTool('bounty_list_auth_profiles', { target_domain: 'example.com' }))",
+        "Promise.resolve(server.executeTool('bounty_init_session', { target_domain: 'example.com', target_url: 'https://example.com/' }))",
+        "  .then((init) => { if (!init.ok) process.exit(24); return server.executeTool('bounty_list_auth_profiles', { target_domain: 'example.com' }); })",
         "  .then((result) => { if (!result.ok || result.data.target_domain !== 'example.com') process.exit(4); })",
         "  .catch(() => process.exit(5));",
       ].join(" "),
@@ -278,7 +342,7 @@ test("installer merges existing MCP/settings config idempotently", () => {
     );
     assert.equal(
       settings.hooks.PreToolUse.filter((entry) => entry.matcher === "mcp__bountyagent__bounty_http_scan").length,
-      1,
+      0,
     );
     const stopEntry = settings.hooks.SubagentStop.find((entry) => entry.matcher === "hunter-agent");
     assert.ok(stopEntry);

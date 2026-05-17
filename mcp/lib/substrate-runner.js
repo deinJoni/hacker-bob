@@ -4,8 +4,16 @@ const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { resolveSubstrateRpcEndpoints, isPublicHttpsUrl } = require("./substrate-rpc-pool.js");
+const { resolveSubstrateRpcEndpoints } = require("./substrate-rpc-pool.js");
 const { parseCargoTestStdout } = require("./cargo-test-output.js");
+const {
+  directSmartContractSubprocessEnv,
+  filterResolvedPublicRpcEndpoints,
+  redactRpcEndpoint,
+  redactRpcEndpointArgs,
+  redactRpcEndpointText,
+  summarizeRpcPolicyRejections,
+} = require("./sc-egress-policy.js");
 
 const DEFAULT_TIMEOUT_MS = 90_000;
 const MAX_TIMEOUT_MS = 600_000;
@@ -82,7 +90,7 @@ function spawnCargo(args, { workdir, env, timeoutMs }) {
     try {
       child = spawn("cargo", args, {
         cwd: workdir,
-        env: { ...process.env, ...env },
+        env: directSmartContractSubprocessEnv(env),
         stdio: ["ignore", "pipe", "pipe"],
         detached: true,
       });
@@ -250,12 +258,16 @@ async function runSubstrateTest({
   }
   const cappedTimeout = Math.min(Math.max(Number(timeoutMs) || DEFAULT_TIMEOUT_MS, 5_000), MAX_TIMEOUT_MS);
 
-  const explicitForkUrls = Array.isArray(forkUrls)
-    ? forkUrls.filter(isPublicHttpsUrl)
+  const explicitForkUrls = Array.isArray(forkUrls) && forkUrls.length > 0
+    ? forkUrls
     : null;
-  const candidateForkUrls = explicitForkUrls && explicitForkUrls.length > 0
+  const rawCandidateForkUrls = explicitForkUrls && explicitForkUrls.length > 0
     ? explicitForkUrls
     : (network ? resolveSubstrateRpcEndpoints(network) : []);
+  const {
+    endpoints: candidateForkUrls,
+    rejected: rpcPolicyRejections,
+  } = await filterResolvedPublicRpcEndpoints(rawCandidateForkUrls);
 
   const extraArgvOut = buildExtraArgs(extraArgs);
   // cargo test --manifest-path X [extra cargo flags] -- --nocapture --test-threads=1 --exact <match_test>
@@ -276,13 +288,16 @@ async function runSubstrateTest({
 
   const forkAttempts = [];
   if (candidateForkUrls.length === 0) {
-    if (network != null && network !== "localnet") {
+    if (explicitForkUrls || (network != null && network !== "localnet")) {
       return {
         ok: false,
         reason: "no_fork_endpoints_for_network",
         network,
-        error: `no public RPC endpoints available for network ${network}; supply fork_urls explicitly or set BOB_SUBSTRATE_RPCS_${String(network).toUpperCase().replace(/-/g, "_")}=url1,url2 in the MCP server env`,
-        command: ["cargo", ...baseArgs],
+        error: network == null || network === "localnet"
+          ? "no public HTTPS RPC endpoints remain after applying the smart-contract egress policy"
+          : `no public HTTPS RPC endpoints available for network ${network}; supply fork_urls explicitly or set BOB_SUBSTRATE_RPCS_${String(network).toUpperCase().replace(/-/g, "_")}=url1,url2 in the MCP server env`,
+        command: ["cargo", ...redactRpcEndpointArgs(baseArgs)],
+        rpc_policy_rejections: summarizeRpcPolicyRejections(rpcPolicyRejections),
         fork_attempts: [],
       };
     }
@@ -291,7 +306,7 @@ async function runSubstrateTest({
     // but the harness wires that itself; we just spawn cargo and let it
     // surface the error.
     const result = await spawnCargo(baseArgs, { workdir: resolvedWorkdir, timeoutMs: cappedTimeout, env: {} });
-    return finalizeRun({ result, args: baseArgs, forkAttempts: [], forkBlock, fork_used: null });
+    return finalizeRun({ result, args: baseArgs, forkAttempts: [], forkBlock, fork_used: null, rpcPolicyRejections });
   }
 
   let lastResult = null;
@@ -303,30 +318,30 @@ async function runSubstrateTest({
     const result = await spawnCargo(baseArgs, { workdir: resolvedWorkdir, timeoutMs: cappedTimeout, env });
     lastResult = result;
     forkAttempts.push({
-      endpoint: url,
+      endpoint: redactRpcEndpoint(url),
       ok: result.ok,
       exit_code: result.exit_code,
       timed_out: result.timed_out === true,
       reason: result.reason || null,
-      stderr_excerpt: truncateString(result.stderr || "", 600),
+      stderr_excerpt: truncateString(redactRpcEndpointText(result.stderr || ""), 600),
     });
     if (result.ok) {
-      return finalizeRun({ result, args: baseArgs, forkAttempts, forkBlock, fork_used: url });
+      return finalizeRun({ result, args: baseArgs, forkAttempts, forkBlock, fork_used: redactRpcEndpoint(url), rpcPolicyRejections });
     }
     if (result.reason === "cargo_not_in_path") {
-      return finalizeRun({ result, args: baseArgs, forkAttempts, forkBlock, fork_used: null });
+      return finalizeRun({ result, args: baseArgs, forkAttempts, forkBlock, fork_used: null, rpcPolicyRejections });
     }
     // If parser sees test status lines, the binary ran fine — tests just
     // asserted. Don't keep failing over.
     const looksLikeTestRan = typeof result.stdout === "string" && /^test\s+\S+\s+\.\.\.\s+(ok|FAILED|ignored)\b/m.test(result.stdout);
     if (looksLikeTestRan) {
-      return finalizeRun({ result, args: baseArgs, forkAttempts, forkBlock, fork_used: url });
+      return finalizeRun({ result, args: baseArgs, forkAttempts, forkBlock, fork_used: redactRpcEndpoint(url), rpcPolicyRejections });
     }
   }
-  return finalizeRun({ result: lastResult, args: baseArgs, forkAttempts, forkBlock, fork_used: null });
+  return finalizeRun({ result: lastResult, args: baseArgs, forkAttempts, forkBlock, fork_used: null, rpcPolicyRejections });
 }
 
-function finalizeRun({ result, args, forkAttempts, forkBlock, fork_used }) {
+function finalizeRun({ result, args, forkAttempts, forkBlock, fork_used, rpcPolicyRejections = [] }) {
   if (!result || result.reason === "cargo_not_in_path" || result.reason === "cargo_spawn_failed") {
     return {
       ok: false,
@@ -335,7 +350,8 @@ function finalizeRun({ result, args, forkAttempts, forkBlock, fork_used }) {
       reason: result && result.reason === "cargo_not_in_path" ? "substrate_not_in_path"
         : (result && result.reason ? result.reason : "spawn_failed"),
       error: result && result.error ? result.error : null,
-      command: ["cargo", ...args],
+      command: ["cargo", ...redactRpcEndpointArgs(args)],
+      rpc_policy_rejections: summarizeRpcPolicyRejections(rpcPolicyRejections),
       fork_attempts: forkAttempts,
     };
   }
@@ -385,7 +401,8 @@ function finalizeRun({ result, args, forkAttempts, forkBlock, fork_used }) {
     fork_block: forkBlock || null,
     fork_block_used: forkBlockUsed,
     fork_attempts: forkAttempts,
-    command: ["cargo", ...args],
+    command: ["cargo", ...redactRpcEndpointArgs(args)],
+    rpc_policy_rejections: summarizeRpcPolicyRejections(rpcPolicyRejections),
     summary: {
       total: summary.total,
       passed: summary.passed,
@@ -395,8 +412,8 @@ function finalizeRun({ result, args, forkAttempts, forkBlock, fork_used }) {
     tests: summary.tests,
     tests_truncated: summary.truncated === true,
     raw_excerpt: {
-      stdout: truncateString(result.stdout || "", RAW_EXCERPT_BYTES),
-      stderr: truncateString(result.stderr || "", RAW_EXCERPT_BYTES),
+      stdout: truncateString(redactRpcEndpointText(result.stdout || ""), RAW_EXCERPT_BYTES),
+      stderr: truncateString(redactRpcEndpointText(result.stderr || ""), RAW_EXCERPT_BYTES),
       truncated: result.truncated === true,
     },
     parse_warning: parseResult.ok ? null : parseResult.reason,

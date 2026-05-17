@@ -18,7 +18,14 @@
 // builds the storage key from the SS58 address. Hunters and verifiers who
 // need lower-level access can call rpcRequest directly with a raw key.
 
-const { resolveSubstrateRpcEndpoints, isPublicHttpsUrl } = require("./substrate-rpc-pool.js");
+const { resolveSubstrateRpcEndpoints } = require("./substrate-rpc-pool.js");
+const {
+  filterResolvedPublicRpcEndpoints,
+  redactRpcEndpoint,
+  redactRpcEndpointText,
+  summarizeRpcPolicyRejections,
+} = require("./sc-egress-policy.js");
+const { requestPublicHttpsText } = require("./sc-http-client.js");
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 256 * 1024;
@@ -32,67 +39,33 @@ function isSs58Address(value) {
   return SS58_BASE58_RE.test(value);
 }
 
-async function readResponseTextCapped(resp, maxBytes) {
-  if (!resp.body || typeof resp.body.getReader !== "function") {
-    const text = await resp.text();
-    const buffer = Buffer.from(text, "utf8");
-    if (buffer.length <= maxBytes) return text;
-    return buffer.subarray(0, maxBytes).toString("utf8");
+async function rpcRequestOnce(url, method, params, { timeoutMs = DEFAULT_TIMEOUT_MS, maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES, lookup } = {}) {
+  const displayUrl = redactRpcEndpoint(url);
+  const resp = await requestPublicHttpsText(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", method, params, id: 1 }),
+    timeoutMs,
+    maxBytes: maxResponseBytes,
+    lookup,
+  });
+  const text = resp.text;
+  if (!resp.ok) {
+    throw new Error(`HTTP ${resp.status} from ${displayUrl}: ${redactRpcEndpointText(text).slice(0, 200)}`);
   }
-  const reader = resp.body.getReader();
-  const chunks = [];
-  let received = 0;
+  let parsed;
   try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      const buffer = Buffer.from(value);
-      const remaining = maxBytes - received;
-      if (remaining > 0) {
-        chunks.push(buffer.length > remaining ? buffer.subarray(0, remaining) : buffer);
-      }
-      received += buffer.length;
-      if (received > maxBytes) {
-        try { if (typeof reader.cancel === "function") await reader.cancel(); } catch {}
-        break;
-      }
-    }
-  } finally {
-    if (typeof reader.releaseLock === "function") reader.releaseLock();
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`malformed JSON-RPC response from ${displayUrl}: ${error.message || String(error)}`);
   }
-  return Buffer.concat(chunks).toString("utf8");
-}
-
-async function rpcRequestOnce(url, method, params, { timeoutMs = DEFAULT_TIMEOUT_MS, maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES } = {}) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json", "User-Agent": "Mozilla/5.0 (compatible; hacker-bob)" },
-      body: JSON.stringify({ jsonrpc: "2.0", method, params, id: 1 }),
-      signal: controller.signal,
-    });
-    const text = await readResponseTextCapped(resp, maxResponseBytes);
-    if (!resp.ok) {
-      throw new Error(`HTTP ${resp.status} from ${url}: ${text.slice(0, 200)}`);
-    }
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch (error) {
-      throw new Error(`malformed JSON-RPC response from ${url}: ${error.message || String(error)}`);
-    }
-    if (parsed && parsed.error) {
-      const message = typeof parsed.error.message === "string" ? parsed.error.message : JSON.stringify(parsed.error);
-      const err = new Error(`JSON-RPC error from ${url}: ${message}`);
-      err.rpcError = parsed.error;
-      throw err;
-    }
-    return parsed && parsed.result;
-  } finally {
-    clearTimeout(timeout);
+  if (parsed && parsed.error) {
+    const message = typeof parsed.error.message === "string" ? parsed.error.message : JSON.stringify(parsed.error);
+    const err = new Error(`JSON-RPC error from ${displayUrl}: ${redactRpcEndpointText(message)}`);
+    err.rpcError = parsed.error;
+    throw err;
   }
+  return parsed && parsed.result;
 }
 
 async function rpcRequest({
@@ -102,24 +75,29 @@ async function rpcRequest({
   endpoints,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES,
+  lookup,
 } = {}) {
-  if (typeof fetch !== "function") {
-    throw new Error("fetch is unavailable in this Node runtime");
-  }
-  const endpointList = Array.isArray(endpoints) && endpoints.length > 0
-    ? endpoints.filter(isPublicHttpsUrl)
+  const rawEndpointList = Array.isArray(endpoints) && endpoints.length > 0
+    ? endpoints
     : resolveSubstrateRpcEndpoints(network);
+  const { endpoints: endpointList, rejected } = await filterResolvedPublicRpcEndpoints(rawEndpointList, { lookup });
   if (endpointList.length === 0) {
-    throw new Error(`no public RPC endpoints available for network ${network}; set BOB_SUBSTRATE_RPCS_${String(network).toUpperCase()}=url1,url2 to override`);
+    const err = new Error(`no public HTTPS RPC endpoints available for network ${network}; set BOB_SUBSTRATE_RPCS_${String(network).toUpperCase()}=url1,url2 to override`);
+    err.rpc_policy_rejections = summarizeRpcPolicyRejections(rejected);
+    err.details = { rpc_policy_rejections: err.rpc_policy_rejections };
+    throw err;
   }
 
   const errors = [];
   for (const endpoint of endpointList) {
     try {
-      const result = await rpcRequestOnce(endpoint, method, params, { timeoutMs, maxResponseBytes });
-      return { result, endpoint };
+      const result = await rpcRequestOnce(endpoint, method, params, { timeoutMs, maxResponseBytes, lookup });
+      return { result, endpoint: redactRpcEndpoint(endpoint) };
     } catch (error) {
-      errors.push({ endpoint, message: error.message || String(error) });
+      errors.push({
+        endpoint: redactRpcEndpoint(endpoint),
+        message: redactRpcEndpointText(error.message || String(error)),
+      });
     }
   }
   const summary = errors.map((e) => `${e.endpoint}: ${e.message}`).join("; ");

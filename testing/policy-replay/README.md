@@ -1,11 +1,11 @@
 # Policy Replay Harness
 
-This harness replays minimized Bob policy regressions against candidate agent prompts. It is for diagnosing false refusals, policy stalls, tool/policy loops, ambiguous prompt wording, and unsafe-compliance regressions. It must not be used to bypass policy; cases should preserve safe refusal behavior where `expected` is `should_refuse`.
+This installed diagnostic harness replays minimized Bob policy regressions against candidate agent prompts. It is for diagnosing false refusals, policy stalls, tool/policy loops, ambiguous prompt wording, and unsafe-compliance regressions from a shell in the installed workspace. It must not be used to bypass policy; cases should preserve safe refusal behavior where `expected` is `should_refuse`.
 
 ## Workflow
 
-1. Run `/bob-debug --deep <target_domain>`.
-2. If the debug review flags a policy/refusal issue in `--deep` mode, it can run a local dry-run cut and bounded tune pass directly from the implicated transcript.
+1. Run `/bob-debug --deep <target_domain>` to identify the failure window from telemetry and narrow transcript context.
+2. From a shell in the installed workspace, run a local dry-run cut or bounded tune pass directly from the implicated transcript.
 3. If a stable regression should be retained, create a minimized and redacted case in `testing/policy-replay/cases/`.
 4. Patch the relevant agent prompt after reviewing the suggested prompt change.
 5. Dry-run the retained case to confirm the transcript cut:

@@ -10,12 +10,13 @@ const {
 } = require("./attack-surface.js");
 const {
   readFindingsFromJsonl,
-} = require("./findings.js");
+} = require("./finding-store.js");
 const {
   chainAttemptsJsonlPath,
 } = require("./paths.js");
 const {
   appendJsonlLine,
+  readFileUtf8,
   withSessionLock,
 } = require("./storage.js");
 const {
@@ -174,7 +175,7 @@ function readChainAttemptsFromJsonl(domain) {
     return [];
   }
 
-  const content = fs.readFileSync(filePath, "utf8");
+  const content = readFileUtf8(filePath, { label: "chain-attempts.jsonl" });
   if (!content.trim()) {
     return [];
   }

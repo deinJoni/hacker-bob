@@ -17,8 +17,6 @@ const id = "claude";
 const DEFAULT_ROOT = path.join(__dirname, "..", "..");
 
 const HOOK_FILES = Object.freeze([
-  "scope-guard.sh",
-  "scope-guard-mcp.sh",
   "session-read-guard.sh",
   "session-write-guard.sh",
   "bounty-statusline.js",
@@ -32,11 +30,11 @@ const HOOK_FILES = Object.freeze([
 
 const STALE_HOOK_FILES = Object.freeze([
   "bob-update-lib.js",
+  "scope-guard.sh",
+  "scope-guard-mcp.sh",
 ]);
 
 const EXECUTABLE_HOOKS = Object.freeze([
-  "scope-guard.sh",
-  "scope-guard-mcp.sh",
   "session-read-guard.sh",
   "session-write-guard.sh",
   "hunter-subagent-stop.js",
@@ -413,7 +411,7 @@ function install({
     );
   }
 
-  // Egress profiles example + operator config (v1.1.7+).
+  // Egress profiles example + operator config.
   // ensureEgressProfilesExample writes a versioned example operators can copy;
   // ensureEgressProfilesConfig writes a default profile only when no operator
   // file exists yet, preserving operator edits across reinstalls.
@@ -579,7 +577,7 @@ function doctor({
     }
   }
 
-  // Egress profile config (v1.1.7): example + operator file + dependency check.
+  // Egress profile config: example + operator file + dependency check.
   const {
     egressProfilesPath,
     egressProfilesExamplePath,
@@ -614,7 +612,7 @@ function doctor({
   // proxy-agent dependency for non-default egress profiles.
   let proxyAgentInstalled = false;
   try {
-    require.resolve("proxy-agent", { paths: [targetAbs] });
+    require.resolve("proxy-agent", { paths: [path.join(targetAbs, "mcp"), targetAbs] });
     proxyAgentInstalled = true;
   } catch {}
   if (proxyAgentInstalled) {
@@ -623,7 +621,7 @@ function doctor({
     addCheck(checks, "warn", checkId("mcp_dependency_proxy_agent"), "proxy-agent is missing; non-default egress profiles will not work until dependencies are installed");
   }
 
-  // Policy replay harness (v1.1.4): testing/policy-replay/ files for /bob-debug replay diagnostics.
+  // Policy replay harness: installed diagnostic files under testing/policy-replay/.
   const POLICY_REPLAY_FILES = [
     "replay.mjs",
     "tune.mjs",
@@ -639,7 +637,7 @@ function doctor({
   if (missingPolicyReplay.length === 0) {
     addCheck(checks, "ok", checkId("policy_replay_harness"), "Policy replay harness is installed");
   } else {
-    addCheck(checks, "warn", checkId("policy_replay_harness"), "Policy replay harness files are missing; /bob-debug replay diagnostics will fall back to legacy mode", {
+    addCheck(checks, "warn", checkId("policy_replay_harness"), "Policy replay harness files are missing; developer replay diagnostics are unavailable", {
       missing: missingPolicyReplay,
     });
   }

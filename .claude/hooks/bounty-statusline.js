@@ -68,10 +68,14 @@ process.stdin.on('end', () => {
 
     let updateHint = '';
     try {
-      const projectDir = data.workspace?.current_dir || process.env.BOB_PROJECT_DIR || process.env.CLAUDE_PROJECT_DIR || process.cwd();
+      const projectDir = process.env.BOB_PROJECT_DIR || process.env.CLAUDE_PROJECT_DIR || data.workspace?.current_dir || process.cwd();
       const cache = update.readUpdateCache(projectDir);
       if (cache && cache.update_available && !cache.error && cache.latest_version) {
-        updateHint = ` │ \x1b[33mBob ${cache.latest_version}: /bob-update\x1b[0m`;
+        const installedVersion = update.readInstalledVersion(projectDir) || cache.installed_version;
+        const updateIsNewer = !installedVersion || update.compareSemver(cache.latest_version, installedVersion) > 0;
+        if (updateIsNewer) {
+          updateHint = ` │ \x1b[33mUpdate Bob to ${cache.latest_version}: /bob-update\x1b[0m`;
+        }
       }
     } catch {}
 

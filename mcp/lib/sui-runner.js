@@ -4,8 +4,16 @@ const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { resolveSuiRpcEndpoints, isPublicHttpsUrl } = require("./sui-rpc-pool.js");
+const { resolveSuiRpcEndpoints } = require("./sui-rpc-pool.js");
 const { parseMoveTestStdout } = require("./move-test-output.js");
+const {
+  directSmartContractSubprocessEnv,
+  filterResolvedPublicRpcEndpoints,
+  redactRpcEndpoint,
+  redactRpcEndpointArgs,
+  redactRpcEndpointText,
+  summarizeRpcPolicyRejections,
+} = require("./sc-egress-policy.js");
 
 const DEFAULT_TIMEOUT_MS = 90_000;
 const MAX_TIMEOUT_MS = 600_000;
@@ -64,7 +72,7 @@ function spawnSui(args, { workdir, env, timeoutMs }) {
     try {
       child = spawn("sui", args, {
         cwd: workdir,
-        env: { ...process.env, ...env },
+        env: directSmartContractSubprocessEnv(env),
         stdio: ["ignore", "pipe", "pipe"],
         detached: true,
       });
@@ -200,12 +208,16 @@ async function runSuiTest({
   }
   const cappedTimeout = Math.min(Math.max(Number(timeoutMs) || DEFAULT_TIMEOUT_MS, 5_000), MAX_TIMEOUT_MS);
 
-  const explicitForkUrls = Array.isArray(forkUrls)
-    ? forkUrls.filter(isPublicHttpsUrl)
+  const explicitForkUrls = Array.isArray(forkUrls) && forkUrls.length > 0
+    ? forkUrls
     : null;
-  const candidateForkUrls = explicitForkUrls && explicitForkUrls.length > 0
+  const rawCandidateForkUrls = explicitForkUrls && explicitForkUrls.length > 0
     ? explicitForkUrls
     : (network ? resolveSuiRpcEndpoints(network) : []);
+  const {
+    endpoints: candidateForkUrls,
+    rejected: rpcPolicyRejections,
+  } = await filterResolvedPublicRpcEndpoints(rawCandidateForkUrls);
 
   // sui move test takes a positional filter (no --filter flag is required;
   // instead a regex argument matches test names). To stay deterministic and
@@ -223,7 +235,7 @@ async function runSuiTest({
 
   const forkAttempts = [];
   if (candidateForkUrls.length === 0) {
-    if (network != null && network !== "localnet") {
+    if (explicitForkUrls || (network != null && network !== "localnet")) {
       // localnet has no public default — accept zero candidate URLs and let
       // the test run locally without a network. For other networks, fail
       // closed.
@@ -231,13 +243,16 @@ async function runSuiTest({
         ok: false,
         reason: "no_fork_endpoints_for_network",
         network,
-        error: `no public RPC endpoints available for network ${network}; supply fork_urls explicitly or set BOB_SUI_RPCS_${String(network).toUpperCase().replace(/-/g, "_")}=url1,url2 in the MCP server env`,
-        command: ["sui", ...baseArgs],
+        error: network == null || network === "localnet"
+          ? "no public HTTPS RPC endpoints remain after applying the smart-contract egress policy"
+          : `no public HTTPS RPC endpoints available for network ${network}; supply fork_urls explicitly or set BOB_SUI_RPCS_${String(network).toUpperCase().replace(/-/g, "_")}=url1,url2 in the MCP server env`,
+        command: ["sui", ...redactRpcEndpointArgs(baseArgs)],
+        rpc_policy_rejections: summarizeRpcPolicyRejections(rpcPolicyRejections),
         fork_attempts: [],
       };
     }
     const result = await spawnSui(baseArgs, { workdir: resolvedWorkdir, timeoutMs: cappedTimeout, env: {} });
-    return finalizeRun({ result, args: baseArgs, forkAttempts: [], forkCheckpoint, fork_used: null });
+    return finalizeRun({ result, args: baseArgs, forkAttempts: [], forkCheckpoint, fork_used: null, rpcPolicyRejections });
   }
 
   let lastResult = null;
@@ -246,34 +261,35 @@ async function runSuiTest({
     const result = await spawnSui(baseArgs, { workdir: resolvedWorkdir, timeoutMs: cappedTimeout, env });
     lastResult = result;
     forkAttempts.push({
-      endpoint: url,
+      endpoint: redactRpcEndpoint(url),
       ok: result.ok,
       exit_code: result.exit_code,
       timed_out: result.timed_out === true,
       reason: result.reason || null,
-      stderr_excerpt: truncateString(result.stderr || "", 600),
+      stderr_excerpt: truncateString(redactRpcEndpointText(result.stderr || ""), 600),
     });
     if (result.ok) {
-      return finalizeRun({ result, args: baseArgs, forkAttempts, forkCheckpoint, fork_used: url });
+      return finalizeRun({ result, args: baseArgs, forkAttempts, forkCheckpoint, fork_used: redactRpcEndpoint(url), rpcPolicyRejections });
     }
     if (result.reason === "sui_not_in_path") {
-      return finalizeRun({ result, args: baseArgs, forkAttempts, forkCheckpoint, fork_used: null });
+      return finalizeRun({ result, args: baseArgs, forkAttempts, forkCheckpoint, fork_used: null, rpcPolicyRejections });
     }
     const looksLikeTestRan = typeof result.stdout === "string" && /\[\s*(PASS|FAIL|TIMEOUT|SKIP)\s*\]/.test(result.stdout);
     if (looksLikeTestRan) {
-      return finalizeRun({ result, args: baseArgs, forkAttempts, forkCheckpoint, fork_used: url });
+      return finalizeRun({ result, args: baseArgs, forkAttempts, forkCheckpoint, fork_used: redactRpcEndpoint(url), rpcPolicyRejections });
     }
   }
-  return finalizeRun({ result: lastResult, args: baseArgs, forkAttempts, forkCheckpoint, fork_used: null });
+  return finalizeRun({ result: lastResult, args: baseArgs, forkAttempts, forkCheckpoint, fork_used: null, rpcPolicyRejections });
 }
 
-function finalizeRun({ result, args, forkAttempts, forkCheckpoint, fork_used }) {
+function finalizeRun({ result, args, forkAttempts, forkCheckpoint, fork_used, rpcPolicyRejections = [] }) {
   if (!result || result.reason === "sui_not_in_path" || result.reason === "sui_spawn_failed") {
     return {
       ok: false,
       reason: result && result.reason ? result.reason : "spawn_failed",
       error: result && result.error ? result.error : null,
-      command: ["sui", ...args],
+      command: ["sui", ...redactRpcEndpointArgs(args)],
+      rpc_policy_rejections: summarizeRpcPolicyRejections(rpcPolicyRejections),
       fork_attempts: forkAttempts,
     };
   }
@@ -311,7 +327,8 @@ function finalizeRun({ result, args, forkAttempts, forkCheckpoint, fork_used }) 
     fork_checkpoint: forkCheckpoint || null,
     fork_checkpoint_used: forkCheckpointUsed,
     fork_attempts: forkAttempts,
-    command: ["sui", ...args],
+    command: ["sui", ...redactRpcEndpointArgs(args)],
+    rpc_policy_rejections: summarizeRpcPolicyRejections(rpcPolicyRejections),
     summary: {
       total: summary.total,
       passed: summary.passed,
@@ -321,8 +338,8 @@ function finalizeRun({ result, args, forkAttempts, forkCheckpoint, fork_used }) 
     tests: summary.tests,
     tests_truncated: summary.truncated === true,
     raw_excerpt: {
-      stdout: truncateString(result.stdout || "", RAW_EXCERPT_BYTES),
-      stderr: truncateString(result.stderr || "", RAW_EXCERPT_BYTES),
+      stdout: truncateString(redactRpcEndpointText(result.stdout || ""), RAW_EXCERPT_BYTES),
+      stderr: truncateString(redactRpcEndpointText(result.stderr || ""), RAW_EXCERPT_BYTES),
       truncated: result.truncated === true,
     },
     parse_warning: parseResult.ok ? null : parseResult.reason,

@@ -49,6 +49,9 @@ TESTS = [
     ("Write to MCP-owned public-intel.json → block",
      {"tool_input": {"file_path": f"{SESSION}/public-intel.json", "content": "test"}},
      2),
+    ("Write to MCP-owned handoff signing key → block",
+     {"tool_input": {"file_path": f"{SESSION}/.handoff-signing-key.json", "content": "test"}},
+     2),
     ("Write to MCP-owned surface-routes.json → block",
      {"tool_input": {"file_path": f"{SESSION}/surface-routes.json", "content": "test"}},
      2),
@@ -132,6 +135,12 @@ TESTS = [
     ("Bash no redirects → allow",
      {"tool_input": {"command": "ls -la /tmp"}},
      0),
+    ("Bash rm MCP-owned signing key → block",
+     {"tool_input": {"command": f"rm {SESSION}/.handoff-signing-key.json"}},
+     2),
+    ("Bash chmod MCP-owned signing key → block",
+     {"tool_input": {"command": f"chmod 644 {SESSION}/.handoff-signing-key.json"}},
+     2),
 
     # --- Inline script tests ---
     ("python3 -c open() to MCP-owned → block",

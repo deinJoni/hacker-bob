@@ -2,7 +2,10 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
 const path = require("path");
-const { TOOLS, TOOL_MANIFEST } = require("../mcp/server.js");
+
+const REMOVED_HOOK_AUTHORITY_FIELD = ["hook", "required"].join("_");
+
+const { TOOLS, TOOL_MANIFEST } = require("../mcp/lib/tool-registry.js");
 const {
   ADAPTERS,
   getAdapter,
@@ -542,9 +545,25 @@ test("manifest, settings, and generated Claude config keep global MCP permission
 
   const hookMatchers = settingsHookMatchers();
   for (const [toolName, metadata] of Object.entries(TOOL_MANIFEST)) {
-    if (!metadata.hook_required) continue;
-    assert.ok(hookMatchers.has(`mcp__bountyagent__${toolName}`), `${toolName} requires a scope hook`);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(metadata, REMOVED_HOOK_AUTHORITY_FIELD),
+      false,
+      `${toolName} must not advertise hook authority metadata`,
+    );
   }
+  assert.equal(
+    Object.values(TOOL_MANIFEST).some((metadata) => (
+      Object.prototype.hasOwnProperty.call(metadata, REMOVED_HOOK_AUTHORITY_FIELD)
+    )),
+    false,
+    "MCP runtime owns scoped HTTP policy; generated settings must not preserve hook authority metadata",
+  );
+  assert.equal(
+    Array.from(hookMatchers).some((matcher) => matcher.startsWith("mcp__bountyagent__")),
+    false,
+    "settings.json should not register MCP scope hooks",
+  );
+  assert.doesNotMatch(readFile(".claude/settings.json"), /scope-guard/);
 });
 
 test("standard hook test script runs both write and read guards", () => {
@@ -976,6 +995,8 @@ test("bountyagentstatus skill is compact, read-only, and points to next commands
 
   assert.match(skill, /not a debug review/i);
   assert.match(skill, /No args or `--last`/);
+  assert.match(skill, /\$\{CLAUDE_PROJECT_DIR:-\$PWD\}\/\.claude\/hooks\/bob-update\.js/);
+  assert.doesNotMatch(skill, /"\$CLAUDE_PROJECT_DIR\/\.claude\/hooks\/bob-update\.js"/);
   assert.match(skill, /bounty_read_pipeline_analytics\(\{ target_domain, include_events: false, limit: 20 \}\)/);
   assert.match(skill, /bounty_read_session_summary\(\{ target_domain \}\)/);
   assert.match(skill, /bounty_read_state_summary\(\{ target_domain \}\)/);
@@ -1318,6 +1339,8 @@ test("installer and dev-sync copy and configure session guards", () => {
   assert.match(devSync, /\.claude\/commands\/bob-update\.md/);
   assert.match(devSync, /\.claude\/commands\/bob-export\.md/);
   assert.match(install, /"mcp", "lib", "tools"/);
+  assert.match(install, /Claude session guard hooks/);
+  assert.doesNotMatch(install, /scope\/session guard hooks/);
   assert.match(devSync, /mcp\/lib\/tools/);
   assert.match(claudeAdapter, /merge-claude-config\.js/);
   assert.match(devSync, /merge-claude-config\.js/);
@@ -1519,60 +1542,65 @@ test("every SC pack ships a complete spawn block consumed by the catalogue rende
   }
 });
 
-test("BLOCKED_HARNESS_RUN_KINDS, schema enum, and waves.js normalizer all stay in sync", () => {
+test("BLOCKED_HARNESS_RUN_KINDS, schema enum, and wave handoff normalizer all stay in sync", () => {
   // Three-way mirror: the renderer constant, the JSON schema enum, and
-  // the runtime normalizer in waves.js (which throws on unknown kinds
+  // the runtime normalizer in wave-handoff-contracts.js (which throws on unknown kinds
   // before the schema check would even run). If any of the three
   // diverges, hunters following the catalogue will fail finalization.
   const { BLOCKED_HARNESS_RUN_KINDS } = require("../mcp/lib/capability-packs-rendering.js");
+  const { BLOCKED_HARNESS_KIND_VALUES } = require("../mcp/lib/wave-handoff-contracts.js");
   const schema = require("../mcp/lib/tools/write-wave-handoff.js").inputSchema;
   const enumFromSchema = schema.properties.blocked_harness_runs.items.properties.kind.enum;
-  // Read the runtime list from waves.js source — it is not exported but
-  // pinning the literal string ensures the runtime stays in lock-step.
-  const wavesSource = readFile("mcp/lib/waves.js");
-  const wavesEnumMatch = wavesSource.match(/BLOCKED_HARNESS_KIND_VALUES = Object\.freeze\(\[([^\]]+)\]\)/);
-  assert.ok(wavesEnumMatch, "could not locate BLOCKED_HARNESS_KIND_VALUES literal in waves.js");
-  const wavesKinds = Array.from(wavesEnumMatch[1].matchAll(/"([a-z_]+)"/g)).map((m) => m[1]);
   const sorted = (arr) => [...arr].sort();
   assert.deepEqual(sorted(BLOCKED_HARNESS_RUN_KINDS), sorted(enumFromSchema),
     "BLOCKED_HARNESS_RUN_KINDS must mirror the write-wave-handoff schema enum");
-  assert.deepEqual(sorted(BLOCKED_HARNESS_RUN_KINDS), sorted(wavesKinds),
-    "waves.js BLOCKED_HARNESS_KIND_VALUES must mirror BLOCKED_HARNESS_RUN_KINDS — runtime normalizer rejects schema-accepted kinds otherwise");
+  assert.deepEqual(sorted(BLOCKED_HARNESS_RUN_KINDS), sorted(BLOCKED_HARNESS_KIND_VALUES),
+    "wave-handoff-contracts.js BLOCKED_HARNESS_KIND_VALUES must mirror BLOCKED_HARNESS_RUN_KINDS — runtime normalizer rejects schema-accepted kinds otherwise");
 });
 
-test("BLOCKED_PREREQ_KINDS, schema enum, and waves.js normalizer all stay in sync", () => {
+test("BLOCKED_PREREQ_KINDS, schema enum, and wave handoff normalizer all stay in sync", () => {
   // Same three-way mirror invariant as BLOCKED_HARNESS_RUN_KINDS. Adding a
   // new prereq kind requires updating all three sites, otherwise hunters
   // either get rejected by the schema or fail finalization in the runtime
   // normalizer.
   const { BLOCKED_PREREQ_KINDS } = require("../mcp/lib/capability-packs-rendering.js");
+  const { BLOCKED_PREREQ_KIND_VALUES } = require("../mcp/lib/wave-handoff-contracts.js");
   const schema = require("../mcp/lib/tools/write-wave-handoff.js").inputSchema;
   const enumFromSchema = schema.properties.blocked_prereqs.items.properties.kind.enum;
-  const wavesSource = readFile("mcp/lib/waves.js");
-  const wavesEnumMatch = wavesSource.match(/BLOCKED_PREREQ_KIND_VALUES = Object\.freeze\(\[([^\]]+)\]\)/);
-  assert.ok(wavesEnumMatch, "could not locate BLOCKED_PREREQ_KIND_VALUES literal in waves.js");
-  const wavesKinds = Array.from(wavesEnumMatch[1].matchAll(/"([a-z_]+)"/g)).map((m) => m[1]);
   const sorted = (arr) => [...arr].sort();
   assert.deepEqual(sorted(BLOCKED_PREREQ_KINDS), sorted(enumFromSchema),
     "BLOCKED_PREREQ_KINDS must mirror the write-wave-handoff schema enum");
-  assert.deepEqual(sorted(BLOCKED_PREREQ_KINDS), sorted(wavesKinds),
-    "waves.js BLOCKED_PREREQ_KIND_VALUES must mirror BLOCKED_PREREQ_KINDS — runtime normalizer rejects schema-accepted kinds otherwise");
+  assert.deepEqual(sorted(BLOCKED_PREREQ_KINDS), sorted(BLOCKED_PREREQ_KIND_VALUES),
+    "wave-handoff-contracts.js BLOCKED_PREREQ_KIND_VALUES must mirror BLOCKED_PREREQ_KINDS — runtime normalizer rejects schema-accepted kinds otherwise");
 });
 
-test("blocked_prereqs identifier_hint pattern matches between schema and runtime normalizer", () => {
+test("blocked_prereqs identifier_hint screens match between schema and runtime normalizer", () => {
   // The schema regex and the runtime normalizer must reject the same
   // strings, otherwise hunters can submit secret-shaped values that pass
   // one check and fail the other (or worse, leak through).
+  const {
+    BLOCKED_PREREQ_IDENTIFIER_HINT_LONG_HEX_PATTERN,
+    BLOCKED_PREREQ_IDENTIFIER_HINT_PATTERN,
+  } = require("../mcp/lib/wave-handoff-contracts.js");
   const schema = require("../mcp/lib/tools/write-wave-handoff.js").inputSchema;
-  const schemaPattern = schema.properties.blocked_prereqs.items.properties.identifier_hint.pattern;
-  const wavesSource = readFile("mcp/lib/waves.js");
-  const runtimeMatch = wavesSource.match(/BLOCKED_PREREQ_IDENTIFIER_HINT_PATTERN = (\/[^\n]+\/)/);
-  assert.ok(runtimeMatch, "could not locate BLOCKED_PREREQ_IDENTIFIER_HINT_PATTERN literal in waves.js");
-  // Strip leading and trailing /; runtime pattern is a JS regex literal,
-  // schema pattern is a JSON-schema string.
-  const runtimePattern = runtimeMatch[1].slice(1, -1);
-  assert.equal(runtimePattern, schemaPattern,
-    "blocked_prereqs[].identifier_hint pattern must be identical between the JSON schema and the waves.js runtime normalizer");
+  const identifierHint = schema.properties.blocked_prereqs.items.properties.identifier_hint;
+  assert.equal(BLOCKED_PREREQ_IDENTIFIER_HINT_PATTERN.source, identifierHint.pattern,
+    "blocked_prereqs[].identifier_hint pattern must be identical between the JSON schema and the wave handoff runtime normalizer");
+  assert.equal(BLOCKED_PREREQ_IDENTIFIER_HINT_LONG_HEX_PATTERN.source, identifierHint.not.pattern,
+    "blocked_prereqs[].identifier_hint long-hex rejection must be identical between the JSON schema and the wave handoff runtime normalizer");
+});
+
+test("bypass_attempts min lengths match between schema and runtime normalizer", () => {
+  const {
+    BYPASS_ATTEMPT_CONDITION_MIN_CHARS,
+    BYPASS_ATTEMPT_SUMMARY_MIN_CHARS,
+  } = require("../mcp/lib/wave-handoff-contracts.js");
+  const schema = require("../mcp/lib/tools/write-wave-handoff.js").inputSchema;
+  const bypassAttempt = schema.properties.bypass_attempts.items.properties;
+  assert.equal(bypassAttempt.condition.minLength, BYPASS_ATTEMPT_CONDITION_MIN_CHARS,
+    "bypass_attempts[].condition minLength must match the wave handoff runtime normalizer");
+  assert.equal(bypassAttempt.attempt_summary.minLength, BYPASS_ATTEMPT_SUMMARY_MIN_CHARS,
+    "bypass_attempts[].attempt_summary minLength must match the wave handoff runtime normalizer");
 });
 
 test("rendered hunter prompts include blocked_prereqs handoff field limits", () => {
@@ -2453,9 +2481,13 @@ test("orchestrator documents --no-auth flag and skips AUTH when set", () => {
 test("orchestrator documents deep mode persistence, recon mode, and lead debt", () => {
   const orchestrator = readFile(".claude/skills/bob-hunt/SKILL.md");
 
+  assert.match(orchestrator, /argument-hint: .*--no-auth/);
+  assert.match(orchestrator, /argument-hint: .*--normal\|--paranoid\|--yolo/);
   assert.match(orchestrator, /argument-hint: .*--deep/);
   assert.match(orchestrator, /`--deep` enables broader script-heavy recon/);
-  assert.match(orchestrator, /bounty_init_session\(\{ target_domain, target_url, deep_mode \}\)/);
+  assert.match(orchestrator, /bounty_init_session\(\{ target_domain, target_url, deep_mode, checkpoint_mode, egress_profile, block_internal_hosts, allow_internal_hosts \}\)/);
+  assert.match(orchestrator, /egress_profile_identity_hash/);
+  assert.match(orchestrator, /route\/profile\/source drift fails closed/);
   assert.match(orchestrator, /persisted `state\.deep_mode` keeps deep behavior/);
   assert.match(orchestrator, /deep_mode false: Agent\(subagent_type: "recon-agent"/);
   assert.match(orchestrator, /deep_mode true: Agent\(subagent_type: "deep-recon-agent"/);
@@ -2476,9 +2508,13 @@ test("orchestrator documents checkpoint modes and MCP-owned traffic/audit/intel/
   assert.match(orchestrator, /--paranoid/);
   assert.match(orchestrator, /--normal/);
   assert.match(orchestrator, /--yolo/);
+  assert.match(orchestrator, /--allow-internal-hosts/);
   assert.match(orchestrator, /If no checkpoint flag is supplied, use `--normal`/);
+  assert.match(orchestrator, /persisted `state\.checkpoint_mode` plus `state\.block_internal_hosts`/);
+  assert.match(orchestrator, /returned `state\.block_internal_hosts` as the canonical effective value/);
   assert.match(orchestrator, /bounty_import_http_traffic[\s\S]*traffic\.jsonl/);
   assert.match(orchestrator, /bounty_http_scan[\s\S]*http-audit\.jsonl/);
+  assert.match(orchestrator, /effective `block_internal_hosts`/);
   assert.match(orchestrator, /bounty_public_intel[\s\S]*public-intel\.json/);
   assert.match(orchestrator, /bounty_import_static_artifact[\s\S]*static-imports/);
   assert.match(orchestrator, /bounty_static_scan[\s\S]*static-scan-results\.jsonl/);
@@ -2595,10 +2631,8 @@ test("hunter and orchestrator prompts keep the structured handoff contract expli
   assert.match(orchestratorPrompt, /technique-pack-reads\.jsonl/);
 });
 
-test("replay prompts preserve technique-pack priority and MCP-owned artifact prohibitions", () => {
+test("policy replay prompts preserve technique-pack priority and MCP-owned artifact prohibitions", () => {
   const replayPrompts = [
-    "scripts/replay-prompts/00-baseline.md",
-    "scripts/replay-prompts/01-scope-anchor.md",
     "testing/policy-replay/prompts/00-baseline.md",
     "testing/policy-replay/prompts/01-scope-anchor.md",
   ];
@@ -2610,6 +2644,51 @@ test("replay prompts preserve technique-pack priority and MCP-owned artifact pro
     assert.match(prompt, /top-level `techniques` and `payload_hints` fields are smaller legacy compatibility summaries/);
     assert.match(prompt, /Never create or backfill[\s\S]*technique-attempts\.jsonl[\s\S]*technique-pack-reads\.jsonl/);
   }
+});
+
+test("public package docs do not advertise removed hook authority", () => {
+  const docs = [
+    "docs/PACKAGE_SURFACES.md",
+    "docs/capability-hypergraph.md",
+    "docs/hacker-bob-offline-guide.md",
+  ].map(readFile).join("\n");
+
+  assert.doesNotMatch(docs, /hook-required/);
+  assert.doesNotMatch(docs, /scope guard around/);
+});
+
+test("public and generated surfaces describe central session authority", () => {
+  const readme = readFile("README.md");
+  const offlineGuide = readFile("docs/hacker-bob-offline-guide.md");
+  const packageSurfaces = readFile("docs/PACKAGE_SURFACES.md");
+  const genericPrompt = readFile("adapters/generic-mcp/prompts/hacker-bob.md");
+  const generatedSurfaces = [
+    ".claude/skills/bob-hunt/SKILL.md",
+    ".claude/skills/bob-status/SKILL.md",
+    ".claude/skills/bob-debug/SKILL.md",
+    ".claude/agents/hunter-agent.md",
+    "adapters/codex/skills/bob-hunt/SKILL.md",
+    "adapters/codex/skills/bob-status/SKILL.md",
+    "adapters/codex/skills/bob-debug/SKILL.md",
+  ].map(readFile).join("\n");
+
+  assert.match(readme, /caller `target_domain` is only a lookup key/);
+  assert.match(readme, /missing or drifted authority fields[\s\S]*fail closed/);
+  assert.match(offlineGuide, /resolve session authority[\s\S]*apply scoped URL policy/);
+  assert.match(offlineGuide, /aggregates authority status by version, class,\s*result, and symbolic error code/);
+  assert.match(packageSurfaces, /Session authority lives behind the MCP dispatcher/);
+  assert.match(genericPrompt, /`target_domain` as a session selector, not proof\s*of authorization/);
+  assert.match(genericPrompt, /Legacy sessions may default presentation or progress\s*fields, but missing or drifted authority fields fail closed/);
+  assert.match(
+    TOOLS.find((tool) => tool.name === "bounty_read_tool_telemetry").description,
+    /authority decision aggregates/,
+  );
+  assert.match(generatedSurfaces, /`target_domain` selects the session record; it is not by itself authority/);
+  assert.match(generatedSurfaces, /If a read returns an authority error, report it as a session-integrity blocker/);
+  assert.match(generatedSurfaces, /telemetry authority\s+aggregate fields/);
+  assert.match(generatedSurfaces, /Legacy sessions may default\s+presentation or progress fields, but missing or drifted authority fields fail\s+closed/);
+  assert.match(generatedSurfaces, /MCP server first authorizes the call against initialized session state/);
+  assert.doesNotMatch(generatedSurfaces, /MCP HTTP tools enforce first-party target scope: request URL hosts must equal `target_domain`/);
 });
 
 test("context scaling architecture doc is durable and matches enforced budget contract", () => {

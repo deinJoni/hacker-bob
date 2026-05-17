@@ -9,6 +9,18 @@ const {
   assertSafeResolvedRequestUrl,
   safeFetch,
 } = require("./safe-fetch.js");
+const {
+  createProxyAgent,
+} = require("./egress-profiles.js");
+const {
+  blockInternalHostsPolicyFields,
+} = require("./session-state-contracts.js");
+const {
+  blockInternalHostsRequestPolicy,
+} = require("./session-state-store.js");
+const {
+  resolveAndAssertSessionEgressIdentity,
+} = require("./session-state.js");
 
 const SIGNUP_PATHS = [
   "/register", "/signup", "/sign-up", "/join", "/create-account",
@@ -129,7 +141,58 @@ function normalizeAutoSignupResult(result, signupUrl) {
 async function signupDetect(args) {
   const targetDomain = assertNonEmptyString(args.target_domain, "target_domain");
   const targetUrl = assertNonEmptyString(args.target_url, "target_url").replace(/\/+$/, "");
-  const blockInternalHosts = args.block_internal_hosts === true;
+  const requestedEgressProfile = args.egress_profile == null
+    ? "default"
+    : assertNonEmptyString(args.egress_profile, "egress_profile");
+
+  let egressProfile;
+  let egressIdentity;
+  let internalHostPolicy;
+  let internalHostContext;
+  let egressAgent = null;
+  try {
+    const resolved = resolveAndAssertSessionEgressIdentity(targetDomain, requestedEgressProfile, {
+      source: "bounty_signup_detect",
+    });
+    egressProfile = resolved.profile;
+    egressIdentity = resolved.identity;
+    internalHostPolicy = blockInternalHostsRequestPolicy(targetDomain, args);
+    internalHostContext = blockInternalHostsPolicyFields(internalHostPolicy);
+    if (internalHostPolicy.block_internal_hosts && egressProfile.proxy_configured) {
+      return JSON.stringify({
+        error: `block_internal_hosts cannot be enforced with proxy-backed egress_profile "${egressProfile.name}" because target DNS and routing may be resolved outside Bob. Use egress_profile "default" or disable block_internal_hosts.`,
+        scope_decision: "blocked",
+        ...egressIdentity,
+        ...internalHostContext,
+        endpoints_found: [],
+        form_fields: [],
+        has_captcha: false,
+        captcha_type: null,
+        oauth_only: false,
+        email_restrictions_detected: false,
+        signup_feasibility: "manual",
+        blocked_requests: [],
+      });
+    }
+    egressAgent = createProxyAgent(egressProfile.proxy_url);
+  } catch (error) {
+    if (error && error.code === "STATE_CONFLICT") throw error;
+    const message = error && error.message ? error.message : String(error);
+    return JSON.stringify({
+      error: `${message} — request was NOT sent.`,
+      scope_decision: "egress_error",
+      egress_profile: requestedEgressProfile,
+      block_internal_hosts: args.block_internal_hosts === true,
+      endpoints_found: [],
+      form_fields: [],
+      has_captcha: false,
+      captcha_type: null,
+      oauth_only: false,
+      email_restrictions_detected: false,
+      signup_feasibility: "manual",
+      blocked_requests: [],
+    });
+  }
 
   const endpointsFound = [];
   const blockedRequests = [];
@@ -148,7 +211,8 @@ async function signupDetect(args) {
         followRedirects: true,
         timeoutMs: 5000,
         targetDomain,
-        blockInternalHosts,
+        blockInternalHosts: internalHostPolicy.block_internal_hosts,
+        agent: egressAgent,
         maxResponseBytes: 20000,
       });
 
@@ -220,6 +284,8 @@ async function signupDetect(args) {
     email_restrictions_detected: emailRestrictions,
     signup_feasibility: feasibility,
     blocked_requests: blockedRequests,
+    ...egressIdentity,
+    ...internalHostContext,
   });
 }
 
@@ -230,10 +296,39 @@ async function autoSignup(args) {
   const password = assertNonEmptyString(args.password, "password");
   const profileName = args.profile_name || "attacker";
   const name = args.name || "Hunter Test";
-  const blockInternalHosts = args.block_internal_hosts === true;
+  const requestedEgressProfile = args.egress_profile == null
+    ? "default"
+    : assertNonEmptyString(args.egress_profile, "egress_profile");
+
+  let egressProfile;
+  let egressIdentity;
+  let internalHostPolicy;
+  let internalHostContext;
+  try {
+    const resolved = resolveAndAssertSessionEgressIdentity(domain, requestedEgressProfile, {
+      source: "bounty_auto_signup",
+    });
+    egressProfile = resolved.profile;
+    egressIdentity = resolved.identity;
+    internalHostPolicy = blockInternalHostsRequestPolicy(domain, args);
+    internalHostContext = blockInternalHostsPolicyFields(internalHostPolicy);
+  } catch (error) {
+    if (error && error.code === "STATE_CONFLICT") throw error;
+    const message = error && error.message ? error.message : String(error);
+    return JSON.stringify({
+      ...manualSignupFallback("egress_profile_unavailable", `${message} — browser was NOT launched.`),
+      scope_decision: "egress_error",
+      egress_profile: requestedEgressProfile,
+    });
+  }
+
+  const egressContext = {
+    ...egressIdentity,
+    ...internalHostContext,
+  };
 
   try {
-    await assertSafeResolvedRequestUrl(signupUrl, domain, { blockInternalHosts });
+    await assertSafeResolvedRequestUrl(signupUrl, domain, { blockInternalHosts: false });
   } catch (error) {
     if (error && error.scope_decision === "blocked") {
       return JSON.stringify({
@@ -241,6 +336,7 @@ async function autoSignup(args) {
         error: error.message || String(error),
         scope_decision: "blocked",
         fallback: "manual",
+        ...egressContext,
       });
     }
     return JSON.stringify({
@@ -248,6 +344,20 @@ async function autoSignup(args) {
         fallbackReasonFromMessage(error && error.message ? error.message : String(error)),
         error && error.message ? error.message : String(error),
       ),
+      ...egressContext,
+    });
+  }
+
+  if (internalHostPolicy.block_internal_hosts) {
+    const message = "block_internal_hosts cannot be enforced for browser auto-signup because Chromium resolves network destinations outside Bob's safeFetch transport. Use manual signup or rerun without --block-internal-hosts.";
+    return JSON.stringify({
+      ...manualSignupFallback(
+        "strict_internal_hosts_unsupported_browser",
+        message,
+      ),
+      error: message,
+      scope_decision: "blocked",
+      ...egressContext,
     });
   }
 
@@ -263,16 +373,20 @@ async function autoSignup(args) {
       ...manualSignupFallback(
         "patchright_unavailable",
         "Patchright is not installed. Use manual signup or install optional browser automation with npm install and npx patchright install chromium.",
+        egressContext,
       ),
     });
   }
 
   const scriptPath = path.join(__dirname, "..", "auto-signup.js");
   if (!fs.existsSync(scriptPath)) {
-    return JSON.stringify(manualSignupFallback(
-      "browser_script_missing",
-      "The auto-signup browser script was not found; use manual signup.",
-    ));
+    return JSON.stringify({
+      ...manualSignupFallback(
+        "browser_script_missing",
+        "The auto-signup browser script was not found; use manual signup.",
+      ),
+      ...egressContext,
+    });
   }
 
   const config = {
@@ -282,17 +396,18 @@ async function autoSignup(args) {
     password,
     name,
     capsolver_api_key: process.env.CAPSOLVER_API_KEY || null,
-    proxy: args.proxy || process.env.BOUNTY_PROXY || null,
+    proxy: egressProfile.proxy_url,
     timeout_ms: args.timeout_ms || 45000,
     headless: args.headless !== undefined ? args.headless : false,
-    block_internal_hosts: blockInternalHosts,
+    block_internal_hosts: false,
+    ...egressContext,
   };
 
   return new Promise((resolve) => {
     const timeout = (config.timeout_ms || 45000) + 10000; // script timeout + buffer
-    execFile(
+    const child = execFile(
       process.execPath,
-      [scriptPath, JSON.stringify(config)],
+      [scriptPath],
       { timeout, maxBuffer: 5 * 1024 * 1024, env: { ...process.env } },
       async (err, stdout, stderr) => {
         if (err && !stdout) {
@@ -300,7 +415,7 @@ async function autoSignup(args) {
           resolve(JSON.stringify(manualSignupFallback(
             fallbackReasonFromMessage(message),
             message,
-            { stderr: (stderr || "").slice(0, 500) },
+            { stderr: (stderr || "").slice(0, 500), ...egressContext },
           )));
           return;
         }
@@ -312,12 +427,13 @@ async function autoSignup(args) {
           resolve(JSON.stringify(manualSignupFallback(
             "invalid_browser_output",
             "Auto-signup returned invalid JSON; use manual signup.",
-            { raw_output: (stdout || "").slice(0, 500) },
+            { raw_output: (stdout || "").slice(0, 500), ...egressContext },
           )));
           return;
         }
 
         result = normalizeAutoSignupResult(result, signupUrl);
+        Object.assign(result, egressContext);
 
         // If signup succeeded with auth-shaped evidence, auto-store auth.
         if (result.success === true && hasAuthEvidence(result.auth_evidence)) {
@@ -341,6 +457,7 @@ async function autoSignup(args) {
         resolve(JSON.stringify(result));
       }
     );
+    child.stdin.end(JSON.stringify(config));
   });
 }
 

@@ -12,7 +12,7 @@ const {
 } = require("./paths.js");
 const {
   readSessionStateStrict,
-} = require("./session-state.js");
+} = require("./session-state-store.js");
 const {
   readSessionArtifactSummary,
 } = require("./pipeline-analytics.js");
@@ -169,6 +169,14 @@ function readSessionSummary(args) {
       target: domain,
       phase: state.phase,
       auth_status: state.auth_status,
+      checkpoint_mode: state.checkpoint_mode,
+      block_internal_hosts: state.block_internal_hosts,
+      block_internal_hosts_source: state.block_internal_hosts_source,
+      egress_profile: state.egress_profile,
+      egress_region: state.egress_region,
+      proxy_configured: state.proxy_configured,
+      egress_profile_identity_hash: state.egress_profile_identity_hash,
+      egress_profile_identity_version: state.egress_profile_identity_version,
       operator_note: state.operator_note,
       waves_run: state.hunt_wave,
       pending_wave: state.pending_wave,

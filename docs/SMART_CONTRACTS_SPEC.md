@@ -372,17 +372,45 @@ If the runner returns a tooling-blocker reason (`*_not_in_path`,
 verifier's earlier reasoning text in `representative_samples[]` — the gate
 checks pack EXISTENCE, not pack quality. The verifier owns reportability.
 
-### 4. Egress profiles × SC RPC traffic
+### 4. Direct SC egress policy
 
 `bounty_http_scan` honors the operator's `egress_profile` for HTTP traffic
-to the target. SC RPC clients (`bounty_evm_*`, `bounty_svm_*`,
-`bounty_aptos_*`, `bounty_sui_*`, `bounty_substrate_*`, `bounty_cosmwasm_*`)
-are NOT subject to egress policy — chain RPCs are operator-curated
-infrastructure (`BOB_<FAMILY>_RPCS_<NETWORK>` env vars at MCP server start),
-distinct from the user-target HTTP traffic egress profiles are designed to
-constrain.
+to the target. SC RPC clients and fork runners use a separate direct-only
+policy because chain RPC/REST endpoints are operator-curated infrastructure,
+not first-party target web traffic.
+
+Default SC egress policy:
+
+- accepted transport: direct HTTPS only
+- accepted endpoint sources: shipped public ladders, explicit `endpoints` /
+  `fork_urls`, and `BOB_<FAMILY>_RPCS_<NETWORK>` env overrides
+- blocked by default: `http:`, localhost, private/link-local/internal host
+  literals, and public hostnames whose DNS answers resolve to private or
+  link-local addresses
+- unsupported by default: private/localnet RPC; no per-family elevation policy
+  exists yet
+- unsupported by default: corporate proxy routing through `egress_profile`
+- recorded evidence: runners return redacted `fork_attempts[]` and
+  `rpc_policy_rejections[]`; read tools return redacted `endpoint_used`
+  values and redact query credentials in errors
+- timeout evidence: DNS preflight is bounded at 3s per candidate endpoint
+  before the family-specific read or runner timeout budget applies
+- DNS limitation: the preflight rejects private/link-local answers observed
+  before the read or runner starts; it is not DNS pinning and does not make
+  external CLIs immune to DNS rebinding or resolver divergence
+
+Per-family matrix:
+
+| family | direct endpoint kind | default timeout budget | default localnet/private behavior |
+|---|---|---:|---|
+| EVM | JSON-RPC HTTPS | DNS 3s per candidate; reads 10s per endpoint; Foundry 60s, max 300s | no localnet chain_id; private/fork URLs blocked |
+| SVM | JSON-RPC HTTPS | DNS 3s per candidate; reads 10s per endpoint; Anchor 90s, max 600s | private/fork URLs blocked |
+| Aptos | REST HTTPS with `/v1` base | DNS 3s per candidate; reads 10s per endpoint; Move runner 90s, max 600s | private/fork URLs blocked |
+| Sui | JSON-RPC HTTPS | DNS 3s per candidate; reads 10s per endpoint; Move runner 90s, max 600s | `localnet` RPC returns no endpoints; local-only tests may run without fork RPC |
+| Substrate | JSON-RPC HTTPS | DNS 3s per candidate; reads 10s per endpoint; cargo runner 90s, max 600s | `localnet` RPC returns no endpoints; local-only tests may run without fork RPC |
+| CosmWasm | REST/LCD HTTPS | DNS 3s per candidate; reads 10s per endpoint; cargo runner 90s, max 600s | `localnet` RPC returns no endpoints; local-only tests may run without fork RPC |
 
 When SC findings have an off-chain web side (e.g., a leaked API key that
 controls oracle pricing on-chain), the off-chain HTTP step still flows
-through `bounty_http_scan` and honors the egress profile; only the chain
-RPC reads are exempt.
+through `bounty_http_scan` and honors the egress profile. The SC-side
+RPC/REST reads stay under the direct HTTPS policy above.

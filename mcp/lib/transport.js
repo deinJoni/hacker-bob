@@ -1,3 +1,11 @@
+const DEFAULT_MAX_FRAME_BYTES = 8 * 1024 * 1024;
+const DEFAULT_MAX_HEADER_BYTES = 64 * 1024;
+const HEADER_DELIMITER = Buffer.from("\r\n\r\n");
+
+function hasResponseId(rpc) {
+  return Object.prototype.hasOwnProperty.call(rpc || {}, "id");
+}
+
 function createMcpMessageHandler({ tools, executeTool, send }) {
   return async function handleMessage(rpc) {
     switch (rpc.method) {
@@ -63,7 +71,7 @@ function createMcpMessageHandler({ tools, executeTool, send }) {
       }
 
       default:
-        if (rpc.id) {
+        if (hasResponseId(rpc)) {
           send({
             jsonrpc: "2.0",
             id: rpc.id,
@@ -81,9 +89,19 @@ function createStdioServer({
   stderr = process.stderr,
   tools,
   executeTool,
+  maxFrameBytes = DEFAULT_MAX_FRAME_BYTES,
+  maxHeaderBytes = DEFAULT_MAX_HEADER_BYTES,
 } = {}) {
+  if (!Number.isInteger(maxFrameBytes) || maxFrameBytes < 1) {
+    throw new Error("maxFrameBytes must be a positive integer");
+  }
+  if (!Number.isInteger(maxHeaderBytes) || maxHeaderBytes < 1) {
+    throw new Error("maxHeaderBytes must be a positive integer");
+  }
+
   let transportMode = "framed";
-  let buffer = "";
+  let buffer = Buffer.alloc(0);
+  let discardRemainingBytes = 0;
 
   function send(msg) {
     const json = JSON.stringify(msg);
@@ -96,76 +114,140 @@ function createStdioServer({
 
   const handleMessage = createMcpMessageHandler({ tools, executeTool, send });
 
-  function handleChunk(chunk) {
-    buffer += chunk;
-    while (true) {
-      const headerEnd = buffer.indexOf("\r\n\r\n");
-      if (headerEnd === -1) {
-        const trimmed = buffer.trim();
-        if (!trimmed) break;
+  function sendParseError(message = "Parse error") {
+    send({ jsonrpc: "2.0", id: null, error: { code: -32700, message } });
+  }
 
-        try {
-          const msg = JSON.parse(trimmed);
-          transportMode = "raw";
-          buffer = "";
-          handleMessage(msg);
+  function sendInvalidRequest(message) {
+    send({ jsonrpc: "2.0", id: null, error: { code: -32600, message } });
+  }
+
+  function toChunkBuffer(chunk) {
+    return Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), "utf8");
+  }
+
+  function maybeHandleRawBuffer() {
+    const prefix = buffer.subarray(0, Math.min(buffer.length, 64)).toString("ascii");
+    if (/^Content-Length:/i.test(prefix)) {
+      return false;
+    }
+
+    const text = buffer.toString("utf8");
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return false;
+    }
+
+    try {
+      const msg = JSON.parse(trimmed);
+      transportMode = "raw";
+      buffer = Buffer.alloc(0);
+      handleMessage(msg);
+      return true;
+    } catch {}
+
+    const firstNewline = buffer.indexOf(0x0a);
+    if (firstNewline === -1) {
+      return false;
+    }
+
+    let offset = 0;
+    let parsedAny = false;
+    while (offset < buffer.length) {
+      const newline = buffer.indexOf(0x0a, offset);
+      if (newline === -1) break;
+      const line = buffer.subarray(offset, newline).toString("utf8").trim();
+      offset = newline + 1;
+      if (!line) continue;
+      try {
+        transportMode = "raw";
+        handleMessage(JSON.parse(line));
+        parsedAny = true;
+      } catch {
+        sendParseError();
+      }
+    }
+
+    if (offset > 0) {
+      buffer = buffer.subarray(offset);
+      return parsedAny;
+    }
+    return false;
+  }
+
+  function handleChunk(chunk) {
+    let incoming = toChunkBuffer(chunk);
+    if (discardRemainingBytes > 0) {
+      const consumed = Math.min(discardRemainingBytes, incoming.length);
+      incoming = incoming.subarray(consumed);
+      discardRemainingBytes -= consumed;
+      if (incoming.length === 0) return;
+    }
+
+    buffer = Buffer.concat([buffer, incoming]);
+    while (true) {
+      const headerEnd = buffer.indexOf(HEADER_DELIMITER);
+      if (headerEnd === -1) {
+        if (maybeHandleRawBuffer()) {
           continue;
-        } catch {
-          if (buffer.includes("\n")) {
-            const lines = buffer.split("\n");
-            buffer = lines.pop() ?? "";
-            let parsedAny = false;
-            for (const line of lines.map((l) => l.trim()).filter(Boolean)) {
-              try {
-                transportMode = "raw";
-                handleMessage(JSON.parse(line));
-                parsedAny = true;
-              } catch {
-                buffer = `${line}\n${buffer}`;
-              }
-            }
-            if (parsedAny) continue;
-          }
+        }
+        if (buffer.length > maxHeaderBytes && /^Content-Length:/i.test(buffer.subarray(0, 64).toString("ascii"))) {
+          buffer = Buffer.alloc(0);
+          sendInvalidRequest(`MCP frame header exceeds ${maxHeaderBytes} bytes`);
+          continue;
+        }
+        if (buffer.length > maxFrameBytes) {
+          buffer = Buffer.alloc(0);
+          sendInvalidRequest(`Raw JSON-RPC message exceeds ${maxFrameBytes} bytes`);
+          continue;
         }
         break;
       }
 
-      const headerPart = buffer.slice(0, headerEnd);
+      if (headerEnd > maxHeaderBytes) {
+        buffer = buffer.subarray(headerEnd + HEADER_DELIMITER.length);
+        sendInvalidRequest(`MCP frame header exceeds ${maxHeaderBytes} bytes`);
+        continue;
+      }
+
+      const headerPart = buffer.subarray(0, headerEnd).toString("ascii");
       const match = headerPart.match(/Content-Length:\s*(\d+)/i);
       if (!match) {
-        try {
-          const lines = buffer.split("\n").filter((line) => line.trim());
-          for (const line of lines) {
-            const msg = JSON.parse(line);
-            handleMessage(msg);
-          }
-          buffer = "";
-          return;
-        } catch {
-          buffer = buffer.slice(headerEnd + 4);
-          continue;
-        }
+        buffer = buffer.subarray(headerEnd + HEADER_DELIMITER.length);
+        sendParseError("Missing Content-Length header");
+        continue;
       }
 
       const contentLength = parseInt(match[1], 10);
       transportMode = "framed";
-      const bodyStart = headerEnd + 4;
+      const bodyStart = headerEnd + HEADER_DELIMITER.length;
+      if (contentLength > maxFrameBytes) {
+        sendInvalidRequest(`MCP frame exceeds ${maxFrameBytes} bytes`);
+        const frameEnd = bodyStart + contentLength;
+        if (buffer.length >= frameEnd) {
+          buffer = buffer.subarray(frameEnd);
+          continue;
+        }
+        const availableBodyBytes = Math.max(0, buffer.length - bodyStart);
+        discardRemainingBytes = Math.max(0, contentLength - availableBodyBytes);
+        buffer = Buffer.alloc(0);
+        break;
+      }
       if (buffer.length < bodyStart + contentLength) break;
 
-      const body = buffer.slice(bodyStart, bodyStart + contentLength);
-      buffer = buffer.slice(bodyStart + contentLength);
+      const body = buffer.subarray(bodyStart, bodyStart + contentLength).toString("utf8");
+      buffer = buffer.subarray(bodyStart + contentLength);
 
       try {
         const msg = JSON.parse(body);
         handleMessage(msg);
       } catch {
-        send({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } });
+        sendParseError();
       }
     }
   }
 
   function start() {
-    stdin.setEncoding("utf8");
     stdin.on("data", handleChunk);
     stderr.write("bountyagent MCP server running (stdio)\n");
   }
@@ -183,6 +265,7 @@ function startStdioServer(options) {
 }
 
 module.exports = {
+  DEFAULT_MAX_FRAME_BYTES,
   createMcpMessageHandler,
   createStdioServer,
   startStdioServer,

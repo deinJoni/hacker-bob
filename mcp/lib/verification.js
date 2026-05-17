@@ -5,112 +5,86 @@ const path = require("path");
 const crypto = require("crypto");
 const {
   SEVERITY_VALUES,
-  VERIFICATION_REPLAY_PURPOSE_VALUES,
   VERIFICATION_ROUND_VALUES,
   VERIFY_QA_SAMPLE_MAX,
   VERIFY_SMALL_REPORTABLE_THRESHOLD,
 } = require("./constants.js");
 const {
-  assertEnumValue,
   assertNonEmptyString,
-  parseFindingId,
 } = require("./validation.js");
 const {
   evidencePackPaths,
   verificationAdjudicationPath,
   verificationAttemptsDir,
   verificationManifestPath,
-  verificationReplayLeaseDir,
   verificationRoundPaths,
   verificationSnapshotPath,
 } = require("./paths.js");
 const {
   loadJsonDocumentStrict,
+  readJsonFile,
+  withSessionLock,
   writeFileAtomic,
-  writeFileExclusiveAtomic,
 } = require("./storage.js");
 const {
   ERROR_CODES,
   ToolError,
 } = require("./envelope.js");
 const {
-  CAPABILITY_PACKS,
-} = require("./capability-packs.js");
+  cloneJson,
+  computeAdjudicationPlanHash,
+  finalVerificationHash,
+  hashCanonicalJson,
+  isPlainObject,
+} = require("./verification-contracts.js");
 const {
-  listAuthProfiles,
-} = require("./auth.js");
+  readFindingsFromJsonl,
+} = require("./finding-store.js");
 const {
-  readChainAttemptsFromJsonl,
-} = require("./chain-attempts.js");
+  normalizeVerificationRoundDocument,
+} = require("./verification-round-store.js");
 const {
-  readSurfaceRoutesStrict,
-} = require("./surface-router.js");
+  listArchivedVerificationAttempts: listArchivedVerificationAttemptsFromStatus,
+  summarizeVerificationRoundStatus,
+} = require("./verification-status-contracts.js");
+const {
+  VERIFICATION_INPUT_CHANGED_MESSAGE,
+  VERIFICATION_SCHEMA_V2,
+  assertFreshVerificationSnapshot,
+  buildVerificationSnapshot,
+  recomputeSnapshotHash,
+  requireFreshVerificationState,
+} = require("./verification-snapshot-contracts.js");
+const {
+  readSessionStateStrict,
+} = require("./session-state-store.js");
+const {
+  DEFAULT_REPLAY_SAFETY,
+  VERIFICATION_REPLAY_LEASE_TTL_MS,
+  listActiveReplayLeases,
+  replayExecutionPolicy,
+  runWithReplaySafety,
+} = require("./verification-replay-safety.js");
 
 const VERIFICATION_SCHEMA_V1 = 1;
-const VERIFICATION_SCHEMA_V2 = 2;
-const VERIFICATION_INPUT_CHANGED_MESSAGE = "VERIFY input changed after snapshot; restart VERIFY/adjudication.";
 const VERIFICATION_ARCHIVE_RETENTION = 5;
-const VERIFICATION_REPLAY_LEASE_TTL_MS = 15 * 60 * 1000;
-const DEFAULT_REPLAY_SAFETY = Object.freeze({
-  mode: "serialized",
-  lease_scope: "attempt_pack",
-});
-
-function findingsLib() {
-  return require("./findings.js");
-}
-
-function sessionStateLib() {
-  return require("./session-state.js");
-}
 
 function evidenceLib() {
   return require("./evidence.js");
 }
 
-function pipelineAnalyticsLib() {
-  return require("./pipeline-analytics.js");
-}
-
-function isPlainObject(value) {
-  return value != null && typeof value === "object" && !Array.isArray(value);
-}
-
-function canonicalize(value) {
-  if (Array.isArray(value)) {
-    return value.map((item) => canonicalize(item));
-  }
-  if (isPlainObject(value)) {
-    const result = {};
-    for (const key of Object.keys(value).sort()) {
-      if (value[key] === undefined) continue;
-      result[key] = canonicalize(value[key]);
-    }
-    return result;
-  }
-  return value;
-}
-
-function canonicalJson(value) {
-  return JSON.stringify(canonicalize(value));
-}
-
-function hashCanonicalJson(value) {
-  return crypto.createHash("sha256").update(canonicalJson(value)).digest("hex");
+function pipelineEventsLib() {
+  return require("./pipeline-events.js");
 }
 
 function hashFile(filePath) {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
 
-function cloneJson(value) {
-  return JSON.parse(JSON.stringify(value));
-}
-
 function safeReadJson(filePath) {
   try {
     if (!fs.existsSync(filePath)) return null;
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return readJsonFile(filePath, { label: path.basename(filePath) });
   } catch {
     return null;
   }
@@ -126,7 +100,7 @@ function readJsonArtifact(filePath, label) {
   };
   if (!result.exists) return result;
   try {
-    result.document = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    result.document = readJsonFile(filePath, { label });
     result.artifact_hash = hashCanonicalJson(result.document);
   } catch (error) {
     result.error = `Malformed ${label}: ${error.message || String(error)}`;
@@ -136,7 +110,7 @@ function readJsonArtifact(filePath, label) {
 
 function readStateSafe(domain) {
   try {
-    return sessionStateLib().readSessionStateStrict(domain).state;
+    return readSessionStateStrict(domain).state;
   } catch {
     return null;
   }
@@ -144,7 +118,7 @@ function readStateSafe(domain) {
 
 function safeAppendPipelineEvent(domain, type, fields) {
   try {
-    pipelineAnalyticsLib().safeAppendPipelineEventDirect(domain, type, fields);
+    pipelineEventsLib().safeAppendPipelineEventDirect(domain, type, fields);
   } catch {}
 }
 
@@ -170,7 +144,7 @@ function hasV1VerificationArtifacts(domain) {
     const paths = verificationRoundPaths(domain, round);
     if (!fs.existsSync(paths.json)) continue;
     try {
-      const doc = JSON.parse(fs.readFileSync(paths.json, "utf8"));
+      const doc = readJsonFile(paths.json, { label: path.basename(paths.json) });
       if (!isPlainObject(doc)) return true;
       if (doc.version === VERIFICATION_SCHEMA_V1 && doc.verification_attempt_id == null) return true;
     } catch {
@@ -209,101 +183,6 @@ function schemaVersionForContext(domain) {
   return VERIFICATION_SCHEMA_V2;
 }
 
-function parseListAuthProfiles(domain) {
-  try {
-    const parsed = JSON.parse(listAuthProfiles({ target_domain: domain }));
-    return Array.isArray(parsed.profiles) ? parsed.profiles : [];
-  } catch (error) {
-    return [{ error: error.message || String(error) }];
-  }
-}
-
-function normalizeAuthProfileSnapshot(profile) {
-  const normalized = cloneJson(profile);
-  if (isPlainObject(normalized.expiry)) {
-    // These booleans depend on Date.now(), so including them would make an
-    // otherwise unchanged VERIFY snapshot turn stale just because time passed.
-    delete normalized.expiry.is_expired;
-    delete normalized.expiry.is_stale;
-  }
-  return normalized;
-}
-
-function readAuthProfileSnapshot(domain) {
-  return parseListAuthProfiles(domain)
-    .map((profile) => normalizeAuthProfileSnapshot(profile))
-    .sort((a, b) => String(a.profile_name || "").localeCompare(String(b.profile_name || "")));
-}
-
-function readSurfaceRoutesSnapshot(domain) {
-  try {
-    return readSurfaceRoutesStrict(domain).document;
-  } catch (error) {
-    return { error: error.message || String(error) };
-  }
-}
-
-function buildSnapshotPayload(domain, { attemptId, createdAt }) {
-  const findings = findingsLib().readFindingsFromJsonl(domain).slice()
-    .sort((a, b) => a.id.localeCompare(b.id));
-  const chainAttempts = readChainAttemptsFromJsonl(domain).slice()
-    .sort((a, b) => canonicalJson(a).localeCompare(canonicalJson(b)));
-  const authProfiles = readAuthProfileSnapshot(domain);
-  const surfaceRoutes = readSurfaceRoutesSnapshot(domain);
-  const findingIds = findings.map((finding) => finding.id);
-  return {
-    version: 1,
-    schema_version: VERIFICATION_SCHEMA_V2,
-    target_domain: domain,
-    verification_attempt_id: attemptId,
-    created_at: createdAt,
-    finding_ids: findingIds,
-    input_hashes: {
-      findings: hashCanonicalJson(findings),
-      chain_attempts: hashCanonicalJson(chainAttempts),
-      auth_profile_summaries: hashCanonicalJson(authProfiles),
-      surface_routes: hashCanonicalJson(surfaceRoutes),
-    },
-  };
-}
-
-function buildVerificationSnapshot(domain, { attemptId, createdAt }) {
-  const payload = buildSnapshotPayload(domain, { attemptId, createdAt });
-  return {
-    ...payload,
-    snapshot_hash: hashCanonicalJson(payload),
-  };
-}
-
-function recomputeSnapshotHash(domain, snapshot) {
-  const payload = buildSnapshotPayload(domain, {
-    attemptId: snapshot.verification_attempt_id,
-    createdAt: snapshot.created_at,
-  });
-  return hashCanonicalJson(payload);
-}
-
-function loadCurrentSnapshot(domain, state) {
-  const snapshot = loadJsonDocumentStrict(verificationSnapshotPath(domain), "verification input snapshot JSON");
-  if (snapshot.verification_attempt_id !== state.verification_attempt_id) {
-    throw new ToolError(ERROR_CODES.STATE_CONFLICT, "Current VERIFY v2 snapshot attempt mismatch; restart VERIFY/adjudication.");
-  }
-  if (snapshot.snapshot_hash !== state.verification_snapshot_hash) {
-    throw new ToolError(ERROR_CODES.STATE_CONFLICT, "Current VERIFY v2 snapshot hash mismatch; restart VERIFY/adjudication.");
-  }
-  return snapshot;
-}
-
-function assertFreshVerificationSnapshot(domain, state) {
-  if (!state || state.verification_schema_version !== VERIFICATION_SCHEMA_V2) return null;
-  const snapshot = loadCurrentSnapshot(domain, state);
-  const currentHash = recomputeSnapshotHash(domain, snapshot);
-  if (currentHash !== state.verification_snapshot_hash) {
-    throw new ToolError(ERROR_CODES.STATE_CONFLICT, VERIFICATION_INPUT_CHANGED_MESSAGE);
-  }
-  return snapshot;
-}
-
 function verificationAttemptId(now = new Date()) {
   const stamp = now.toISOString().replace(/[^0-9A-Za-z]+/g, "").replace(/Z$/, "");
   const suffix = crypto.randomBytes(4).toString("hex");
@@ -314,34 +193,8 @@ function sanitizeAttemptId(attemptId) {
   return String(attemptId || "unknown").replace(/[^A-Za-z0-9._-]+/g, "_");
 }
 
-function readArchiveManifest(filePath) {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
 function listArchivedVerificationAttempts(domain) {
-  const dir = verificationAttemptsDir(domain);
-  if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && /^attempt-/.test(entry.name))
-    .map((entry) => {
-      const attemptDir = path.join(dir, entry.name);
-      const manifestPath = path.join(attemptDir, "manifest.json");
-      const manifest = readArchiveManifest(manifestPath);
-      return {
-        attempt_id: manifest && manifest.attempt_id ? manifest.attempt_id : entry.name.replace(/^attempt-/, ""),
-        archive_dir: attemptDir,
-        manifest_path: fs.existsSync(manifestPath) ? manifestPath : null,
-        archived_at: manifest && manifest.archived_at ? manifest.archived_at : null,
-        snapshot_hash: manifest && manifest.snapshot_hash ? manifest.snapshot_hash : null,
-        files_count: manifest && manifest.files ? Object.keys(manifest.files).length : 0,
-        missing_files_count: manifest && Array.isArray(manifest.missing_files) ? manifest.missing_files.length : 0,
-      };
-    })
-    .sort((a, b) => String(b.archived_at || "").localeCompare(String(a.archived_at || "")) || a.attempt_id.localeCompare(b.attempt_id));
+  return listArchivedVerificationAttemptsFromStatus(domain);
 }
 
 function pruneOldVerificationArchives(domain) {
@@ -509,15 +362,7 @@ function prepareVerificationEntry(domain, state, { now = new Date() } = {}) {
 }
 
 function requireV2State(domain) {
-  const state = readStateSafe(domain);
-  if (!state || state.verification_schema_version !== VERIFICATION_SCHEMA_V2) {
-    throw new ToolError(ERROR_CODES.STATE_CONFLICT, "VERIFY v2 attempt is not active for this session.");
-  }
-  if (!state.verification_attempt_id || !state.verification_snapshot_hash) {
-    throw new ToolError(ERROR_CODES.STATE_CONFLICT, "VERIFY v2 attempt metadata is missing; transition into VERIFY again.");
-  }
-  const snapshot = assertFreshVerificationSnapshot(domain, state);
-  return { state, snapshot };
+  return requireFreshVerificationState(domain);
 }
 
 function validateCurrentAttemptArgs(args, state) {
@@ -549,16 +394,6 @@ function currentV2RoundInput(domain, args) {
   const { state, snapshot } = requireV2State(domain);
   validateCurrentAttemptArgs(args, state);
   return { state, snapshot };
-}
-
-function documentHashExcluding(document, fields) {
-  const clone = cloneJson(document);
-  for (const field of fields) delete clone[field];
-  return hashCanonicalJson(clone);
-}
-
-function finalVerificationHash(document) {
-  return documentHashExcluding(document, ["final_verification_hash"]);
 }
 
 function assertCurrentV2RoundDocument(domain, document, { expectedRound = null, state = null, snapshot = null } = {}) {
@@ -599,8 +434,7 @@ function assertCurrentV2RoundDocument(domain, document, { expectedRound = null, 
 
 function loadCurrentV2Round(domain, round, { state = null, snapshot = null } = {}) {
   const document = loadJsonDocumentStrict(verificationRoundPaths(domain, round).json, `${round} verification round JSON`);
-  const { normalizeVerificationRoundDocument } = findingsLib();
-  const findingIdSet = new Set((snapshot ? snapshot.finding_ids : findingsLib().readFindingsFromJsonl(domain).map((finding) => finding.id)));
+  const findingIdSet = new Set((snapshot ? snapshot.finding_ids : readFindingsFromJsonl(domain).map((finding) => finding.id)));
   const normalized = normalizeVerificationRoundDocument(document, {
     expectedDomain: domain,
     expectedRound: round,
@@ -656,17 +490,6 @@ function deterministicQaSample(targetDomain, state, snapshot, candidates) {
     .sort((a, b) => a.hash.localeCompare(b.hash) || a.finding_id.localeCompare(b.finding_id))
     .slice(0, VERIFY_QA_SAMPLE_MAX)
     .map((entry) => entry.finding_id);
-}
-
-function adjudicationHashPayload(document) {
-  const clone = cloneJson(document);
-  delete clone.adjudication_plan_hash;
-  delete clone.built_at;
-  return clone;
-}
-
-function computeAdjudicationPlanHash(document) {
-  return hashCanonicalJson(adjudicationHashPayload(document));
 }
 
 function compactAdjudicationContextFromDocument(document, { current = true, stale = false, blockerReason = null } = {}) {
@@ -755,6 +578,7 @@ function compactAdjudicationContextFromDocument(document, { current = true, stal
 
 function buildVerificationAdjudication(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
+  return withSessionLock(domain, () => {
   const { state, snapshot } = requireV2State(domain);
   const brutalist = loadCurrentV2Round(domain, "brutalist", { state, snapshot });
   const balanced = loadCurrentV2Round(domain, "balanced", { state, snapshot });
@@ -885,6 +709,7 @@ function buildVerificationAdjudication(args) {
     counts: document.counts,
     adjudication_context: compactAdjudicationContextFromDocument(document),
     written_json: verificationAdjudicationPath(domain),
+  });
   });
 }
 
@@ -1057,336 +882,32 @@ function requireVerificationCompleteForGrade(domain, { findingIdSet = null } = {
   return requireCompleteV2VerificationChain(domain, { findingIdSet });
 }
 
-function replaySafetyForTool(toolName) {
-  for (const pack of Object.values(CAPABILITY_PACKS)) {
-    if (!pack || !pack.verifier) continue;
-    if (pack.verifier.replay_tool === toolName || (pack.evidence && pack.evidence.runner === toolName)) {
-      return {
-        capability_pack: pack.id,
-        replay_safety: pack.verifier.replay_safety || DEFAULT_REPLAY_SAFETY,
-      };
-    }
-  }
-  return null;
-}
-
-function normalizeReplayContext(ctx) {
-  if (!isPlainObject(ctx)) return null;
-  const purpose = typeof ctx.purpose === "string" ? ctx.purpose.trim() : "";
-  if (!VERIFICATION_REPLAY_PURPOSE_VALUES.includes(purpose)) {
-    return { purpose, active: false };
-  }
-  try {
-    return {
-      active: true,
-      purpose,
-      verification_attempt_id: assertNonEmptyString(ctx.verification_attempt_id, "replay_context.verification_attempt_id"),
-      verification_snapshot_hash: assertNonEmptyString(ctx.verification_snapshot_hash, "replay_context.verification_snapshot_hash"),
-      round: ctx.round == null ? null : assertEnumValue(ctx.round, VERIFICATION_ROUND_VALUES, "replay_context.round"),
-      finding_id: ctx.finding_id == null ? null : parseFindingId(ctx.finding_id, "replay_context.finding_id"),
-    };
-  } catch (error) {
-    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, error.message || String(error));
-  }
-}
-
-function replayLeaseKey({ targetDomain, capabilityPack, context, leaseScope }) {
-  if (leaseScope === "none") return null;
-  if (leaseScope === "attempt_pack") {
-    return `${targetDomain}:${context.verification_attempt_id}:${capabilityPack}`;
-  }
-  if (leaseScope === "finding") {
-    if (!context.finding_id) {
-      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "replay_context.finding_id is required for finding-scoped replay leases");
-    }
-    return `${targetDomain}:${context.verification_attempt_id}:${context.finding_id}`;
-  }
-  throw new ToolError(ERROR_CODES.INTERNAL_ERROR, `Unsupported replay lease_scope: ${leaseScope}`);
-}
-
-function replayLeaseFileName(key) {
-  return `${crypto.createHash("sha256").update(key).digest("hex")}.json`;
-}
-
-function replayLeasePath(targetDomain, key) {
-  return path.join(verificationReplayLeaseDir(targetDomain), replayLeaseFileName(key));
-}
-
-function parseLeaseTime(value) {
-  const ms = Date.parse(value);
-  return Number.isFinite(ms) ? ms : 0;
-}
-
-function isReplayLeaseStale(lease, nowMs = Date.now()) {
-  if (!lease || !isPlainObject(lease)) return true;
-  const expiresAtMs = parseLeaseTime(lease.expires_at);
-  if (!expiresAtMs) return true;
-  return expiresAtMs <= nowMs;
-}
-
-function readReplayLeaseFile(filePath) {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-function cleanupStaleReplayLease(filePath, nowMs = Date.now()) {
-  const lease = readReplayLeaseFile(filePath);
-  if (!isReplayLeaseStale(lease, nowMs)) return false;
-  try {
-    fs.rmSync(filePath, { force: true });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function buildReplayLeaseMetadata({
-  targetDomain,
-  key,
-  toolName,
-  policy,
-  leaseScope,
-  context,
-  nowMs = Date.now(),
-}) {
-  const acquiredAt = new Date(nowMs).toISOString();
-  return {
-    version: 1,
-    lease_id: crypto.createHash("sha256").update(key).digest("hex"),
-    target_domain: targetDomain,
-    tool: toolName,
-    capability_pack: policy.capability_pack,
-    lease_scope: leaseScope,
-    replay_purpose: context.purpose,
-    verification_attempt_id: context.verification_attempt_id,
-    verification_snapshot_hash: context.verification_snapshot_hash,
-    round: context.round,
-    finding_id: context.finding_id,
-    acquired_at: acquiredAt,
-    expires_at: new Date(nowMs + VERIFICATION_REPLAY_LEASE_TTL_MS).toISOString(),
-    pid: process.pid,
-  };
-}
-
-function acquireReplayLease({
-  targetDomain,
-  key,
-  toolName,
-  policy,
-  leaseScope,
-  context,
-}) {
-  const dir = verificationReplayLeaseDir(targetDomain);
-  fs.mkdirSync(dir, { recursive: true });
-  const filePath = replayLeasePath(targetDomain, key);
-  const keyHash = crypto.createHash("sha256").update(key).digest("hex");
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const metadata = buildReplayLeaseMetadata({
-      targetDomain,
-      key,
-      toolName,
-      policy,
-      leaseScope,
-      context,
-    });
-    const payload = `${JSON.stringify(metadata, null, 2)}\n`;
-    if (writeFileExclusiveAtomic(filePath, payload)) {
-      return { filePath, metadata };
-    }
-    const existing = readReplayLeaseFile(filePath);
-    if (cleanupStaleReplayLease(filePath)) continue;
-    throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Replay lease busy for ${leaseScope}: ${keyHash}`, {
-      active_lease: existing && isPlainObject(existing)
-        ? {
-          lease_id: existing.lease_id || keyHash,
-          tool: existing.tool || null,
-          capability_pack: existing.capability_pack || policy.capability_pack,
-          replay_purpose: existing.replay_purpose || null,
-          verification_attempt_id: existing.verification_attempt_id || null,
-          round: existing.round || null,
-          finding_id: existing.finding_id || null,
-          acquired_at: existing.acquired_at || null,
-          expires_at: existing.expires_at || null,
-        }
-        : null,
-    });
-  }
-  throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Replay lease busy for ${leaseScope}: ${keyHash}`);
-}
-
-function listActiveReplayLeases(targetDomain) {
-  const dir = verificationReplayLeaseDir(targetDomain);
-  if (!fs.existsSync(dir)) return [];
-  const active = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-    const filePath = path.join(dir, entry.name);
-    const lease = readReplayLeaseFile(filePath);
-    if (isReplayLeaseStale(lease)) {
-      cleanupStaleReplayLease(filePath);
-      continue;
-    }
-    active.push({
-      lease_id: lease.lease_id || entry.name.replace(/\.json$/, ""),
-      tool: lease.tool || null,
-      capability_pack: lease.capability_pack || null,
-      lease_scope: lease.lease_scope || null,
-      purpose: lease.replay_purpose || null,
-      replay_purpose: lease.replay_purpose || null,
-      verification_attempt_id: lease.verification_attempt_id || null,
-      round: lease.round || null,
-      finding_id: lease.finding_id || null,
-      acquired_at: lease.acquired_at || null,
-      expires_at: lease.expires_at || null,
-    });
-  }
-  return active.sort((a, b) => a.lease_id.localeCompare(b.lease_id));
-}
-
-function assertReplayContextCurrent(targetDomain, context) {
-  const { state } = requireV2State(targetDomain);
-  if (context.verification_attempt_id !== state.verification_attempt_id) {
-    throw new ToolError(ERROR_CODES.STATE_CONFLICT, "replay_context verification_attempt_id does not match current VERIFY attempt");
-  }
-  if (context.verification_snapshot_hash !== state.verification_snapshot_hash) {
-    throw new ToolError(ERROR_CODES.STATE_CONFLICT, "replay_context verification_snapshot_hash does not match current VERIFY snapshot");
-  }
-}
-
-async function runWithReplaySafety(tool, args, handler) {
-  const context = normalizeReplayContext(args && args.replay_context);
-  if (!context || !context.active) {
-    return handler();
-  }
-  const targetDomain = assertNonEmptyString(args.target_domain, "target_domain");
-  assertReplayContextCurrent(targetDomain, context);
-  const policy = replaySafetyForTool(tool.name);
-  if (!policy) return handler();
-  const mode = policy.replay_safety.mode || DEFAULT_REPLAY_SAFETY.mode;
-  const leaseScope = policy.replay_safety.lease_scope || DEFAULT_REPLAY_SAFETY.lease_scope;
-  if (leaseScope === "none" && mode !== "parallel_safe") {
-    throw new ToolError(ERROR_CODES.INTERNAL_ERROR, "replay lease_scope none is allowed only with mode parallel_safe");
-  }
-  const key = replayLeaseKey({
-    targetDomain,
-    capabilityPack: policy.capability_pack,
-    context,
-    leaseScope,
-  });
-  let lease = null;
-  if (key) {
-    try {
-      lease = acquireReplayLease({
-        targetDomain,
-        key,
-        toolName: tool.name,
-        policy,
-        leaseScope,
-        context,
-      });
-    } catch (error) {
-      if (error instanceof ToolError && error.code === ERROR_CODES.STATE_CONFLICT) {
-        safeAppendPipelineEvent(targetDomain, "verification_replay_policy_applied", {
-          phase: "VERIFY",
-          status: "lease_rejected",
-          source: tool.name,
-          verification_attempt_id: context.verification_attempt_id,
-          verification_snapshot_hash: context.verification_snapshot_hash,
-          capability_pack: policy.capability_pack,
-          lease_scope: leaseScope,
-          replay_purpose: context.purpose,
-          counts: { active_leases: listActiveReplayLeases(targetDomain).length },
-        });
-      }
-      throw error;
-    }
-  }
-  if (key && !lease) {
-    throw new ToolError(ERROR_CODES.STATE_CONFLICT, "Replay lease acquisition failed");
-  }
-  safeAppendPipelineEvent(targetDomain, "verification_replay_policy_applied", {
-    phase: "VERIFY",
-    status: key ? "lease_acquired" : "parallel_safe",
-    source: tool.name,
-    verification_attempt_id: context.verification_attempt_id,
-    verification_snapshot_hash: context.verification_snapshot_hash,
-    capability_pack: policy.capability_pack,
-    lease_scope: leaseScope,
-    replay_purpose: context.purpose,
-    counts: { active_leases: listActiveReplayLeases(targetDomain).length },
-  });
-  try {
-    return await handler();
-  } finally {
-    if (lease && lease.filePath) {
-      try { fs.rmSync(lease.filePath, { force: true }); } catch {}
-    }
-  }
-}
-
-function replayExecutionPolicy(targetDomain) {
-  const activeLeases = targetDomain ? listActiveReplayLeases(targetDomain) : [];
-  return Object.values(CAPABILITY_PACKS).map((pack) => {
-    const safety = pack.verifier.replay_safety || DEFAULT_REPLAY_SAFETY;
-    const active = activeLeases
-      .filter((lease) => lease.capability_pack === pack.id)
-      .map((lease) => ({
-        lease_id: lease.lease_id,
-        tool: lease.tool,
-        purpose: lease.purpose,
-        verification_attempt_id: lease.verification_attempt_id,
-        round: lease.round,
-        finding_id: lease.finding_id,
-        acquired_at: lease.acquired_at,
-        expires_at: lease.expires_at,
-      }));
-    return {
-      capability_pack: pack.id,
-      mode: safety.mode,
-      lease_scope: safety.lease_scope,
-      can_run_rounds_concurrently: safety.mode === "parallel_safe" || safety.lease_scope === "finding",
-      active_leases: active,
-      next_available_after_ms: active.length > 0 && safety.mode === "serialized" ? 1 : 0,
-    };
-  }).sort((a, b) => a.capability_pack.localeCompare(b.capability_pack));
-}
-
 function roundStatus(domain, round, state) {
   const paths = verificationRoundPaths(domain, round);
-  const status = {
-    round,
-    exists: fs.existsSync(paths.json),
-    current: false,
-    stale: false,
-    blocker_reason: null,
-    results_count: 0,
-    reportable_count: 0,
-    artifact_hash: null,
-  };
-  if (!status.exists) return status;
-  try {
-    const doc = JSON.parse(fs.readFileSync(paths.json, "utf8"));
-    status.artifact_hash = hashCanonicalJson(doc);
-    status.results_count = Array.isArray(doc.results) ? doc.results.length : 0;
-    status.reportable_count = Array.isArray(doc.results) ? doc.results.filter((result) => result && result.reportable === true).length : 0;
-    if (doc.version !== VERIFICATION_SCHEMA_V2) {
-      status.current = schemaVersionForContext(domain) === VERIFICATION_SCHEMA_V1;
-      status.stale = !status.current;
-      status.blocker_reason = status.stale ? "v1 artifact in v2 context" : null;
-      return status;
-    }
-    const decorated = decorateVerificationRoundRead(domain, doc);
-    status.current = decorated.current === true;
-    status.stale = decorated.stale === true;
-    status.blocker_reason = decorated.blocker_reason;
-  } catch (error) {
-    status.stale = true;
-    status.blocker_reason = error.message || String(error);
+  if (!fs.existsSync(paths.json)) {
+    return summarizeVerificationRoundStatus({ targetDomain: domain, round });
   }
-  return status;
+  try {
+    const doc = readJsonFile(paths.json, { label: path.basename(paths.json) });
+    return summarizeVerificationRoundStatus({
+      targetDomain: domain,
+      round,
+      exists: true,
+      document: doc,
+      state,
+      artifactHash: hashCanonicalJson(doc),
+      schemaVersionForContext,
+      decorateVerificationRoundRead,
+    });
+  } catch (error) {
+    const label = `${round} verification round JSON`;
+    return summarizeVerificationRoundStatus({
+      targetDomain: domain,
+      round,
+      exists: true,
+      error: `Malformed ${label}: ${error.message || String(error)}`,
+    });
+  }
 }
 
 function adjudicationStatus(domain, state) {
@@ -1400,7 +921,7 @@ function adjudicationStatus(domain, state) {
   };
   if (!status.exists) return status;
   try {
-    const doc = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const doc = readJsonFile(filePath, { label: path.basename(filePath) });
     if (Object.prototype.hasOwnProperty.call(doc, "plan_hash")) {
       status.stale = true;
       status.blocker_reason = "plan_hash is not supported; use adjudication_plan_hash";
@@ -1774,12 +1295,9 @@ module.exports = {
   assertExactFindingCoverage,
   assertFreshVerificationSnapshot,
   buildVerificationAdjudication,
-  computeAdjudicationPlanHash,
   currentV2RoundInput,
   decorateVerificationRoundRead,
   evidenceBindingForFinal,
-  finalVerificationHash,
-  hashCanonicalJson,
   listActiveReplayLeases,
   listArchivedVerificationAttempts,
   prepareVerificationEntry,
@@ -1791,6 +1309,9 @@ module.exports = {
   refreshVerificationManifest,
   replayExecutionPolicy,
   runWithReplaySafety,
+  adjudicationStatus,
+  roundStatus,
+  schemaVersionForContext,
   selectVerificationWriteSchemaVersion,
   validateCurrentAttemptArgs,
   validateFinalAgainstAdjudication,

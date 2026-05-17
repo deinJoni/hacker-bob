@@ -1,6 +1,6 @@
 "use strict";
 
-const { waveHandoffStatus } = require("../waves.js");
+const { waveHandoffStatus } = require("../wave-handoff-store.js");
 
 module.exports = Object.freeze({
   name: "bounty_wave_handoff_status",
@@ -30,5 +30,4 @@ module.exports = Object.freeze({
   scope_required: false,
   sensitive_output: false,
   session_artifacts_written: [],
-  hook_required: false,
 });

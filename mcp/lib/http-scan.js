@@ -10,8 +10,18 @@ const {
 const { appendHttpAuditRecord } = require("./http-records.js");
 const {
   createProxyAgent,
-  resolveEgressProfile,
 } = require("./egress-profiles.js");
+const {
+  blockInternalHostsPolicyFields,
+} = require("./session-state-contracts.js");
+const {
+  blockInternalHostsRequestPolicy,
+} = require("./session-state-store.js");
+const {
+  assertBlockInternalHostsCompatibleWithEgress,
+  resolveAndAssertSessionEgressIdentity,
+  readStateSummary,
+} = require("./session-state.js");
 const {
   isFirstPartyHost,
   safeUrlObject,
@@ -25,9 +35,46 @@ const {
   safeFetch,
 } = require("./safe-fetch.js");
 
+function scopeAuditFields(scopeDecision) {
+  if (!scopeDecision || typeof scopeDecision !== "object") return {};
+  const fields = {};
+  for (const field of ["registrable_domain", "public_suffix", "public_suffix_source", "psl_overlay_file"]) {
+    if (scopeDecision[field] != null) fields[field] = scopeDecision[field];
+  }
+  return fields;
+}
+
 function isNetworkUnreachableError(message) {
   return /timeout|abort|econnreset|socket hang up|etimedout|enotfound|eai_again|econnrefused|network unreachable|connection reset/i
     .test(String(message || ""));
+}
+
+function isMissingSessionStateError(error) {
+  return /Missing session state:|requires an initialized session/.test(
+    error && error.message ? error.message : String(error),
+  );
+}
+
+function sessionStateExistsForEgressContext(targetDomain) {
+  try {
+    readStateSummary({ target_domain: targetDomain });
+    return true;
+  } catch (error) {
+    if (isMissingSessionStateError(error)) return false;
+    throw error;
+  }
+}
+
+function scopeBlockedEgressContext(targetDomain, requestedEgressProfile, fallback) {
+  if (!sessionStateExistsForEgressContext(targetDomain)) return fallback;
+  try {
+    return resolveAndAssertSessionEgressIdentity(targetDomain, requestedEgressProfile, {
+      source: "bounty_http_scan_scope_blocked",
+    }).identity;
+  } catch (error) {
+    if (isMissingSessionStateError(error)) return fallback;
+    throw error;
+  }
 }
 
 async function httpScan(args) {
@@ -44,7 +91,11 @@ async function httpScan(args) {
       scope_decision: "blocked",
     });
   }
-  const blockInternalHosts = args.block_internal_hosts === true;
+  const internalHostPolicy = blockInternalHostsRequestPolicy(targetDomain, args, {
+    allowMissingSession: true,
+  });
+  const blockInternalHosts = internalHostPolicy.block_internal_hosts === true;
+  const internalHostContext = blockInternalHostsPolicyFields(internalHostPolicy);
   const parsedUrl = safeUrlObject(url);
   const requestedEgressProfile = args.egress_profile == null
     ? "default"
@@ -52,6 +103,9 @@ async function httpScan(args) {
   let egressContext = {
     egress_profile: requestedEgressProfile,
     egress_region: null,
+    proxy_configured: false,
+    egress_profile_identity_hash: null,
+    egress_profile_identity_version: null,
   };
   let egressAgent = null;
   const auditUrl = redactUrlSensitiveValues(url);
@@ -70,6 +124,7 @@ async function httpScan(args) {
     auth_profile: args.auth_profile || null,
     egress_profile: requestedEgressProfile,
     egress_region: null,
+    ...internalHostContext,
   } : null;
   const audit = (fields) => {
     if (!auditBase) return;
@@ -82,39 +137,49 @@ async function httpScan(args) {
     });
   };
 
+  let initialScopeDecision = null;
   try {
-    const profile = resolveEgressProfile(requestedEgressProfile);
-    egressContext = {
-      egress_profile: profile.name,
-      egress_region: profile.region,
-    };
-    egressAgent = createProxyAgent(profile.proxy_url);
+    initialScopeDecision = assertSafeRequestUrl(url, targetDomain, { blockInternalHosts });
   } catch (error) {
-    const message = error.message || String(error);
+    egressContext = scopeBlockedEgressContext(targetDomain, requestedEgressProfile, egressContext);
     audit({
       status: null,
-      error: message,
-      scope_decision: "egress_error",
+      error: error.message || String(error),
+      scope_decision: "blocked",
+      ...scopeAuditFields(error.details),
     });
     return JSON.stringify({
-      error: `${message} — request was NOT sent.`,
-      scope_decision: "egress_error",
+      error: error.message || String(error),
+      scope_decision: "blocked",
       ...egressContext,
+      ...internalHostContext,
     });
   }
 
   try {
-    assertSafeRequestUrl(url, targetDomain, { blockInternalHosts });
+    const { profile, identity } = resolveAndAssertSessionEgressIdentity(targetDomain, requestedEgressProfile, {
+      source: "bounty_http_scan",
+    });
+    egressContext = identity;
+    assertBlockInternalHostsCompatibleWithEgress(internalHostPolicy, profile);
+    egressAgent = createProxyAgent(profile.proxy_url);
   } catch (error) {
+    if (error && error.code === "STATE_CONFLICT") throw error;
+    const message = error.message || String(error);
+    const scopeDecision = error && (error.scope_decision === "blocked" || error.code === "SCOPE_BLOCKED")
+      ? "blocked"
+      : "egress_error";
     audit({
       status: null,
-      error: error.message || String(error),
-      scope_decision: "blocked",
+      error: message,
+      scope_decision: scopeDecision,
+      ...scopeAuditFields(initialScopeDecision),
     });
     return JSON.stringify({
-      error: error.message || String(error),
-      scope_decision: "blocked",
+      error: `${message} — request was NOT sent.`,
+      scope_decision: scopeDecision,
       ...egressContext,
+      ...internalHostContext,
     });
   }
 
@@ -136,6 +201,7 @@ async function httpScan(args) {
         status: null,
         error: `auth_profile "${authProfile}" requested but not found`,
         scope_decision: "auth_missing",
+        ...scopeAuditFields(initialScopeDecision),
       });
       return JSON.stringify({
         error: `auth_profile "${authProfile}" requested but not found — request was NOT sent. Store auth first via bounty_auth_store.`,
@@ -193,6 +259,7 @@ async function httpScan(args) {
       error: null,
       scope_decision: "allowed",
       final_url: redactUrlSensitiveValues(finalUrl),
+      ...scopeAuditFields(initialScopeDecision),
     });
 
     if (responseMode === "status_only") {
@@ -203,6 +270,7 @@ async function httpScan(args) {
         redirect_count: redirectCount,
         final_url: finalUrl,
         ...egressContext,
+        ...internalHostContext,
       });
     }
 
@@ -215,6 +283,7 @@ async function httpScan(args) {
         redirect_count: redirectCount,
         final_url: finalUrl,
         ...egressContext,
+        ...internalHostContext,
       });
     }
 
@@ -231,6 +300,7 @@ async function httpScan(args) {
         final_url: finalUrl,
         analysis,
         ...egressContext,
+        ...internalHostContext,
       }, null, 2);
     }
 
@@ -244,6 +314,7 @@ async function httpScan(args) {
       final_url: finalUrl,
       analysis,
       ...egressContext,
+      ...internalHostContext,
     }, null, 2);
   } catch (err) {
     const errorMessage = err && err.name === "AbortError"
@@ -256,9 +327,11 @@ async function httpScan(args) {
       status: null,
       error: errorMessage,
       scope_decision: isBlocked ? "blocked" : networkUnreachable ? "network_unreachable_target" : "request_error",
+      ...scopeAuditFields(initialScopeDecision),
+      ...scopeAuditFields(err && err.details),
     });
     return JSON.stringify(isBlocked
-      ? { error: errorMessage, scope_decision: "blocked", ...egressContext }
+      ? { error: errorMessage, scope_decision: "blocked", ...egressContext, ...internalHostContext }
       : {
         error: errorMessage,
         ...(networkUnreachable ? {
@@ -266,6 +339,7 @@ async function httpScan(args) {
           geofence_warning: "Repeated first-party network failures may indicate a geofenced or unreachable target. Log coverage/dead-end context and ask the operator before switching egress profiles.",
         } : {}),
         ...egressContext,
+        ...internalHostContext,
       });
   }
 }

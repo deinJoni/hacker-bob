@@ -20,6 +20,19 @@ legacy `.claude/` resource locations. New installs write canonical Bob resources
 under `.hacker-bob/knowledge` and `.hacker-bob/bypass-tables`; adapters should
 not create new `.claude/knowledge` or `.claude/bypass-tables` copies.
 
+## Compatibility Policy
+
+Legacy install metadata and resource fallbacks are long-term read compatibility
+for projects installed before Bob moved shared state under `.hacker-bob/`.
+Adapter stale-file pruning is also intentional reinstall hygiene: when Bob
+renames a command, skill, plugin file, or generated role, reinstall should remove
+the previously managed path instead of leaving two host-visible entrypoints.
+
+Do not add new legacy paths unless they correspond to a shipped Bob version. A
+legacy path may be removed only in a major-version migration after the installer,
+doctor, and release notes document that old workspaces must reinstall from a
+fresh adapter surface.
+
 ## Adapter Boundary
 
 Adapters own host-specific packaging and ergonomics:
@@ -54,5 +67,5 @@ Claude `SubagentStop` can keep enforcing the hunter handoff contract, but the
 portable runtime must also be able to verify hunter completion through MCP state
 and tools so hosts without a matching hook can still run Bob predictably.
 
-The continued implementation graph for this migration is tracked in
-[`PLATFORM_TASK_GRAPH.md`](PLATFORM_TASK_GRAPH.md).
+Longer-running platform work is tracked in the roadmap and release notes rather
+than through adapter-owned host files.

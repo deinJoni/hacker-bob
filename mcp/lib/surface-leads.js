@@ -17,8 +17,9 @@ const {
 const {
   readSessionStateStrict,
   writeSessionStateDocument,
-} = require("./session-state.js");
+} = require("./session-state-store.js");
 const {
+  readJsonFile,
   withSessionLock,
   writeFileAtomic,
 } = require("./storage.js");
@@ -150,7 +151,7 @@ function readSurfaceLeadsDocument(domain) {
   }
   let parsed;
   try {
-    parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    parsed = readJsonFile(filePath, { label: "surface-leads.json" });
   } catch (error) {
     throw new Error(`Malformed surface leads JSON: ${filePath} (${error.message || String(error)})`);
   }
@@ -269,7 +270,7 @@ function readAttackSurfaceDocument(domain) {
   }
   let parsed;
   try {
-    parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    parsed = readJsonFile(filePath, { label: "attack_surface.json" });
   } catch (error) {
     throw new Error(`Malformed attack surface JSON: ${filePath} (${error.message || String(error)})`);
   }
@@ -428,6 +429,10 @@ function recordSurfaceLeads(args) {
   }));
 }
 
+function recordSurfaceLeadsForWaveHandoff(domain, leads, context = {}) {
+  return withSessionLock(domain, () => recordSurfaceLeadsInternal(domain, leads, context));
+}
+
 function readSurfaceLeads(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   const limit = args.limit == null ? 50 : assertInteger(args.limit, "limit", { min: 1, max: 200 });
@@ -460,18 +465,25 @@ function promoteSurfaceLeads(args) {
   }));
 }
 
+function promoteSurfaceLeadsForWave(domain, options = {}) {
+  return withSessionLock(domain, () => promoteSurfaceLeadsInternal(domain, {
+    ...options,
+    update_state: false,
+  }));
+}
+
 module.exports = {
   LEAD_CONFIDENCE_VALUES,
   LEAD_STATUS_VALUES,
   isAssignableSurfaceLead,
   normalizeSurfaceLead,
+  promoteSurfaceLeadsForWave,
   promoteSurfaceLeads,
-  promoteSurfaceLeadsInternal,
   previewSurfaceLeadPromotion,
   readSurfaceLeads,
   readSurfaceLeadsDocument,
   recordSurfaceLeads,
-  recordSurfaceLeadsInternal,
+  recordSurfaceLeadsForWaveHandoff,
   selectPromotableSurfaceLeads,
   surfaceLeadsPath,
 };

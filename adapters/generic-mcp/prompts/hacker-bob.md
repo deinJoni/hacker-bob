@@ -15,6 +15,14 @@ Start with `bounty_init_session`, progress through the phase machine, and keep
 all durable state in MCP-owned tools and artifacts. Do not manually edit Bob
 session JSON or JSONL files.
 
+For session-bound tools, treat `target_domain` as a session selector, not proof
+of authorization. The MCP runtime binds calls to initialized session state and
+blocks raw target or target URL drift before handlers run. If an authority error
+is returned, stop and use the error details or status/debug readers rather than
+editing session files. Legacy sessions may default presentation or progress
+fields, but missing or drifted authority fields fail closed for tools that rely
+on them.
+
 Hunter completion is portable through `bounty_finalize_hunter_run`. A hunter
 must write a structured wave handoff and then finalize the run with
 `target_domain`, `wave`, `agent`, and `surface_id`.

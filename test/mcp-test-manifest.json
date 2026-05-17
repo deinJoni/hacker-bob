@@ -1,5 +1,11 @@
 [
   "test/mcp-server.test.js",
+  "test/finding-contracts.test.js",
+  "test/pipeline-events.test.js",
+  "test/verification-contracts.test.js",
+  "test/session-state-store.test.js",
+  "test/wave-handoff-contracts.test.js",
+  "test/wave-handoff-store.test.js",
   "test/wave-planner.test.js",
   "test/bob-export.test.js",
   "test/schema-contracts.test.js",

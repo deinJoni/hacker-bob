@@ -45,7 +45,7 @@ const COMMAND_SPECS = Object.freeze({
     file: "bob-hunt.md",
     skill: "bob-hunt",
     description: "Run or resume a Hacker Bob bug bounty hunt.",
-    argumentHint: "<target|resume target [force-merge]> [--no-auth|--normal|--paranoid|--yolo]",
+    argumentHint: "<target|resume target [force-merge]> [--no-auth|--normal|--paranoid|--yolo] [--deep] [--egress <profile>] [--block-internal-hosts|--allow-internal-hosts]",
   }),
   status: Object.freeze({
     file: "bob-status.md",

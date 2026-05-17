@@ -59,5 +59,4 @@ module.exports = Object.freeze({
   scope_required: false,
   sensitive_output: true,
   session_artifacts_written: ["auth.json"],
-  hook_required: false,
 });

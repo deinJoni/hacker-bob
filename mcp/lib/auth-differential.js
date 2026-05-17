@@ -1,6 +1,6 @@
 "use strict";
 
-const { hashCanonicalJson } = require("./verification.js");
+const { hashCanonicalJson } = require("./verification-contracts.js");
 
 const SENSITIVE_FIELD_PATTERNS = [
   /password/i,

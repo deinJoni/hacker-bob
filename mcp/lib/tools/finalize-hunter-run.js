@@ -43,5 +43,4 @@ module.exports = Object.freeze({
     "tool-telemetry.jsonl",
     "pipeline-events.jsonl"
   ],
-  hook_required: false,
 });

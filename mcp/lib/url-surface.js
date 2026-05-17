@@ -120,29 +120,58 @@ function ipv4ToNumber(address) {
 function isPrivateIpv4(address) {
   const value = ipv4ToNumber(address);
   if (value == null) return false;
+  return isPrivateIpv4Number(value);
+}
+
+function isPrivateIpv4Number(value) {
+  if (!Number.isInteger(value) || value < 0 || value > 0xffffffff) return false;
+  const inRange = (start, end) => value >= ipv4ToNumber(start) && value <= ipv4ToNumber(end);
   return (
     (value >>> 24) === 0 ||
     (value >>> 24) === 10 ||
     (value >>> 24) === 127 ||
-    (value >= ipv4ToNumber("100.64.0.0") && value <= ipv4ToNumber("100.127.255.255")) ||
-    (value >= ipv4ToNumber("169.254.0.0") && value <= ipv4ToNumber("169.254.255.255")) ||
-    (value >= ipv4ToNumber("172.16.0.0") && value <= ipv4ToNumber("172.31.255.255")) ||
-    (value >= ipv4ToNumber("192.168.0.0") && value <= ipv4ToNumber("192.168.255.255"))
+    inRange("100.64.0.0", "100.127.255.255") ||
+    inRange("169.254.0.0", "169.254.255.255") ||
+    inRange("172.16.0.0", "172.31.255.255") ||
+    inRange("192.0.0.0", "192.0.0.255") ||
+    inRange("192.0.2.0", "192.0.2.255") ||
+    inRange("192.88.99.0", "192.88.99.255") ||
+    inRange("192.168.0.0", "192.168.255.255") ||
+    inRange("198.18.0.0", "198.19.255.255") ||
+    inRange("198.51.100.0", "198.51.100.255") ||
+    inRange("203.0.113.0", "203.0.113.255") ||
+    inRange("224.0.0.0", "239.255.255.255") ||
+    inRange("240.0.0.0", "255.255.255.255")
   );
 }
 
+function ipv4NumberFromIpv6Parts(high16, low16) {
+  return ((((high16 || 0) & 0xffff) << 16) | ((low16 || 0) & 0xffff)) >>> 0;
+}
+
 function expandIpv6(address) {
-  const value = String(address || "").toLowerCase().replace(/^\[|\]$/g, "");
+  const value = String(address || "").toLowerCase().replace(/^\[|\]$/g, "").replace(/%.+$/, "");
   if (!value) return null;
   const halves = value.split("::");
   if (halves.length > 2) return null;
 
   const parseSide = (side) => {
     if (!side) return [];
-    return side.split(":").filter((part) => part.length > 0).map((part) => {
-      if (!/^[0-9a-f]{1,4}$/i.test(part)) return null;
-      return Number.parseInt(part, 16);
-    });
+    const rawParts = side.split(":").filter((part) => part.length > 0);
+    const parsed = [];
+    for (let index = 0; index < rawParts.length; index += 1) {
+      const part = rawParts[index];
+      if (part.includes(".")) {
+        if (index !== rawParts.length - 1) return [null];
+        const value = ipv4ToNumber(part);
+        if (value == null) return [null];
+        parsed.push((value >>> 16) & 0xffff, value & 0xffff);
+        continue;
+      }
+      if (!/^[0-9a-f]{1,4}$/i.test(part)) return [null];
+      parsed.push(Number.parseInt(part, 16));
+    }
+    return parsed;
   };
 
   const left = parseSide(halves[0]);
@@ -162,9 +191,27 @@ function isBlockedIpv6(address) {
   const isLoopback = parts.slice(0, 7).every((part) => part === 0) && parts[7] === 1;
   const isUniqueLocal = (parts[0] & 0xfe00) === 0xfc00;
   const isLinkLocal = (parts[0] & 0xffc0) === 0xfe80;
+  const isMulticast = (parts[0] & 0xff00) === 0xff00;
+  const isDocumentation = parts[0] === 0x2001 && parts[1] === 0x0db8;
+  const isDocumentation3fff = parts[0] === 0x3fff && (parts[1] & 0xf000) === 0;
+  const isBenchmarking = parts[0] === 0x2001 && parts[1] === 0x0002 && parts[2] === 0;
+  const isDiscard = parts[0] === 0x0100 && parts[1] === 0 && parts[2] === 0 && parts[3] === 0;
+  const isDummyPrefix = parts[0] === 0x0100 && parts[1] === 0 && parts[2] === 0 && parts[3] === 1;
+  const isLocalIpv4Ipv6Translation = parts[0] === 0x0064 && parts[1] === 0xff9b && parts[2] === 0x0001;
+  const isWellKnownNat64 = parts[0] === 0x0064 && parts[1] === 0xff9b
+    && parts[2] === 0 && parts[3] === 0 && parts[4] === 0 && parts[5] === 0;
+  const isWellKnownNat64PrivateIpv4 = isWellKnownNat64
+    && isPrivateIpv4Number(ipv4NumberFromIpv6Parts(parts[6], parts[7]));
+  const is6to4PrivateIpv4 = parts[0] === 0x2002
+    && isPrivateIpv4Number(ipv4NumberFromIpv6Parts(parts[1], parts[2]));
+  const isSrv6Sid = parts[0] === 0x5f00;
   const isIpv4Mapped = parts.slice(0, 5).every((part) => part === 0) && parts[5] === 0xffff;
+  const isIpv4Compatible = !isUnspecified && parts.slice(0, 6).every((part) => part === 0);
 
-  return isUnspecified || isLoopback || isUniqueLocal || isLinkLocal || isIpv4Mapped;
+  return isUnspecified || isLoopback || isUniqueLocal || isLinkLocal || isMulticast
+    || isDocumentation || isDocumentation3fff || isBenchmarking || isDiscard || isDummyPrefix
+    || isLocalIpv4Ipv6Translation || isWellKnownNat64PrivateIpv4 || is6to4PrivateIpv4
+    || isSrv6Sid || isIpv4Mapped || isIpv4Compatible;
 }
 
 function normalizeValidationHost(hostname) {

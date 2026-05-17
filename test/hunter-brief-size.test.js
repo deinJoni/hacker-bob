@@ -9,15 +9,19 @@ const path = require("node:path");
 
 const {
   attackSurfacePath,
-  readHunterBrief,
   sessionDir,
-  startWave,
   statePath,
-  writeFileAtomic,
-} = require("../mcp/server.js");
+} = require("../mcp/lib/paths.js");
 const {
+  readHunterBrief,
   HUNTER_BRIEF_SLICE_REGISTRY,
 } = require("../mcp/lib/hunter-brief.js");
+const {
+  startWave,
+} = require("../mcp/lib/waves.js");
+const {
+  writeFileAtomic,
+} = require("../mcp/lib/storage.js");
 const {
   ingestSchemaDoc,
 } = require("../mcp/lib/schema-contracts-store.js");

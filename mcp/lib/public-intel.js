@@ -15,6 +15,7 @@ const {
   publicIntelPath,
 } = require("./paths.js");
 const {
+  readJsonFile,
   writeFileAtomic,
 } = require("./storage.js");
 const {
@@ -35,7 +36,7 @@ function readPublicIntelDocument(domain) {
     return null;
   }
   try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const parsed = readJsonFile(filePath, { label: "public-intel.json" });
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     if (parsed.target_domain !== domain) return null;
     return parsed;

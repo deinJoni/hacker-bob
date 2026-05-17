@@ -30,5 +30,4 @@ module.exports = Object.freeze({
     "surface-leads.json",
     "attack_surface.json",
   ],
-  hook_required: false,
 });

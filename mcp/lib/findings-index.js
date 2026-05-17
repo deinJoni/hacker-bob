@@ -10,8 +10,21 @@ const {
   sessionDir,
   sessionsRoot,
 } = require("./paths.js");
+const {
+  readFileUtf8,
+  trimJsonlFile,
+  withSessionLock,
+  writeFileAtomic,
+} = require("./storage.js");
+const {
+  validateNoSensitiveMaterial,
+} = require("./sensitive-material.js");
 
 const FEATURE_DIMENSION = 256;
+const FINDINGS_INDEX_MAX_RECORDS = 5000;
+const FINDINGS_INDEX_MAX_BYTES = 8 * 1024 * 1024;
+const FINDINGS_INDEX_CROSS_TARGET_DOMAIN_LIMIT = 200;
+const FINDINGS_INDEX_TECH_STACK_MAX_ITEMS = 32;
 const STOP_WORDS = new Set([
   "the", "a", "an", "and", "or", "but", "for", "with", "without", "on", "in",
   "of", "to", "is", "are", "was", "were", "be", "been", "being", "as", "at",
@@ -103,7 +116,15 @@ function ensureSessionDir(domain) {
 
 function readJsonlFindingsIndex(filePath) {
   if (!fs.existsSync(filePath)) return [];
-  const raw = fs.readFileSync(filePath, "utf8");
+  let raw;
+  try {
+    raw = readFileUtf8(filePath, { label: "findings-index.jsonl" });
+  } catch (error) {
+    if (error && /findings-index\.jsonl exceeds read cap/.test(error.message || String(error))) {
+      return [];
+    }
+    throw error;
+  }
   const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
   const records = [];
   for (let i = 0; i < lines.length; i++) {
@@ -116,14 +137,88 @@ function readJsonlFindingsIndex(filePath) {
   return records;
 }
 
+function trimFindingsIndexForRecovery(filePath) {
+  if (!fs.existsSync(filePath)) return;
+  trimJsonlFile(filePath, FINDINGS_INDEX_MAX_RECORDS);
+  let stats;
+  try {
+    stats = fs.statSync(filePath);
+  } catch {
+    return;
+  }
+  if (stats.size <= FINDINGS_INDEX_MAX_BYTES) return;
+  const raw = readFileUtf8(filePath, { label: "findings-index.jsonl", maxBytes: null });
+  const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  let retained = lines.slice(-FINDINGS_INDEX_MAX_RECORDS);
+  while (retained.length > 0) {
+    const body = `${retained.join("\n")}\n`;
+    if (Buffer.byteLength(body, "utf8") <= FINDINGS_INDEX_MAX_BYTES) {
+      writeFileAtomic(filePath, body);
+      return;
+    }
+    retained = retained.slice(1);
+  }
+  writeFileAtomic(filePath, "");
+}
+
+function validateIndexFindingInput(finding) {
+  validateNoSensitiveMaterial(finding.finding_id, "finding.finding_id", { maxTextChars: 120 });
+  if (calibrationLabelForValidation(finding) != null) {
+    validateNoSensitiveMaterial(calibrationLabelForValidation(finding), "calibration_label", { maxTextChars: 120 });
+  }
+  for (const [field, maxTextChars] of [
+    ["title", 300],
+    ["description", 4000],
+    ["attack_class", 200],
+    ["cwe", 120],
+    ["endpoint", 2000],
+    ["surface_id", 200],
+    ["surface_type", 80],
+    ["evidence_summary", 4000],
+    ["proof_of_concept", 4000],
+  ]) {
+    if (finding[field] == null) continue;
+    validateNoSensitiveMaterial(finding[field], `finding.${field}`, { maxTextChars });
+  }
+  if (Array.isArray(finding.tech_stack)) {
+    if (finding.tech_stack.length > FINDINGS_INDEX_TECH_STACK_MAX_ITEMS) {
+      throw new Error(`finding.tech_stack must contain at most ${FINDINGS_INDEX_TECH_STACK_MAX_ITEMS} entries`);
+    }
+    validateNoSensitiveMaterial(finding.tech_stack, "finding.tech_stack", { maxTextChars: 200 });
+  }
+}
+
+function calibrationLabelForValidation(finding) {
+  return finding && typeof finding.calibration_label === "string"
+    ? finding.calibration_label
+    : null;
+}
+
 function writeJsonlFindingsIndex(filePath, records) {
-  const sorted = records.slice().sort((a, b) => {
+  const byRecent = records.slice()
+    .sort((a, b) => String(b.indexed_at || "").localeCompare(String(a.indexed_at || "")));
+  const capped = byRecent.slice(0, FINDINGS_INDEX_MAX_RECORDS);
+  while (capped.length > 0) {
+    const projected = capped
+      .slice()
+      .sort((a, b) => {
+        const aId = typeof a.finding_id === "string" ? a.finding_id : "";
+        const bId = typeof b.finding_id === "string" ? b.finding_id : "";
+        return aId.localeCompare(bId);
+      })
+      .map((record) => JSON.stringify(record))
+      .join("\n");
+    const projectedBody = projected.length > 0 ? `${projected}\n` : "";
+    if (Buffer.byteLength(projectedBody, "utf8") <= FINDINGS_INDEX_MAX_BYTES) break;
+    capped.pop();
+  }
+  const sorted = capped.sort((a, b) => {
     const aId = typeof a.finding_id === "string" ? a.finding_id : "";
     const bId = typeof b.finding_id === "string" ? b.finding_id : "";
     return aId.localeCompare(bId);
   });
   const body = sorted.map((record) => JSON.stringify(record)).join("\n");
-  fs.writeFileSync(filePath, body.length > 0 ? body + "\n" : "", "utf8");
+  writeFileAtomic(filePath, body.length > 0 ? body + "\n" : "");
 }
 
 function indexFinding({ target_domain, finding, calibration_label }) {
@@ -134,39 +229,46 @@ function indexFinding({ target_domain, finding, calibration_label }) {
   if (typeof finding.finding_id !== "string" || finding.finding_id.length === 0) {
     throw new Error("finding.finding_id must be a non-empty string");
   }
-  ensureSessionDir(domain);
-  const filePath = findingsIndexJsonlPath(domain);
-  const existing = readJsonlFindingsIndex(filePath);
-  const byId = new Map();
-  for (const record of existing) {
-    if (record && typeof record.finding_id === "string") {
-      byId.set(record.finding_id, record);
+  return withSessionLock(domain, () => {
+    ensureSessionDir(domain);
+    const filePath = findingsIndexJsonlPath(domain);
+    trimFindingsIndexForRecovery(filePath);
+    const existing = readJsonlFindingsIndex(filePath);
+    const byId = new Map();
+    for (const record of existing) {
+      if (record && typeof record.finding_id === "string") {
+        byId.set(record.finding_id, record);
+      }
     }
-  }
-  const vector = featureVectorForFinding(finding);
-  const record = {
-    finding_id: finding.finding_id,
-    target_domain: domain,
-    title: typeof finding.title === "string" ? finding.title : null,
-    severity: typeof finding.severity === "string" ? finding.severity : null,
-    attack_class: typeof finding.attack_class === "string" ? finding.attack_class : null,
-    surface_type: typeof finding.surface_type === "string" ? finding.surface_type : null,
-    endpoint: typeof finding.endpoint === "string" ? finding.endpoint : null,
-    tech_stack: Array.isArray(finding.tech_stack) ? finding.tech_stack.slice(0, 8) : null,
-    calibration_label: typeof calibration_label === "string" && calibration_label.length > 0
-      ? calibration_label
-      : null,
-    indexed_at: new Date().toISOString(),
-    feature_vector: vector,
-  };
-  byId.set(finding.finding_id, record);
-  writeJsonlFindingsIndex(filePath, Array.from(byId.values()));
-  return {
-    finding_id: finding.finding_id,
-    target_domain: domain,
-    new_record: !existing.some((r) => r.finding_id === finding.finding_id),
-    total_in_index: byId.size,
-  };
+    validateIndexFindingInput({ ...finding, calibration_label: calibration_label });
+    const vector = featureVectorForFinding(finding);
+    const record = {
+      finding_id: finding.finding_id,
+      target_domain: domain,
+      title: typeof finding.title === "string" ? finding.title : null,
+      severity: typeof finding.severity === "string" ? finding.severity : null,
+      attack_class: typeof finding.attack_class === "string" ? finding.attack_class : null,
+      surface_type: typeof finding.surface_type === "string" ? finding.surface_type : null,
+      endpoint: typeof finding.endpoint === "string" ? finding.endpoint : null,
+      tech_stack: Array.isArray(finding.tech_stack) ? finding.tech_stack.slice(0, 8) : null,
+      calibration_label: typeof calibration_label === "string" && calibration_label.length > 0
+        ? calibration_label
+        : null,
+      indexed_at: new Date().toISOString(),
+      feature_vector: vector,
+    };
+    const newRecord = !byId.has(finding.finding_id);
+    byId.set(finding.finding_id, record);
+    writeJsonlFindingsIndex(filePath, Array.from(byId.values()));
+    return {
+      finding_id: finding.finding_id,
+      target_domain: domain,
+      new_record: newRecord,
+      total_in_index: Math.min(byId.size, FINDINGS_INDEX_MAX_RECORDS),
+      index_record_limit: FINDINGS_INDEX_MAX_RECORDS,
+      index_byte_limit: FINDINGS_INDEX_MAX_BYTES,
+    };
+  });
 }
 
 function queryFindingsForTarget({ target_domain, query_text, top_k, severity_filter, attack_class_filter }) {
@@ -227,15 +329,25 @@ function queryFindingsCrossTarget({ query_text, top_k, severity_filter, attack_c
   const scored = [];
   let totalRecords = 0;
   let domainsScanned = 0;
-  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    if (entry.name.startsWith(".")) continue;
-    const filePath = path.join(root, entry.name, "findings-index.jsonl");
-    if (!fs.existsSync(filePath)) continue;
+  const indexFiles = fs.readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .filter((entry) => !entry.name.startsWith("."))
+    .map((entry) => {
+      const filePath = path.join(root, entry.name, "findings-index.jsonl");
+      let mtimeMs = 0;
+      try {
+        mtimeMs = fs.statSync(filePath).mtimeMs;
+      } catch {}
+      return { domain: entry.name, filePath, mtimeMs };
+    })
+    .filter((entry) => entry.mtimeMs > 0)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs || a.domain.localeCompare(b.domain));
+  const selectedIndexFiles = indexFiles.slice(0, FINDINGS_INDEX_CROSS_TARGET_DOMAIN_LIMIT);
+  for (const entry of selectedIndexFiles) {
     domainsScanned += 1;
     let records;
     try {
-      records = readJsonlFindingsIndex(filePath);
+      records = readJsonlFindingsIndex(entry.filePath);
     } catch (_err) {
       continue;
     }
@@ -270,6 +382,9 @@ function queryFindingsCrossTarget({ query_text, top_k, severity_filter, attack_c
     total_in_index: totalRecords,
     query_dimension: queryVector.dimension,
     domains_scanned: domainsScanned,
+    domain_scan_limit: FINDINGS_INDEX_CROSS_TARGET_DOMAIN_LIMIT,
+    domains_available: indexFiles.length,
+    domains_truncated: indexFiles.length > FINDINGS_INDEX_CROSS_TARGET_DOMAIN_LIMIT,
     matched_total: scored.length,
   };
 }
@@ -357,4 +472,8 @@ module.exports = {
   queryFindingsCrossTarget,
   summarizePriorFindingsForSurface,
   FEATURE_DIMENSION,
+  FINDINGS_INDEX_CROSS_TARGET_DOMAIN_LIMIT,
+  FINDINGS_INDEX_MAX_BYTES,
+  FINDINGS_INDEX_MAX_RECORDS,
+  FINDINGS_INDEX_TECH_STACK_MAX_ITEMS,
 };

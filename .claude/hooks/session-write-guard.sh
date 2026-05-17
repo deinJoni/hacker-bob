@@ -12,6 +12,7 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import sys
 
 
@@ -45,6 +46,7 @@ MCP_OWNED_EXACT = {
     "static-artifacts.jsonl",
     "static-scan-results.jsonl",
     "pipeline-events.jsonl",
+    ".handoff-signing-key.json",
 }
 
 MCP_OWNED_DIRS = {
@@ -181,6 +183,31 @@ def extract_inline_script_paths(command):
     return targets
 
 
+def check_mutating_path_commands(command):
+    """Block direct shell mutations of MCP-owned session files."""
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError:
+        return
+
+    mutators = {"rm", "unlink", "mv", "cp", "chmod", "chown"}
+    for index, token in enumerate(tokens):
+        command_name = pathlib.PurePosixPath(token).name
+        if command_name not in mutators:
+            continue
+        for candidate in tokens[index + 1:]:
+            if candidate in {"|", ";", "&&", "||"}:
+                break
+            if candidate.startswith("-"):
+                continue
+            blocked = check_file(candidate)
+            if blocked:
+                block(
+                    f"BLOCKED: Bash {command_name} on '{blocked}' in session directory. "
+                    f"Use the appropriate bountyagent MCP tool instead."
+                )
+
+
 # Main
 payload = {}
 try:
@@ -205,6 +232,8 @@ if "file_path" in tool_input:
 command = tool_input.get("command", "")
 if not command:
     raise SystemExit(0)
+
+check_mutating_path_commands(command)
 
 # Quick gate: skip if no write indicators
 has_redirects = re.search(r">{1,2}\s|tee\s", command)

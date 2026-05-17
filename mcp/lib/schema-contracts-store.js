@@ -8,6 +8,7 @@ const {
   sessionDir,
 } = require("./paths.js");
 const {
+  readFileUtf8,
   withSessionLock,
   writeFileAtomic,
 } = require("./storage.js");
@@ -22,7 +23,7 @@ function ensureSessionDir(domain) {
 
 function readJsonlContracts(filePath) {
   if (!fs.existsSync(filePath)) return [];
-  const raw = fs.readFileSync(filePath, "utf8");
+  const raw = readFileUtf8(filePath, { label: "schema-contracts.jsonl" });
   const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
   const records = [];
   for (let i = 0; i < lines.length; i++) {

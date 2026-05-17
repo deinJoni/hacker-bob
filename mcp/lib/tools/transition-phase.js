@@ -56,5 +56,4 @@ module.exports = Object.freeze({
     "verification-manifest.json",
     "verification-attempts/attempt-*/",
   ],
-  hook_required: false,
 });

@@ -28,12 +28,13 @@ const {
 } = require("./paths.js");
 const {
   appendJsonlLine,
+  readFileUtf8,
   withSessionLock,
   writeFileAtomic,
 } = require("./storage.js");
 const {
   readSessionStateStrict,
-} = require("./session-state.js");
+} = require("./session-state-store.js");
 const {
   EVM_PATTERNS,
   RISK_ORDER,
@@ -123,7 +124,7 @@ function readJsonlRecords(filePath, label, normalizer) {
   if (!fs.existsSync(filePath)) {
     return [];
   }
-  const content = fs.readFileSync(filePath, "utf8");
+  const content = readFileUtf8(filePath, { label });
   if (!content.trim()) {
     return [];
   }
@@ -412,7 +413,7 @@ function staticScan(args) {
     if (!fs.existsSync(artifactPath)) {
       throw new Error(`Missing imported static artifact file: ${artifactPath}`);
     }
-    const content = fs.readFileSync(artifactPath, "utf8");
+    const content = readFileUtf8(artifactPath, { label: path.basename(artifactPath) });
     const scannedAt = new Date().toISOString();
     const scan = scanTokenContractContent(content, {
       artifactId,

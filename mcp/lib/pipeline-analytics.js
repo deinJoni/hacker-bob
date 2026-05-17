@@ -1,336 +1,88 @@
 "use strict";
 
 const fs = require("fs");
-const path = require("path");
 const {
-  CHAIN_ATTEMPT_OUTCOME_VALUES,
-  CHAIN_ATTEMPT_TERMINAL_OUTCOME_VALUES,
-  COVERAGE_STATUS_VALUES,
-  GRADE_VERDICT_VALUES,
   PHASE_VALUES,
-  SEVERITY_VALUES,
-  TECHNIQUE_ATTEMPT_STATUS_VALUES,
   VERIFICATION_ROUND_VALUES,
 } = require("./constants.js");
 const {
   assertNonEmptyString,
-  normalizeStringArray,
-  parseAgentId,
-  parseWaveId,
 } = require("./validation.js");
 const {
-  attackSurfacePath,
-  chainAttemptsJsonlPath,
-  coverageJsonlPath,
-  evidencePackPaths,
+  findingsIndexJsonlPath,
   findingsJsonlPath,
-  gradeArtifactPaths,
   httpAuditJsonlPath,
   pipelineEventsJsonlPath,
   reportMarkdownPath,
   sessionDir,
   sessionsRoot,
   statePath,
-  techniqueAttemptsJsonlPath,
-  techniquePackReadsJsonlPath,
-  verificationAdjudicationPath,
-  verificationAttemptsDir,
-  verificationRoundPaths,
-  verificationSnapshotPath,
 } = require("./paths.js");
-const {
-  appendJsonlLine,
-  readJsonFile,
-  withSessionLock,
-} = require("./storage.js");
-const {
-  loadWaveAssignments,
-} = require("./assignments.js");
 const {
   readAgentRunTelemetryEvents,
   readToolTelemetryEvents,
   summarizeToolTelemetryEvents,
 } = require("./tool-telemetry.js");
 const {
-  bobVersion,
-} = require("./runtime-resources.js");
-const {
-  requireValidEvidencePacksForFinalReportableFindings,
-} = require("./evidence.js");
-const {
-  buildCircuitBreakerSummary,
-  readHttpAuditRecordsFromJsonl,
-  summarizeHttpAuditRecords,
-} = require("./http-records.js");
-
+  HANDOFF_ANALYTICS_MAX_FILES,
+  WAVE_READINESS_MAX_ASSIGNMENT_FILES,
+  readSessionArtifactSummary,
+} = require("./pipeline-session-artifacts.js");
 const PIPELINE_ANALYTICS_VERSION = 1;
-const PIPELINE_EVENT_VERSION = 1;
+const PIPELINE_EVENT_READ_MAX_BYTES = 16 * 1024 * 1024;
 const DEFAULT_WINDOW_DAYS = 30;
 const MAX_WINDOW_DAYS = 365;
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
+const CROSS_SESSION_ANALYTICS_MAX_SESSIONS = 200;
 const STALE_PENDING_WAVE_MS = 2 * 60 * 60 * 1000;
 const HIGH_TOOL_FAILURE_RATE = 0.2;
 const HIGH_TOOL_FAILURE_MIN_FAILURES = 3;
-
-const PIPELINE_EVENT_TYPES = Object.freeze([
-  "session_started",
-  "phase_transitioned",
-  "wave_started",
-  "hunter_stopped",
-  "wave_merge_pending",
-  "wave_merged",
-  "coverage_logged",
-  "technique_attempt_logged",
-  "finding_recorded",
-  "verification_snapshot_created",
-  "verification_adjudication_built",
-  "verification_replay_policy_applied",
-  "verification_attempt_archived",
-  "verification_archive_pruned",
-  "verification_written",
-  "evidence_written",
-  "grade_written",
-  "surface_terminally_blocked",
-  "terminal_block_cleared",
-  "finding_index_failed",
-  "report_written",
+const AUTHORITY_DERIVED_EVENT_FIELDS = Object.freeze([
+  "checkpoint_mode",
+  "block_internal_hosts",
+  "block_internal_hosts_source",
+  "egress_profile",
+  "egress_region",
+  "proxy_configured",
+  "egress_profile_identity_hash",
+  "egress_profile_identity_version",
 ]);
+const {
+  PIPELINE_EVENT_TYPES,
+  PIPELINE_EVENT_VERSION,
+  capString,
+  normalizePipelineEvent,
+  normalizePipelineEventForRead,
+  normalizePositiveInteger,
+  pipelineAnalyticsEnabled,
+  timestampMs,
+} = require("./pipeline-events.js");
 
-function pipelineAnalyticsEnabled(env = process.env) {
-  return env.BOUNTY_PIPELINE_ANALYTICS !== "0";
-}
-
-function isPlainObject(value) {
-  return value != null && typeof value === "object" && !Array.isArray(value);
-}
-
-function capString(value, maxChars = 200) {
-  if (value == null) return null;
-  const text = String(value).replace(/[\r\n\t]+/g, " ").trim();
-  if (!text) return null;
-  return text.length > maxChars ? text.slice(0, maxChars) : text;
-}
-
-function compactErrorMessage(error) {
-  return error && error.message ? error.message : String(error);
-}
-
-function normalizeIsoTimestamp(value, fallback = new Date()) {
-  if (value instanceof Date && Number.isFinite(value.getTime())) {
-    return value.toISOString();
-  }
-  const text = capString(value, 80);
-  if (text) {
-    const parsedMs = Date.parse(text);
-    if (Number.isFinite(parsedMs)) return new Date(parsedMs).toISOString();
-  }
-  return fallback.toISOString();
-}
-
-function timestampMs(value) {
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function fileMtimeIso(filePath) {
-  try {
-    return new Date(fs.statSync(filePath).mtimeMs).toISOString();
-  } catch {
-    return null;
-  }
-}
-
-function updateLatestIso(current, candidate) {
-  if (!candidate) return current;
-  if (!current) return candidate;
-  return timestampMs(candidate) > timestampMs(current) ? candidate : current;
-}
-
-function normalizePositiveInteger(value, defaultValue, maxValue) {
-  if (!Number.isFinite(value)) return defaultValue;
-  return Math.max(1, Math.min(maxValue, Math.trunc(value)));
-}
-
-function normalizeCounts(counts) {
-  if (!isPlainObject(counts)) return null;
-  const normalized = {};
-  for (const [key, value] of Object.entries(counts)) {
-    const safeKey = capString(key, 80);
-    if (!safeKey) continue;
-    if (Number.isFinite(value)) {
-      normalized[safeKey] = Math.max(0, Math.trunc(value));
-    } else if (value === true || value === false) {
-      normalized[safeKey] = value ? 1 : 0;
-    }
-  }
-  return Object.keys(normalized).length ? normalized : null;
-}
-
-function normalizeWaveNumber(value) {
-  if (Number.isInteger(value) && value > 0) return value;
-  if (typeof value === "string") {
-    const match = value.match(/^w([1-9][0-9]*)$/);
-    if (match) return Number(match[1]);
-  }
-  return null;
-}
-
-function normalizePipelineEvent(targetDomain, type, fields = {}) {
-  const domain = assertNonEmptyString(targetDomain || fields.target_domain, "target_domain");
-  const eventType = capString(type || fields.type, 80);
-  if (!PIPELINE_EVENT_TYPES.includes(eventType)) {
-    throw new Error(`unknown pipeline event type: ${eventType || "<empty>"}`);
-  }
-
-  const event = {
-    version: PIPELINE_EVENT_VERSION,
-    bob_version: capString(fields.bob_version || bobVersion(), 80),
-    ts: normalizeIsoTimestamp(fields.ts || fields.now),
-    target_domain: domain,
-    type: eventType,
-  };
-
-  const phase = capString(fields.phase, 40);
-  const fromPhase = capString(fields.from_phase, 40);
-  const toPhase = capString(fields.to_phase, 40);
-  if (phase) event.phase = phase;
-  if (fromPhase) event.from_phase = fromPhase;
-  if (toPhase) event.to_phase = toPhase;
-
-  const waveNumber = normalizeWaveNumber(fields.wave_number == null ? fields.wave : fields.wave_number);
-  if (waveNumber != null) event.wave_number = waveNumber;
-
-  const agent = capString(fields.agent, 40);
-  const surfaceId = capString(fields.surface_id, 200);
-  const status = capString(fields.status, 120);
-  const blockCode = capString(fields.block_code, 120);
-  const source = capString(fields.source, 120);
-  const counts = normalizeCounts(fields.counts);
-  // surface_terminally_blocked / terminal_block_cleared carry structured
-  // prereq metadata. Kept short and bounded; identifier_hint is the
-  // schema-validated handle (lowercase + ._-, <= 64 chars), kind is an
-  // enum value. No free-text reasons — those go in state-side artifacts
-  // (state.terminal_block_clear_history) so the event stream stays
-  // free of secret-shaped strings.
-  const kind = capString(fields.kind, 64);
-  const identifierHint = capString(fields.identifier_hint, 64);
-  if (agent) event.agent = agent;
-  if (surfaceId) event.surface_id = surfaceId;
-  if (status) event.status = status;
-  if (blockCode) event.block_code = blockCode;
-  if (counts) event.counts = counts;
-  if (source) event.source = source;
-  if (kind) event.kind = kind;
-  if (identifierHint) event.identifier_hint = identifierHint;
-  if (typeof fields.force_merge === "boolean") event.force_merge = fields.force_merge;
-  const forceMergeReason = capString(fields.force_merge_reason, 1000);
-  if (forceMergeReason) event.force_merge_reason = forceMergeReason;
-  if (typeof fields.override === "boolean") event.override = fields.override;
-  const overrideReason = capString(fields.override_reason, 1000);
-  if (overrideReason) event.override_reason = overrideReason;
-
-  for (const [sourceField, maxChars] of [
-    ["verification_attempt_id", 120],
-    ["verification_snapshot_hash", 128],
-    ["adjudication_plan_hash", 128],
-    ["final_verification_hash", 128],
-    ["capability_pack", 128],
-    ["lease_scope", 80],
-    ["replay_purpose", 80],
-    ["started_by", 120],
-  ]) {
-    const safe = capString(fields[sourceField], maxChars);
-    if (safe) event[sourceField] = safe;
-  }
-
-  return event;
-}
-
-function appendPipelineEventDirect(targetDomain, type, fields = {}, { env = process.env } = {}) {
-  if (!pipelineAnalyticsEnabled(env)) return null;
-  const event = normalizePipelineEvent(targetDomain, type, fields);
-  appendJsonlLine(pipelineEventsJsonlPath(event.target_domain), event);
-  return event;
-}
-
-function safeAppendPipelineEventDirect(targetDomain, type, fields = {}, options = {}) {
-  try {
-    return appendPipelineEventDirect(targetDomain, type, fields, options);
-  } catch {
-    return null;
-  }
-}
-
-function safeAppendPipelineEventWithSessionLock(targetDomain, type, fields = {}, options = {}) {
-  if (!pipelineAnalyticsEnabled(options.env || process.env)) return null;
-  try {
-    return withSessionLock(targetDomain, () => appendPipelineEventDirect(targetDomain, type, fields, options));
-  } catch {
-    return null;
-  }
-}
-
-function safeRecordHunterStoppedPipelineEvent(input, options = {}) {
-  if (!input || !input.target_domain) return null;
-  return safeAppendPipelineEventWithSessionLock(input.target_domain, "hunter_stopped", {
-    wave: input.wave,
-    agent: input.agent,
-    surface_id: input.surface_id,
-    status: input.status,
-    block_code: input.block_code == null ? input.blockCode : input.block_code,
-    source: input.source || input.telemetry_source || "hunter-subagent-stop",
-    now: input.now,
-    counts: {
-      coverage: input.coverage && Number.isFinite(input.coverage.total) ? input.coverage.total : 0,
-      findings: input.findings && Number.isFinite(input.findings.count) ? input.findings.count : 0,
-      handoff_present: input.handoff && input.handoff.present === true ? 1 : 0,
-      handoff_valid: input.handoff && input.handoff.valid === true ? 1 : 0,
-    },
-  }, options);
-}
-
-function readJsonSafe(filePath, label) {
+function readPipelineEventJsonlSafe(filePath) {
+  const label = "pipeline-events.jsonl";
   const result = {
-    exists: fs.existsSync(filePath),
-    path: filePath,
-    document: null,
-    error: null,
-    mtime: fileMtimeIso(filePath),
-  };
-  if (!result.exists) return result;
-  try {
-    result.document = readJsonFile(filePath);
-  } catch (error) {
-    result.error = `Malformed ${label}: ${error.message || String(error)}`;
-  }
-  return result;
-}
-
-function readJsonlSafe(filePath, label) {
-  const result = {
-    exists: fs.existsSync(filePath),
-    path: filePath,
     records: [],
     malformed_lines: 0,
     error: null,
-    mtime: fileMtimeIso(filePath),
   };
-  if (!result.exists) return result;
   let content;
   try {
+    const stats = fs.statSync(filePath);
+    if (stats.size > PIPELINE_EVENT_READ_MAX_BYTES) {
+      throw new Error(`${label} exceeds read cap of ${PIPELINE_EVENT_READ_MAX_BYTES} bytes: ${filePath}`);
+    }
     content = fs.readFileSync(filePath, "utf8");
   } catch (error) {
     result.error = `Unreadable ${label}: ${error.message || String(error)}`;
     return result;
   }
   const lines = content.split(/\r?\n/);
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
+  for (const line of lines) {
     if (!line.trim()) continue;
     try {
       const parsed = JSON.parse(line);
-      if (!isPlainObject(parsed)) {
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
         result.malformed_lines += 1;
         continue;
       }
@@ -342,780 +94,25 @@ function readJsonlSafe(filePath, label) {
   return result;
 }
 
-function normalizePipelineEventForRead(record, expectedDomain) {
-  if (!isPlainObject(record) || record.version !== PIPELINE_EVENT_VERSION) return null;
-  const type = capString(record.type, 80);
-  const targetDomain = capString(record.target_domain);
-  if (!PIPELINE_EVENT_TYPES.includes(type) || !targetDomain) return null;
-  if (expectedDomain && targetDomain !== expectedDomain) return null;
-  const event = {
-    version: PIPELINE_EVENT_VERSION,
-    bob_version: capString(record.bob_version, 80),
-    ts: normalizeIsoTimestamp(record.ts),
-    target_domain: targetDomain,
-    type,
-  };
-  const fieldCaps = {
-    surface_id: 200,
-    kind: 64,
-    identifier_hint: 64,
-    verification_snapshot_hash: 128,
-    adjudication_plan_hash: 128,
-    final_verification_hash: 128,
-  };
-  for (const field of ["phase", "from_phase", "to_phase", "agent", "surface_id", "status", "block_code", "source", "kind", "identifier_hint", "verification_attempt_id", "verification_snapshot_hash", "adjudication_plan_hash", "final_verification_hash", "capability_pack", "lease_scope", "replay_purpose", "started_by"]) {
-    const safe = capString(record[field], fieldCaps[field] || 120);
-    if (safe) event[field] = safe;
-  }
-  const waveNumber = normalizeWaveNumber(record.wave_number);
-  if (waveNumber != null) event.wave_number = waveNumber;
-  const counts = normalizeCounts(record.counts);
-  if (counts) event.counts = counts;
-  if (typeof record.force_merge === "boolean") event.force_merge = record.force_merge;
-  const forceMergeReason = capString(record.force_merge_reason, 1000);
-  if (forceMergeReason) event.force_merge_reason = forceMergeReason;
-  if (typeof record.override === "boolean") event.override = record.override;
-  const overrideReason = capString(record.override_reason, 1000);
-  if (overrideReason) event.override_reason = overrideReason;
-  return event;
-}
-
-function listWaveAssignmentNumbers(targetDomain) {
-  const dir = sessionDir(targetDomain);
-  if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir)
-    .map((fileName) => {
-      const match = fileName.match(/^wave-([1-9][0-9]*)-assignments\.json$/);
-      return match ? Number(match[1]) : null;
-    })
-    .filter((waveNumber) => Number.isInteger(waveNumber))
-    .sort((a, b) => a - b);
-}
-
-function listHandoffFiles(dir, waveId) {
-  if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir)
-    .filter((fileName) => fileName.startsWith(`handoff-${waveId}-`) && fileName.endsWith(".json"))
-    .sort();
-}
-
-function validateHandoffMetadata(document, { targetDomain, wave, agent, surfaceId, requiresToken }) {
-  if (!isPlainObject(document)) throw new Error("handoff payload must be an object");
-  if (document.target_domain != null && document.target_domain !== targetDomain) throw new Error("target_domain mismatch");
-  if (parseWaveId(document.wave) !== wave) throw new Error("wave mismatch");
-  if (parseAgentId(document.agent) !== agent) throw new Error("agent mismatch");
-  if (assertNonEmptyString(document.surface_id, "surface_id") !== surfaceId) throw new Error("surface_id mismatch");
-  if (!["complete", "partial"].includes(capString(document.surface_status, 40))) {
-    throw new Error("invalid surface_status");
-  }
-  if (requiresToken && document.provenance !== "verified") {
-    throw new Error("handoff provenance is not verified");
-  }
-}
-
-function readWaveReadiness(targetDomain, waveNumber) {
-  const wave = `w${waveNumber}`;
-  const result = {
-    wave_number: waveNumber,
-    assignments_total: 0,
-    handoffs_total: 0,
-    received_agents: [],
-    missing_agents: [],
-    invalid_agents: [],
-    unexpected_agents: [],
-    is_complete: false,
-    error: null,
-  };
-
-  let artifacts;
-  try {
-    artifacts = loadWaveAssignments(targetDomain, waveNumber);
-  } catch (error) {
-    result.error = error.message || String(error);
-    return result;
-  }
-
-  result.assignments_total = artifacts.assignments.length;
-  const handoffFiles = listHandoffFiles(artifacts.dir, wave);
-  result.handoffs_total = handoffFiles.length;
-  const handoffPathByAgent = new Map();
-  for (const fileName of handoffFiles) {
-    const agent = fileName.slice(`handoff-${wave}-`.length, -".json".length);
-    if (!artifacts.assignmentByAgent.has(agent)) {
-      result.unexpected_agents.push(agent);
-    } else {
-      handoffPathByAgent.set(agent, path.join(artifacts.dir, fileName));
-    }
-  }
-
-  for (const assignment of artifacts.assignments) {
-    const handoffPath = handoffPathByAgent.get(assignment.agent);
-    if (!handoffPath) {
-      result.missing_agents.push(assignment.agent);
-      continue;
-    }
-    try {
-      validateHandoffMetadata(readJsonFile(handoffPath), {
-        targetDomain,
-        wave,
-        agent: assignment.agent,
-        surfaceId: assignment.surface_id,
-        requiresToken: !!assignment.handoff_token_sha256,
-      });
-      result.received_agents.push(assignment.agent);
-    } catch {
-      result.invalid_agents.push(assignment.agent);
-    }
-  }
-
-  result.is_complete = result.missing_agents.length === 0 && result.invalid_agents.length === 0;
-  return result;
-}
-
-function summarizeFindingsJsonl(targetDomain) {
-  const read = readJsonlSafe(findingsJsonlPath(targetDomain), "findings.jsonl");
-  const bySeverity = SEVERITY_VALUES.reduce((result, severity) => {
-    result[severity] = 0;
-    return result;
-  }, {});
-  for (const record of read.records) {
-    const severity = capString(record.severity, 40);
-    if (Object.prototype.hasOwnProperty.call(bySeverity, severity)) {
-      bySeverity[severity] += 1;
-    }
-  }
-  return {
-    exists: read.exists,
-    total: read.records.length,
-    by_severity: bySeverity,
-    malformed_lines: read.malformed_lines,
-    error: read.error,
-    mtime: read.mtime,
-  };
-}
-
-function summarizeCoverageJsonl(targetDomain) {
-  const read = readJsonlSafe(coverageJsonlPath(targetDomain), "coverage.jsonl");
-  const byStatus = COVERAGE_STATUS_VALUES.reduce((result, status) => {
-    result[status] = 0;
-    return result;
-  }, {});
-  const surfaces = new Set();
-  for (const record of read.records) {
-    const status = capString(record.status, 40);
-    if (Object.prototype.hasOwnProperty.call(byStatus, status)) {
-      byStatus[status] += 1;
-    }
-    if (typeof record.surface_id === "string" && record.surface_id.trim()) {
-      surfaces.add(record.surface_id.trim());
-    }
-  }
-  return {
-    exists: read.exists,
-    total_records: read.records.length,
-    surface_count: surfaces.size,
-    by_status: byStatus,
-    malformed_lines: read.malformed_lines,
-    error: read.error,
-    mtime: read.mtime,
-  };
-}
-
-function summarizeTechniqueAttemptsJsonl(targetDomain) {
-  const read = readJsonlSafe(techniqueAttemptsJsonlPath(targetDomain), "technique-attempts.jsonl");
-  const byStatus = TECHNIQUE_ATTEMPT_STATUS_VALUES.reduce((result, status) => {
-    result[status] = 0;
-    return result;
-  }, {});
-  const surfaces = new Set();
-  const packs = new Set();
-  let total = 0;
-  let invalidRecords = 0;
-
-  for (const record of read.records) {
-    const status = capString(record.status, 40);
-    const surfaceId = capString(record.surface_id, 200);
-    const packId = capString(record.pack_id, 128);
-    if (
-      record.target_domain !== targetDomain ||
-      !TECHNIQUE_ATTEMPT_STATUS_VALUES.includes(status) ||
-      !surfaceId ||
-      !packId
-    ) {
-      invalidRecords += 1;
-      continue;
-    }
-    total += 1;
-    byStatus[status] += 1;
-    surfaces.add(surfaceId);
-    packs.add(packId);
-  }
-
-  return {
-    exists: read.exists,
-    total_records: total,
-    surface_count: surfaces.size,
-    pack_count: packs.size,
-    by_status: byStatus,
-    malformed_lines: read.malformed_lines + invalidRecords,
-    error: read.error,
-    mtime: read.mtime,
-  };
-}
-
-function summarizeTechniquePackReadsJsonl(targetDomain) {
-  const read = readJsonlSafe(techniquePackReadsJsonlPath(targetDomain), "technique-pack-reads.jsonl");
-  const surfaces = new Set();
-  const packs = new Set();
-  let fullReads = 0;
-  let invalidRecords = 0;
-
-  for (const record of read.records) {
-    const mode = capString(record.mode, 40);
-    const surfaceId = capString(record.surface_id, 200);
-    const packId = capString(record.pack_id, 128);
-    if (record.target_domain !== targetDomain || mode !== "full" || !surfaceId || !packId) {
-      invalidRecords += 1;
-      continue;
-    }
-    fullReads += 1;
-    surfaces.add(surfaceId);
-    packs.add(packId);
-  }
-
-  return {
-    exists: read.exists,
-    total_records: fullReads,
-    full_reads: fullReads,
-    surface_count: surfaces.size,
-    pack_count: packs.size,
-    malformed_lines: read.malformed_lines + invalidRecords,
-    error: read.error,
-    mtime: read.mtime,
-  };
-}
-
-function summarizeChainAttemptsJsonl(targetDomain) {
-  const read = readJsonlSafe(chainAttemptsJsonlPath(targetDomain), "chain-attempts.jsonl");
-  const byOutcome = CHAIN_ATTEMPT_OUTCOME_VALUES.reduce((result, outcome) => {
-    result[outcome] = 0;
-    return result;
-  }, {});
-  let total = 0;
-  let terminalTotal = 0;
-  let invalidRecords = 0;
-
-  for (const record of read.records) {
-    const outcome = capString(record.outcome, 40);
-    if (record.target_domain !== targetDomain || !CHAIN_ATTEMPT_OUTCOME_VALUES.includes(outcome)) {
-      invalidRecords += 1;
-      continue;
-    }
-    total += 1;
-    byOutcome[outcome] += 1;
-    if (CHAIN_ATTEMPT_TERMINAL_OUTCOME_VALUES.includes(outcome)) {
-      terminalTotal += 1;
-    }
-  }
-
-  return {
-    exists: read.exists,
-    total,
-    terminal_total: terminalTotal,
-    by_outcome: byOutcome,
-    malformed_lines: read.malformed_lines + invalidRecords,
-    error: read.error,
-    mtime: read.mtime,
-  };
-}
-
-function summarizeHttpAuditJsonl(targetDomain) {
-  const filePath = httpAuditJsonlPath(targetDomain);
-  const summary = {
-    exists: fs.existsSync(filePath),
-    total: 0,
-    errors: 0,
-    scope_blocked: 0,
-    network_unreachable_target: 0,
-    egress: { by_profile: {}, by_region: {} },
-    geofence_warning: {
-      threshold: 3,
-      warning: false,
-      code: null,
-      note: null,
-      hosts: [],
-    },
-    circuit_breaker_summary: buildCircuitBreakerSummary([]),
-    error: null,
-    mtime: fileMtimeIso(filePath),
-  };
-  if (!summary.exists) return summary;
-  try {
-    const records = readHttpAuditRecordsFromJsonl(targetDomain);
-    const auditSummary = summarizeHttpAuditRecords(records, { targetDomain });
-    summary.total = auditSummary.total;
-    summary.errors = auditSummary.errors;
-    summary.scope_blocked = auditSummary.scope_blocked;
-    summary.network_unreachable_target = auditSummary.network_unreachable_target;
-    summary.egress = auditSummary.egress;
-    summary.geofence_warning = auditSummary.geofence_warning;
-    summary.circuit_breaker_summary = buildCircuitBreakerSummary(records);
-  } catch (error) {
-    summary.error = `Malformed http-audit.jsonl: ${error.message || String(error)}`;
-  }
-  return summary;
-}
-
-function summarizeStructuredHandoffChainNotes(targetDomain) {
-  const dir = sessionDir(targetDomain);
-  const summary = {
-    chain_notes_count: 0,
-    handoff_count: 0,
-    handoff_refs: [],
-    malformed_files: 0,
-  };
-  if (!fs.existsSync(dir)) return summary;
-
-  for (const fileName of fs.readdirSync(dir).sort()) {
-    const match = fileName.match(/^handoff-(w[1-9][0-9]*)-(a[1-9][0-9]*)\.json$/);
-    if (!match) continue;
-    let document;
-    try {
-      document = readJsonFile(path.join(dir, fileName));
-    } catch {
-      summary.malformed_files += 1;
-      continue;
-    }
-    if (!isPlainObject(document)) {
-      summary.malformed_files += 1;
-      continue;
-    }
-    if (document.target_domain != null && document.target_domain !== targetDomain) continue;
-    let chainNotes;
-    try {
-      chainNotes = normalizeStringArray(document.chain_notes, "chain_notes");
-    } catch {
-      summary.malformed_files += 1;
-      continue;
-    }
-    if (chainNotes.length === 0) continue;
-    summary.handoff_count += 1;
-    summary.chain_notes_count += chainNotes.length;
-    summary.handoff_refs.push({
-      wave: match[1],
-      agent: match[2],
-      surface_id: capString(document.surface_id, 200),
-      chain_notes_count: chainNotes.length,
-    });
-  }
-
-  return summary;
-}
-
-function summarizeVerificationArtifacts(targetDomain) {
-  const rounds = {};
-  let latestMtime = null;
-  const errors = [];
-  let finalReportableIds = [];
-  const snapshotRead = readJsonSafe(verificationSnapshotPath(targetDomain), "verification input snapshot JSON");
-  const adjudicationRead = readJsonSafe(verificationAdjudicationPath(targetDomain), "verification adjudication JSON");
-  latestMtime = updateLatestIso(latestMtime, snapshotRead.mtime);
-  latestMtime = updateLatestIso(latestMtime, adjudicationRead.mtime);
-  const snapshot = {
-    exists: snapshotRead.exists,
-    schema_version: isPlainObject(snapshotRead.document) && Number.isInteger(snapshotRead.document.schema_version)
-      ? snapshotRead.document.schema_version
-      : null,
-    attempt_id: isPlainObject(snapshotRead.document) ? capString(snapshotRead.document.verification_attempt_id, 120) : null,
-    snapshot_hash: isPlainObject(snapshotRead.document) ? capString(snapshotRead.document.snapshot_hash, 128) : null,
-    finding_count: isPlainObject(snapshotRead.document) && Array.isArray(snapshotRead.document.finding_ids)
-      ? snapshotRead.document.finding_ids.length
-      : 0,
-    input_hashes: isPlainObject(snapshotRead.document) && isPlainObject(snapshotRead.document.input_hashes)
-      ? snapshotRead.document.input_hashes
-      : null,
-    mtime: snapshotRead.mtime,
-    error: snapshotRead.error,
-  };
-  if (snapshotRead.error) errors.push(snapshotRead.error);
-  const adjudication = {
-    exists: adjudicationRead.exists,
-    current_attempt_id: isPlainObject(adjudicationRead.document) ? capString(adjudicationRead.document.verification_attempt_id, 120) : null,
-    snapshot_hash: isPlainObject(adjudicationRead.document) ? capString(adjudicationRead.document.verification_snapshot_hash, 128) : null,
-    adjudication_plan_hash: isPlainObject(adjudicationRead.document) ? capString(adjudicationRead.document.adjudication_plan_hash, 128) : null,
-    agreed_count: isPlainObject(adjudicationRead.document) && Array.isArray(adjudicationRead.document.agreed)
-      ? adjudicationRead.document.agreed.length
-      : 0,
-    disagreement_count: isPlainObject(adjudicationRead.document) && Array.isArray(adjudicationRead.document.disagreements)
-      ? adjudicationRead.document.disagreements.length
-      : 0,
-    replay_required_count: isPlainObject(adjudicationRead.document) && Array.isArray(adjudicationRead.document.replay_required_ids)
-      ? adjudicationRead.document.replay_required_ids.length
-      : 0,
-    qa_sample_count: isPlainObject(adjudicationRead.document) && Array.isArray(adjudicationRead.document.qa_sampled_ids)
-      ? adjudicationRead.document.qa_sampled_ids.length
-      : 0,
-    mtime: adjudicationRead.mtime,
-    error: adjudicationRead.error,
-  };
-  if (adjudicationRead.error) errors.push(adjudicationRead.error);
-  for (const round of VERIFICATION_ROUND_VALUES) {
-    const paths = verificationRoundPaths(targetDomain, round);
-    const read = readJsonSafe(paths.json, `${round} verification round JSON`);
-    latestMtime = updateLatestIso(latestMtime, read.mtime);
-    const summary = {
-      exists: read.exists,
-      valid: false,
-      results_count: 0,
-      reportable_count: 0,
-      confirmed_count: 0,
-      mtime: read.mtime,
-      error: read.error,
-    };
-    if (read.error) errors.push(read.error);
-    if (isPlainObject(read.document) && Array.isArray(read.document.results)) {
-      summary.valid = read.document.target_domain === targetDomain && read.document.round === round;
-      summary.schema_version = read.document.version || null;
-      summary.verification_attempt_id = capString(read.document.verification_attempt_id, 120);
-      summary.verification_snapshot_hash = capString(read.document.verification_snapshot_hash, 128);
-      summary.adjudication_plan_hash = capString(read.document.adjudication_plan_hash, 128);
-      summary.final_verification_hash = capString(read.document.final_verification_hash, 128);
-      summary.results_count = read.document.results.length;
-      summary.reportable_count = read.document.results.filter((result) => result && result.reportable === true).length;
-      summary.confirmed_count = read.document.results.filter((result) => result && result.disposition === "confirmed").length;
-      if (round === "final") {
-        finalReportableIds = read.document.results
-          .filter((result) => result && result.reportable === true && typeof result.finding_id === "string")
-          .map((result) => result.finding_id);
-      }
-      if (!summary.valid) {
-        summary.error = `${round} verification artifact metadata mismatch`;
-        errors.push(summary.error);
-      }
-    }
-    rounds[round] = summary;
-  }
-  const schemaVersion = (
-    snapshot.exists ||
-    adjudication.exists ||
-    Object.values(rounds).some((round) => round.schema_version === 2)
-  )
-    ? 2
-    : (Object.values(rounds).some((round) => round.schema_version === 1) ? 1 : null);
-  return {
-    schema_version: schemaVersion,
-    current_attempt_id: snapshot.attempt_id,
-    snapshot_hash: snapshot.snapshot_hash,
-    snapshot,
-    adjudication,
-    archived_attempts: summarizeArchivedVerificationAttempts(targetDomain),
-    rounds,
-    final_results_count: rounds.final.results_count,
-    final_reportable_count: rounds.final.reportable_count,
-    final_reportable_ids: finalReportableIds,
-    errors,
-    latest_mtime: latestMtime,
-  };
-}
-
-function summarizeArchivedVerificationAttempts(targetDomain) {
-  const dir = verificationAttemptsDir(targetDomain);
-  if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && /^attempt-/.test(entry.name))
-    .map((entry) => {
-      const archiveDir = path.join(dir, entry.name);
-      const manifestRead = readJsonSafe(path.join(archiveDir, "manifest.json"), "verification attempt manifest JSON");
-      return {
-        attempt_id: isPlainObject(manifestRead.document) && manifestRead.document.attempt_id
-          ? capString(manifestRead.document.attempt_id, 120)
-          : entry.name.replace(/^attempt-/, ""),
-        archive_dir: archiveDir,
-        archived_at: isPlainObject(manifestRead.document) ? capString(manifestRead.document.archived_at, 80) : null,
-        snapshot_hash: isPlainObject(manifestRead.document) ? capString(manifestRead.document.snapshot_hash, 128) : null,
-        adjudication_plan_hash: isPlainObject(manifestRead.document) ? capString(manifestRead.document.adjudication_plan_hash, 128) : null,
-        final_verification_hash: isPlainObject(manifestRead.document) ? capString(manifestRead.document.final_verification_hash, 128) : null,
-        files_count: isPlainObject(manifestRead.document) && isPlainObject(manifestRead.document.files)
-          ? Object.keys(manifestRead.document.files).length
-          : 0,
-        missing_files_count: isPlainObject(manifestRead.document) && Array.isArray(manifestRead.document.missing_files)
-          ? manifestRead.document.missing_files.length
-          : 0,
-      };
-    })
-    .sort((a, b) => String(b.archived_at || "").localeCompare(String(a.archived_at || "")) || a.attempt_id.localeCompare(b.attempt_id));
-}
-
-function summarizeEvidenceArtifacts(targetDomain, finalReportableIds) {
-  const paths = evidencePackPaths(targetDomain);
-  const read = readJsonSafe(paths.json, "evidence packs JSON");
-  const finalReportableSet = new Set(finalReportableIds);
-  const summary = {
-    exists: read.exists,
-    valid: false,
-    skipped: finalReportableIds.length === 0 && !read.exists,
-    packs_count: 0,
-    representative_samples_count: 0,
-    reportable_findings_covered: 0,
-    final_reportable_count: finalReportableIds.length,
-    missing_finding_ids: finalReportableIds.slice(),
-    duplicate_finding_ids: [],
-    extra_finding_ids: [],
-    verification_attempt_id: isPlainObject(read.document) ? capString(read.document.verification_attempt_id, 120) : null,
-    verification_snapshot_hash: isPlainObject(read.document) ? capString(read.document.verification_snapshot_hash, 128) : null,
-    final_verification_hash: isPlainObject(read.document) ? capString(read.document.final_verification_hash, 128) : null,
-    error: read.error,
-    mtime: read.mtime,
-  };
-
-  if (finalReportableIds.length === 0 && !read.exists) {
-    summary.valid = true;
-    return summary;
-  }
-
-  if (isPlainObject(read.document) && Array.isArray(read.document.packs)) {
-    if (read.document.version !== 1 || read.document.target_domain !== targetDomain) {
-      summary.error = "evidence packs artifact metadata mismatch";
-    }
-
-    const seen = new Set();
-    const duplicateIds = new Set();
-    for (const pack of read.document.packs) {
-      if (!isPlainObject(pack) || typeof pack.finding_id !== "string") {
-        summary.error = summary.error || "evidence packs artifact has malformed pack entries";
-        continue;
-      }
-      summary.packs_count += 1;
-      if (seen.has(pack.finding_id)) {
-        duplicateIds.add(pack.finding_id);
-      }
-      seen.add(pack.finding_id);
-      if (Array.isArray(pack.representative_samples)) {
-        summary.representative_samples_count += pack.representative_samples.length;
-      }
-    }
-
-    summary.duplicate_finding_ids = Array.from(duplicateIds).sort();
-    summary.missing_finding_ids = finalReportableIds.filter((id) => !seen.has(id));
-    summary.extra_finding_ids = Array.from(seen).filter((id) => !finalReportableSet.has(id)).sort();
-    summary.reportable_findings_covered = finalReportableIds.filter((id) => seen.has(id)).length;
-  } else if (read.exists && !read.error) {
-    summary.error = "evidence packs artifact metadata mismatch";
-  }
-
-  try {
-    const validation = requireValidEvidencePacksForFinalReportableFindings(targetDomain);
-    summary.exists = validation.exists;
-    summary.valid = true;
-    summary.skipped = validation.skipped;
-    summary.packs_count = validation.packs_count;
-    summary.representative_samples_count = validation.representative_samples_count;
-    summary.reportable_findings_covered = validation.reportable_findings_covered;
-    summary.final_reportable_count = validation.final_reportable_count;
-    summary.missing_finding_ids = [];
-    summary.duplicate_finding_ids = [];
-    summary.extra_finding_ids = [];
-    summary.verification_attempt_id = validation.document.verification_attempt_id || null;
-    summary.verification_snapshot_hash = validation.document.verification_snapshot_hash || null;
-    summary.final_verification_hash = validation.document.final_verification_hash || null;
-    summary.error = null;
-  } catch (error) {
-    summary.valid = false;
-    summary.error = compactErrorMessage(error);
-    if (summary.missing_finding_ids.length === 0 && finalReportableIds.length > 0 && summary.reportable_findings_covered < finalReportableIds.length) {
-      summary.missing_finding_ids = finalReportableIds.slice();
-    }
-  }
-  return summary;
-}
-
-function summarizeGradeArtifact(targetDomain) {
-  const paths = gradeArtifactPaths(targetDomain);
-  const read = readJsonSafe(paths.json, "grade verdict JSON");
-  const summary = {
-    exists: read.exists,
-    valid: false,
-    verdict: null,
-    total_score: null,
-    findings_count: 0,
-    error: read.error,
-    mtime: read.mtime,
-  };
-  if (isPlainObject(read.document)) {
-    const verdict = capString(read.document.verdict, 40);
-    summary.valid = read.document.target_domain === targetDomain && GRADE_VERDICT_VALUES.includes(verdict);
-    summary.verdict = verdict;
-    summary.total_score = Number.isFinite(read.document.total_score) ? Math.trunc(read.document.total_score) : null;
-    summary.findings_count = Array.isArray(read.document.findings) ? read.document.findings.length : 0;
-    if (!summary.valid) {
-      summary.error = "grade artifact metadata mismatch";
-    }
-  }
-  return summary;
-}
-
-function summarizeAttackSurfaceCoverage(targetDomain, state) {
-  const read = readJsonSafe(attackSurfacePath(targetDomain), "attack_surface.json");
-  if (!isPlainObject(read.document) || !Array.isArray(read.document.surfaces)) {
-    return {
-      exists: read.exists,
-      error: read.error,
-      total_surfaces: 0,
-      non_low_total: 0,
-      non_low_explored: 0,
-      non_low_terminally_blocked: 0,
-      coverage_pct: null,
-      closed_pct: null,
-      unexplored_high: 0,
-      blocked_high: 0,
-      mtime: read.mtime,
-    };
-  }
-  const exploredSet = new Set(Array.isArray(state?.explored) ? state.explored : []);
-  const terminallyBlockedSet = new Set(
-    Array.isArray(state?.terminally_blocked)
-      ? state.terminally_blocked.map((entry) => entry && typeof entry.surface_id === "string" ? entry.surface_id : null).filter(Boolean)
-      : [],
-  );
-  const surfaces = read.document.surfaces.filter((surface) => isPlainObject(surface) && typeof surface.id === "string");
-  const nonLowSurfaces = surfaces.filter((surface) => (surface.priority || "HIGH").toUpperCase() !== "LOW");
-  const highSurfaces = surfaces.filter((surface) => ["CRITICAL", "HIGH"].includes((surface.priority || "HIGH").toUpperCase()));
-  const exploredNonLow = nonLowSurfaces.filter((surface) => exploredSet.has(surface.id)).length;
-  const blockedNonLow = nonLowSurfaces.filter((surface) => terminallyBlockedSet.has(surface.id)).length;
-  const closedNonLow = exploredNonLow + blockedNonLow;
-  return {
-    exists: true,
-    error: null,
-    total_surfaces: surfaces.length,
-    non_low_total: nonLowSurfaces.length,
-    non_low_explored: exploredNonLow,
-    non_low_terminally_blocked: blockedNonLow,
-    // coverage_pct keeps the explored-only meaning for back-compat with
-    // existing dashboards. closed_pct is the post-Cycle-2 measure that
-    // also counts terminally_blocked surfaces (classified blocked, not
-    // neglected). low_coverage analytics fires on closed_pct so blocked
-    // surfaces correctly count as "off the queue".
-    coverage_pct: nonLowSurfaces.length ? Math.round((exploredNonLow / nonLowSurfaces.length) * 100) : 100,
-    closed_pct: nonLowSurfaces.length ? Math.round((closedNonLow / nonLowSurfaces.length) * 100) : 100,
-    unexplored_high: highSurfaces.filter((surface) => !exploredSet.has(surface.id) && !terminallyBlockedSet.has(surface.id)).length,
-    blocked_high: highSurfaces.filter((surface) => terminallyBlockedSet.has(surface.id)).length,
-    mtime: read.mtime,
-  };
-}
-
-function readSessionArtifactSummary(targetDomain) {
-  const dir = sessionDir(targetDomain);
-  const stateRead = readJsonSafe(statePath(targetDomain), "session state");
-  const state = isPlainObject(stateRead.document) ? stateRead.document : null;
-  const waveNumbers = listWaveAssignmentNumbers(targetDomain);
-  if (state && Number.isInteger(state.pending_wave) && state.pending_wave > 0 && !waveNumbers.includes(state.pending_wave)) {
-    waveNumbers.push(state.pending_wave);
-    waveNumbers.sort((a, b) => a - b);
-  }
-
-  const waves = waveNumbers.map((waveNumber) => readWaveReadiness(targetDomain, waveNumber));
-  const findings = summarizeFindingsJsonl(targetDomain);
-  const coverage = summarizeCoverageJsonl(targetDomain);
-  const techniqueAttempts = summarizeTechniqueAttemptsJsonl(targetDomain);
-  const techniquePackReads = summarizeTechniquePackReadsJsonl(targetDomain);
-  const httpAudit = summarizeHttpAuditJsonl(targetDomain);
-  const chainAttempts = summarizeChainAttemptsJsonl(targetDomain);
-  const chainHandoffs = summarizeStructuredHandoffChainNotes(targetDomain);
-  const attackSurfaceCoverage = summarizeAttackSurfaceCoverage(targetDomain, state);
-  const verification = summarizeVerificationArtifacts(targetDomain);
-  const evidence = summarizeEvidenceArtifacts(targetDomain, verification.final_reportable_ids);
-  const grade = summarizeGradeArtifact(targetDomain);
-  const reportPath = reportMarkdownPath(targetDomain);
-  const reportMtime = fileMtimeIso(reportPath);
-
-  let latestMtime = null;
-  for (const value of [
-    stateRead.mtime,
-    findings.mtime,
-    coverage.mtime,
-    techniqueAttempts.mtime,
-    techniquePackReads.mtime,
-    httpAudit.mtime,
-    chainAttempts.mtime,
-    attackSurfaceCoverage.mtime,
-    verification.latest_mtime,
-    evidence.mtime,
-    grade.mtime,
-    reportMtime,
-  ]) {
-    latestMtime = updateLatestIso(latestMtime, value);
-  }
-
-  const artifactErrors = [];
-  if (!stateRead.exists) artifactErrors.push("Missing session state");
-  if (stateRead.error) artifactErrors.push(stateRead.error);
-  if (findings.error) artifactErrors.push(findings.error);
-  if (coverage.error) artifactErrors.push(coverage.error);
-  if (techniqueAttempts.error) artifactErrors.push(techniqueAttempts.error);
-  if (techniquePackReads.error) artifactErrors.push(techniquePackReads.error);
-  if (httpAudit.error) artifactErrors.push(httpAudit.error);
-  if (chainAttempts.error) artifactErrors.push(chainAttempts.error);
-  if (findings.malformed_lines > 0) artifactErrors.push(`Malformed findings.jsonl lines: ${findings.malformed_lines}`);
-  if (coverage.malformed_lines > 0) artifactErrors.push(`Malformed coverage.jsonl lines: ${coverage.malformed_lines}`);
-  if (techniqueAttempts.malformed_lines > 0) artifactErrors.push(`Malformed technique-attempts.jsonl lines: ${techniqueAttempts.malformed_lines}`);
-  if (techniquePackReads.malformed_lines > 0) artifactErrors.push(`Malformed technique-pack-reads.jsonl lines: ${techniquePackReads.malformed_lines}`);
-  if (chainAttempts.malformed_lines > 0) artifactErrors.push(`Malformed chain-attempts.jsonl lines: ${chainAttempts.malformed_lines}`);
-  if (chainHandoffs.malformed_files > 0) artifactErrors.push(`Malformed chain handoff files: ${chainHandoffs.malformed_files}`);
-  for (const wave of waves) {
-    if (wave.error) artifactErrors.push(`Wave ${wave.wave_number}: ${wave.error}`);
-  }
-  artifactErrors.push(...verification.errors);
-  if (evidence.error) artifactErrors.push(evidence.error);
-  if (grade.error) artifactErrors.push(grade.error);
-
-  return {
-    target_domain: targetDomain,
-    session_dir: dir,
-    state: {
-      exists: stateRead.exists,
-      phase: capString(state?.phase, 40),
-      auth_status: capString(state?.auth_status, 40),
-      hunt_wave: Number.isInteger(state?.hunt_wave) ? state.hunt_wave : 0,
-      pending_wave: Number.isInteger(state?.pending_wave) ? state.pending_wave : null,
-      total_findings: Number.isInteger(state?.total_findings) ? state.total_findings : findings.total,
-      hold_count: Number.isInteger(state?.hold_count) ? state.hold_count : 0,
-      verification_schema_version: Number.isInteger(state?.verification_schema_version) ? state.verification_schema_version : null,
-      verification_attempt_id: capString(state?.verification_attempt_id, 120),
-      verification_snapshot_hash: capString(state?.verification_snapshot_hash, 128),
-      verification_entered_at: capString(state?.verification_entered_at, 80),
-      mtime: stateRead.mtime,
-      error: stateRead.error,
-    },
-    waves,
-    findings,
-    coverage,
-    technique_attempts: techniqueAttempts,
-    technique_pack_reads: techniquePackReads,
-    http_audit: httpAudit,
-    chain_attempts: chainAttempts,
-    chain_handoffs: chainHandoffs,
-    attack_surface_coverage: attackSurfaceCoverage,
-    verification,
-    evidence,
-    grade,
-    report: {
-      present: fs.existsSync(reportPath),
-      path: reportPath,
-      mtime: reportMtime,
-    },
-    artifact_errors: artifactErrors,
-    latest_artifact_ts: latestMtime,
-  };
-}
-
 function buildBackfillEvents(targetDomain, artifacts) {
   const source = "artifact_backfill";
   const ts = artifacts.latest_artifact_ts || new Date().toISOString();
+  const egressFields = {
+    egress_profile: artifacts.state.egress_profile,
+    egress_region: artifacts.state.egress_region,
+    proxy_configured: artifacts.state.proxy_configured,
+    egress_profile_identity_hash: artifacts.state.egress_profile_identity_hash,
+    egress_profile_identity_version: artifacts.state.egress_profile_identity_version,
+    checkpoint_mode: artifacts.state.checkpoint_mode,
+    block_internal_hosts: artifacts.state.block_internal_hosts,
+    block_internal_hosts_source: artifacts.state.block_internal_hosts_source,
+  };
   const events = [];
   events.push(normalizePipelineEvent(targetDomain, "session_started", {
     ts: artifacts.state.mtime || ts,
     phase: "RECON",
     source,
+    ...egressFields,
   }));
   if (artifacts.state.phase && artifacts.state.phase !== "RECON") {
     events.push(normalizePipelineEvent(targetDomain, "phase_transitioned", {
@@ -1123,6 +120,7 @@ function buildBackfillEvents(targetDomain, artifacts) {
       to_phase: artifacts.state.phase,
       status: "current",
       source,
+      ...egressFields,
     }));
   }
   for (const wave of artifacts.waves) {
@@ -1132,6 +130,7 @@ function buildBackfillEvents(targetDomain, artifacts) {
       status: wave.error ? "invalid" : "started",
       counts: { assignments: wave.assignments_total },
       source,
+      ...egressFields,
     }));
     if (artifacts.state.pending_wave === wave.wave_number) {
       events.push(normalizePipelineEvent(targetDomain, "wave_merge_pending", {
@@ -1145,6 +144,7 @@ function buildBackfillEvents(targetDomain, artifacts) {
           invalid_handoffs: wave.invalid_agents.length,
         },
         source,
+        ...egressFields,
       }));
     } else if (artifacts.state.hunt_wave >= wave.wave_number) {
       events.push(normalizePipelineEvent(targetDomain, "wave_merged", {
@@ -1157,6 +157,7 @@ function buildBackfillEvents(targetDomain, artifacts) {
           invalid_handoffs: wave.invalid_agents.length,
         },
         source,
+        ...egressFields,
       }));
     }
   }
@@ -1166,6 +167,7 @@ function buildBackfillEvents(targetDomain, artifacts) {
       status: "backfilled",
       counts: { records: artifacts.coverage.total_records, surfaces: artifacts.coverage.surface_count },
       source,
+      ...egressFields,
     }));
   }
   if (artifacts.technique_attempts.total_records > 0) {
@@ -1178,6 +180,7 @@ function buildBackfillEvents(targetDomain, artifacts) {
         packs: artifacts.technique_attempts.pack_count,
       },
       source,
+      ...egressFields,
     }));
   }
   if (artifacts.findings.total > 0) {
@@ -1186,6 +189,7 @@ function buildBackfillEvents(targetDomain, artifacts) {
       status: "backfilled",
       counts: { findings: artifacts.findings.total },
       source,
+      ...egressFields,
     }));
   }
   for (const round of VERIFICATION_ROUND_VALUES) {
@@ -1196,6 +200,7 @@ function buildBackfillEvents(targetDomain, artifacts) {
       status: round,
       counts: { results: summary.results_count, reportable: summary.reportable_count },
       source,
+      ...egressFields,
     }));
   }
   if (artifacts.evidence.exists) {
@@ -1208,6 +213,7 @@ function buildBackfillEvents(targetDomain, artifacts) {
         reportable_findings_covered: artifacts.evidence.reportable_findings_covered,
       },
       source,
+      ...egressFields,
     }));
   }
   if (artifacts.grade.exists) {
@@ -1216,42 +222,121 @@ function buildBackfillEvents(targetDomain, artifacts) {
       status: artifacts.grade.verdict || "unknown",
       counts: { findings: artifacts.grade.findings_count, total_score: artifacts.grade.total_score || 0 },
       source,
+      ...egressFields,
     }));
   }
   return events.sort((a, b) => timestampMs(a.ts) - timestampMs(b.ts));
 }
 
-function readPipelineEvents(targetDomain, { allowBackfill = true } = {}) {
+function egressFieldsFromArtifactState(artifacts) {
+  const state = artifacts && artifacts.state ? artifacts.state : {};
+  return {
+    egress_profile: state.egress_profile,
+    egress_region: state.egress_region,
+    proxy_configured: state.proxy_configured,
+    egress_profile_identity_hash: state.egress_profile_identity_hash,
+    egress_profile_identity_version: state.egress_profile_identity_version,
+    checkpoint_mode: state.checkpoint_mode,
+    block_internal_hosts: state.block_internal_hosts,
+    block_internal_hosts_source: state.block_internal_hosts_source,
+  };
+}
+
+function enrichEventWithSessionEgress(event, egressFields) {
+  if (!event || !egressFields) return event;
+  const hasEgressFields = [
+    "egress_profile",
+    "egress_region",
+    "egress_profile_identity_hash",
+    "checkpoint_mode",
+    "block_internal_hosts_source",
+  ].some((field) => Boolean(egressFields[field]))
+    || typeof egressFields.proxy_configured === "boolean"
+    || typeof egressFields.block_internal_hosts === "boolean"
+    || Number.isInteger(egressFields.egress_profile_identity_version);
+  if (!hasEgressFields) return event;
+  const enriched = { ...event };
+  for (const field of ["egress_profile", "egress_region", "egress_profile_identity_hash", "checkpoint_mode", "block_internal_hosts_source"]) {
+    if (!enriched[field] && egressFields[field]) {
+      enriched[field] = egressFields[field];
+    }
+  }
+  if (typeof enriched.proxy_configured !== "boolean" && typeof egressFields.proxy_configured === "boolean") {
+    enriched.proxy_configured = egressFields.proxy_configured;
+  }
+  if (typeof enriched.block_internal_hosts !== "boolean" && typeof egressFields.block_internal_hosts === "boolean") {
+    enriched.block_internal_hosts = egressFields.block_internal_hosts;
+  }
+  if (
+    !Number.isInteger(enriched.egress_profile_identity_version) &&
+    Number.isInteger(egressFields.egress_profile_identity_version) &&
+    egressFields.egress_profile_identity_version > 0
+  ) {
+    enriched.egress_profile_identity_version = egressFields.egress_profile_identity_version;
+  }
+  return enriched;
+}
+
+function readPipelineEvents(targetDomain, { allowBackfill = true, validateAuthority = false } = {}) {
   const filePath = pipelineEventsJsonlPath(targetDomain);
+  let artifactSummary = null;
+  let sessionEgressFields = null;
   const result = {
     enabled: pipelineAnalyticsEnabled(),
     events_path: filePath,
     exists: fs.existsSync(filePath),
     events: [],
     malformed_lines: 0,
+    error: null,
     backfilled: false,
   };
 
   if (result.exists) {
-    const read = readJsonlSafe(filePath, "pipeline-events.jsonl");
+    artifactSummary = readSessionArtifactSummary(targetDomain, { validateAuthority });
+    const authorityInvalid = sessionAuthorityInvalid(artifactSummary);
+    sessionEgressFields = authorityInvalid ? null : egressFieldsFromArtifactState(artifactSummary);
+    const read = readPipelineEventJsonlSafe(filePath);
+    result.error = read.error;
     result.malformed_lines = read.malformed_lines;
-    for (const record of read.records) {
-      const event = normalizePipelineEventForRead(record, targetDomain);
-      if (event) {
-        result.events.push(event);
-      } else {
-        result.malformed_lines += 1;
+    if (!read.error) {
+      for (const record of read.records) {
+        const event = normalizePipelineEventForRead(record, targetDomain);
+        if (event) {
+          const enriched = enrichEventWithSessionEgress(event, sessionEgressFields);
+          result.events.push(authorityInvalid ? stripAuthorityDerivedEventFields(enriched) : enriched);
+        } else {
+          result.malformed_lines += 1;
+        }
       }
     }
   }
 
-  if (allowBackfill && result.events.length === 0) {
-    result.events = buildBackfillEvents(targetDomain, readSessionArtifactSummary(targetDomain));
+  if (allowBackfill && !result.exists && result.events.length === 0) {
+    result.events = buildBackfillEvents(
+      targetDomain,
+      artifactSummary || readSessionArtifactSummary(targetDomain, { validateAuthority }),
+    );
     result.backfilled = true;
   }
 
   result.events.sort((a, b) => timestampMs(a.ts) - timestampMs(b.ts));
   return result;
+}
+
+function sessionAuthorityInvalid(artifactSummary) {
+  return !!(
+    artifactSummary &&
+    Array.isArray(artifactSummary.artifact_errors) &&
+    artifactSummary.artifact_errors.some((error) => /^Session authority invalid:/.test(error))
+  );
+}
+
+function stripAuthorityDerivedEventFields(event) {
+  const stripped = { ...event };
+  for (const field of AUTHORITY_DERIVED_EVENT_FIELDS) {
+    delete stripped[field];
+  }
+  return stripped;
 }
 
 function latestEvent(events) {
@@ -1272,7 +357,7 @@ function compactEvent(event) {
     target_domain: event.target_domain,
     type: event.type,
   };
-  for (const field of ["phase", "from_phase", "to_phase", "wave_number", "agent", "surface_id", "status", "block_code", "counts", "source", "force_merge", "force_merge_reason", "override", "override_reason", "kind", "identifier_hint", "verification_attempt_id", "verification_snapshot_hash", "adjudication_plan_hash", "final_verification_hash", "capability_pack", "lease_scope", "replay_purpose", "started_by"]) {
+  for (const field of ["phase", "from_phase", "to_phase", "wave_number", "agent", "surface_id", "status", "block_code", "counts", "source", "force_merge", "force_merge_reason", "override", "override_reason", "legacy_migration", "kind", "identifier_hint", "verification_attempt_id", "verification_snapshot_hash", "adjudication_plan_hash", "final_verification_hash", "capability_pack", "lease_scope", "replay_purpose", "started_by", "checkpoint_mode", "block_internal_hosts", "block_internal_hosts_source", "egress_profile", "egress_region", "proxy_configured", "egress_profile_identity_hash", "egress_profile_identity_version"]) {
     if (event[field] != null) compact[field] = event[field];
   }
   return compact;
@@ -1325,18 +410,35 @@ function slimToolHealth(readResult, events, limit) {
   };
 }
 
-function buildToolHealth({ targetDomain = null, cutoffMs = null, limit = DEFAULT_LIMIT, env = process.env } = {}) {
-  const readResult = readToolTelemetryEvents({ target_domain: targetDomain, env });
-  return slimToolHealth(readResult, filterByWindow(readResult.events, cutoffMs), limit);
+function filterTelemetryReadResult(readResult, { targetDomain = null, cutoffMs = null, predicate = null } = {}) {
+  const events = filterByWindow(readResult.events, cutoffMs)
+    .filter((event) => (targetDomain ? event.target_domain === targetDomain : true))
+    .filter((event) => (predicate ? predicate(event) : true));
+  return { ...readResult, events };
 }
 
-function buildHunterHealth({ targetDomain = null, cutoffMs = null, limit = DEFAULT_LIMIT, env = process.env } = {}) {
-  const readResult = readAgentRunTelemetryEvents({
+function buildToolHealth({ targetDomain = null, cutoffMs = null, limit = DEFAULT_LIMIT, env = process.env, readResult = null } = {}) {
+  const baseRead = readResult || readToolTelemetryEvents({ target_domain: targetDomain, env });
+  const filtered = readResult
+    ? filterTelemetryReadResult(baseRead, { targetDomain, cutoffMs })
+    : { ...baseRead, events: filterByWindow(baseRead.events, cutoffMs) };
+  return slimToolHealth(filtered, filtered.events, limit);
+}
+
+function buildHunterHealth({ targetDomain = null, cutoffMs = null, limit = DEFAULT_LIMIT, env = process.env, readResult = null } = {}) {
+  const baseRead = readResult || readAgentRunTelemetryEvents({
     target_domain: targetDomain,
     agent_run_type: "hunter",
     env,
   });
-  const events = filterByWindow(readResult.events, cutoffMs);
+  const filtered = readResult
+    ? filterTelemetryReadResult(baseRead, {
+      targetDomain,
+      cutoffMs,
+      predicate: (event) => event.run_type === "hunter",
+    })
+    : { ...baseRead, events: filterByWindow(baseRead.events, cutoffMs) };
+  const events = filtered.events;
   const byStatus = { allowed: 0, blocked: 0 };
   const byBlockCode = {};
   for (const event of events) {
@@ -1346,10 +448,10 @@ function buildHunterHealth({ targetDomain = null, cutoffMs = null, limit = DEFAU
     }
   }
   return {
-    enabled: readResult.enabled,
-    telemetry_path: readResult.telemetry_path,
+    enabled: filtered.enabled,
+    telemetry_path: filtered.telemetry_path,
     total_runs: events.length,
-    malformed_lines: readResult.malformed_lines,
+    malformed_lines: filtered.malformed_lines,
     totals: {
       by_status: byStatus,
       by_block_code: byBlockCode,
@@ -1405,13 +507,31 @@ function issue(code, severity, message, evidence = {}) {
   return { code, severity, message, evidence };
 }
 
-function analyzeSession(targetDomain, { cutoffMs = null, limit = DEFAULT_LIMIT, env = process.env } = {}) {
-  const artifacts = readSessionArtifactSummary(targetDomain);
-  const eventRead = readPipelineEvents(targetDomain);
+function analyzeSession(targetDomain, {
+  cutoffMs = null,
+  limit = DEFAULT_LIMIT,
+  env = process.env,
+  telemetryCache = null,
+  validateAuthority = false,
+} = {}) {
+  const artifacts = readSessionArtifactSummary(targetDomain, { validateAuthority });
+  const eventRead = readPipelineEvents(targetDomain, { validateAuthority });
   const events = filterByWindow(eventRead.events, cutoffMs);
   const allEvents = eventRead.events;
-  const toolHealth = buildToolHealth({ targetDomain, cutoffMs, limit, env });
-  const hunterHealth = buildHunterHealth({ targetDomain, cutoffMs, limit, env });
+  const toolHealth = buildToolHealth({
+    targetDomain,
+    cutoffMs,
+    limit,
+    env,
+    readResult: telemetryCache ? telemetryCache.toolRead : null,
+  });
+  const hunterHealth = buildHunterHealth({
+    targetDomain,
+    cutoffMs,
+    limit,
+    env,
+    readResult: telemetryCache ? telemetryCache.hunterRead : null,
+  });
   const issues = [];
 
   if (artifacts.artifact_errors.length > 0) {
@@ -1597,10 +717,22 @@ function analyzeSession(targetDomain, { cutoffMs = null, limit = DEFAULT_LIMIT, 
     target_domain: targetDomain,
     phase: artifacts.state.phase,
     auth_status: artifacts.state.auth_status,
+    checkpoint_mode: artifacts.state.checkpoint_mode,
+    block_internal_hosts: artifacts.state.block_internal_hosts,
+    block_internal_hosts_source: artifacts.state.block_internal_hosts_source,
+    egress_profile_identity: {
+      egress_profile: artifacts.state.egress_profile,
+      egress_region: artifacts.state.egress_region,
+      proxy_configured: artifacts.state.proxy_configured,
+      egress_profile_identity_hash: artifacts.state.egress_profile_identity_hash,
+      egress_profile_identity_version: artifacts.state.egress_profile_identity_version,
+    },
     waves: {
       hunt_wave: artifacts.state.hunt_wave,
       pending_wave: artifacts.state.pending_wave,
       assignment_files: artifacts.waves.length,
+      assignment_files_total: artifacts.wave_bounds.assignment_files_total,
+      assignment_files_omitted: artifacts.wave_bounds.waves_omitted,
       pending_handoffs_missing: pendingReadiness ? pendingReadiness.missing_agents.length : 0,
       pending_handoffs_invalid: pendingReadiness ? pendingReadiness.invalid_agents.length : 0,
     },
@@ -1640,6 +772,7 @@ function analyzeSession(targetDomain, { cutoffMs = null, limit = DEFAULT_LIMIT, 
       errors: artifacts.http_audit.errors,
       scope_blocked: artifacts.http_audit.scope_blocked,
       network_unreachable_target: artifacts.http_audit.network_unreachable_target,
+      block_internal_hosts: artifacts.http_audit.block_internal_hosts,
     },
     grade_verdict: artifacts.grade.verdict,
     report_present: artifacts.report.present,
@@ -1793,6 +926,42 @@ function listSessionDomains() {
     .sort();
 }
 
+function sessionActivityMtimeMs(targetDomain) {
+  const candidates = [
+    statePath(targetDomain),
+    pipelineEventsJsonlPath(targetDomain),
+    findingsIndexJsonlPath(targetDomain),
+    httpAuditJsonlPath(targetDomain),
+    findingsJsonlPath(targetDomain),
+    reportMarkdownPath(targetDomain),
+  ];
+  let latest = 0;
+  for (const filePath of candidates) {
+    try {
+      const stat = fs.statSync(filePath);
+      if (stat.mtimeMs > latest) latest = stat.mtimeMs;
+    } catch {}
+  }
+  return latest;
+}
+
+function listRecentSessionDomainCandidates({ cutoffMs = null, limit = CROSS_SESSION_ANALYTICS_MAX_SESSIONS } = {}) {
+  const domains = listSessionDomains()
+    .map((targetDomain) => ({
+      targetDomain,
+      activityMs: sessionActivityMtimeMs(targetDomain),
+    }))
+    .filter((entry) => !cutoffMs || entry.activityMs >= cutoffMs)
+    .sort((a, b) => b.activityMs - a.activityMs || a.targetDomain.localeCompare(b.targetDomain));
+  const normalizedLimit = Number.isInteger(limit) && limit > 0 ? limit : CROSS_SESSION_ANALYTICS_MAX_SESSIONS;
+  return {
+    total_available: domains.length,
+    limit: normalizedLimit,
+    truncated: domains.length > normalizedLimit,
+    domains: domains.slice(0, normalizedLimit).map((entry) => entry.targetDomain),
+  };
+}
+
 function normalizeReadArgs(args = {}) {
   const targetDomain = args.target_domain == null ? null : assertNonEmptyString(args.target_domain, "target_domain");
   return {
@@ -1803,7 +972,7 @@ function normalizeReadArgs(args = {}) {
   };
 }
 
-function readPipelineAnalytics(args = {}, { env = process.env } = {}) {
+function readPipelineAnalytics(args = {}, { env = process.env, validateAuthority = false } = {}) {
   const options = normalizeReadArgs(args);
   const cutoffMs = Date.now() - options.window_days * 24 * 60 * 60 * 1000;
 
@@ -1812,6 +981,7 @@ function readPipelineAnalytics(args = {}, { env = process.env } = {}) {
       cutoffMs: null,
       limit: options.limit,
       env,
+      validateAuthority,
     });
     const bottlenecks = buildBottlenecks([analysis], options.limit);
     const response = {
@@ -1832,6 +1002,15 @@ function readPipelineAnalytics(args = {}, { env = process.env } = {}) {
         malformed_lines: analysis.event_read.malformed_lines,
         backfilled: analysis.event_read.backfilled,
       },
+      analytics_bounds: {
+        session_scan_limit: 1,
+        sessions_available: 1,
+        sessions_considered: 1,
+        sessions_truncated: false,
+        telemetry_reads_reused: false,
+        tool_events_loaded: analysis.tool_health.total_events,
+        hunter_events_loaded: analysis.hunter_health.total_runs,
+      },
     };
     if (options.include_events) {
       response.events = analysis.event_read.events.slice(-options.limit).map(compactEvent);
@@ -1839,8 +1018,25 @@ function readPipelineAnalytics(args = {}, { env = process.env } = {}) {
     return JSON.stringify(response);
   }
 
-  const analyses = listSessionDomains()
-    .map((targetDomain) => analyzeSession(targetDomain, { cutoffMs, limit: options.limit, env }))
+  const candidates = listRecentSessionDomainCandidates({
+    cutoffMs,
+    limit: CROSS_SESSION_ANALYTICS_MAX_SESSIONS,
+  });
+  const telemetryCache = {
+    toolRead: readToolTelemetryEvents({ env }),
+    hunterRead: readAgentRunTelemetryEvents({
+      agent_run_type: "hunter",
+      env,
+    }),
+  };
+  const analyses = candidates.domains
+    .map((targetDomain) => analyzeSession(targetDomain, {
+      cutoffMs,
+      limit: options.limit,
+      env,
+      telemetryCache,
+      validateAuthority: true,
+    }))
     .filter((analysis) => {
       const latest = latestEvent(analysis.event_read.events);
       const latestMs = Math.max(timestampMs(latest?.ts), timestampMs(analysis.artifacts.latest_artifact_ts));
@@ -1861,8 +1057,17 @@ function readPipelineAnalytics(args = {}, { env = process.env } = {}) {
     funnel: buildFunnel(analyses),
     bottlenecks,
     next_actions: buildNextActions(bottlenecks, options.limit),
-    tool_health: buildToolHealth({ cutoffMs, limit: options.limit, env }),
-    hunter_health: buildHunterHealth({ cutoffMs, limit: options.limit, env }),
+    tool_health: buildToolHealth({ cutoffMs, limit: options.limit, env, readResult: telemetryCache.toolRead }),
+    hunter_health: buildHunterHealth({ cutoffMs, limit: options.limit, env, readResult: telemetryCache.hunterRead }),
+    analytics_bounds: {
+      session_scan_limit: candidates.limit,
+      sessions_available: candidates.total_available,
+      sessions_considered: candidates.domains.length,
+      sessions_truncated: candidates.truncated,
+      telemetry_reads_reused: true,
+      tool_events_loaded: telemetryCache.toolRead.events.length,
+      hunter_events_loaded: telemetryCache.hunterRead.events.length,
+    },
   };
   if (options.include_events) {
     response.events = analyses
@@ -1876,9 +1081,11 @@ function readPipelineAnalytics(args = {}, { env = process.env } = {}) {
 
 module.exports = {
   PIPELINE_ANALYTICS_VERSION,
+  CROSS_SESSION_ANALYTICS_MAX_SESSIONS,
+  HANDOFF_ANALYTICS_MAX_FILES,
+  WAVE_READINESS_MAX_ASSIGNMENT_FILES,
   PIPELINE_EVENT_TYPES,
   PIPELINE_EVENT_VERSION,
-  appendPipelineEventDirect,
   buildBackfillEvents,
   listSessionDomains,
   normalizePipelineEvent,
@@ -1886,7 +1093,4 @@ module.exports = {
   readPipelineAnalytics,
   readPipelineEvents,
   readSessionArtifactSummary,
-  safeAppendPipelineEventDirect,
-  safeAppendPipelineEventWithSessionLock,
-  safeRecordHunterStoppedPipelineEvent,
 };

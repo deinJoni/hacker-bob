@@ -34,6 +34,7 @@
       "mcp__bountyagent__bounty_read_state_summary",
       "mcp__bountyagent__bounty_read_session_summary",
       "mcp__bountyagent__bounty_read_hunter_brief",
+      "mcp__bountyagent__bounty_read_capability_playbook",
       "mcp__bountyagent__bounty_get_context_budget",
       "mcp__bountyagent__bounty_select_technique_packs",
       "mcp__bountyagent__bounty_read_technique_pack",
@@ -67,8 +68,7 @@
       "Bash(echo *)",
       "Read",
       "Glob",
-      "Grep",
-      "mcp__bountyagent__bounty_read_capability_playbook"
+      "Grep"
     ]
   },
   "hooks": {
@@ -76,11 +76,6 @@
       {
         "matcher": "Bash",
         "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/scope-guard.sh\"",
-            "timeout": 5
-          },
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/session-write-guard.sh\"",
@@ -109,56 +104,6 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/session-write-guard.sh\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "mcp__bountyagent__bounty_http_scan",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/scope-guard-mcp.sh\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "mcp__bountyagent__bounty_run_doc_delta",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/scope-guard-mcp.sh\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "mcp__bountyagent__bounty_run_auth_differential",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/scope-guard-mcp.sh\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "mcp__bountyagent__bounty_signup_detect",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/scope-guard-mcp.sh\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "mcp__bountyagent__bounty_auto_signup",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/scope-guard-mcp.sh\"",
             "timeout": 5
           }
         ]

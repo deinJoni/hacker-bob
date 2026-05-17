@@ -7,6 +7,9 @@ const {
 const {
   attackSurfacePath,
 } = require("./paths.js");
+const {
+  readJsonFile,
+} = require("./storage.js");
 
 function readAttackSurfaceStrict(domain) {
   const filePath = attackSurfacePath(domain);
@@ -16,7 +19,7 @@ function readAttackSurfaceStrict(domain) {
 
   let parsed;
   try {
-    parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    parsed = readJsonFile(filePath, { label: "attack_surface.json" });
   } catch (error) {
     throw new Error(`Malformed attack surface JSON: ${filePath} (${error.message || String(error)})`);
   }

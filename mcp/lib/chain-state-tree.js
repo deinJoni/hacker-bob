@@ -6,7 +6,10 @@ const {
   chainTreeJsonlPath,
   sessionDir,
 } = require("./paths.js");
-const { hashCanonicalJson } = require("./verification.js");
+const {
+  readFileUtf8,
+} = require("./storage.js");
+const { hashCanonicalJson } = require("./verification-contracts.js");
 
 const ROOT_PARENT_STATE_HASH = "root";
 
@@ -30,7 +33,7 @@ function ensureSessionDir(domain) {
 
 function readJsonlNodes(filePath) {
   if (!fs.existsSync(filePath)) return [];
-  const raw = fs.readFileSync(filePath, "utf8");
+  const raw = readFileUtf8(filePath, { label: "chain-tree.jsonl" });
   const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
   const records = [];
   for (let i = 0; i < lines.length; i++) {

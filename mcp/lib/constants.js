@@ -46,6 +46,7 @@ const COSMWASM_NETWORK_VALUES = [
 ];
 const PHASE_VALUES = ["RECON", "AUTH", "HUNT", "CHAIN", "VERIFY", "GRADE", "REPORT", "EXPLORE"];
 const AUTH_STATUS_VALUES = ["pending", "authenticated", "unauthenticated"];
+const CHECKPOINT_MODE_VALUES = ["normal", "paranoid", "yolo"];
 const VERIFICATION_ROUND_VALUES = ["brutalist", "balanced", "final"];
 const VERIFICATION_DISPOSITION_VALUES = ["confirmed", "denied", "downgraded"];
 const VERIFICATION_CONFIDENCE_VALUES = ["high", "medium", "low"];
@@ -97,6 +98,9 @@ const SESSION_PUBLIC_STATE_FIELDS = [
   "target",
   "target_url",
   "deep_mode",
+  "checkpoint_mode",
+  "block_internal_hosts",
+  "block_internal_hosts_source",
   "phase",
   "hunt_wave",
   "pending_wave",
@@ -112,6 +116,15 @@ const SESSION_PUBLIC_STATE_FIELDS = [
   "scope_exclusions",
   "hold_count",
   "auth_status",
+  "egress_profile",
+  "egress_region",
+  "proxy_configured",
+  "egress_profile_identity_hash",
+  "egress_profile_identity_version",
+  "egress_profile_identity_source",
+  "egress_profile_identity_bound_at",
+  "egress_profile_identity_bind_source",
+  "egress_profile_legacy_migration",
   "operator_note",
   "verification_schema_version",
   "verification_attempt_id",
@@ -131,6 +144,7 @@ module.exports = {
   AUTH_STATUS_VALUES,
   CHAIN_ATTEMPT_OUTCOME_VALUES,
   CHAIN_ATTEMPT_TERMINAL_OUTCOME_VALUES,
+  CHECKPOINT_MODE_VALUES,
   CHAIN_FAMILY_VALUES,
   CIRCUIT_BREAKER_THRESHOLD,
   COSMWASM_NETWORK_VALUES,

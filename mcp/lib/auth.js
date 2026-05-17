@@ -11,6 +11,7 @@ const {
   sessionDir,
 } = require("./paths.js");
 const {
+  readJsonFile,
   withSessionLock,
 } = require("./storage.js");
 const {
@@ -72,7 +73,7 @@ function resolveAuthJsonPath(targetDomain, { allowLegacyFallback = false } = {})
 
 function readAuthJson(filePath) {
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return readJsonFile(filePath, { label: "auth.json" });
   } catch {
     return null;
   }
@@ -188,22 +189,11 @@ function candidateAuthDomains(targetDomain, urlValue) {
     candidates.push(value);
   };
 
-  add(normalizedTarget);
-
   const parsed = safeUrlObject(urlValue);
   const urlHost = parsed ? parsed.hostname.toLowerCase().replace(/\.+$/, "") : null;
-  if (urlHost && normalizedTarget && isFirstPartyHost(urlHost, normalizedTarget)) {
-    add(normalizedTarget);
-  }
 
-  if (normalizedTarget) {
-    const labels = normalizedTarget.split(".");
-    for (let index = 1; index < labels.length - 1; index += 1) {
-      const parent = labels.slice(index).join(".");
-      if (!urlHost || isFirstPartyHost(urlHost, parent) || isFirstPartyHost(normalizedTarget, parent)) {
-        add(parent);
-      }
-    }
+  if (normalizedTarget && (!urlHost || isFirstPartyHost(urlHost, normalizedTarget))) {
+    add(normalizedTarget);
   }
 
   return candidates;

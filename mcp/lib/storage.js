@@ -17,8 +17,25 @@ const {
   ToolError,
 } = require("./envelope.js");
 
-function readJsonFile(filePath) {
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+const DEFAULT_ARTIFACT_READ_MAX_BYTES = 16 * 1024 * 1024;
+const activeSessionLocks = new Map();
+
+function readFileUtf8(filePath, {
+  label = path.basename(filePath),
+  maxBytes = DEFAULT_ARTIFACT_READ_MAX_BYTES,
+} = {}) {
+  if (maxBytes != null && (!Number.isInteger(maxBytes) || maxBytes < 1)) {
+    throw new Error("maxBytes must be a positive integer");
+  }
+  const stats = fs.statSync(filePath);
+  if (maxBytes != null && stats.size > maxBytes) {
+    throw new Error(`${label} exceeds read cap of ${maxBytes} bytes: ${filePath}`);
+  }
+  return fs.readFileSync(filePath, "utf8");
+}
+
+function readJsonFile(filePath, options = {}) {
+  return JSON.parse(readFileUtf8(filePath, options));
 }
 
 function writeFileAtomic(filePath, content) {
@@ -72,7 +89,9 @@ function trimJsonlFile(filePath, maxRecords) {
     return { trimmed: false, total: 0, retained: 0 };
   }
 
-  const content = fs.readFileSync(filePath, "utf8");
+  // Retention is the recovery path for oversized JSONL artifacts, so it must
+  // be able to read and trim files that already exceed the normal read cap.
+  const content = readFileUtf8(filePath, { label: path.basename(filePath), maxBytes: null });
   const lines = content.split("\n").filter((line) => line.trim());
   if (lines.length <= normalizedMaxRecords) {
     return { trimmed: false, total: lines.length, retained: lines.length };
@@ -92,6 +111,8 @@ function appendJsonlLines(filePath, documents, { maxRecords = null } = {}) {
     return;
   }
 
+  // Contract: session-owned callers must hold withSessionLock. This helper is
+  // intentionally low-level so tests and non-session artifacts can use it too.
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.appendFileSync(
     filePath,
@@ -131,9 +152,10 @@ function loadJsonDocumentStrict(filePath, label) {
     throw new Error(`Missing ${label}: ${filePath}`);
   }
 
+  const raw = readFileUtf8(filePath, { label });
   let parsed;
   try {
-    parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    parsed = JSON.parse(raw);
   } catch (error) {
     throw new Error(`Malformed ${label}: ${filePath} (${error.message || String(error)})`);
   }
@@ -167,6 +189,52 @@ function tryAcquireSessionLock(lockPathValue) {
     : null;
 }
 
+function readLockIdentity(lockPathValue) {
+  try {
+    const stats = fs.statSync(lockPathValue);
+    return {
+      dev: stats.dev,
+      ino: stats.ino,
+      isDirectory: stats.isDirectory(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function sameLockIdentity(stats, identity) {
+  if (!stats || !identity) return false;
+  return (
+    stats.dev === identity.dev &&
+    stats.ino === identity.ino &&
+    stats.isDirectory() === identity.isDirectory
+  );
+}
+
+function releaseSessionLock(lockPathValue, token, identity) {
+  let stats;
+  try {
+    stats = fs.statSync(lockPathValue);
+  } catch {
+    return;
+  }
+
+  const sameOwnedFile = sameLockIdentity(stats, identity);
+  if (identity && !sameOwnedFile) {
+    return;
+  }
+
+  let tokenMatches = false;
+  try {
+    const current = JSON.parse(fs.readFileSync(lockPathValue, "utf8"));
+    tokenMatches = current && typeof current === "object" && current.token === token;
+  } catch {}
+
+  if (tokenMatches || sameOwnedFile) {
+    try { fs.rmSync(lockPathValue, { force: true }); } catch {}
+  }
+}
+
 function readSessionLockSnapshot(lockPathValue) {
   let stats;
   try {
@@ -186,7 +254,9 @@ function readSessionLockSnapshot(lockPathValue) {
     } catch {}
   }
 
-  const staleReferenceMs = Number.isFinite(timestampMs) ? timestampMs : stats.mtimeMs;
+  const staleReferenceMs = Number.isFinite(timestampMs)
+    ? Math.min(timestampMs, stats.mtimeMs)
+    : stats.mtimeMs;
   return {
     dev: stats.dev,
     ino: stats.ino,
@@ -245,14 +315,8 @@ function acquireSessionLock(domain) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const token = tryAcquireSessionLock(lockPathValue);
     if (token) {
-      return () => {
-        try {
-          const current = JSON.parse(fs.readFileSync(lockPathValue, "utf8"));
-          if (current && current.token === token) {
-            fs.rmSync(lockPathValue, { force: true });
-          }
-        } catch {}
-      };
+      const identity = readLockIdentity(lockPathValue);
+      return () => releaseSessionLock(lockPathValue, token, identity);
     }
 
     const staleSnapshot = readSessionLockSnapshot(lockPathValue);
@@ -270,21 +334,46 @@ function acquireSessionLock(domain) {
 }
 
 function withSessionLock(domain, callback) {
+  const lockKey = sessionLockPath(domain);
+  const heldCount = activeSessionLocks.get(lockKey) || 0;
+  if (heldCount > 0) {
+    activeSessionLocks.set(lockKey, heldCount + 1);
+    try {
+      const result = callback();
+      if (result && typeof result.then === "function") {
+        throw new Error("withSessionLock callback must be synchronous");
+      }
+      return result;
+    } finally {
+      const nextCount = (activeSessionLocks.get(lockKey) || 1) - 1;
+      if (nextCount > 0) activeSessionLocks.set(lockKey, nextCount);
+      else activeSessionLocks.delete(lockKey);
+    }
+  }
+
   const release = acquireSessionLock(domain);
+  activeSessionLocks.set(lockKey, 1);
   try {
-    return callback();
+    const result = callback();
+    if (result && typeof result.then === "function") {
+      throw new Error("withSessionLock callback must be synchronous");
+    }
+    return result;
   } finally {
+    activeSessionLocks.delete(lockKey);
     release();
   }
 }
 
 module.exports = {
+  DEFAULT_ARTIFACT_READ_MAX_BYTES,
   acquireSessionLock,
   appendJsonlLine,
   appendJsonlLines,
   appendMarkdownMirror,
   isSessionDirEffectivelyEmpty,
   loadJsonDocumentStrict,
+  readFileUtf8,
   readJsonFile,
   trimJsonlFile,
   readSessionLockSnapshot,

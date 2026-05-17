@@ -24,6 +24,7 @@
 // The result line uses `ok` for all-pass and `FAILED` for any failure.
 
 const CARGO_TESTS_CAP = 100;
+const { redactTextSensitiveValues } = require("../redaction.js");
 
 // Regex captures: 1=test_name (e.g., "foo::bar"), 2=status token. The leading
 // "test " literal is required; we accept arbitrary whitespace between the name
@@ -108,7 +109,7 @@ function parseCargoTestStdout(stdout) {
       if (idx != null) {
         const entry = tests[idx];
         if (entry && !entry.reason) {
-          entry.reason = trimmed.slice(0, 1024);
+          entry.reason = redactTextSensitiveValues(trimmed).slice(0, 1024);
         }
       }
       // Don't unset inFailureBlock — multiple lines may follow; we only keep

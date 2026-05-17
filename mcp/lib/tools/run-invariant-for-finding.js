@@ -38,7 +38,7 @@ async function runInvariantForFindingHandler(args) {
 module.exports = Object.freeze({
   name: "bounty_run_invariant_for_finding",
   description:
-    "Generate a Foundry invariant test from an audit finding's vulnerability_class, write it into the supplied harness, run forge against it, and persist the result to invariant-runs.jsonl. Pass dry_run: true to preview the generated test without writing or running. Use after bounty_query_audit_reports + bounty_suggest_invariants when you want the runner to commit a specific template against a real harness.",
+    "Generate a single-function Foundry invariant test from an audit finding's vulnerability_class, write it into the supplied harness, run forge against it, and persist the result to invariant-runs.jsonl. The harness root, test/ directory, and test/bob-invariants output directory are resolved through realpath containment before writing; generated tests use an exclusive same-directory temp file plus atomic rename so pre-existing final-file symlinks are replaced, not followed. Result persistence rejects symlinked per-domain session directories under the resolved sessions root and replaces pre-existing symlinked or hard-linked invariant-runs.jsonl files without importing their target records. The corpus is bounded by the artifact read cap; if valid accumulated records would exceed it, newest records are retained and the response reports invariant_runs_retention. This is honest-harness/resolved-session-root containment and final-file symlink safety, not a guarantee against a malicious same-UID process replacing validated parent directories or final path entries during path-based read/write operations, or mutating already-open regular files outside Bob's cooperative session lock. Fork RPC inherits bounty_foundry_run's direct public HTTPS policy: DNS-private/private/localnet endpoints and egress_profile proxy routing are unsupported by default, and endpoint evidence is redacted. Pass dry_run: true to preview the generated test without writing or running. Use after bounty_query_audit_reports + bounty_suggest_invariants when you want the runner to commit a specific template against a real harness.",
   inputSchema: {
     type: "object",
     properties: {
@@ -49,7 +49,7 @@ module.exports = Object.freeze({
       },
       template_id: { type: "string", description: "Optional. Pin a specific template id; default is the first suggestion for the class." },
       slot_values: { type: "object", description: "Map of parameter_slot -> value (target_contract, vulnerable_function, etc.)." },
-      harness_path: { type: "string", description: "Foundry harness root. Must contain a test/ directory." },
+      harness_path: { type: "string", description: "Foundry harness root under the user home directory. The root, test/, and test/bob-invariants paths are realpath-validated to stay inside the harness before writing." },
       chain_id: { type: "integer", minimum: 1 },
       fork_block: {
         oneOf: [
@@ -74,5 +74,4 @@ module.exports = Object.freeze({
   scope_required: false,
   sensitive_output: false,
   session_artifacts_written: ["invariant-runs.jsonl"],
-  hook_required: false,
 });

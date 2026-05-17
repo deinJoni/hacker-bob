@@ -2,9 +2,10 @@
 
 const fs = require("fs");
 const { attackSurfacePath } = require("./paths.js");
+const { readJsonFile } = require("./storage.js");
 const { appendEdges } = require("./surface-graph.js");
 const { querySchemaContracts } = require("./schema-contracts-store.js");
-const { hashCanonicalJson } = require("./verification.js");
+const { hashCanonicalJson } = require("./verification-contracts.js");
 
 function isPlainObject(value) {
   return value != null && typeof value === "object" && !Array.isArray(value);
@@ -14,7 +15,7 @@ function safeReadAttackSurface(domain) {
   const filePath = attackSurfacePath(domain);
   if (!fs.existsSync(filePath)) return null;
   try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const parsed = readJsonFile(filePath, { label: "attack_surface.json" });
     if (!isPlainObject(parsed) || !Array.isArray(parsed.surfaces)) return null;
     return parsed;
   } catch (_err) {

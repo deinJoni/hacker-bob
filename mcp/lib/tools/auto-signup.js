@@ -28,8 +28,10 @@ module.exports = Object.freeze({
         "type": "string",
         "default": "attacker"
       },
-      "proxy": {
-        "type": "string"
+      "egress_profile": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+        "description": "Optional named egress profile from .claude/bob/egress-profiles.json. Defaults to direct local egress."
       },
       "headless": {
         "type": "boolean"
@@ -39,7 +41,7 @@ module.exports = Object.freeze({
       },
       "block_internal_hosts": {
         "type": "boolean",
-        "description": "When true, block localhost, private/link-local IP ranges, .internal/.local names, cloud metadata hosts, and public hostnames that resolve to those addresses. Defaults to false."
+        "description": "When true or when the session's effective policy is true, this browser tool refuses with SCOPE_BLOCKED/manual fallback because Chromium cannot be DNS-pinned by Bob's safeFetch transport; use manual signup or direct MCP HTTP tools."
       }
     },
     "required": [
@@ -56,7 +58,7 @@ module.exports = Object.freeze({
   network_access: true,
   browser_access: true,
   scope_required: true,
+  scope_url_fields: ["signup_url"],
   sensitive_output: true,
   session_artifacts_written: ["auth.json"],
-  hook_required: true,
 });

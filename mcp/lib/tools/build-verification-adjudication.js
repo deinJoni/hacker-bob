@@ -22,5 +22,4 @@ module.exports = Object.freeze({
   scope_required: false,
   sensitive_output: false,
   session_artifacts_written: ["verification-adjudication.json", "verification-manifest.json"],
-  hook_required: false,
 });

@@ -1,6 +1,6 @@
 "use strict";
 
-const { hashCanonicalJson } = require("./verification.js");
+const { hashCanonicalJson } = require("./verification-contracts.js");
 
 const PUNCT = new Set(["{", "}", "(", ")", "[", "]", ":", "!", "=", ",", "@", "&", "|"]);
 
