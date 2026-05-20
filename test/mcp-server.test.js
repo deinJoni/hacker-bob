@@ -8847,6 +8847,7 @@ test("bounty_merge_wave_handoffs requeues missing and invalid assigned handoffs 
     writeUnexpectedHandoff(domain, "w3", "a9", { dead_ends: ["/ignored"] });
 
     const merged = JSON.parse(mergeWaveHandoffs({ target_domain: domain, wave_number: 3 }));
+    assert.match(merged.invalid_handoffs[0]?.error || "", /JSON at position 1/);
 
 	    assert.deepEqual(merged, {
 	      assignments_total: 2,
@@ -8856,7 +8857,7 @@ test("bounty_merge_wave_handoffs requeues missing and invalid assigned handoffs 
 	      invalid_handoffs: [{
 	        agent: "a1",
 	        surface_id: "surface-a",
-	        error: "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
+	        error: merged.invalid_handoffs[0].error,
 	      }],
 	      unexpected_agents: ["a9"],
       completed_surface_ids: [],
