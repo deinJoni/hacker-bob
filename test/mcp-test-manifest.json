@@ -1,5 +1,6 @@
 [
   "test/mcp-server.test.js",
+  "test/repo-target.test.js",
   "test/wave-planner.test.js",
   "test/bob-export.test.js",
   "test/schema-contracts.test.js",

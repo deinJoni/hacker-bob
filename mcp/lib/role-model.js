@@ -43,6 +43,11 @@ const ROLE_DEFINITIONS = Object.freeze({
     prompt_body: path.join(ROLE_PROMPT_DIR, "orchestrator.md"),
     mcp_role_bundles: Object.freeze(["orchestrator", "auth"]),
   }),
+  "oss-orchestrator": Object.freeze({
+    id: "oss-orchestrator",
+    prompt_body: path.join(ROLE_PROMPT_DIR, "oss-orchestrator.md"),
+    mcp_role_bundles: Object.freeze(["orchestrator"]),
+  }),
   recon: Object.freeze({
     id: "recon",
     prompt_body: path.join(ROLE_PROMPT_DIR, "recon.md"),

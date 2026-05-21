@@ -45,7 +45,8 @@ module.exports = Object.freeze({
         "items": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 300
+          "maxLength": 300,
+          "x-autoTruncate": true
         }
       },
       "blocked_harness_runs": {

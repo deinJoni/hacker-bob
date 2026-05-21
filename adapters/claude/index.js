@@ -73,6 +73,7 @@ const COMMAND_SPECS = Object.freeze({
 
 const BOB_SKILLS = Object.freeze([
   "bob-hunt",
+  "bob-oss",
   "bob-status",
   "bob-debug",
 ]);
@@ -117,6 +118,7 @@ function managedDirs() {
     path.join(".claude", "commands", "bob"),
     path.join(".claude", "commands"),
     path.join(".claude", "skills", "bob-hunt"),
+    path.join(".claude", "skills", "bob-oss"),
     path.join(".claude", "skills", "bob-status"),
     path.join(".claude", "skills", "bob-debug"),
     path.join(".claude", "skills", "bountyagent"),

@@ -41,6 +41,7 @@ test("installer copies a require-able complete MCP runtime", () => {
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bountyagent.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bountyagentdebug.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-oss", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-status", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-debug", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bountyagent", "SKILL.md")));
@@ -87,7 +88,7 @@ test("installer copies a require-able complete MCP runtime", () => {
       "-e",
       [
         "const server = require(process.argv[1]);",
-        "if (!Array.isArray(server.TOOLS) || server.TOOLS.length !== 104) process.exit(2);",
+        "if (!Array.isArray(server.TOOLS) || server.TOOLS.length !== 109) process.exit(2);",
         "if (!server.TOOLS.some((tool) => tool.name === 'bounty_list_auth_profiles')) process.exit(3);",
         "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_tool_telemetry')) process.exit(6);",
         "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_pipeline_analytics')) process.exit(7);",
@@ -107,6 +108,11 @@ test("installer copies a require-able complete MCP runtime", () => {
         "if (!server.TOOLS.some((tool) => tool.name === 'bounty_get_context_budget')) process.exit(21);",
         "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_verification_context')) process.exit(22);",
         "if (!server.TOOLS.some((tool) => tool.name === 'bounty_build_verification_adjudication')) process.exit(23);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_init_repo_session')) process.exit(24);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_repo_inventory')) process.exit(25);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_repo_prepare_env')) process.exit(26);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_repo_docker_run')) process.exit(27);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_repo_check')) process.exit(28);",
         "Promise.resolve(server.executeTool('bounty_list_auth_profiles', { target_domain: 'example.com' }))",
         "  .then((result) => { if (!result.ok || result.data.target_domain !== 'example.com') process.exit(4); })",
         "  .catch(() => process.exit(5));",
@@ -396,12 +402,13 @@ test("codex adapter installs direct skills and doctor checks MCP wiring", () => 
       targetAbs: workspace,
       serverPath: path.join(workspace, "mcp", "server.js"),
     });
-    assert.equal(install.skills, 6);
-    assert.equal(install.commands, 6);
+    assert.equal(install.skills, 7);
+    assert.equal(install.commands, 7);
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".codex-plugin", "plugin.json")));
     const manifest = JSON.parse(fs.readFileSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".codex-plugin", "plugin.json"), "utf8"));
     assert.equal(Object.prototype.hasOwnProperty.call(manifest, "skills"), false);
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-hunt", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-oss", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-status", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-debug", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-update", "SKILL.md")));
@@ -412,6 +419,7 @@ test("codex adapter installs direct skills and doctor checks MCP wiring", () => 
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "hacker-bob-hunt", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "hacker-bob-hunt", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-hunt.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-oss.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-export.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-egress.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".agents", "plugins", "marketplace.json")));

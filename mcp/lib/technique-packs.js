@@ -56,6 +56,13 @@ const HUNTER_KNOWLEDGE_DEFAULT_ID = "generic-rest-api";
 const HUNTER_KNOWLEDGE_MAX_ENTRIES = 4;
 const HUNTER_KNOWLEDGE_MAX_CHARS = 4500;
 const TECHNIQUE_PACK_ID_RE = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/;
+const TECHNIQUE_PACK_ID_ALIASES = Object.freeze({
+  "oss-native-code-c-parser-review": "oss-native-code-protocol-memory",
+  "oss-native-code-parser-review": "oss-native-code-protocol-memory",
+  "oss-native-code-memory-safety": "oss-native-code-protocol-memory",
+  "oss_native_code_memory_safety": "oss-native-code-protocol-memory",
+  "oss_native_code_protocol_memory": "oss-native-code-protocol-memory",
+});
 const DEFAULT_SUMMARY_ESTIMATED_TOKENS = 500;
 const DEFAULT_FULL_ESTIMATED_TOKENS = 1500;
 const TECHNIQUE_SUMMARY_ITEMS_PER_KIND = 4;
@@ -63,6 +70,8 @@ const TECHNIQUE_SUMMARY_ITEM_MAX_CHARS = 240;
 const TECHNIQUE_FULL_ITEMS_PER_KIND = 12;
 const TECHNIQUE_FULL_ITEM_MAX_CHARS = 900;
 const TECHNIQUE_SELECTION_MAX_CHARS = 6000;
+const TECHNIQUE_ATTEMPT_EVIDENCE_MAX_CHARS = 2000;
+const TECHNIQUE_ATTEMPT_OUTCOME_MAX_CHARS = 200;
 
 function registryWarning(source, { entryIndex = null, entryId = null, reason }) {
   const warning = {
@@ -253,12 +262,12 @@ function scoreTechniqueEntry(entry, surface) {
   );
 }
 
-function normalizeTechniquePackId(value, fieldName = "pack_id") {
+function normalizeTechniquePackId(value, fieldName = "pack_id", { resolveAlias = true } = {}) {
   const packId = assertNonEmptyString(value, fieldName);
   if (!TECHNIQUE_PACK_ID_RE.test(packId)) {
     throw new Error(`${fieldName} has invalid format`);
   }
-  return packId;
+  return resolveAlias ? (TECHNIQUE_PACK_ID_ALIASES[packId] || packId) : packId;
 }
 
 function normalizeCapabilityPacks(entry) {
@@ -286,7 +295,7 @@ function normalizeRegistryEntry(entry, registryVersion) {
   if (entry == null || typeof entry !== "object" || Array.isArray(entry)) {
     throw new Error("technique pack entry must be an object");
   }
-  const id = normalizeTechniquePackId(entry.id || "knowledge-entry", "technique_pack.id");
+  const id = normalizeTechniquePackId(entry.id || "knowledge-entry", "technique_pack.id", { resolveAlias: false });
   const title = assertNonEmptyString(entry.title || entry.id || "Hunter guidance", "technique_pack.title");
   const capabilityPacks = normalizeCapabilityPacks(entry);
   for (const capabilityPack of capabilityPacks) {
@@ -1008,19 +1017,31 @@ function summarizeTechniqueAttempt(record) {
   return summary;
 }
 
+function truncateTechniqueAttemptText(value, maxChars) {
+  const text = String(value);
+  if (text.length <= maxChars) {
+    return { value: text, truncated: false, total_chars: text.length };
+  }
+  return {
+    value: text.slice(0, maxChars),
+    truncated: true,
+    total_chars: text.length,
+  };
+}
+
 function logTechniqueAttempt(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   const surfaceId = assertNonEmptyString(args.surface_id, "surface_id");
   const packId = normalizeTechniquePackId(args.pack_id);
   const status = assertEnumValue(args.status, TECHNIQUE_ATTEMPT_STATUS_VALUES, "status");
-  const evidence = assertRequiredText(args.evidence, "evidence");
-  if (evidence.length > 2000) {
-    throw new Error("evidence must be at most 2000 characters");
-  }
-  const outcome = normalizeOptionalText(args.outcome, "outcome");
-  if (outcome && outcome.length > 200) {
-    throw new Error("outcome must be at most 200 characters");
-  }
+  const evidenceInput = assertRequiredText(args.evidence, "evidence");
+  const evidenceLimit = truncateTechniqueAttemptText(evidenceInput, TECHNIQUE_ATTEMPT_EVIDENCE_MAX_CHARS);
+  const evidence = evidenceLimit.value;
+  const outcomeInput = normalizeOptionalText(args.outcome, "outcome");
+  const outcomeLimit = outcomeInput == null
+    ? { value: null, truncated: false, total_chars: 0 }
+    : truncateTechniqueAttemptText(outcomeInput, TECHNIQUE_ATTEMPT_OUTCOME_MAX_CHARS);
+  const outcome = outcomeLimit.value;
 
   const wave = normalizeOptionalText(args.wave, "wave");
   const agent = normalizeOptionalText(args.agent, "agent");
@@ -1078,6 +1099,10 @@ function logTechniqueAttempt(args) {
       appended: 1,
       log_path: logPath,
       record: summarizeTechniqueAttempt(record),
+      truncated: {
+        evidence: evidenceLimit.truncated,
+        outcome: outcomeLimit.truncated,
+      },
       registry_warnings: packResult.registry_warnings,
     });
   });

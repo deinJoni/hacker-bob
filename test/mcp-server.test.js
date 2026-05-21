@@ -243,6 +243,11 @@ const EXPECTED_TOOL_NAMES = [
   "bounty_write_grade_verdict",
   "bounty_read_grade_verdict",
   "bounty_init_session",
+  "bounty_init_repo_session",
+  "bounty_repo_inventory",
+  "bounty_repo_prepare_env",
+  "bounty_repo_docker_run",
+  "bounty_repo_check",
   "bounty_read_session_state",
   "bounty_transition_phase",
   "bounty_apply_wave_merge",
@@ -1011,6 +1016,7 @@ test("mcp server public exports remain stable", () => {
     "buildCircuitBreakerSummary",
     "buildCoverageSummaryForSurface",
     "buildHeaderProfile",
+    "buildRepoInventory",
     "buildVerificationAdjudication",
     "chainAttemptsJsonlPath",
     "clearOperatorNote",
@@ -1029,6 +1035,7 @@ test("mcp server public exports remain stable", () => {
     "httpAuditJsonlPath",
     "importHttpTraffic",
     "importStaticArtifact",
+    "initRepoSession",
     "initSession",
     "listAuthProfiles",
     "listFindings",
@@ -1046,6 +1053,7 @@ test("mcp server public exports remain stable", () => {
     "normalizeStringArray",
     "normalizeTrafficRecord",
     "pipelineEventsJsonlPath",
+    "prepareRepoEnv",
     "promoteSurfaceLeads",
     "publicIntelPath",
     "rankAttackSurfaces",
@@ -1086,6 +1094,13 @@ test("mcp server public exports remain stable", () => {
     "renderFindingMarkdownEntry",
     "renderGradeVerdictMarkdown",
     "renderVerificationRoundMarkdown",
+    "repoCheck",
+    "repoChecksJsonlPath",
+    "repoCommandRunsJsonlPath",
+    "repoDockerRun",
+    "repoDockerfilePath",
+    "repoEnvPath",
+    "repoInventoryPath",
     "reportMarkdownPath",
     "reportWritten",
     "resolveAuthJsonPath",
@@ -1357,6 +1372,60 @@ test("MCP per-tool modules preserve representative tool behavior", () => {
   assert.equal(TOOL_MANIFEST.bounty_clear_operator_note.mutating, true);
   assert.equal(TOOL_MANIFEST.bounty_clear_operator_note.global_preapproval, false);
   assert.deepEqual(TOOL_MANIFEST.bounty_clear_operator_note.role_bundles, ["orchestrator"]);
+});
+
+test("OSS native-code surfaces can select and log a compatible technique pack", () => {
+  withTempHome(() => {
+    const domain = "repo-native-technique.example.com";
+    const surfaceId = "OSS-NATIVE-CODE";
+    seedSessionState(domain, {
+      target_kind: "repo",
+      target_url: "file:///tmp/libnfs",
+      repo: {
+        root_path: "/tmp/libnfs",
+      },
+      phase: "HUNT",
+    });
+    seedAttackSurfaces(domain, [{
+      id: surfaceId,
+      surface_type: "oss_native_code",
+      tech_stack: ["C", "XDR", "NFS", "RPC"],
+      endpoints: ["lib/libnfs-zdr.c", "lib/pdu.c", "nfs/nfs.c"],
+      params: ["length", "size", "buffer"],
+      bug_class_hints: ["signed_unsigned_mismatch", "integer_truncation"],
+      high_value_flows: ["malicious NFS server reply parsing"],
+      priority: "HIGH",
+    }]);
+    JSON.parse(startWave({
+      target_domain: domain,
+      wave_number: 1,
+      assignments: [{ agent: "a1", surface_id: surfaceId }],
+    }));
+
+    const selected = JSON.parse(selectTechniquePacks({
+      target_domain: domain,
+      surface_id: surfaceId,
+      include_attempted: true,
+    }));
+    assert.equal(selected.capability_pack, "oss_native_code");
+    assert.ok(
+      selected.technique_packs.some((pack) => pack.id === "oss-native-code-protocol-memory"),
+      "oss_native_code surface should receive a compatible native-code pack",
+    );
+
+    const attempt = JSON.parse(logTechniqueAttempt({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: surfaceId,
+      pack_id: "oss_native_code_memory_safety",
+      status: "attempted",
+      outcome: "no_finding",
+      evidence: "Synthetic C/XDR parser review attempt logged for native-code routing.",
+    }));
+    assert.equal(attempt.record.pack_id, "oss-native-code-protocol-memory");
+    assert.equal(attempt.record.capability_pack, "oss_native_code");
+  });
 });
 
 test("MCP tool registry validation rejects incomplete or inconsistent entries", () => {
@@ -2621,6 +2690,8 @@ test("bounty_init_session creates the initial state and bounty_read_session_stat
     const expectedState = {
       target: domain,
       target_url: targetUrl,
+      target_kind: "web",
+      repo: null,
       deep_mode: false,
       phase: "RECON",
       hunt_wave: 0,
@@ -2738,6 +2809,8 @@ test("legacy state normalization is applied while unknown fields remain on disk 
       state: {
         target: domain,
         target_url: "https://example.com",
+        target_kind: "web",
+        repo: null,
         deep_mode: false,
         phase: "RECON",
         hunt_wave: 0,
@@ -3686,6 +3759,8 @@ test("bounty_start_wave validates inputs, writes assignments, and updates pendin
     seedAttackSurface(domain, ["surface-a", "surface-b"]);
     const expectedState = {
       target: domain,
+      target_kind: "web",
+      repo: null,
       deep_mode: false,
       phase: "HUNT",
       hunt_wave: 1,
@@ -5294,11 +5369,18 @@ test("bounty_report_written emits report_written when report.md is present", () 
   });
 });
 
-test("bounty_report_written rejects when report.md is absent", () => {
+test("bounty_report_written returns structured pending state when report.md is absent", () => {
   withTempHome(() => {
     const domain = "no-report.example.com";
     seedSessionState(domain, { phase: "REPORT", hunt_wave: 1 });
-    assert.throws(() => reportWritten({ target_domain: domain }), /report\.md is not present/);
+    const result = JSON.parse(reportWritten({ target_domain: domain }));
+    assert.equal(result.report_written, false);
+    assert.equal(result.present, false);
+    assert.match(result.path, /report\.md$/);
+    assert.equal(result.next_action.kind, "write_report");
+
+    const eventsResult = readPipelineEvents(domain);
+    assert.equal(eventsResult.events.some((event) => event.type === "report_written"), false);
   });
 });
 
@@ -5658,6 +5740,29 @@ test("bounty_write_wave_handoff writes matching markdown and json with normalize
       waf_blocked_endpoints: [],
       lead_surface_ids: [],
     });
+  });
+});
+
+test("bounty_write_wave_handoff auto-truncates overlong chain_notes through tool validation", async () => {
+  await withTempHome(async () => {
+    const domain = "example.com";
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
+
+    const result = await executeTool("bounty_write_wave_handoff", {
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      surface_status: "complete",
+      summary: "Freeform handoff summary.",
+      chain_notes: ["c".repeat(360)],
+      content: "# Handoff\n",
+    });
+    assert.equal(result.ok, true);
+
+    const payload = JSON.parse(fs.readFileSync(result.data.written_json, "utf8"));
+    assert.equal(payload.chain_notes.length, 1);
+    assert.equal(payload.chain_notes[0].length, 300);
   });
 });
 
@@ -7672,6 +7777,12 @@ test("bounty_record_finding appends findings.jsonl and bounty_read_findings pres
           severity: "high",
           cwe: "CWE-639",
           endpoint: "/api/export",
+          file_path: null,
+          symbol: null,
+          manifest: null,
+          affected_package: null,
+          affected_version_range: null,
+          repro_command: null,
           description: "Authenticated user can export another account's data by changing account_id.",
           proof_of_concept: "curl https://example.com/api/export?account_id=2",
           response_evidence: "{\"account_id\":2}",
@@ -7694,6 +7805,12 @@ test("bounty_record_finding appends findings.jsonl and bounty_read_findings pres
           severity: "medium",
           cwe: "CWE-639",
           endpoint: "/comments",
+          file_path: null,
+          symbol: null,
+          manifest: null,
+          affected_package: null,
+          affected_version_range: null,
+          repro_command: null,
           description: "Unsanitized comment body executes in admin view.",
           proof_of_concept: "<script>alert(1)</script>",
           response_evidence: "<script>alert(1)</script>",
@@ -14983,6 +15100,9 @@ test("context budget and technique-pack MCP tools are deterministic and bounded"
     assert.ok(full.technique_pack.full_limits);
     assert.doesNotMatch(JSON.stringify(full), /WordPress REST/);
 
+    const nativeAlias = readTechniquePack("oss-native-code-c-parser-review", { mode: "summary" });
+    assert.equal(nativeAlias.technique_pack.id, "oss-native-code-protocol-memory");
+
     assert.throws(
       () => readTechniquePack("unknown-pack", { mode: "summary" }),
       /Unknown technique pack id/,
@@ -15116,6 +15236,25 @@ test("bounty_log_technique_attempt appends valid JSONL and rejects invalid input
     assert.equal(records[0].status, "attempted");
     assert.equal(records[0].outcome, "not_applicable");
     assert.match(records[0].ts, /^\d{4}-\d{2}-\d{2}T/);
+
+    const longAttempt = await executeTool("bounty_log_technique_attempt", {
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-graphql",
+      pack_id: "graphql",
+      status: "attempted",
+      outcome: "x".repeat(260),
+      evidence: "e".repeat(2100),
+    });
+    assert.equal(longAttempt.ok, true);
+    assert.equal(longAttempt.data.truncated.evidence, true);
+    assert.equal(longAttempt.data.truncated.outcome, true);
+
+    const recordsAfterLongAttempt = readTechniqueAttemptRecordsFromJsonl(domain);
+    assert.equal(recordsAfterLongAttempt.length, 2);
+    assert.equal(recordsAfterLongAttempt[1].evidence.length, 2000);
+    assert.equal(recordsAfterLongAttempt[1].outcome.length, 200);
 
     const pipelineEvents = readJsonl(pipelineEventsJsonlPath(domain));
     const attemptEvent = pipelineEvents.find((event) => event.type === "technique_attempt_logged");

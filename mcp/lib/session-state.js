@@ -5,6 +5,7 @@ const {
   AUTH_STATUS_VALUES,
   PHASE_VALUES,
   SESSION_PUBLIC_STATE_FIELDS,
+  TARGET_KIND_VALUES,
 } = require("./constants.js");
 const {
   assertEnumValue,
@@ -123,10 +124,27 @@ function terminallyBlockedSurfaceIds(state) {
   return list.map((entry) => entry.surface_id);
 }
 
-function buildInitialSessionState(domain, targetUrl, { deepMode = false } = {}) {
+function normalizeRepoMetadata(value, fieldName = "repo") {
+  if (value == null) return null;
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${fieldName} must be an object`);
+  }
+  const result = {
+    root_path: assertNonEmptyString(value.root_path, `${fieldName}.root_path`),
+  };
+  for (const key of ["source_url", "branch", "commit", "default_branch"]) {
+    const normalized = normalizeOptionalText(value[key], `${fieldName}.${key}`);
+    if (normalized) result[key] = normalized;
+  }
+  return result;
+}
+
+function buildInitialSessionState(domain, targetUrl, { deepMode = false, targetKind = "web", repo = null } = {}) {
   return {
     target: domain,
     target_url: targetUrl,
+    target_kind: targetKind,
+    repo,
     deep_mode: deepMode,
     phase: "RECON",
     hunt_wave: 0,
@@ -271,6 +289,8 @@ function publicSessionState(state) {
 function compactSessionState(state) {
   return {
     target: state.target,
+    target_kind: state.target_kind || "web",
+    repo: state.repo || null,
     deep_mode: state.deep_mode === true,
     phase: state.phase,
     hunt_wave: state.hunt_wave,
@@ -303,6 +323,10 @@ function normalizeSessionStateDocument(document, requestedDomain) {
   const normalized = {
     target: requestedDomain,
     target_url: assertNonEmptyString(document.target_url, "target_url"),
+    target_kind: document.target_kind == null
+      ? "web"
+      : assertEnumValue(document.target_kind, TARGET_KIND_VALUES, "target_kind"),
+    repo: normalizeRepoMetadata(document.repo, "repo"),
     deep_mode: document.deep_mode == null
       ? false
       : assertBoolean(document.deep_mode, "deep_mode"),
@@ -339,6 +363,12 @@ function normalizeSessionStateDocument(document, requestedDomain) {
     verification_snapshot_hash: normalizeOptionalText(document.verification_snapshot_hash, "verification_snapshot_hash"),
     verification_entered_at: normalizeOptionalText(document.verification_entered_at, "verification_entered_at"),
   };
+  if (normalized.target_kind === "repo" && !normalized.repo) {
+    throw new Error("repo metadata is required when target_kind='repo'");
+  }
+  if (normalized.target_kind !== "repo" && normalized.repo) {
+    throw new Error("repo metadata is only allowed when target_kind='repo'");
+  }
 
   // Disjointness invariant: a surface is either explored (hunter declared
   // complete) OR terminally_blocked (system promoted on stuck loop with no
@@ -400,6 +430,16 @@ function initSession(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   const targetUrl = assertNonEmptyString(args.target_url, "target_url");
   const deepMode = args.deep_mode == null ? false : assertBoolean(args.deep_mode, "deep_mode");
+  const targetKind = args.target_kind == null
+    ? "web"
+    : assertEnumValue(args.target_kind, TARGET_KIND_VALUES, "target_kind");
+  const repo = normalizeRepoMetadata(args.repo, "repo");
+  if (targetKind === "repo" && !repo) {
+    throw new Error("repo metadata is required when target_kind='repo'");
+  }
+  if (targetKind !== "repo" && repo) {
+    throw new Error("repo metadata is only allowed when target_kind='repo'");
+  }
 
   return withSessionLock(domain, () => {
     const dir = sessionDir(domain);
@@ -412,12 +452,13 @@ function initSession(args) {
       throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Session directory is not empty: ${dir}`);
     }
 
-    const state = buildInitialSessionState(domain, targetUrl, { deepMode });
+    const state = buildInitialSessionState(domain, targetUrl, { deepMode, targetKind, repo });
     writeFileAtomic(filePath, `${JSON.stringify(state, null, 2)}\n`);
     safeAppendPipelineEventDirect(domain, "session_started", {
       phase: state.phase,
       source: "bounty_init_session",
       deep_mode: state.deep_mode,
+      target_kind: state.target_kind,
     });
 
     return JSON.stringify({
@@ -735,10 +776,16 @@ function reportWritten(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   const reportPath = require("./paths.js").reportMarkdownPath(domain);
   if (!fs.existsSync(reportPath)) {
-    throw new ToolError(
-      ERROR_CODES.STATE_CONFLICT,
-      `report.md is not present at ${reportPath}; call bounty_report_written only after writing the report`,
-    );
+    return JSON.stringify({
+      version: 1,
+      report_written: false,
+      path: reportPath,
+      present: false,
+      next_action: {
+        kind: "write_report",
+        message: "Write the canonical session report.md, then call bounty_report_written again.",
+      },
+    });
   }
   const stats = fs.statSync(reportPath);
   safeAppendPipelineEventDirect(domain, "report_written", {

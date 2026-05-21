@@ -36,6 +36,7 @@ const {
   findingsJsonlPath,
   findingsMarkdownPath,
   gradeArtifactPaths,
+  repoCommandRunsJsonlPath,
   verificationRoundPaths,
 } = require("./paths.js");
 const {
@@ -92,6 +93,74 @@ function normalizeTextForDedupe(value) {
 
 function shortFingerprint(value) {
   return crypto.createHash("sha256").update(String(value || "")).digest("hex").slice(0, 16);
+}
+
+function shellQuoteForDisplay(value) {
+  const text = String(value || "");
+  if (/^[A-Za-z0-9_./:=@%+,-]+$/.test(text)) return text;
+  return `'${text.replace(/'/g, "'\\''")}'`;
+}
+
+function repoRunCommandVariants(command) {
+  if (!Array.isArray(command)) return [];
+  const variants = new Set();
+  variants.add(command.join(" "));
+  variants.add(command.map(shellQuoteForDisplay).join(" "));
+  variants.add(JSON.stringify(command));
+  if (command.length >= 3 && command[0] === "sh" && command[1] === "-lc") {
+    variants.add(command.slice(2).join(" "));
+  }
+  return Array.from(variants).filter(Boolean);
+}
+
+function readRepoCommandRunRecords(domain) {
+  const filePath = repoCommandRunsJsonlPath(domain);
+  if (!fs.existsSync(filePath)) return [];
+  const rows = [];
+  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      rows.push(JSON.parse(line));
+    } catch {
+      // Malformed run logs should not satisfy dynamic proof requirements.
+    }
+  }
+  return rows;
+}
+
+function repoRunMatchesReproCommand(record, reproCommand) {
+  const repro = String(reproCommand || "").trim();
+  if (!repro) return false;
+  if (!record || record.dry_run === true) return false;
+  if (record.runner !== "docker") return false;
+  if (record.status === "dry_run" || record.status === "docker_unavailable" || record.timed_out === true) {
+    return false;
+  }
+  return repoRunCommandVariants(record.command).some((variant) => {
+    const normalized = String(variant || "").trim();
+    return normalized === repro || normalized.includes(repro) || repro.includes(normalized);
+  });
+}
+
+function assertOssDynamicProofRequirement({ domain, capabilityPack, severity, reproCommand, validated }) {
+  if (validated !== true) return;
+  if (capabilityPack !== "oss_native_code") return;
+  if (!["critical", "high"].includes(severity)) return;
+  if (!reproCommand) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "high/critical oss_native_code findings require repro_command backed by a non-dry-run bounty_repo_docker_run; mark the surface partial with blocked_harness_runs if replay cannot run",
+    );
+  }
+  const matchingRun = readRepoCommandRunRecords(domain)
+    .some((record) => repoRunMatchesReproCommand(record, reproCommand));
+  if (!matchingRun) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "high/critical oss_native_code findings require a matching non-dry-run bounty_repo_docker_run entry before recording; static repo checks alone are insufficient for CVE-style native-code claims",
+    );
+  }
 }
 
 // surface_type is null on legacy findings.jsonl rows recorded before this
@@ -525,6 +594,12 @@ function normalizeFindingRecord(record, { expectedDomain = null, lineNumber = nu
       severity: assertEnumValue(record.severity, SEVERITY_VALUES, "severity"),
       cwe: normalizeOptionalText(record.cwe, "cwe"),
       endpoint: assertRequiredText(record.endpoint, "endpoint"),
+      file_path: normalizeOptionalText(record.file_path, "file_path"),
+      symbol: normalizeOptionalText(record.symbol, "symbol"),
+      manifest: normalizeOptionalText(record.manifest, "manifest"),
+      affected_package: normalizeOptionalText(record.affected_package, "affected_package"),
+      affected_version_range: normalizeOptionalText(record.affected_version_range, "affected_version_range"),
+      repro_command: normalizeOptionalText(record.repro_command, "repro_command"),
       description: assertRequiredText(record.description, "description"),
       proof_of_concept: assertRequiredText(record.proof_of_concept, "proof_of_concept"),
       response_evidence: normalizeOptionalText(record.response_evidence, "response_evidence"),
@@ -638,6 +713,14 @@ function renderFindingMarkdownEntry(finding) {
     ? `\n- **Capability Pack:** ${finding.capability_pack}${finding.hunter_agent ? ` (${finding.hunter_agent})` : ""}`
     : "";
   const authProfile = finding.auth_profile ? `\n- **Auth Profile:** ${finding.auth_profile}` : "";
+  const repoFields = [
+    finding.file_path ? `\n- **File:** ${finding.file_path}` : "",
+    finding.symbol ? `\n- **Symbol:** ${finding.symbol}` : "",
+    finding.manifest ? `\n- **Manifest:** ${finding.manifest}` : "",
+    finding.affected_package ? `\n- **Affected Package:** ${finding.affected_package}` : "",
+    finding.affected_version_range ? `\n- **Affected Version Range:** ${finding.affected_version_range}` : "",
+    finding.repro_command ? `\n- **Repro Command:** \`${finding.repro_command}\`` : "",
+  ].join("");
   let scBlock = "";
   if (finding.sc_evidence) {
     const e = finding.sc_evidence;
@@ -696,6 +779,7 @@ function renderFindingMarkdownEntry(finding) {
     surface,
     routing,
     authProfile,
+    repoFields,
     scBlock,
     "---\n\n",
   ].join("\n");
@@ -765,6 +849,12 @@ function recordFinding(args) {
       severity: args.severity,
       cwe: args.cwe,
       endpoint: args.endpoint,
+      file_path: args.file_path,
+      symbol: args.symbol,
+      manifest: args.manifest,
+      affected_package: args.affected_package,
+      affected_version_range: args.affected_version_range,
+      repro_command: args.repro_command,
       description: args.description,
       proof_of_concept: args.proof_of_concept,
       response_evidence: args.response_evidence,
@@ -782,6 +872,14 @@ function recordFinding(args) {
       auth_profile: args.auth_profile,
       force_record: args.force_record === true,
     }, { expectedDomain: domain });
+
+    assertOssDynamicProofRequirement({
+      domain,
+      capabilityPack: finding.capability_pack,
+      severity: finding.severity,
+      reproCommand: finding.repro_command,
+      validated: finding.validated,
+    });
 
     const duplicate = existingFindings.find((existing) => existing.dedupe_key === finding.dedupe_key);
     if (duplicate && args.force_record !== true) {

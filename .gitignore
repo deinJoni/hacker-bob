@@ -1,6 +1,7 @@
 node_modules/
 testing/**/node_modules/
 site/dist/
+CODEX_VISUALIZATION/dist/
 .DS_Store
 *.log
 *.tsbuildinfo

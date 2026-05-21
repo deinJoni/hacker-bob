@@ -241,11 +241,13 @@ test("Codex plugin manifest and direct skills expose portable Bob contracts", ()
   assert.match(mcp.mcpServers.bountyagent.args[0], /mcp\/server\.js$/);
 
   const hunt = readFile("adapters/codex/skills/bob-hunt/SKILL.md");
+  const oss = readFile("adapters/codex/skills/bob-oss/SKILL.md");
   const status = readFile("adapters/codex/skills/bob-status/SKILL.md");
   const debug = readFile("adapters/codex/skills/bob-debug/SKILL.md");
   const exportSkill = readFile("adapters/codex/skills/bob-export/SKILL.md");
   const egressSkill = readFile("adapters/codex/skills/bob-egress/SKILL.md");
   assert.equal(parseFrontmatter(hunt, "adapters/codex/skills/bob-hunt/SKILL.md").name, "bob-hunt");
+  assert.equal(parseFrontmatter(oss, "adapters/codex/skills/bob-oss/SKILL.md").name, "bob-oss");
   assert.equal(parseFrontmatter(status, "adapters/codex/skills/bob-status/SKILL.md").name, "bob-status");
   assert.equal(parseFrontmatter(debug, "adapters/codex/skills/bob-debug/SKILL.md").name, "bob-debug");
   assert.equal(parseFrontmatter(exportSkill, "adapters/codex/skills/bob-export/SKILL.md").name, "bob-export");
@@ -261,7 +263,17 @@ test("Codex plugin manifest and direct skills expose portable Bob contracts", ()
   assert.match(hunt, /wait_agent/);
   assert.match(hunt, /close_agent/);
   assert.match(hunt, /host_agent_id -> w\[wave\]\/a\[agent\]\/surface_id/);
-  assert.doesNotMatch(hunt + status + debug + exportSkill + egressSkill, /CLAUDE_PROJECT_DIR|mcp__bountyagent__|\/bob:|\bClaude\b|Agent\(subagent_type|subagent_type|run_in_background|\bTask\b|SubagentStop/);
+  assert.match(oss, /bounty_init_repo_session/);
+  assert.match(oss, /bounty_repo_inventory/);
+  assert.match(oss, /bounty_repo_prepare_env/);
+  assert.match(oss, /bounty_repo_docker_run/);
+  assert.match(oss, /bounty_repo_check/);
+  assert.match(oss, /bounty_repo_check\(\{ target_domain, file_path/);
+  assert.match(oss, /oss_native_code/);
+  assert.match(oss, /C\/C\+\+ surfaces/);
+  assert.match(oss, /attacker-controlled input/);
+  assert.match(oss, /false positive/);
+  assert.doesNotMatch(hunt + oss + status + debug + exportSkill + egressSkill, /CLAUDE_PROJECT_DIR|mcp__bountyagent__|\/bob:|\bClaude\b|Agent\(subagent_type|subagent_type|run_in_background|\bTask\b|SubagentStop/);
   assert.match(status, /mcp\/lib\/update-check\.js/);
   assert.match(exportSkill, /mcp\/lib\/bob-export\.js/);
   assert.match(exportSkill, /no v1 flags/);
@@ -279,6 +291,45 @@ test("Codex plugin manifest and direct skills expose portable Bob contracts", ()
     assert.match(command, new RegExp(`\\$bob-${commandId}`));
     assert.match(command, /\$ARGUMENTS/);
     assert.doesNotMatch(command, /CLAUDE_PROJECT_DIR|mcp__bountyagent__/);
+  }
+});
+
+test("hunter technique registry includes an OSS native-code pack", () => {
+  const knowledge = JSON.parse(readFile(".hacker-bob/knowledge/hunter-techniques.json"));
+  const pack = knowledge.entries.find((entry) => entry.id === "oss-native-code-protocol-memory");
+
+  assert.ok(pack, "missing oss-native-code-protocol-memory technique pack");
+  assert.ok(pack.capability_packs.includes("oss_native_code"));
+
+  const serialized = JSON.stringify(pack);
+  assert.match(serialized, /XDR/);
+  assert.match(serialized, /signed\/unsigned/);
+  assert.match(serialized, /use-after-free|double-free/);
+});
+
+test("OSS prompts require build intent, replay evidence, and coverage before completion", () => {
+  const ossPrompts = [
+    readFile(".claude/skills/bob-oss/SKILL.md"),
+    readFile("adapters/codex/skills/bob-oss/SKILL.md"),
+  ];
+  const hunterPrompts = [
+    readFile(".claude/agents/hunter-agent.md"),
+    readFile("adapters/codex/skills/bob-oss/SKILL.md"),
+  ];
+
+  for (const prompt of ossPrompts) {
+    assert.match(prompt, /--build/);
+    assert.match(prompt, /--allow-network/);
+    assert.match(prompt, /build_image: true[\s\S]*dry_run: false/);
+    assert.match(prompt, /do not record a CVE-style native-code finding from static reading alone/);
+    assert.match(prompt, /matching non-dry-run replay logged before recording/);
+  }
+
+  for (const prompt of hunterPrompts) {
+    assert.match(prompt, /surface_status: complete` requires at least one logged coverage row or a recorded finding/);
+    assert.match(prompt, /zero-coverage static summaries must be `partial`/);
+    assert.match(prompt, /High\/critical native-code findings require a real non-dry-run `bounty_repo_docker_run` replay matching `repro_command`/);
+    assert.match(prompt, /rather than recording a static-only CVE claim/);
   }
 });
 
@@ -413,6 +464,8 @@ test("hunter frontmatter excludes Write and still exposes wave handoff MCP tools
   assert.ok(tools.includes("mcp__bountyagent__bounty_read_http_audit"));
   assert.ok(tools.includes("mcp__bountyagent__bounty_import_static_artifact"));
   assert.ok(tools.includes("mcp__bountyagent__bounty_static_scan"));
+  assert.ok(tools.includes("mcp__bountyagent__bounty_repo_check"));
+  assert.ok(tools.includes("mcp__bountyagent__bounty_repo_docker_run"));
   assert.ok(tools.includes("mcp__bountyagent__bounty_record_surface_leads"));
   assert.ok(tools.includes("mcp__bountyagent__bounty_read_surface_leads"));
   assert.ok(tools.includes("mcp__bountyagent__bounty_get_context_budget"));
@@ -1727,8 +1780,9 @@ test("renderer source files contain no per-chain workflow strings (pack.spawn is
 });
 
 test("hunter agent tool counts stay bounded under capability packs (anti-cruft budget)", () => {
-  // Cap routed hunters tightly. The web hunter has explicit web-only technique
-  // pack tools; smart-contract hunters stay on the stricter pack budget.
+  // Cap routed hunters tightly. The web/OSS hunter carries web technique tools
+  // plus two session-scoped repo evidence tools; smart-contract hunters stay on
+  // the stricter pack budget.
   const HUNTER_MCP_TOOL_BUDGET = 16;
   const agentNameToRoleId = {};
   for (const [roleId, spec] of Object.entries(CLAUDE_ROLE_SPECS)) {
@@ -1740,7 +1794,7 @@ test("hunter agent tool counts stay bounded under capability packs (anti-cruft b
   for (const pack of Object.values(CAPABILITY_PACKS)) {
     const roleId = agentNameToRoleId[pack.hunter_agent];
     const tools = mcpToolNamesForRole(roleId);
-    const budget = pack.brief_profile === "web" ? 18 : HUNTER_MCP_TOOL_BUDGET;
+    const budget = pack.brief_profile === "web" ? 20 : HUNTER_MCP_TOOL_BUDGET;
     assert.ok(
       tools.length <= budget,
       `pack ${pack.id} hunter ${pack.hunter_agent} has ${tools.length} MCP tools (budget ${budget}); justify or split before raising the cap`,
@@ -1783,9 +1837,11 @@ test("verifier role bundle has only documented mutating tools and no orchestrati
     [
       "bounty_evm_fetch_source",       // SC source-cache populate during re-run
       "bounty_http_scan",              // web PoC replay (existing baseline)
+      "bounty_repo_check",             // OSS repo-local evidence replay
+      "bounty_repo_docker_run",        // OSS Docker build/repro replay
       "bounty_write_verification_round" // the verifier's own write path
     ].sort(),
-    "Only evm-fetch-source, http_scan, and write-verification-round may be mutating in the verifier bundle. New mutating tools must be reviewed before joining verifier role.",
+    "Only evm-fetch-source, http_scan, repo_check, repo_docker_run, and write-verification-round may be mutating in the verifier bundle. New mutating tools must be reviewed before joining verifier role.",
   );
   const forbidden = [
     "bounty_record_finding",
@@ -2555,6 +2611,7 @@ test("hunter and orchestrator prompts keep the structured handoff contract expli
   assert.match(hunterPrompt, /full_pack_read_limit/);
   assert.match(hunterPrompt, /bounty_log_technique_attempt/);
   assert.match(hunterPrompt, /Every call requires a valid `status` and non-empty `evidence`; include `outcome` when the attempt has a concrete result/);
+  assert.match(hunterPrompt, /bounty_repo_check\(\{ target_domain, file_path, pattern\?, check_type\? \}\)/);
   assert.match(hunterPrompt, /completion-status `bounty_log_technique_attempt`/);
   assert.match(hunterPrompt, /If finalization says the technique-attempt log is missing/);
   assert.match(hunterPrompt, /technique-pack-reads\.jsonl/);

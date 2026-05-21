@@ -27,7 +27,10 @@
 //           bounty_read_technique_pack, bounty_log_technique_attempt,
 //           bounty_read_capability_playbook,
 //           bounty_read_verification_context,
-//           bounty_build_verification_adjudication
+//           bounty_build_verification_adjudication,
+//           bounty_init_repo_session, bounty_repo_inventory,
+//           bounty_repo_prepare_env, bounty_repo_docker_run,
+//           bounty_repo_check
 
 const { redactUrlSensitiveValues } = require("./redaction.js");
 const {
@@ -69,6 +72,11 @@ const {
   httpAuditJsonlPath,
   pipelineEventsJsonlPath,
   publicIntelPath,
+  repoCommandRunsJsonlPath,
+  repoChecksJsonlPath,
+  repoDockerfilePath,
+  repoEnvPath,
+  repoInventoryPath,
   reportMarkdownPath,
   sessionDir,
   sessionLockPath,
@@ -227,6 +235,15 @@ const {
   readSurfaceLeads,
   recordSurfaceLeads,
 } = require("./lib/surface-leads.js");
+const {
+  buildRepoInventory,
+  initRepoSession,
+  repoCheck,
+} = require("./lib/repo-target.js");
+const {
+  prepareRepoEnv,
+  repoDockerRun,
+} = require("./lib/repo-env.js");
 
 function startServer() {
   startStdioServer({ tools: TOOLS, executeTool });
@@ -253,6 +270,7 @@ module.exports = {
   gradeArtifactPaths,
   getContextBudget,
   httpAuditJsonlPath,
+  initRepoSession,
   importStaticArtifact,
   importHttpTraffic,
   initSession,
@@ -271,7 +289,14 @@ module.exports = {
   normalizeSessionStateDocument,
   normalizeTrafficRecord,
   pipelineEventsJsonlPath,
+  prepareRepoEnv,
   publicIntelPath,
+  repoCommandRunsJsonlPath,
+  repoChecksJsonlPath,
+  repoDockerfilePath,
+  repoDockerRun,
+  repoEnvPath,
+  repoInventoryPath,
   bountyPublicIntel,
   readAuthJson,
   readChainAttempts,
@@ -331,6 +356,8 @@ module.exports = {
   readVerificationRound,
   recordFinding,
   recordSurfaceLeads,
+  buildRepoInventory,
+  repoCheck,
   renderEvidencePacksMarkdown,
   renderFindingMarkdownEntry,
   renderGradeVerdictMarkdown,

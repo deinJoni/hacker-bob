@@ -5,6 +5,7 @@ const WAVE_ID_RE = /^w([1-9]\d*)$/;
 const AGENT_ID_RE = /^a([1-9]\d*)$/;
 
 const SEVERITY_VALUES = ["critical", "high", "medium", "low", "info"];
+const TARGET_KIND_VALUES = ["web", "repo"];
 const SURFACE_TYPE_VALUES = ["web", "smart_contract"];
 const CHAIN_FAMILY_VALUES = ["evm", "svm", "aptos", "sui", "substrate", "cosmwasm"];
 const SVM_CLUSTER_VALUES = ["mainnet-beta", "devnet", "testnet"];
@@ -96,6 +97,8 @@ const SESSION_LOCK_STALE_MS = 300_000;
 const SESSION_PUBLIC_STATE_FIELDS = [
   "target",
   "target_url",
+  "target_kind",
+  "repo",
   "deep_mode",
   "phase",
   "hunt_wave",
@@ -164,6 +167,7 @@ module.exports = {
   SUBSTRATE_NETWORK_VALUES,
   SUI_NETWORK_VALUES,
   SURFACE_TYPE_VALUES,
+  TARGET_KIND_VALUES,
   SVM_CLUSTER_VALUES,
   TRAFFIC_IMPORT_MAX_ENTRIES,
   TRAFFIC_LOG_MAX_RECORDS,

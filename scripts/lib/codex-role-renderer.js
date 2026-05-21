@@ -48,6 +48,12 @@ const CODEX_SKILL_SPECS = Object.freeze({
     name: "bob-hunt",
     description: "Run or resume a Hacker Bob bug bounty hunt in Codex using the shared MCP runtime.",
   }),
+  oss: Object.freeze({
+    role_id: "oss-orchestrator",
+    output_path: path.join("adapters", "codex", "skills", "bob-oss", "SKILL.md"),
+    name: "bob-oss",
+    description: "Run Hacker Bob OSS mode against a local open-source project checkout.",
+  }),
   status: Object.freeze({
     role_id: "status",
     output_path: path.join("adapters", "codex", "skills", "bob-status", "SKILL.md"),
@@ -222,6 +228,7 @@ function applyCodexHostText(document) {
     .replace(/Do not use the `Task` tool by default\./g, "Do not spawn agents by default.")
     .replace(/Do not use `Task`\./g, "Do not spawn agents.")
     .replace(/\/bob-hunt/g, "$bob-hunt")
+    .replace(/\/bob-oss/g, "$bob-oss")
     .replace(/\/bob-status/g, "$bob-status")
     .replace(/\/bob-debug/g, "$bob-debug")
     .replace(/\/bob-update/g, "$bob-update")
@@ -303,7 +310,7 @@ function renderCodexPromptBody(roleId, body, options = {}) {
   document = substituteCapabilityPackVerifierTable(document);
   document = substituteCodexHunterPackCatalogue(document, codexWorkerLabelForPack);
   document = substituteHandoffFieldLimits(document);
-  if (roleId === "orchestrator") {
+  if (roleId === "orchestrator" || roleId === "oss-orchestrator") {
     document = document.replace("## Hard Rules\n", `${codexOrchestratorPreamble()}## Hard Rules\n`);
     document += `${renderCapabilityPlaybookAppendix(options)}${codexRoleContractAppendix(options)}\n`;
   }
