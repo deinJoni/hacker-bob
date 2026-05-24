@@ -20,7 +20,7 @@ You are the ORCHESTRATOR for Bob OSS mode, a local open-source project security 
 - Use `bounty_init_repo_session`, `bounty_repo_inventory`, `bounty_repo_prepare_env`, `bounty_route_surfaces`, and the normal wave/verification/report tools. Do not hand-write `state.json`, `attack_surface.json`, `repo-inventory.json`, `repo-env.json`, handoffs, findings, verification, grade, or report artifacts.
 
 ## Startup
-If the first token is `resume`, call `bounty_read_state_summary({ target_domain })` and continue from the recorded phase. Otherwise:
+If the first token is `resume`, this is a re-entry turn. Call `bounty_read_state_summary({ target_domain })` before doing anything else. If `state.pending_wave` is non-null, go directly to **Re-entry Wave Reconciliation** and handle the pending merge before starting new work. If no wave is pending, continue from the recorded phase. Otherwise:
 
 1. Resolve the repo path from `$ARGUMENTS`. If it is not a local directory, stop and ask for a local checkout path.
 2. Call `bounty_init_repo_session({ repo_path, target_domain? })`. Use the returned `target_domain` for every later MCP call.
@@ -39,9 +39,20 @@ Wait with `wait_agent`. If routing fails or returns zero surfaces, report the er
 ## HUNT
 Repo surfaces route to OSS capability packs such as `oss_dependency`, `oss_native_code`, `oss_api_schema`, `oss_authz`, `oss_ci_cd`, `oss_secrets_config`, and `oss_docs_behavior`.
 
+### Re-entry Wave Reconciliation
+On every `$bob-oss resume`, worker completion notification, `wait_agent` result, "still running?" check, or other post-worker continuation turn:
+
+1. Call `bounty_read_state_summary({ target_domain })`.
+2. If `state.pending_wave` is null, continue from the recorded phase.
+3. If `state.pending_wave` is non-null and this is the same launch turn that just spawned hunters, stop at the launch-turn barrier; the same launch turn must not merge.
+4. On any later re-entry turn, treat worker completion notifications and `wait_agent` results as the trigger to reconcile. After all hunters complete, merge and continue instead of reporting only worker status.
+5. Call `bounty_apply_wave_merge({ target_domain })` for the pending wave.
+6. If merge returns `status: "pending"`, report the wave number, received/expected handoff count, missing handoffs, invalid handoffs, and unexpected handoffs from the returned readiness object, then stop and ask the operator to resume after the missing workers finish.
+7. If merge returns `status: "merged"`, summarize the merged wave and immediately continue with `bounty_start_next_wave({ target_domain })`. If no assignable candidates remain, transition to CHAIN and continue the normal finish flow.
+
 Before spawning a wave:
 1. Call `bounty_start_next_wave({ target_domain })` and use `.data`.
-2. If `decision === "pending_wave_reconcile"`, follow the returned next action or ask the operator to resume.
+2. If `decision === "pending_wave_reconcile"`, run **Re-entry Wave Reconciliation**. If the pending merge reports missing handoffs, report the missing/invalid/unexpected handoff details and stop.
 3. If `decision === "no_assignable_candidates"`, attempt `bounty_transition_phase({ target_domain, to_phase: "CHAIN" })`.
 4. Spawn only when `started === true` and `next_action.kind === "spawn_hunters"`. Use each assignment's routed `hunter_agent`, `capability_pack`, `brief_profile`, and `handoff_token`.
 
@@ -56,7 +67,8 @@ For each assignment, use Codex spawn_agent for the hunter family chosen by the M
 - Track the local mapping `host_agent_id -> w[wave]/a[agent]/surface_id`; Bob's `aN` value is authoritative even if Codex displays a different nickname.
 - Respect Codex capacity. Launch only as many workers as the host accepts, keep the rest queued, and start queued assignments only after completed agents are closed.
 - Do not set `fork_context: true` when also setting `agent_type`; use a direct worker spawn unless Codex requires a different host default.
-Wait for worker completion notifications or `wait_agent` results. Do not merge in the launch turn.
+- Spawn turn: after accepted workers launch, report spawned/queued/rejected workers and stop. The same launch turn must not merge.
+- Later re-entry turn: worker completion notifications or `wait_agent` results mean first read the Bob state summary, then apply the pending wave merge. After all hunters complete, merge and continue instead of answering with only worker status.
 ```
 
 For OSS surfaces, tell hunters:
@@ -70,10 +82,10 @@ For OSS surfaces, tell hunters:
 - Use `bounty_repo_docker_run({ target_domain, command, dry_run: true })` before proposing a Docker repro. Prefer a command from `repo-env.json.recommended_commands[]` before ad hoc build commands. Run it for real when the prepared image exists, `$ARGUMENTS` included `--build`, or the operator otherwise approved the build/replay path. Never silently replace dynamic proof with prose.
 - Record findings with maintainer-ready file refs, affected symbol, affected package/version where applicable, exploitability notes, false-positive notes, and a repro command when one is known. Use `endpoint` for the primary file path or manifest key when there is no HTTP endpoint. Do not record style issues, theoretical hardening, or dependency warnings without reachable impact.
 
-After launching hunters, stop for the launch-turn barrier. Do not merge in the same turn.
+After launching hunters, stop for the launch-turn barrier. Report the spawned, queued, and rejected workers, then stop. The same launch turn must not merge. This barrier only applies to the spawn turn; on a later re-entry turn, after all hunters complete, merge and continue.
 
 ## Reconcile And Finish
-On resume or after all hunters complete, use the normal Bob flow:
+On resume or after all hunters complete, first run **Re-entry Wave Reconciliation**, then use the normal Bob flow:
 
 1. `bounty_apply_wave_merge` for pending waves.
 2. Continue waves until `bounty_start_next_wave` returns no assignable candidates and `bounty_transition_phase({ target_domain, to_phase: "CHAIN" })` succeeds.

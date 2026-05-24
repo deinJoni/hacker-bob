@@ -143,7 +143,8 @@ For each assignment, use Codex spawn_agent for the hunter family chosen by the M
 - Track the local mapping `host_agent_id -> w[wave]/a[agent]/surface_id`; Bob's `aN` value is authoritative even if Codex displays a different nickname.
 - Respect Codex capacity. Launch only as many workers as the host accepts, keep the rest queued, and start queued assignments only after completed agents are closed.
 - Do not set `fork_context: true` when also setting `agent_type`; use a direct worker spawn unless Codex requires a different host default.
-Wait for worker completion notifications or `wait_agent` results. Do not merge in the launch turn.
+- Spawn turn: after accepted workers launch, report spawned/queued/rejected workers and stop. The same launch turn must not merge.
+- Later re-entry turn: worker completion notifications or `wait_agent` results mean first read the Bob state summary, then apply the pending wave merge. After all hunters complete, merge and continue instead of answering with only worker status.
 ```
 
 Smart-contract spawn dispatch:

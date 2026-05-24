@@ -434,10 +434,23 @@ test("codex adapter installs direct skills and doctor checks MCP wiring", () => 
     assert.equal(doctor.ok, true);
     assert.ok(doctor.checks.some((check) => check.id === "codex_plugin_manifest" && check.status === "ok"));
     assert.ok(doctor.checks.some((check) => check.id === "codex_global_skills" && check.status === "ok"));
+    assert.ok(doctor.checks.some((check) => check.id === "codex_global_skills_fresh" && check.status === "warn"));
+    fs.cpSync(path.join(ROOT, "adapters", "codex", "skills"), path.join(workspace, "adapters", "codex", "skills"), { recursive: true });
+    const sourceBackedDoctor = CODEX_ADAPTER.doctor({ targetAbs: workspace });
+    assert.equal(sourceBackedDoctor.ok, true);
+    assert.ok(sourceBackedDoctor.checks.some((check) => check.id === "codex_global_skills_fresh" && check.status === "ok"));
     assert.ok(doctor.checks.some((check) => check.id === "codex_plugin_skills_clean" && check.status === "ok"));
     assert.ok(doctor.checks.some((check) => check.id === "codex_plugin_mcp" && check.status === "ok"));
     assert.ok(doctor.checks.some((check) => check.id === "codex_plugin_commands" && check.status === "ok"));
     assert.ok(doctor.checks.some((check) => check.id === "codex_plugin_marketplace" && check.status === "ok"));
+
+    fs.appendFileSync(path.join(tempHome, ".codex", "skills", "bob-oss", "SKILL.md"), "\n# stale local edit\n", "utf8");
+    const staleDoctor = CODEX_ADAPTER.doctor({ targetAbs: workspace });
+    assert.equal(staleDoctor.ok, false);
+    const freshness = staleDoctor.checks.find((check) => check.id === "codex_global_skills_fresh");
+    assert.equal(freshness.status, "error");
+    assert.equal(freshness.detail.stale.some((item) => item.skill === "bob-oss" && item.reason === "content_mismatch"), true);
+    assert.equal(freshness.detail.reinstall, "node bin/hacker-bob.js install . --adapter codex");
 
     const dryRun = CODEX_ADAPTER.uninstall({ sourceRoot: ROOT, targetAbs: workspace, dryRun: true });
     assert.equal(dryRun.dry_run, true);

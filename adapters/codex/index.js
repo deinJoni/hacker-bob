@@ -358,6 +358,38 @@ function installDirectSkills(sourceRoot, home = codexHome()) {
   return copied.sort();
 }
 
+function directSkillFreshness(sourceRoot, home = codexHome()) {
+  const result = {
+    stale: [],
+    missingSource: [],
+  };
+  for (const spec of Object.values(CODEX_SKILL_SPECS)) {
+    const source = path.join(sourceRoot, spec.output_path);
+    const installed = directSkillTargetPath(spec, home);
+    if (!fileExists(source)) {
+      result.missingSource.push({
+        skill: spec.name,
+        reason: "source_missing",
+        source,
+        installed,
+      });
+      continue;
+    }
+    if (!fileExists(installed)) continue;
+    const sourceText = fs.readFileSync(source, "utf8");
+    const installedText = fs.readFileSync(installed, "utf8");
+    if (sourceText !== installedText) {
+      result.stale.push({
+        skill: spec.name,
+        reason: "content_mismatch",
+        source,
+        installed,
+      });
+    }
+  }
+  return result;
+}
+
 function tomlString(value) {
   return `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
 }
@@ -553,6 +585,21 @@ function doctor({ targetAbs }) {
     });
   } else {
     addCheck(checks, "error", "codex_global_skills", "Codex Bob skills are missing", { missing: missingSkills });
+  }
+
+  const skillFreshness = directSkillFreshness(targetAbs);
+  if (skillFreshness.stale.length > 0) {
+    addCheck(checks, "error", "codex_global_skills_fresh", "Codex Bob global skills are stale", {
+      stale: skillFreshness.stale,
+      reinstall: "node bin/hacker-bob.js install . --adapter codex",
+    });
+  } else if (skillFreshness.missingSource.length > 0) {
+    addCheck(checks, "warn", "codex_global_skills_fresh", "Codex Bob source skills are unavailable, so freshness comparison was skipped", {
+      missing_source: skillFreshness.missingSource,
+      skillRoot: directSkillTargetRoot(),
+    });
+  } else {
+    addCheck(checks, "ok", "codex_global_skills_fresh", "Codex Bob global skills match this install target");
   }
 
   const stalePluginSkills = STALE_PLUGIN_SKILL_DIRS
@@ -821,6 +868,7 @@ module.exports = {
   commandIds,
   commandSpec,
   directSkillSourceRoot,
+  directSkillFreshness,
   directSkillTargetPath,
   directSkillTargetRoot,
   doctor,

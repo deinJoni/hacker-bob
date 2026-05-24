@@ -2451,6 +2451,78 @@ test("pipeline analytics uses recent technique-pack read artifacts as pending-wa
   });
 });
 
+test("pipeline analytics flags delayed wave reconciliation after all hunters stop", () => {
+  withTempHome(() => {
+    const domain = "delayed-reconcile.example";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      pending_wave: null,
+      hunt_wave: 1,
+      explored: ["surface-a", "surface-b"],
+    });
+    seedAttackSurface(domain, ["surface-a", "surface-b"]);
+    seedAssignments(domain, 1, [
+      { agent: "a1", surface_id: "surface-a" },
+      { agent: "a2", surface_id: "surface-b" },
+    ]);
+    writeFileAtomic(pipelineEventsJsonlPath(domain), [
+      {
+        version: 1,
+        ts: "2026-05-24T18:00:00.000Z",
+        target_domain: domain,
+        type: "wave_started",
+        wave_number: 1,
+        status: "started",
+        source: "test",
+        counts: { assignments: 2 },
+      },
+      {
+        version: 1,
+        ts: "2026-05-24T18:10:00.000Z",
+        target_domain: domain,
+        type: "hunter_stopped",
+        wave_number: 1,
+        agent: "a1",
+        surface_id: "surface-a",
+        status: "allowed",
+        source: "bounty_finalize_hunter_run",
+        counts: { handoff_present: 1, handoff_valid: 1 },
+      },
+      {
+        version: 1,
+        ts: "2026-05-24T18:31:00.000Z",
+        target_domain: domain,
+        type: "hunter_stopped",
+        wave_number: 1,
+        agent: "a2",
+        surface_id: "surface-b",
+        status: "allowed",
+        source: "bounty_finalize_hunter_run",
+        counts: { handoff_present: 1, handoff_valid: 1 },
+      },
+      {
+        version: 1,
+        ts: "2026-05-24T19:00:00.000Z",
+        target_domain: domain,
+        type: "wave_merged",
+        wave_number: 1,
+        status: "merged",
+        source: "bounty_apply_wave_merge",
+        counts: { assignments: 2, handoffs: 2 },
+      },
+    ].map((event) => JSON.stringify(event)).join("\n") + "\n");
+
+    const analytics = JSON.parse(readPipelineAnalytics({ target_domain: domain, include_events: true }));
+    assert.ok(analytics.sessions[0].health.reasons.includes("delayed_wave_reconciliation"));
+    const bottleneck = analytics.bottlenecks.find((item) => item.code === "delayed_wave_reconciliation");
+    assert.ok(bottleneck);
+    assert.equal(bottleneck.severity, "needs_attention");
+    assert.equal(bottleneck.evidence[0].waves[0].wave_number, 1);
+    assert.equal(bottleneck.evidence[0].waves[0].delay_ms, 29 * 60 * 1000);
+    assert.match(analytics.next_actions[0].action, /resume flow after hunter completion/);
+  });
+});
+
 test("pipeline analytics reports chain attempts, chain duration, and no-attempt bottleneck", () => {
   withTempHome(() => {
     const domain = "chain-analytics.example.com";

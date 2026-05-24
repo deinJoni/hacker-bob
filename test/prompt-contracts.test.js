@@ -273,6 +273,13 @@ test("Codex plugin manifest and direct skills expose portable Bob contracts", ()
   assert.match(oss, /C\/C\+\+ surfaces/);
   assert.match(oss, /attacker-controlled input/);
   assert.match(oss, /false positive/);
+  assert.match(oss, /Re-entry Wave Reconciliation/);
+  assert.match(oss, /post-worker continuation turn/);
+  assert.match(oss, /After all hunters complete, merge and continue/);
+  assert.match(oss, /If merge returns `status: "pending"`[\s\S]*missing handoffs[\s\S]*stop/);
+  assert.match(oss, /same launch turn must not merge/);
+  assert.match(oss, /repo-env\.json\.recommended_commands\[\]/);
+  assert.match(oss, /Do not add unsupported repo-tool fields[\s\S]*`replay_context` is for verifier\/evidence replay only/);
   assert.doesNotMatch(hunt + oss + status + debug + exportSkill + egressSkill, /CLAUDE_PROJECT_DIR|mcp__bountyagent__|\/bob:|\bClaude\b|Agent\(subagent_type|subagent_type|run_in_background|\bTask\b|SubagentStop/);
   assert.match(status, /mcp\/lib\/update-check\.js/);
   assert.match(exportSkill, /mcp\/lib\/bob-export\.js/);
