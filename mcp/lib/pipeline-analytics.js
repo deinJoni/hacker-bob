@@ -51,11 +51,15 @@ const AUTHORITY_DERIVED_EVENT_FIELDS = Object.freeze([
 const {
   PIPELINE_EVENT_TYPES,
   PIPELINE_EVENT_VERSION,
+  appendPipelineEventDirect,
   capString,
   normalizePipelineEvent,
   normalizePipelineEventForRead,
   normalizePositiveInteger,
   pipelineAnalyticsEnabled,
+  safeAppendPipelineEventDirect,
+  safeAppendPipelineEventWithSessionLock,
+  safeRecordHunterStoppedPipelineEvent,
   timestampMs,
 } = require("./pipeline-events.js");
 
@@ -1093,4 +1097,10 @@ module.exports = {
   readPipelineAnalytics,
   readPipelineEvents,
   readSessionArtifactSummary,
+  // Re-exported from ./pipeline-events.js for backwards compatibility. Prefer
+  // importing these from pipeline-events.js directly in new code.
+  appendPipelineEventDirect,
+  safeAppendPipelineEventDirect,
+  safeAppendPipelineEventWithSessionLock,
+  safeRecordHunterStoppedPipelineEvent,
 };

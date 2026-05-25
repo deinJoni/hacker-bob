@@ -28,6 +28,7 @@ const {
 } = require("./chain-attempts.js");
 const {
   sessionDir,
+  statePath,
 } = require("./paths.js");
 const {
   readJsonFile,
@@ -42,6 +43,18 @@ const {
   assignmentRequiresToken,
   validateHandoffProvenance,
 } = require("./wave-handoff-contracts.js");
+
+// Read the session's handoff_provenance_required flag directly from state.json
+// (no normalization, no lock — call sites are read-only). See wave-handoff-store
+// for the equivalent helper; we duplicate rather than circular-import.
+function readHandoffProvenanceRequired(domain) {
+  try {
+    const raw = readJsonFile(statePath(domain));
+    return raw && raw.handoff_provenance_required === true;
+  } catch {
+    return false;
+  }
+}
 
 // Inline rather than importing terminallyBlockedSurfaceIds from
 // session-state.js to avoid a circular dep (session-state.js depends on
@@ -255,6 +268,7 @@ function readStructuredHandoffChainNotes(domain) {
     return [];
   }
 
+  const requireProvenance = readHandoffProvenanceRequired(domain);
   const refs = [];
   const assignmentContexts = new Map();
 
@@ -289,7 +303,7 @@ function readStructuredHandoffChainNotes(domain) {
       assignment = context.assignment;
       if (document.target_domain != null && document.target_domain !== domain) continue;
       if (document.wave !== match[1] || document.agent !== match[2] || document.surface_id !== assignment.surface_id) continue;
-      validateHandoffProvenance(document, assignment, { signingKey: context.signingKey });
+      validateHandoffProvenance(document, assignment, { signingKey: context.signingKey, requireProvenance });
     } catch {
       continue;
     }

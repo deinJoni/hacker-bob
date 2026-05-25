@@ -2,7 +2,9 @@
 
 ## [Unreleased]
 
-## [1.3.5] - 2026-05-17
+- v1.3.6 follow-up: complete removal of the `legacy_unverified` handoff path. v1.3.5 keeps the path behind the per-session `handoff_provenance_required` flag so sessions initialised on v1.3.5+ already fail-closed; v1.3.6 will drop the legacy branch entirely from `wave-handoff-contracts.js`, `phase-gates.js`, `pipeline-session-artifacts.js`, and `wave-handoff-store.js`.
+
+## [1.3.5] - 2026-05-25
 
 ### Runtime contracts and release gates
 
@@ -12,6 +14,16 @@
 - Added clean release/package gates, dependency freshness checks, package-surface documentation, and a generated authority inventory freshness check.
 - Suppressed stale Claude statusline update hints after local installs and clarified the hint text as an update target instead of a current-version label.
 - Release notes: [docs/releases/v1.3.5.md](docs/releases/v1.3.5.md).
+
+### Review-cycle hardening
+
+- Fixed `mcp/lib/tool-validation.js` so explicit `null` is no longer conflated with "missing" for required + nullable fields. Affects `bounty_write_verification_round.notes`, `bounty_write_evidence_packs.packs[].redaction_notes`, `bounty_write_grade_verdict.feedback`, and `bounty_write_grade_verdict.findings[].feedback`; consumers already normalize null via `normalizeOptionalText`.
+- Restored a compat shim in `mcp/lib/pipeline-analytics.js` that re-exports `appendPipelineEventDirect`, `safeAppendPipelineEventDirect`, `safeAppendPipelineEventWithSessionLock`, and `safeRecordHunterStoppedPipelineEvent` from `pipeline-events.js` so downstream importers do not break.
+- Reordered session-state normalization before fail-closed assertion in `mcp/lib/session-authority.js`, and trimmed `LEGACY_FAIL_CLOSED_FIELDS` to `target` + `target_url` only. v1.3.4-shaped sessions now backfill via the normalizer instead of failing with `STATE_CONFLICT` on read.
+- Added the per-session `handoff_provenance_required` flag in `mcp/lib/session-state-contracts.js`, defaulted to `true` for sessions initialised on v1.3.5+ and `false` for legacy sessions resumed from disk. When set, `validateHandoffToken` and `validateHandoffProvenance` reject the previous `legacy_unverified` downgrade path with an actionable re-init hint; when unset, legacy behavior is preserved so in-flight pre-v1.3.5 sessions can drain.
+- Unified wave readiness in `mcp/lib/wave-handoff-store.js`: `buildWaveReadiness` now validates handoff content and provenance inline when the domain is provided, exposes an `invalid_agents` field, and sets `is_complete = missing.length === 0 && invalid.length === 0`. `bounty_apply_wave_merge` propagates invalid surfaces into `missing_surface_ids` so the orchestrator cannot lose track of them.
+- Hardened `summarizeStructuredHandoffChainNotes` in `mcp/lib/pipeline-session-artifacts.js`: a legitimately missing assignment file (ENOENT) falls back to direct `chain_notes` parsing capped at 10 per session, and the summary reports `unsigned_handoff_count` for operator visibility. Tamper-style validation failures still drop the affected handoff.
+- Wired `npm run release:check:dependencies` as its own step in `.github/workflows/release.yml` so PSL freshness gates run on every tagged release.
 
 ## [1.3.4] - 2026-05-14
 

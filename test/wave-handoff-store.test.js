@@ -82,11 +82,16 @@ test("wave handoff store readiness indexes structured JSON without parsing paylo
     for (const key of WAVE_ARTIFACT_KEYS) {
       assert.ok(Object.prototype.hasOwnProperty.call(artifacts, key), `missing artifact key ${key}`);
     }
+    // buildWaveReadiness without a `domain` argument runs in file-presence-only
+    // mode (no validation), so a1 with a malformed JSON file still shows as
+    // received here. The apply_wave_merge gate calls it with { domain }, which
+    // is what triggers full validation — covered in mcp-server.test.js.
     assert.deepEqual(buildWaveReadiness(artifacts), {
       assignments_total: 2,
       handoffs_total: 2,
       received_agents: ["a1"],
       missing_agents: ["a2"],
+      invalid_agents: [],
       unexpected_agents: ["a9"],
       is_complete: false,
     });

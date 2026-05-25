@@ -356,6 +356,13 @@ function buildInitialSessionState(domain, targetUrl, {
     verification_attempt_id: null,
     verification_snapshot_hash: null,
     verification_entered_at: null,
+    // New v1.3.5 sessions opt into mandatory handoff provenance. When true,
+    // validateHandoffProvenance refuses legacy_unverified handoffs, closing
+    // the assignment-file-downgrade attack documented in R1-HIGH-#1. Pre-v1.3.5
+    // sessions whose state.json lacks this field default to false (legacy
+    // compat) per the normalizer. Full removal of the legacy path is scheduled
+    // for v1.3.6 with deliberate test-fixture migration.
+    handoff_provenance_required: true,
   };
 }
 
@@ -508,6 +515,7 @@ function compactSessionState(state) {
     verification_attempt_id: state.verification_attempt_id,
     verification_snapshot_hash: state.verification_snapshot_hash,
     verification_entered_at: state.verification_entered_at,
+    handoff_provenance_required: state.handoff_provenance_required === true,
   };
 }
 
@@ -589,6 +597,12 @@ function normalizeSessionStateDocument(document, requestedDomain) {
     verification_attempt_id: normalizeOptionalText(document.verification_attempt_id, "verification_attempt_id"),
     verification_snapshot_hash: normalizeOptionalText(document.verification_snapshot_hash, "verification_snapshot_hash"),
     verification_entered_at: normalizeOptionalText(document.verification_entered_at, "verification_entered_at"),
+    // Provenance enforcement opt-in (v1.3.5+). Missing field = legacy session,
+    // defaulted to false to preserve compat with pre-v1.3.5 fixtures and any
+    // in-flight sessions. New sessions set this to true in buildInitialSessionState.
+    handoff_provenance_required: document.handoff_provenance_required == null
+      ? false
+      : assertBoolean(document.handoff_provenance_required, "handoff_provenance_required"),
   };
 
   // Disjointness invariant: a surface is either explored (hunter declared

@@ -111,7 +111,10 @@ function validateObject(value, schema, pathParts) {
     : false;
 
   for (const key of required) {
-    if (!hasOwn(value, key) || value[key] == null) {
+    // `required` means the key must be present. If the property's schema type
+    // includes "null", an explicit null value is still a valid presence; the
+    // per-property type check later enforces non-null when the schema disallows it.
+    if (!hasOwn(value, key)) {
       throw new Error(`${formatPath([...pathParts, key])} is required`);
     }
   }

@@ -162,25 +162,16 @@ const LEGACY_DEFAULTABLE_FIELDS = Object.freeze([
   "waf_blocked_endpoints",
 ]);
 
+// Fields whose absence is a hard scope/authority failure (not defaultable).
+// Egress/checkpoint/verification fields are intentionally NOT in this list:
+// normalizeSessionStateDocument backfills safe defaults for them so v1.3.4
+// sessions can resume on v1.3.5. The fields below are scope identity and have
+// no meaningful default — their per-field checks above this list (raw.target
+// drift, target_url drift) emit more specific errors before this list is
+// consulted, so this is belt-and-suspenders for that contract.
 const LEGACY_FAIL_CLOSED_FIELDS = Object.freeze([
   "target",
   "target_url",
-  "checkpoint_mode",
-  "block_internal_hosts",
-  "block_internal_hosts_source",
-  "egress_profile",
-  "egress_region",
-  "proxy_configured",
-  "egress_profile_identity_hash",
-  "egress_profile_identity_version",
-  "egress_profile_identity_source",
-  "egress_profile_identity_bound_at",
-  "egress_profile_identity_bind_source",
-  "egress_profile_legacy_migration",
-  "verification_schema_version",
-  "verification_attempt_id",
-  "verification_snapshot_hash",
-  "verification_entered_at",
 ]);
 
 const SESSION_AUTHORITY_CLASSES = new Set([

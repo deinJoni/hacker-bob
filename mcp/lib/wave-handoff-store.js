@@ -12,11 +12,25 @@ const {
 const {
   liveDeadEndsJsonlPath,
   sessionDir,
+  statePath,
 } = require("./paths.js");
 const {
   readFileUtf8,
   readJsonFile,
 } = require("./storage.js");
+
+// Read the session's handoff_provenance_required flag directly from state.json
+// (no normalization, no lock — call sites are read-only). Returns false for
+// missing/legacy/malformed sessions, matching the soft-migration model: only
+// v1.3.5+ sessions that explicitly opt into provenance get strict validation.
+function readHandoffProvenanceRequired(domain) {
+  try {
+    const raw = readJsonFile(statePath(domain));
+    return raw && raw.handoff_provenance_required === true;
+  } catch {
+    return false;
+  }
+}
 const {
   loadWaveAssignments,
 } = require("./assignments.js");
@@ -98,15 +112,60 @@ function readSigningKeyForArtifacts(domain, artifacts) {
     : null;
 }
 
-function buildWaveReadiness(artifacts) {
+function buildWaveReadiness(artifacts, { domain = null } = {}) {
   const receivedAgents = [];
   const missingAgents = [];
+  const invalidAgents = [];
+
+  // When a `domain` is provided, also validate each present handoff's signature
+  // and metadata so the readiness gate at apply_wave_merge can refuse to merge
+  // when invalid handoffs would silently drop surfaces from completed/partial/
+  // missing tracking (R1-HIGH-#2). Without validation, the file-presence-only
+  // readiness lies to the caller about wave health.
+  let signingKey = null;
+  let signingKeyError = null;
+  let requireProvenance = false;
+  if (domain) {
+    try {
+      signingKey = readSigningKeyForArtifacts(domain, artifacts);
+    } catch (error) {
+      signingKeyError = error;
+    }
+    requireProvenance = readHandoffProvenanceRequired(domain);
+  }
 
   for (const assignment of artifacts.assignments) {
-    if (artifacts.handoffPathByAgent.has(assignment.agent)) {
-      receivedAgents.push(assignment.agent);
-    } else {
+    if (!artifacts.handoffPathByAgent.has(assignment.agent)) {
       missingAgents.push(assignment.agent);
+      continue;
+    }
+    if (!domain) {
+      receivedAgents.push(assignment.agent);
+      continue;
+    }
+    try {
+      if (assignmentRequiresToken(assignment) && signingKeyError) {
+        throw signingKeyError;
+      }
+      const filePath = artifacts.handoffPathByAgent.get(assignment.agent);
+      const handoffJson = readJsonFile(filePath);
+      // Only validate provenance + payload shape here; the full business-logic
+      // validation runs inside mergeWaveHandoffsInternal. Catching both here
+      // ensures the gate also reflects business-rule failures so merge can't
+      // silently drop surfaces with invalid handoffs.
+      const payload = validateWaveHandoffPayload(handoffJson, {
+        targetDomain: domain,
+        wave: artifacts.wave,
+        agent: assignment.agent,
+        surfaceId: assignment.surface_id,
+        effectiveSurfaceType: assignment.surface_type || null,
+        findingsForRun: [],
+      });
+      void payload;
+      validateHandoffProvenance(handoffJson, assignment, { signingKey, requireProvenance });
+      receivedAgents.push(assignment.agent);
+    } catch {
+      invalidAgents.push(assignment.agent);
     }
   }
 
@@ -115,8 +174,9 @@ function buildWaveReadiness(artifacts) {
     handoffs_total: artifacts.handoffFiles.length,
     received_agents: receivedAgents,
     missing_agents: missingAgents,
+    invalid_agents: invalidAgents,
     unexpected_agents: artifacts.unexpectedAgents,
-    is_complete: missingAgents.length === 0,
+    is_complete: missingAgents.length === 0 && invalidAgents.length === 0,
   };
 }
 
@@ -142,7 +202,7 @@ function buildSuspicionFlags({ smartContractCompletedSurfaceIds, bypassAttemptsF
 
 function mergeWaveHandoffsInternal(domain, waveNumber) {
   const artifacts = loadWaveArtifacts(domain, waveNumber);
-  const readiness = buildWaveReadiness(artifacts);
+  const readiness = buildWaveReadiness(artifacts, { domain });
 
   const receivedAgents = [];
   const invalidAgents = [];
@@ -181,6 +241,7 @@ function mergeWaveHandoffsInternal(domain, waveNumber) {
   const smartContractCompletedSurfaceIds = [];
   const bypassAttemptsForCompletedSurfaces = new Map();
   const signingKey = readSigningKeyForArtifacts(domain, artifacts);
+  const requireProvenance = readHandoffProvenanceRequired(domain);
 
   for (const assignment of artifacts.assignments) {
     const filePath = artifacts.handoffPathByAgent.get(assignment.agent);
@@ -202,7 +263,7 @@ function mergeWaveHandoffsInternal(domain, waveNumber) {
         effectiveSurfaceType,
         findingsForRun,
       });
-      const provenanceStatus = validateHandoffProvenance(handoffJson, assignment, { signingKey });
+      const provenanceStatus = validateHandoffProvenance(handoffJson, assignment, { signingKey, requireProvenance });
 
       receivedAgents.push(assignment.agent);
       if (provenanceStatus === "verified") {
@@ -241,6 +302,13 @@ function mergeWaveHandoffsInternal(domain, waveNumber) {
         surface_id: assignment.surface_id,
         error: error.message || String(error),
       });
+      // Surface the invalid handoff's surface_id via missing_surface_ids so it
+      // reaches the orchestrator's requeue path. Without this, R1-HIGH-#2:
+      // the surface is silently dropped from completed/partial/missing buckets
+      // while the wave appears merged.
+      if (!missingSurfaceIds.includes(assignment.surface_id)) {
+        missingSurfaceIds.push(assignment.surface_id);
+      }
     }
   }
 
@@ -354,6 +422,7 @@ function buildWaveHandoffsDocument(domain, waveNumbers) {
     findingsByRun.get(runKey).push(finding);
   }
 
+  const requireProvenance = readHandoffProvenanceRequired(domain);
   for (const waveNumber of waveNumbers) {
     const artifacts = loadWaveArtifacts(domain, waveNumber);
     let signingKey = null;
@@ -394,7 +463,7 @@ function buildWaveHandoffsDocument(domain, waveNumbers) {
           effectiveSurfaceType,
           findingsForRun,
         });
-        const provenance = validateHandoffProvenance(handoffJson, assignment, { signingKey });
+        const provenance = validateHandoffProvenance(handoffJson, assignment, { signingKey, requireProvenance });
         const handoff = {
           wave: artifacts.wave,
           agent: assignment.agent,
@@ -449,7 +518,7 @@ function readWaveHandoffs(args) {
 function waveHandoffStatus(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   const waveNumber = parseWaveNumber(args.wave_number);
-  return JSON.stringify(buildWaveReadiness(loadWaveArtifacts(domain, waveNumber)));
+  return JSON.stringify(buildWaveReadiness(loadWaveArtifacts(domain, waveNumber), { domain }));
 }
 
 module.exports = {

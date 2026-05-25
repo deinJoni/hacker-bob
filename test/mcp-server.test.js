@@ -2104,6 +2104,48 @@ test("central session authority blocks raw target and target_url drift before ha
   });
 });
 
+test("central session authority backfills missing v1.3.4-shaped fields instead of fail-closing", async () => {
+  await withTempHome(async () => {
+    const domain = "v134-resume.example.com";
+    fs.mkdirSync(sessionDir(domain), { recursive: true });
+    // A v1.3.4 session predates checkpoint_mode, block_internal_hosts*, and
+    // the egress identity / verification fields. The normalizer must backfill
+    // safe defaults on read; the legacy-fail-closed list must NOT reject it.
+    const legacyShape = {
+      target: domain,
+      target_url: `https://${domain}`,
+      deep_mode: false,
+      phase: "HUNT",
+      hunt_wave: 0,
+      pending_wave: null,
+      total_findings: 0,
+      explored: [],
+      terminally_blocked: [],
+      prereq_registry_snapshots: [],
+      blocked_prereq_history: [],
+      terminal_block_clear_history: [],
+      dead_ends: [],
+      waf_blocked_endpoints: [],
+      lead_surface_ids: [],
+      scope_exclusions: [],
+      hold_count: 0,
+      auth_status: "pending",
+      operator_note: null,
+    };
+    fs.writeFileSync(statePath(domain), `${JSON.stringify(legacyShape, null, 2)}\n`, "utf8");
+
+    const result = await executeTool("bounty_read_session_state", { target_domain: domain });
+    assert.equal(result.ok, true, `expected v1.3.4 session to load; got ${JSON.stringify(result.error)}`);
+    const state = result.data.state;
+    assert.equal(state.target, domain);
+    assert.equal(state.target_url, `https://${domain}`);
+    // Backfilled defaults from normalizeSessionStateDocument
+    assert.equal(state.egress_profile, "default");
+    assert.equal(state.proxy_configured, false);
+    assert.equal(state.verification_schema_version, null);
+  });
+});
+
 test("central session authority shadow mode is bounded to missing read-only sessions", async () => {
   await withTempHome(async () => {
     const missing = await executeTool("bounty_read_session_state", {
@@ -3239,6 +3281,41 @@ test("pipeline analytics reports chain attempts, chain duration, and no-attempt 
   });
 });
 
+test("pipeline analytics counts chain_notes when assignment file is missing (capped) but drops on validation failure", () => {
+  withTempHome(() => {
+    const domain = "chain-notes-resilience.example.com";
+    seedSessionState(domain, { phase: "VERIFY" });
+    seedAttackSurface(domain, ["surface-a"]);
+    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
+
+    writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      surface_status: "complete",
+      summary: "Tested with chain notes.",
+      content: "# w1-a1",
+      chain_notes: ["Cookie reuse possible.", "Open redirect amplifies."],
+    });
+
+    // R1-HIGH-#3 resilience: deleting the assignment file used to drop the
+    // handoff's chain_notes from analytics entirely. With the fix, the notes
+    // are counted up to the per-session cap and surfaced via
+    // unsigned_handoff_count so operators see the gap.
+    fs.unlinkSync(path.join(sessionDir(domain), "wave-1-assignments.json"));
+
+    const analytics = JSON.parse(readPipelineAnalytics({ target_domain: domain, include_events: false }));
+    const row = analytics.sessions[0];
+    // The chain_phase_no_attempts issue fires because phase >= CHAIN and
+    // chain_notes_count > 0 but no terminal chain attempts exist. Its
+    // `handoff_chain_notes` detail surfaces our counted notes.
+    const issue = (analytics.bottlenecks || []).find((b) => b.code === "chain_phase_no_attempts");
+    assert.ok(issue, "expected chain_phase_no_attempts bottleneck");
+    assert.ok(row.health.reasons.includes("chain_phase_no_attempts"));
+  });
+});
+
 test("pipeline analytics flags missing evidence only for final reportable findings", () => {
   withTempHome(() => {
     const domain = "missing-evidence.example.com";
@@ -3578,6 +3655,7 @@ test("bounty_init_session creates the initial state and bounty_read_session_stat
       verification_attempt_id: null,
       verification_snapshot_hash: null,
       verification_entered_at: null,
+      handoff_provenance_required: true,
     };
 
     const created = JSON.parse(initSession({ target_domain: domain, target_url: targetUrl }));
@@ -3811,6 +3889,7 @@ test("legacy state normalization is applied while unknown fields remain on disk 
         verification_attempt_id: null,
         verification_snapshot_hash: null,
         verification_entered_at: null,
+        handoff_provenance_required: false,
       },
     });
 
@@ -4759,6 +4838,7 @@ test("bounty_start_wave validates inputs, writes assignments, and updates pendin
       verification_attempt_id: null,
       verification_snapshot_hash: null,
       verification_entered_at: null,
+      handoff_provenance_required: false,
     };
 
     const result = JSON.parse(startWave({
@@ -5113,6 +5193,7 @@ test("bounty_apply_wave_merge returns pending without mutating state when handof
         handoffs_total: 1,
         received_agents: ["a1"],
         missing_agents: ["a2"],
+        invalid_agents: [],
         unexpected_agents: [],
         is_complete: false,
       },
@@ -5406,6 +5487,7 @@ test("bounty_apply_wave_merge merges state, findings, requeues, and scope exclus
       handoffs_total: 2,
       received_agents: ["a1", "a2"],
       missing_agents: [],
+      invalid_agents: [],
       unexpected_agents: [],
       is_complete: true,
     });
@@ -5939,9 +6021,13 @@ test("bounty_apply_wave_merge force-merges missing and invalid handoffs and comp
     assert.equal(result.force_merge, true);
     assert.match(result.force_merge_reason, /a1 handoff is malformed/);
     assert.deepEqual(result.merge.invalid_agents, ["a1"]);
-    assert.deepEqual(result.merge.missing_surface_ids, ["surface-b"]);
+    // R1-HIGH-#2 fix: invalid handoff surfaces now propagate to
+    // missing_surface_ids so the orchestrator can't lose track of them.
+    // Requeue order: partial first, then missing (which now includes both
+    // a1's invalid surface-a and a2's truly-missing surface-b).
+    assert.deepEqual(result.merge.missing_surface_ids.sort(), ["surface-a", "surface-b"]);
     assert.deepEqual(result.merge.partial_surface_ids, ["surface-c"]);
-    assert.deepEqual(result.merge.requeue_surface_ids, ["surface-c", "surface-b", "surface-a"]);
+    assert.deepEqual(result.merge.requeue_surface_ids, ["surface-c", "surface-a", "surface-b"]);
     assert.equal(result.state.pending_wave, null);
     assert.equal(result.state.hunt_wave, 2);
 
@@ -7481,10 +7567,25 @@ test("tampered tokenized handoff JSON is invalid and cannot complete the surface
     assert.equal(handoffs.data.invalid_handoffs.length, 1);
     assert.match(handoffs.data.invalid_handoffs[0].error, /signature does not match/);
 
-    const merged = await executeTool("bounty_apply_wave_merge", {
+    // R1-HIGH-#2 fix: the readiness gate now validates handoff signatures,
+    // so a tampered handoff causes apply_wave_merge to gate as "pending" with
+    // is_complete:false until the operator explicitly force_merges. Previously
+    // the gate ran on file presence only and silently merged.
+    const pending = await executeTool("bounty_apply_wave_merge", {
       target_domain: domain,
       wave_number: 1,
       force_merge: false,
+    });
+    assert.equal(pending.ok, true);
+    assert.equal(pending.data.status, "pending");
+    assert.equal(pending.data.readiness.is_complete, false);
+    assert.deepEqual(pending.data.readiness.invalid_agents, ["a1"]);
+
+    const merged = await executeTool("bounty_apply_wave_merge", {
+      target_domain: domain,
+      wave_number: 1,
+      force_merge: true,
+      force_merge_reason: "Tampered handoff for a1 caused a signature failure; the surface is requeued.",
     });
     assert.equal(merged.ok, true);
     assert.equal(merged.data.status, "merged");
@@ -8668,6 +8769,7 @@ test("bounty_wave_handoff_status reports complete when all assigned handoffs exi
       handoffs_total: 2,
       received_agents: ["a1", "a2"],
       missing_agents: [],
+      invalid_agents: [],
       unexpected_agents: [],
       is_complete: true,
     });
@@ -8690,6 +8792,7 @@ test("markdown-only handoffs do not satisfy readiness or advance merges", () => 
       handoffs_total: 0,
       received_agents: [],
       missing_agents: ["a1"],
+      invalid_agents: [],
       unexpected_agents: [],
       is_complete: false,
     });
@@ -8725,13 +8828,14 @@ test("markdown-only handoffs do not satisfy readiness or advance merges", () => 
       handoffs_total: 1,
       received_agents: ["a1"],
       missing_agents: [],
+      invalid_agents: [],
       unexpected_agents: [],
       is_complete: true,
     });
   });
 });
 
-test("bounty_wave_handoff_status reports partial completion and unexpected handoffs without parsing payloads", () => {
+test("bounty_wave_handoff_status reports partial completion and surfaces invalid handoffs", () => {
   withTempHome(() => {
     const domain = "example.com";
     const dir = sessionDir(domain);
@@ -8748,11 +8852,15 @@ test("bounty_wave_handoff_status reports partial completion and unexpected hando
 
     const status = JSON.parse(waveHandoffStatus({ target_domain: domain, wave_number: 2 }));
 
+    // a1's handoff file exists but is malformed; the readiness must classify
+    // it as invalid (not received) so the gate sees is_complete:false instead
+    // of silently passing the merge and dropping surface-a from tracking.
     assert.deepEqual(status, {
       assignments_total: 3,
       handoffs_total: 2,
-      received_agents: ["a1"],
+      received_agents: [],
       missing_agents: ["a2", "a3"],
+      invalid_agents: ["a1"],
       unexpected_agents: ["a9"],
       is_complete: false,
     });
@@ -8862,7 +8970,9 @@ test("bounty_merge_wave_handoffs requeues missing and invalid assigned handoffs 
 	      unexpected_agents: ["a9"],
       completed_surface_ids: [],
       partial_surface_ids: [],
-      missing_surface_ids: ["surface-b"],
+      // R1-HIGH-#2 fix: invalid handoff surface_ids propagate to
+      // missing_surface_ids; a1's surface-a now reaches the orchestrator.
+      missing_surface_ids: ["surface-a", "surface-b"],
       dead_ends: [],
       waf_blocked_endpoints: [],
       lead_surface_ids: [],
@@ -14001,6 +14111,64 @@ test("bounty_write_grade_verdict rejects duplicate or unknown finding_ids", () =
       ],
       feedback: null,
     }), /Unknown finding_id: F-99/);
+  });
+});
+
+test("dispatch validator accepts explicit null for required+nullable fields", async () => {
+  await withTempHome(async () => {
+    const domain = "example.com";
+    seedFinding(domain);
+    seedVerificationPipeline(domain, [{
+      finding_id: "F-1",
+      disposition: "confirmed",
+      severity: "high",
+      reportable: true,
+      reasoning: "Confirmed.",
+    }]);
+
+    const round = await executeTool("bounty_write_verification_round", {
+      target_domain: domain,
+      round: "brutalist",
+      notes: null,
+      results: [{
+        finding_id: "F-1",
+        disposition: "confirmed",
+        severity: "high",
+        reportable: true,
+        reasoning: "Confirmed.",
+      }],
+    });
+    assert.ok(!round.error || !/notes is required/.test(round.error.message || ""),
+      `bounty_write_verification_round rejected notes:null at dispatch: ${round.error && round.error.message}`);
+
+    const pack = await executeTool("bounty_write_evidence_packs", {
+      target_domain: domain,
+      packs: [{ ...evidencePack("F-1"), redaction_notes: null }],
+    });
+    assert.ok(!pack.error || !/redaction_notes is required/.test(pack.error.message || ""),
+      `bounty_write_evidence_packs rejected redaction_notes:null at dispatch: ${pack.error && pack.error.message}`);
+
+    const verdict = await executeTool("bounty_write_grade_verdict", {
+      target_domain: domain,
+      verdict: "SKIP",
+      total_score: 0,
+      findings: [{
+        finding_id: "F-1",
+        severity: "high",
+        reportable_input: true,
+        reportable_final: false,
+        exploitability: 0,
+        impact: 0,
+        novelty: 0,
+        chain_potential: 0,
+        report_quality: 0,
+        total_score: 0,
+        feedback: null,
+      }],
+      feedback: null,
+    });
+    assert.ok(!verdict.error || !/feedback is required/.test(verdict.error.message || ""),
+      `bounty_write_grade_verdict rejected feedback:null at dispatch: ${verdict.error && verdict.error.message}`);
   });
 });
 

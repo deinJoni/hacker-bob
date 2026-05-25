@@ -130,6 +130,7 @@ const SESSION_PUBLIC_STATE_FIELDS = [
   "verification_attempt_id",
   "verification_snapshot_hash",
   "verification_entered_at",
+  "handoff_provenance_required",
 ];
 
 const VERIFICATION_ROUND_FILE_MAP = {

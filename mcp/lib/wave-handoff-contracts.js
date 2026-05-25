@@ -39,10 +39,19 @@ function assignmentRequiresToken(assignment) {
   return !!(assignment && (assignment.handoff_token_required === true || assignment.handoff_token_sha256));
 }
 
-function validateHandoffToken(assignment, token) {
+function validateHandoffToken(assignment, token, { requireProvenance = false } = {}) {
   // Tokenized assignments store only `handoff_token_sha256` on disk. The raw
   // token is handed to the assigned agent and checked only at write time.
+  // When the caller's session opts into provenance enforcement (v1.3.5+ via
+  // state.handoff_provenance_required), legacy assignments without tokens are
+  // rejected instead of being silently downgraded.
   if (!assignmentRequiresToken(assignment)) {
+    if (requireProvenance) {
+      throw new ToolError(
+        ERROR_CODES.STATE_CONFLICT,
+        "wave assignment is missing handoff token metadata; this session requires signed handoffs (state.handoff_provenance_required). The assignment file may have been tampered, or this is a pre-v1.3.5 session that needs re-init.",
+      );
+    }
     return "legacy_unverified";
   }
   if (typeof assignment.handoff_token_sha256 !== "string" || !assignment.handoff_token_sha256.trim()) {
@@ -152,12 +161,24 @@ function verifyHandoffProvenanceSignature(payload, signingKey, { assignment } = 
   }
 }
 
-function validateHandoffProvenance(payload, assignment, { signingKey = null } = {}) {
+function validateHandoffProvenance(payload, assignment, { signingKey = null, requireProvenance = false } = {}) {
   // Tokenized handoffs are signed with a session-local MCP key after the raw
   // token is checked at write time. This verifies the persisted artifact
   // without storing raw tokens. It does not defend against a local actor with
   // direct read access to Bob's private session key.
+  //
+  // When the caller's session opts into provenance enforcement (v1.3.5+ via
+  // state.handoff_provenance_required), legacy assignments without tokens are
+  // rejected: this closes the assignment-file-downgrade attack documented in
+  // R1-HIGH-#1 by forcing an attacker to also tamper state.json (which the
+  // orchestrator reads constantly, raising the bar for sustained tampering).
   if (!assignmentRequiresToken(assignment)) {
+    if (requireProvenance) {
+      throw new ToolError(
+        ERROR_CODES.STATE_CONFLICT,
+        "handoff provenance is required for this session but the assignment lacks token metadata; the assignment file may have been tampered, or this is a pre-v1.3.5 handoff that needs re-init.",
+      );
+    }
     return "legacy_unverified";
   }
   if (payload.provenance !== "verified") {

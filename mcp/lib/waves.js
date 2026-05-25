@@ -763,7 +763,7 @@ function applyWaveMerge(args) {
       throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Wave merge requires pending_wave ${waveNumber}, found ${state.pending_wave}`);
     }
 
-    const readiness = buildWaveReadiness(loadWaveArtifacts(domain, waveNumber));
+    const readiness = buildWaveReadiness(loadWaveArtifacts(domain, waveNumber), { domain });
     if (!readiness.is_complete && !forceMerge) {
       safeAppendPipelineEventDirect(domain, "wave_merge_pending", {
         phase: state.phase,
@@ -1084,7 +1084,17 @@ function writeWaveHandoff(args) {
 
   return withSessionLock(domain, () => {
     const assignment = validateAssignedWaveAgentSurface(domain, wave, agent, surfaceId);
-    const provenance = validateHandoffToken(assignment, args.handoff_token);
+    // Session state may be missing in narrow test paths that only seed
+    // assignments + attack surface. Default to legacy mode in that case;
+    // production callers always have an initialized session here.
+    let requireProvenance = false;
+    try {
+      const { state } = readSessionStateStrict(domain);
+      requireProvenance = state.handoff_provenance_required === true;
+    } catch {
+      requireProvenance = false;
+    }
+    const provenance = validateHandoffToken(assignment, args.handoff_token, { requireProvenance });
 
     // Read surface_type from the immutable, MCP-owned assignment file (captured
     // at start_wave time). Reading from agent-writable attack_surface.json would

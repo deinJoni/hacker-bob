@@ -220,7 +220,18 @@ function signingKeyForAssignments(targetDomain, assignments) {
     : null;
 }
 
-function validateHandoffMetadata(document, { targetDomain, wave, agent, surfaceId, assignment, signingKey }) {
+// Read the session's handoff_provenance_required flag directly. Returns false
+// for missing/legacy/malformed sessions, matching the v1.3.5 soft-migration model.
+function readHandoffProvenanceRequired(targetDomain) {
+  try {
+    const raw = readJsonFile(statePath(targetDomain));
+    return raw && raw.handoff_provenance_required === true;
+  } catch {
+    return false;
+  }
+}
+
+function validateHandoffMetadata(document, { targetDomain, wave, agent, surfaceId, assignment, signingKey, requireProvenance = false }) {
   if (!isPlainObject(document)) throw new Error("handoff payload must be an object");
   if (document.target_domain != null && document.target_domain !== targetDomain) throw new Error("target_domain mismatch");
   if (parseWaveId(document.wave) !== wave) throw new Error("wave mismatch");
@@ -229,7 +240,7 @@ function validateHandoffMetadata(document, { targetDomain, wave, agent, surfaceI
   if (!["complete", "partial"].includes(capString(document.surface_status, 40))) {
     throw new Error("invalid surface_status");
   }
-  validateHandoffProvenance(document, assignment, { signingKey });
+  validateHandoffProvenance(document, assignment, { signingKey, requireProvenance });
 }
 
 function readWaveReadiness(targetDomain, waveNumber, handoffListing = null) {
@@ -262,6 +273,7 @@ function readWaveReadiness(targetDomain, waveNumber, handoffListing = null) {
   } catch (error) {
     signingKeyError = error;
   }
+  const requireProvenance = readHandoffProvenanceRequired(targetDomain);
   const handoffFiles = listHandoffFiles(artifacts.dir, wave, handoffListing);
   result.handoffs_total = handoffFiles.length;
   const handoffPathByAgent = new Map();
@@ -291,6 +303,7 @@ function readWaveReadiness(targetDomain, waveNumber, handoffListing = null) {
         surfaceId: assignment.surface_id,
         assignment,
         signingKey,
+        requireProvenance,
       });
       result.received_agents.push(assignment.agent);
     } catch {
@@ -481,6 +494,22 @@ function summarizeHttpAuditJsonl(targetDomain) {
   return summary;
 }
 
+// Cap on chain_notes contribution from handoffs without a verifiable assignment
+// file. This bounds an attacker's ability to inflate chain_notes_count (which
+// feeds the chain_phase_no_attempts gate at pipeline-analytics.js) by leaving
+// a handoff file but removing the assignment file. The fallback only covers
+// the missing-file case; validation failures (tampered signatures, metadata
+// mismatch) remain strict drops.
+const UNSIGNED_HANDOFF_CHAIN_NOTES_FALLBACK_CAP = 10;
+
+function isMissingAssignmentFileError(error) {
+  if (!error) return false;
+  const message = error.message || String(error);
+  // assignments.js:28 throws "Missing assignment file: <path>"; fs-level ENOENT
+  // can also bubble through readJsonFile.
+  return /Missing assignment file/.test(message) || error.code === "ENOENT";
+}
+
 function summarizeStructuredHandoffChainNotes(targetDomain, handoffListing = null) {
   const dir = sessionDir(targetDomain);
   const summary = {
@@ -490,8 +519,15 @@ function summarizeStructuredHandoffChainNotes(targetDomain, handoffListing = nul
     handoff_files_total: 0,
     handoff_files_omitted: 0,
     malformed_files: 0,
+    // R1-HIGH-#3 resilience: chain_notes from handoffs whose wave-N-assignments
+    // .json is missing are counted up to UNSIGNED_HANDOFF_CHAIN_NOTES_FALLBACK_CAP
+    // (legitimate pre-v1.3.5 sessions and crash-recovery cases). Operators can
+    // see the gap via this counter without losing the underlying chain_notes
+    // from analytics. Validation failures (tampering) remain strict drops.
+    unsigned_handoff_count: 0,
   };
   if (!fs.existsSync(dir)) return summary;
+  const requireProvenance = readHandoffProvenanceRequired(targetDomain);
   const assignmentContexts = new Map();
 
   function contextFor(wave, agent) {
@@ -516,6 +552,8 @@ function summarizeStructuredHandoffChainNotes(targetDomain, handoffListing = nul
     return { assignment, signingKey: context.signingKey };
   }
 
+  let unsignedFallbackBudget = UNSIGNED_HANDOFF_CHAIN_NOTES_FALLBACK_CAP;
+
   const listing = handoffListing || listSessionHandoffFiles(dir);
   summary.handoff_files_total = listing.total;
   summary.handoff_files_omitted = listing.omitted;
@@ -533,6 +571,7 @@ function summarizeStructuredHandoffChainNotes(targetDomain, handoffListing = nul
       continue;
     }
     let chainNotes;
+    let fallbackUsed = false;
     try {
       const { assignment, signingKey } = contextFor(match[1], match[2]);
       validateHandoffMetadata(document, {
@@ -542,15 +581,41 @@ function summarizeStructuredHandoffChainNotes(targetDomain, handoffListing = nul
         surfaceId: assignment.surface_id,
         assignment,
         signingKey,
+        requireProvenance,
       });
       chainNotes = normalizeStringArray(document.chain_notes, "chain_notes");
-    } catch {
-      summary.malformed_files += 1;
-      continue;
+    } catch (error) {
+      // Only fall back when the underlying problem is a missing assignment
+      // file (legitimate state for pre-v1.3.5 or post-crash sessions). For
+      // validation failures (signature mismatch, target_domain mismatch,
+      // surface_id mismatch), keep the strict drop so an attacker who tampers
+      // a handoff can't inflate chain_notes_count.
+      if (!isMissingAssignmentFileError(error)) {
+        summary.malformed_files += 1;
+        continue;
+      }
+      try {
+        chainNotes = normalizeStringArray(document.chain_notes, "chain_notes");
+      } catch {
+        summary.malformed_files += 1;
+        continue;
+      }
+      fallbackUsed = true;
     }
     if (chainNotes.length === 0) continue;
+    if (fallbackUsed) {
+      summary.unsigned_handoff_count += 1;
+      // Cap fallback contribution to bound attacker-controlled inflation of
+      // the chain_phase_no_attempts gate via crafted unsigned chain_notes.
+      const remaining = Math.max(0, unsignedFallbackBudget);
+      const contributed = Math.min(chainNotes.length, remaining);
+      unsignedFallbackBudget -= contributed;
+      summary.chain_notes_count += contributed;
+      if (contributed === 0) continue;
+    } else {
+      summary.chain_notes_count += chainNotes.length;
+    }
     summary.handoff_count += 1;
-    summary.chain_notes_count += chainNotes.length;
     summary.handoff_refs.push({
       wave: match[1],
       agent: match[2],
