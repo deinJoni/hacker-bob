@@ -98,12 +98,23 @@ function evaluateExpected(result, caseData) {
 }
 
 async function loadSdkQuery() {
+  let initialError;
   try {
     const sdk = await import("@anthropic-ai/claude-agent-sdk");
     return sdk.query;
   } catch (error) {
+    initialError = error;
+  }
+  try {
+    const { createRequire } = await import("node:module");
+    const { pathToFileURL } = await import("node:url");
+    const mcpEntry = path.resolve(__dirname, "..", "..", "mcp", "server.js");
+    const sdkPath = createRequire(mcpEntry).resolve("@anthropic-ai/claude-agent-sdk");
+    const sdk = await import(pathToFileURL(sdkPath).href);
+    return sdk.query;
+  } catch (fallbackError) {
     throw new Error(
-      `Claude Agent SDK is not installed or not resolvable: ${error.message}. Run npm install in the repo before live replay.`,
+      `Claude Agent SDK is not resolvable from policy-replay: ${initialError.message} (mcp/node_modules fallback: ${fallbackError.message}). Run npm install in the repo, or install Bob into a workspace via 'hacker-bob install'.`,
     );
   }
 }

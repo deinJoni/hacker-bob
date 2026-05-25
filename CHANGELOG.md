@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 - v1.3.6 follow-up: complete removal of the `legacy_unverified` handoff path. v1.3.5 keeps the path behind the per-session `handoff_provenance_required` flag so sessions initialised on v1.3.5+ already fail-closed; v1.3.6 will drop the legacy branch entirely from `wave-handoff-contracts.js`, `phase-gates.js`, `pipeline-session-artifacts.js`, and `wave-handoff-store.js`.
+- v1.3.6 follow-up: end-to-end live policy-replay smoke. v1.3.5 fixes SDK package + native-binary resolution from an installed workspace's `testing/policy-replay/replay.mjs`, but does not exercise `query()` invocation. v1.3.6 will add a Claude-OAuth-gated live-replay smoke test so binary lookup is verified beyond static resolution.
 
 ## [1.3.5] - 2026-05-25
 
@@ -24,6 +25,7 @@
 - Unified wave readiness in `mcp/lib/wave-handoff-store.js`: `buildWaveReadiness` now validates handoff content and provenance inline when the domain is provided, exposes an `invalid_agents` field, and sets `is_complete = missing.length === 0 && invalid.length === 0`. `bounty_apply_wave_merge` propagates invalid surfaces into `missing_surface_ids` so the orchestrator cannot lose track of them.
 - Hardened `summarizeStructuredHandoffChainNotes` in `mcp/lib/pipeline-session-artifacts.js`: a legitimately missing assignment file (ENOENT) falls back to direct `chain_notes` parsing capped at 10 per session, and the summary reports `unsigned_handoff_count` for operator visibility. Tamper-style validation failures still drop the affected handoff.
 - Wired `npm run release:check:dependencies` as its own step in `.github/workflows/release.yml` so PSL freshness gates run on every tagged release.
+- Closed the pre-existing live-replay SDK-resolution gap surfaced by the PR #44 install layout: `testing/policy-replay/replay.mjs` now tries the bare specifier first and falls back to `createRequire(<workspace>/mcp/server.js).resolve("@anthropic-ai/claude-agent-sdk")`, and `scripts/install.js` now walks `optionalDependencies` so the SDK's current-platform native package (e.g. `@anthropic-ai/claude-agent-sdk-darwin-arm64`) propagates into the installed workspace when npm installed it in source. `test/install-smoke.test.js` asserts both contracts.
 
 ## [1.3.4] - 2026-05-14
 

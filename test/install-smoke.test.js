@@ -80,6 +80,29 @@ test("installer copies a require-able complete MCP runtime", () => {
     assert.ok(fs.existsSync(path.join(workspace, "testing", "policy-replay", "tune.mjs")));
     assert.ok(fs.existsSync(path.join(workspace, "testing", "policy-replay", "cases", "sample-hunter-refusal.json")));
     assert.ok(!fs.existsSync(path.join(workspace, "testing", "policy-replay", "node_modules")));
+
+    const { createRequire } = require("node:module");
+    const installedRequire = createRequire(installedServer);
+    assert.ok(
+      installedRequire.resolve("@anthropic-ai/claude-agent-sdk"),
+      "Claude Agent SDK must resolve from <workspace>/mcp/server.js so policy-replay's fallback can find it",
+    );
+
+    const sourceSdkManifestPath = path.join(ROOT, "node_modules", "@anthropic-ai", "claude-agent-sdk", "package.json");
+    if (fs.existsSync(sourceSdkManifestPath)) {
+      const sdkOptionalDeps = JSON.parse(fs.readFileSync(sourceSdkManifestPath, "utf8")).optionalDependencies || {};
+      const platformKey = `${process.platform}-${process.arch}`;
+      const currentPlatformPackages = Object.keys(sdkOptionalDeps).filter((name) => name.includes(platformKey));
+      for (const platformPackage of currentPlatformPackages) {
+        const sourcePackageDir = path.join(ROOT, "node_modules", ...platformPackage.split("/"));
+        if (!fs.existsSync(sourcePackageDir)) continue;
+        const targetPackageDir = path.join(workspace, "mcp", "node_modules", ...platformPackage.split("/"));
+        assert.ok(
+          fs.existsSync(targetPackageDir),
+          `Source has ${platformPackage}; copyRuntimeNodeDependencies must propagate it into <workspace>/mcp/node_modules so live replay can invoke the SDK`,
+        );
+      }
+    }
     assert.equal(fs.readFileSync(path.join(workspace, ".hacker-bob", "VERSION"), "utf8").trim(), PACKAGE_VERSION);
     const neutralInstallMeta = JSON.parse(fs.readFileSync(path.join(workspace, ".hacker-bob", "install.json"), "utf8"));
     assert.equal(neutralInstallMeta.schema_version, 2);

@@ -183,22 +183,31 @@ function copyResourceSet(sourceRoot, targetAbs, resourceSet) {
 
 function copyRuntimeNodeDependencies(sourceRoot, mcpDir) {
   const manifest = packageManifest(sourceRoot);
-  const rootDependencies = Object.keys(manifest.dependencies || {}).sort();
   const copied = [];
-  const queued = [...rootDependencies];
+  const queued = [];
+  for (const name of Object.keys(manifest.dependencies || {}).sort()) {
+    queued.push({ name, optional: false });
+  }
+  for (const name of Object.keys(manifest.optionalDependencies || {}).sort()) {
+    queued.push({ name, optional: true });
+  }
   const visited = new Set();
   const targetNodeModules = path.join(mcpDir, "node_modules");
   while (queued.length > 0) {
-    const packageName = queued.shift();
+    const { name: packageName, optional } = queued.shift();
     if (!packageName || visited.has(packageName)) continue;
-    visited.add(packageName);
     const sourceDir = path.join(sourceRoot, "node_modules", ...packageName.split("/"));
     if (!fs.existsSync(sourceDir) || !fs.statSync(sourceDir).isDirectory()) {
+      if (optional) continue;
       throw new Error(`Runtime dependency ${packageName} is missing; run npm install before installing Bob into a project`);
     }
+    visited.add(packageName);
     const dependencyManifest = JSON.parse(fs.readFileSync(path.join(sourceDir, "package.json"), "utf8"));
     for (const dependencyName of Object.keys(dependencyManifest.dependencies || {}).sort()) {
-      if (!visited.has(dependencyName)) queued.push(dependencyName);
+      if (!visited.has(dependencyName)) queued.push({ name: dependencyName, optional });
+    }
+    for (const dependencyName of Object.keys(dependencyManifest.optionalDependencies || {}).sort()) {
+      if (!visited.has(dependencyName)) queued.push({ name: dependencyName, optional: true });
     }
     const destinationDir = path.join(targetNodeModules, packageName);
     if (path.resolve(sourceDir) === path.resolve(destinationDir)) continue;
