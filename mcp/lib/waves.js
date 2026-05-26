@@ -85,7 +85,7 @@ const {
 const { listAuthProfiles } = require("./auth.js");
 const { listEgressProfiles } = require("./egress-profiles.js");
 const {
-  computeHuntToChainGate,
+  computeEvaluationToChainGate,
 } = require("./phase-gates.js");
 const {
   WAVE_HANDOFF_CONTENT_MAX_CHARS,
@@ -140,13 +140,13 @@ function waveStatus(args) {
   let transitionBlockers = [];
   try {
     const { state } = readSessionStateStrict(domain);
-    const gate = computeHuntToChainGate(domain, state);
+    const gate = computeEvaluationToChainGate(domain, state);
     coverage = gate.coverage;
     transitionBlockers = gate.transition_blockers;
   } catch (error) {
     transitionBlockers = [{
       code: "state_unavailable",
-      message: "session state could not be read for HUNT -> CHAIN gating",
+      message: "session state could not be read for EVALUATE -> CHAIN gating",
       error: error && error.message ? error.message : String(error),
     }];
   }
@@ -193,14 +193,14 @@ function waveStatus(args) {
 }
 
 function assertWaveStartState(state, waveNumber) {
-  if (state.phase !== "HUNT" && state.phase !== "EXPLORE") {
-    throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Wave start requires phase HUNT or EXPLORE, found ${state.phase}`);
+  if (state.phase !== "EVALUATE" && state.phase !== "EXPLORE") {
+    throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Wave start requires phase EVALUATE or EXPLORE, found ${state.phase}`);
   }
   if (state.pending_wave != null) {
     throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Wave start requires pending_wave null, found ${state.pending_wave}`);
   }
-  if (waveNumber !== state.hunt_wave + 1) {
-    throw new ToolError(ERROR_CODES.STATE_CONFLICT, `wave_number must equal hunt_wave + 1 (${state.hunt_wave + 1})`);
+  if (waveNumber !== state.evaluation_wave + 1) {
+    throw new ToolError(ERROR_CODES.STATE_CONFLICT, `wave_number must equal evaluation_wave + 1 (${state.evaluation_wave + 1})`);
   }
 }
 
@@ -238,7 +238,7 @@ function startWaveLocked(domain, {
   // assigned to a wave until an operator clears the block via
   // bounty_clear_terminal_block. Defends against an orchestrator
   // regression that drops the soft-prompt exclusion and silently burns
-  // hunter cycles on classified-blocked work.
+  // evaluator cycles on classified-blocked work.
   const terminallyBlockedSet = new Set(terminallyBlockedSurfaceIds(state));
   const blockedAssignments = assignments
     .filter((assignment) => terminallyBlockedSet.has(assignment.surface_id))
@@ -252,7 +252,7 @@ function startWaveLocked(domain, {
 
   // Capture surface_type from attack_surface.json AT WAVE START into the
   // immutable, MCP-owned assignment file. This makes the smart_contract
-  // completion gate tamper-resistant — hunters cannot disable enforcement
+  // completion gate tamper-resistant — evaluators cannot disable enforcement
   // by mutating attack_surface.json mid-wave.
   const routedSurfaces = routeSurfacesInternal(domain, { attackSurfaceInfo: attackSurface });
   const routeBySurfaceId = new Map(
@@ -272,9 +272,11 @@ function startWaveLocked(domain, {
       surface_type: surfaceTypeById.get(assignment.surface_id) || null,
       capability_pack: route.capability_pack,
       capability_pack_version: route.capability_pack_version,
-      hunter_agent: route.hunter_agent,
+      evaluator_agent: route.evaluator_agent,
       brief_profile: route.brief_profile,
       context_budget: route.context_budget,
+      task_lens: assignment.task_lens,
+      budget: assignment.budget,
       handoff_token_required: true,
       handoff_token_sha256: sha256Hex(token),
       handoff_token: token,
@@ -343,9 +345,11 @@ function startWaveLocked(domain, {
       surface_id: assignment.surface_id,
       capability_pack: assignment.capability_pack,
       capability_pack_version: assignment.capability_pack_version,
-      hunter_agent: assignment.hunter_agent,
+      evaluator_agent: assignment.evaluator_agent,
       brief_profile: assignment.brief_profile,
       context_budget: assignment.context_budget,
+      task_lens: assignment.task_lens,
+      budget: assignment.budget,
       handoff_token: assignment.handoff_token,
     })),
     assignments_path: assignmentsPath,
@@ -405,7 +409,7 @@ function pushUniqueValues(values, additions) {
 }
 
 function buildNextWaveAction(domain, decision, waveNumber) {
-  if (decision === "pending_wave_reconcile") {
+  if (decision === "pending_wave_settle") {
     return {
       kind: "call_tool",
       tool: "bounty_apply_wave_merge",
@@ -418,7 +422,7 @@ function buildNextWaveAction(domain, decision, waveNumber) {
   }
   if (decision === "start_wave") {
     return {
-      kind: "spawn_hunters",
+      kind: "spawn_evaluators",
       wave_number: waveNumber,
       assignments_source: "top_level_assignments",
     };
@@ -444,7 +448,7 @@ function buildStartNextWaveResponse({
         kind: "stop",
         reason: "dry_run is true; call bounty_start_next_wave with dry_run false to start this planned wave.",
       }
-    : buildNextWaveAction(domain, decision, decision === "pending_wave_reconcile" ? plan.pending_wave : plan.wave_number);
+    : buildNextWaveAction(domain, decision, decision === "pending_wave_settle" ? plan.pending_wave : plan.wave_number);
   const response = {
     version: 1,
     target_domain: domain,
@@ -482,8 +486,8 @@ function startNextWave(args) {
 
   return withSessionLock(domain, () => {
     const { raw, state } = readSessionStateStrict(domain);
-    if (state.phase !== "HUNT" && state.phase !== "EXPLORE") {
-      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Wave start requires phase HUNT or EXPLORE, found ${state.phase}`);
+    if (state.phase !== "EVALUATE" && state.phase !== "EXPLORE") {
+      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Wave start requires phase EVALUATE or EXPLORE, found ${state.phase}`);
     }
 
     const basePromotionPreview = state.deep_mode === true
@@ -753,8 +757,8 @@ function applyWaveMerge(args) {
 
   return withSessionLock(domain, () => {
     const { raw, state } = readSessionStateStrict(domain);
-    if (state.phase !== "HUNT" && state.phase !== "EXPLORE") {
-      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Wave merge requires phase HUNT or EXPLORE, found ${state.phase}`);
+    if (state.phase !== "EVALUATE" && state.phase !== "EXPLORE") {
+      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Wave merge requires phase EVALUATE or EXPLORE, found ${state.phase}`);
     }
     if (state.pending_wave == null) {
       throw new ToolError(ERROR_CODES.STATE_CONFLICT, "Wave merge requires pending_wave to be set");
@@ -860,11 +864,11 @@ function applyWaveMerge(args) {
     const attackSurface = readAttackSurfaceStrict(domain);
 
     // The structured handoff's `surface_status: complete` is the contract;
-    // coverage rows are endpoint-level advisory history. A hunter that wrote
+    // coverage rows are endpoint-level advisory history. A evaluator that wrote
     // `complete` and ALSO wrote some unfinished coverage rows during the same
     // wave is internally inconsistent, but the right place to catch that is
-    // either the hunter prompt or a server-side handoff validator — not a
-    // silent downgrade that strands the surface in HUNT forever. Trust the
+    // either the evaluator prompt or a server-side handoff validator — not a
+    // silent downgrade that strands the surface in EVALUATE forever. Trust the
     // handoff and add to explored unconditionally.
     pushUnique(
       explored,
@@ -878,37 +882,37 @@ function applyWaveMerge(args) {
     // Disjointness invariant: a surface marked complete in this wave wins
     // over any prior terminal promotion. Strip from terminally_blocked.
     const exploredSet = new Set(explored);
-    const reconciledTerminallyBlocked = nextTerminallyBlocked.filter(
+    const settledTerminallyBlocked = nextTerminallyBlocked.filter(
       (entry) => !exploredSet.has(entry.surface_id),
     );
-    const reconciledTerminallySet = new Set(reconciledTerminallyBlocked.map((e) => e.surface_id));
+    const settledTerminallySet = new Set(settledTerminallyBlocked.map((e) => e.surface_id));
 
     const filteredLeadSurfaceIds = leadSurfaceIds.filter(
       (surfaceId) =>
         attackSurface.surface_id_set.has(surfaceId) &&
         !explored.includes(surfaceId) &&
-        !reconciledTerminallySet.has(surfaceId),
+        !settledTerminallySet.has(surfaceId),
     );
 
     // Filter requeue: terminally-blocked surfaces are not "requeue
     // candidates" — the orchestrator must clear them via
     // bounty_clear_terminal_block before they can be assigned again.
     const filteredRequeueSurfaceIds = requeueSurfaceIds.filter(
-      (surfaceId) => !reconciledTerminallySet.has(surfaceId),
+      (surfaceId) => !settledTerminallySet.has(surfaceId),
     );
 
     // Snapshots are populated by start_wave; merge does not write them.
     const nextState = {
       ...state,
       explored,
-      terminally_blocked: reconciledTerminallyBlocked,
+      terminally_blocked: settledTerminallyBlocked,
       blocked_prereq_history: nextHistory,
       dead_ends: deadEnds,
       waf_blocked_endpoints: wafBlockedEndpoints,
       lead_surface_ids: filteredLeadSurfaceIds,
       scope_exclusions: scopeExclusions,
       pending_wave: null,
-      hunt_wave: waveNumber,
+      evaluation_wave: waveNumber,
       total_findings: findings.total,
     };
 
@@ -945,7 +949,7 @@ function applyWaveMerge(args) {
         missing_surfaces: merge.missing_surface_ids.length,
         requeue_surfaces: filteredRequeueSurfaceIds.length,
         terminally_blocked_promoted: promotions.length,
-        terminally_blocked_total: reconciledTerminallyBlocked.length,
+        terminally_blocked_total: settledTerminallyBlocked.length,
         findings: findings.total,
       },
     });
@@ -1050,7 +1054,7 @@ function logDeadEnds(args) {
 // The smart_contract completion gate does NOT use this — it reads from the
 // MCP-owned, tamper-resistant assignment file (captured at start_wave time
 // in mcp/lib/waves.js startWave). Reading from attack_surface.json would
-// allow a hunter with Bash access to mutate the file and disable enforcement.
+// allow a evaluator with Bash access to mutate the file and disable enforcement.
 function lookupSurfaceType(domain, surfaceId) {
   const attackSurface = readAttackSurfaceStrict(domain);
   const surface = (attackSurface.document.surfaces || []).find((entry) => entry && entry.id === surfaceId);
@@ -1098,7 +1102,7 @@ function writeWaveHandoff(args) {
 
     // Read surface_type from the immutable, MCP-owned assignment file (captured
     // at start_wave time). Reading from agent-writable attack_surface.json would
-    // let a hunter disable the smart_contract gate via Bash mutation.
+    // let a evaluator disable the smart_contract gate via Bash mutation.
     const surfaceType = assignment.surface_type || null;
     const findingsForRun = readFindingsFromJsonl(domain).filter((finding) => (
       finding.wave === wave &&
@@ -1116,7 +1120,7 @@ function writeWaveHandoff(args) {
       findingCount: findingsForRun.length,
     });
     const surfaceLeadResult = recordSurfaceLeadsForWaveHandoff(domain, Array.isArray(args.surface_leads) ? args.surface_leads : [], {
-      source: "hunter_handoff",
+      source: "evaluator_handoff",
       source_wave: wave,
       source_agent: agent,
       source_surface_id: surfaceId,

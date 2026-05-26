@@ -94,6 +94,42 @@ function pipelineEventsJsonlPath(domain) {
   return path.join(sessionDir(domain), "pipeline-events.jsonl");
 }
 
+function frontierEventsJsonlPath(domain) {
+  return path.join(sessionDir(domain), "frontier-events.jsonl");
+}
+
+function surfaceIndexPath(domain) {
+  return path.join(sessionDir(domain), "surface-index.json");
+}
+
+function taskQueuePath(domain) {
+  return path.join(sessionDir(domain), "task-queue.json");
+}
+
+function agentRunsJsonlPath(domain) {
+  return path.join(sessionDir(domain), "agent-runs.jsonl");
+}
+
+function schedulerDecisionsJsonlPath(domain) {
+  return path.join(sessionDir(domain), "scheduler-decisions.jsonl");
+}
+
+function claimsJsonlPath(domain) {
+  return path.join(sessionDir(domain), "claims.jsonl");
+}
+
+function claimClustersJsonlPath(domain) {
+  return path.join(sessionDir(domain), "claim-clusters.jsonl");
+}
+
+function claimFreezePath(domain) {
+  return path.join(sessionDir(domain), "claim-freeze.json");
+}
+
+function reportSnapshotsJsonlPath(domain) {
+  return path.join(sessionDir(domain), "report-snapshots.jsonl");
+}
+
 function httpAuditJsonlPath(domain) {
   return path.join(sessionDir(domain), "http-audit.jsonl");
 }
@@ -249,17 +285,26 @@ module.exports = {
   handoffSigningKeyPath,
   auditReportsJsonlPath,
   authDifferentialResultsPath,
+  agentRunsJsonlPath,
   chainTreeJsonlPath,
+  claimClustersJsonlPath,
+  claimFreezePath,
+  claimsJsonlPath,
   docDeltaResultsPath,
+  frontierEventsJsonlPath,
   findingsIndexJsonlPath,
   invariantRunsJsonlPath,
+  reportSnapshotsJsonlPath,
+  schedulerDecisionsJsonlPath,
   schemaContractsJsonlPath,
+  surfaceIndexPath,
   surfaceGraphJsonlPath,
   symbolSurfaceIndexPath,
   staticArtifactImportDir,
   staticArtifactPath,
   staticArtifactsJsonlPath,
   staticScanResultsJsonlPath,
+  taskQueuePath,
   trafficJsonlPath,
   verificationAdjudicationPath,
   verificationAttemptsDir,

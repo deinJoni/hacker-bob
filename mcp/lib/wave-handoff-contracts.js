@@ -94,9 +94,11 @@ function handoffAssignmentProvenancePayload(assignment) {
     surface_type: assignment.surface_type || null,
     capability_pack: assignment.capability_pack || null,
     capability_pack_version: assignment.capability_pack_version || null,
-    hunter_agent: assignment.hunter_agent || null,
+    evaluator_agent: assignment.evaluator_agent || null,
     brief_profile: assignment.brief_profile || null,
     context_budget: assignment.context_budget || null,
+    task_lens: assignment.task_lens || null,
+    budget: assignment.budget || null,
     handoff_token_required: assignmentRequiresToken(assignment),
     handoff_token_sha256: assignment.handoff_token_sha256 || null,
   };
@@ -215,7 +217,7 @@ function normalizeChainNotes(value) {
 
 // Runtime mirror of the bounty_write_wave_handoff JSON schema enum and the
 // renderer's BLOCKED_HARNESS_RUN_KINDS constant. Mismatch here would cause
-// SVM/Move/Substrate/CosmWasm hunters to fail finalization even though the
+// SVM/Move/Substrate/CosmWasm evaluators to fail finalization even though the
 // schema accepted their handoff. test/prompt-contracts.test.js enforces the
 // schema, renderer, and runtime invariant.
 const BLOCKED_HARNESS_KIND_VALUES = Object.freeze([

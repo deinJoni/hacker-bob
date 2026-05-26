@@ -12,6 +12,11 @@ const STANDARD_WAVE_TARGET = 4;
 const STANDARD_WAVE_MAX = 6;
 const DEEP_WAVE_TARGET = 6;
 const DEEP_WAVE_MAX = 8;
+const DEFAULT_WAVE_TASK_LENS = "surface_scout";
+const DEFAULT_WAVE_TASK_BUDGET = Object.freeze({
+  max_steps: 6,
+  max_context_tokens: 24000,
+});
 
 function surfaceIdOf(value) {
   if (value == null) return null;
@@ -161,7 +166,7 @@ function planNextWave({
   const deepMode = normalizedState.deep_mode === true;
   const target = deepMode ? DEEP_WAVE_TARGET : STANDARD_WAVE_TARGET;
   const max = deepMode ? DEEP_WAVE_MAX : STANDARD_WAVE_MAX;
-  const nextWave = (Number.isInteger(normalizedState.hunt_wave) ? normalizedState.hunt_wave : 0) + 1;
+  const nextWave = (Number.isInteger(normalizedState.evaluation_wave) ? normalizedState.evaluation_wave : 0) + 1;
 
   const basePlan = {
     version: 1,
@@ -177,7 +182,7 @@ function planNextWave({
   if (normalizedState.pending_wave != null) {
     return {
       ...basePlan,
-      decision: "pending_wave_reconcile",
+      decision: "pending_wave_settle",
       reason: `pending_wave is still set to ${normalizedState.pending_wave}`,
       pending_wave: normalizedState.pending_wave,
     };
@@ -240,6 +245,8 @@ function planNextWave({
   const assignments = selected.map((surface, index) => ({
     agent: `a${index + 1}`,
     surface_id: surface.id,
+    task_lens: DEFAULT_WAVE_TASK_LENS,
+    budget: { ...DEFAULT_WAVE_TASK_BUDGET },
   }));
 
   return {
@@ -260,6 +267,8 @@ function planNextWave({
 module.exports = {
   DEEP_WAVE_MAX,
   DEEP_WAVE_TARGET,
+  DEFAULT_WAVE_TASK_BUDGET,
+  DEFAULT_WAVE_TASK_LENS,
   STANDARD_WAVE_MAX,
   STANDARD_WAVE_TARGET,
   isOpenForAssignment,

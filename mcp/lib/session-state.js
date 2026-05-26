@@ -27,6 +27,9 @@ const {
   resolveEgressProfile,
 } = require("./egress-profiles.js");
 const {
+  buildSessionNucleus,
+} = require("./governance-contracts.js");
+const {
   safeAppendPipelineEventDirect,
 } = require("./pipeline-events.js");
 const {
@@ -35,7 +38,7 @@ const {
 } = require("./scope.js");
 const {
   computeChainToVerifyGate,
-  computeHuntToChainGate,
+  computeEvaluationToChainGate,
   computeVerifyToGradeGate,
   formatTransitionBlockers,
 } = require("./phase-gates.js");
@@ -210,10 +213,26 @@ function initSession(args) {
     const egressProfile = resolveEgressProfile(requestedEgressProfile);
     assertBlockInternalHostsCompatibleWithEgress(internalHostPolicy, egressProfile);
     const egressFields = egressProfileStateFields(egressProfile);
-    const state = buildInitialSessionState(domain, targetUrl, {
+    const sessionNucleus = buildSessionNucleus({
+      target_domain: domain,
+      target_url: targetUrl,
+      scope_policy: {
+        target_domain: domain,
+        target_url: targetUrl,
+        ...internalHostPolicy,
+      },
+      egress_identity: egressFields,
+      auth_context: {
+        auth_status: "pending",
+      },
+      operator_constraint: {
+        handoff_provenance_required: true,
+      },
+    });
+    const state = buildInitialSessionState(sessionNucleus.target_domain, sessionNucleus.scope_policy.target_url, {
       deepMode,
       egressProfile,
-      blockInternalHostsPolicy: internalHostPolicy,
+      blockInternalHostsPolicy: sessionNucleus.scope_policy,
     });
     writeFileAtomic(filePath, `${JSON.stringify(state, null, 2)}\n`);
     safeAppendPipelineEventDirect(domain, "session_started", {
@@ -300,12 +319,12 @@ function transitionPhase(args) {
     const { raw, state } = readSessionStateStrict(domain);
     const fromPhase = state.phase;
     const allowedTransitions = {
-      RECON: ["AUTH"],
-      AUTH: ["HUNT"],
-      HUNT: ["CHAIN"],
+      SURFACE_DISCOVERY: ["AUTH"],
+      AUTH: ["EVALUATE"],
+      EVALUATE: ["CHAIN"],
       CHAIN: ["VERIFY"],
       VERIFY: ["GRADE"],
-      GRADE: ["REPORT", "HUNT"],
+      GRADE: ["REPORT", "EVALUATE"],
       REPORT: ["EXPLORE"],
       EXPLORE: ["CHAIN"],
     };
@@ -316,12 +335,12 @@ function transitionPhase(args) {
 
     let overrideReason = null;
     const overrideAllowed = (
-      (fromPhase === "HUNT" && toPhase === "CHAIN") ||
+      (fromPhase === "EVALUATE" && toPhase === "CHAIN") ||
       (fromPhase === "CHAIN" && toPhase === "VERIFY")
     );
     if (args.override_reason != null) {
       if (!overrideAllowed) {
-        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "override_reason is only allowed for HUNT -> CHAIN or CHAIN -> VERIFY");
+        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "override_reason is only allowed for EVALUATE -> CHAIN or CHAIN -> VERIFY");
       }
       if (typeof args.override_reason !== "string" || !args.override_reason.trim()) {
         throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "override_reason must be a non-empty string");
@@ -333,9 +352,9 @@ function transitionPhase(args) {
     }
 
     let nextAuthStatus = state.auth_status;
-    if (fromPhase === "AUTH" && toPhase === "HUNT") {
+    if (fromPhase === "AUTH" && toPhase === "EVALUATE") {
       if (args.auth_status == null) {
-        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "auth_status is required for AUTH -> HUNT");
+        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "auth_status is required for AUTH -> EVALUATE");
       }
       nextAuthStatus = assertEnumValue(
         args.auth_status,
@@ -343,14 +362,14 @@ function transitionPhase(args) {
         "auth_status",
       );
     } else if (args.auth_status != null) {
-      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "auth_status is only allowed for AUTH -> HUNT");
+      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "auth_status is only allowed for AUTH -> EVALUATE");
     }
 
     let transitionGate = null;
     let transitionGateLabel = null;
-    if (fromPhase === "HUNT" && toPhase === "CHAIN") {
-      transitionGate = computeHuntToChainGate(domain, state);
-      transitionGateLabel = "HUNT -> CHAIN";
+    if (fromPhase === "EVALUATE" && toPhase === "CHAIN") {
+      transitionGate = computeEvaluationToChainGate(domain, state);
+      transitionGateLabel = "EVALUATE -> CHAIN";
     } else if (fromPhase === "CHAIN" && toPhase === "VERIFY") {
       transitionGate = computeChainToVerifyGate(domain, state);
       transitionGateLabel = "CHAIN -> VERIFY";
@@ -377,7 +396,7 @@ function transitionPhase(args) {
       ...(verificationEntry ? verificationEntry.state_fields : {}),
       phase: toPhase,
       auth_status: nextAuthStatus,
-      hold_count: fromPhase === "GRADE" && toPhase === "HUNT"
+      hold_count: fromPhase === "GRADE" && toPhase === "EVALUATE"
         ? state.hold_count + 1
         : state.hold_count,
     };
@@ -503,7 +522,7 @@ function clearTerminalBlock(args) {
     const priorClearHistory = Array.isArray(state.terminal_block_clear_history) ? state.terminal_block_clear_history : [];
     const clearEntry = {
       surface_id: surfaceId,
-      cleared_at_wave: state.hunt_wave,
+      cleared_at_wave: state.evaluation_wave,
       cleared_at_ts: clearedAtTs,
       reason,
       previously_blocked_at_wave: previousEntry.blocked_at_wave,
@@ -533,7 +552,7 @@ function clearTerminalBlock(args) {
       version: 1,
       cleared: true,
       surface_id: surfaceId,
-      cleared_at_wave: state.hunt_wave,
+      cleared_at_wave: state.evaluation_wave,
       cleared_at_ts: clearedAtTs,
       previous_blockers: clearEntry.previous_blockers,
       previously_blocked_at_wave: clearEntry.previously_blocked_at_wave,

@@ -429,6 +429,14 @@ function compactPriorRecord(record) {
   };
 }
 
+function pushUniquePriorRecord(target, seen, record) {
+  if (record == null || typeof record !== "object") return;
+  const key = `${record.target_domain || ""}\0${record.finding_id || ""}`;
+  if (seen.has(key)) return;
+  seen.add(key);
+  target.push(record);
+}
+
 function summarizePriorFindingsForSurface(domain, surfaceObj, options) {
   const opts = options || {};
   const requestedLimit = Number.isInteger(opts.limit) && opts.limit > 0
@@ -437,6 +445,16 @@ function summarizePriorFindingsForSurface(domain, surfaceObj, options) {
   const limit = Math.min(requestedLimit, PRIORS_SLICE_MAX_LIMIT);
   const queryText = indexableSurfaceQuery(surfaceObj);
   if (queryText.length === 0) return null;
+  let sameTarget;
+  try {
+    sameTarget = queryFindingsForTarget({
+      target_domain: domain,
+      query_text: queryText,
+      top_k: limit,
+    });
+  } catch (_err) {
+    sameTarget = { matches: [], total_in_index: 0 };
+  }
   let crossTarget;
   try {
     crossTarget = queryFindingsCrossTarget({
@@ -444,20 +462,32 @@ function summarizePriorFindingsForSurface(domain, surfaceObj, options) {
       top_k: limit,
     });
   } catch (_err) {
+    crossTarget = {
+      matches: [],
+      total_in_index: 0,
+      domains_scanned: 0,
+      matched_total: 0,
+    };
+  }
+  if (sameTarget.matches.length === 0 && crossTarget.matches.length === 0) {
     return null;
   }
-  if (crossTarget.matches.length === 0) {
-    return null;
+  const seen = new Set();
+  const priors = [];
+  for (const match of sameTarget.matches) pushUniquePriorRecord(priors, seen, match);
+  for (const match of crossTarget.matches) {
+    if (priors.length >= limit) break;
+    pushUniquePriorRecord(priors, seen, match);
   }
-  const sameTargetMatches = crossTarget.matches.filter((m) => m.target_domain === domain);
-  const otherTargetMatches = crossTarget.matches.filter((m) => m.target_domain !== domain);
+  const sameTargetMatches = priors.filter((m) => m.target_domain === domain);
+  const otherTargetMatches = priors.filter((m) => m.target_domain !== domain);
   return {
-    total_in_corpus: crossTarget.total_in_index,
+    total_in_corpus: Math.max(crossTarget.total_in_index || 0, sameTarget.total_in_index || 0),
     domains_scanned: crossTarget.domains_scanned,
-    matched_total: crossTarget.matched_total,
+    matched_total: Math.max(crossTarget.matched_total || 0, priors.length),
     same_target_count: sameTargetMatches.length,
     other_target_count: otherTargetMatches.length,
-    priors: crossTarget.matches.slice(0, limit).map(compactPriorRecord).filter((entry) => entry != null),
+    priors: priors.slice(0, limit).map(compactPriorRecord).filter((entry) => entry != null),
     limit,
   };
 }
