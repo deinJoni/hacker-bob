@@ -4,7 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const MARKER = "BOB_HUNTER_DONE";
+const MARKER = "BOB_AGENT_RUN_DONE";
 
 function readStdin() {
   return fs.readFileSync(0, "utf8");
@@ -67,7 +67,7 @@ function parseMarkerWithStatus(message) {
 }
 
 function block(reason, telemetryInput = null) {
-  recordHunterCompletionTelemetry(telemetryInput);
+  recordAgentCompletionTelemetry(telemetryInput);
   console.error(reason);
   process.exit(2);
 }
@@ -76,18 +76,18 @@ function projectRoot() {
   return process.env.BOB_PROJECT_DIR || process.env.CLAUDE_PROJECT_DIR || path.resolve(__dirname, "..", "..");
 }
 
-function loadHunterCompletion() {
-  return require(path.join(projectRoot(), "mcp", "lib", "hunter-completion.js"));
+function loadAgentCompletion() {
+  return require(path.join(projectRoot(), "mcp", "lib", "agent-run-completion.js"));
 }
 
-function recordHunterCompletionTelemetry(input) {
+function recordAgentCompletionTelemetry(input) {
   if (!input) return;
   try {
-    const completion = loadHunterCompletion();
-    if (completion && typeof completion.recordHunterCompletionTelemetry === "function") {
-      completion.recordHunterCompletionTelemetry(input, {
+    const completion = loadAgentCompletion();
+    if (completion && typeof completion.recordAgentCompletionTelemetry === "function") {
+      completion.recordAgentCompletionTelemetry(input, {
         transcript_path: input.transcript_path,
-        telemetry_source: input.telemetry_source || "hunter-subagent-stop",
+        telemetry_source: input.telemetry_source || "agent-run-stop",
         now: input.now,
       });
     }
@@ -95,7 +95,7 @@ function recordHunterCompletionTelemetry(input) {
 }
 
 function markerValidationError(marker) {
-  const completion = loadHunterCompletion();
+  const completion = loadAgentCompletion();
   if (completion && typeof completion.isEvidenceMarker === "function" && completion.isEvidenceMarker(marker)) {
     return completion.evidenceMarkerValidationError(marker);
   }
@@ -105,31 +105,31 @@ function markerValidationError(marker) {
   if (missing.length) {
     return {
       block_code: "malformed_marker",
-      reason: `Hunter final marker is missing required field(s): ${missing.join(", ")}`,
+      reason: `Evaluator final marker is missing required field(s): ${missing.join(", ")}`,
     };
   }
   if (!/^w[1-9][0-9]*$/.test(marker.wave)) {
     return {
       block_code: "malformed_marker",
-      reason: "Hunter final marker wave must look like positive wN",
+      reason: "Evaluator final marker wave must look like positive wN",
     };
   }
   if (!/^a[1-9][0-9]*$/.test(marker.agent)) {
     return {
       block_code: "malformed_marker",
-      reason: "Hunter final marker agent must look like positive aN",
+      reason: "Evaluator final marker agent must look like positive aN",
     };
   }
   return null;
 }
 
 function inspectEvidenceRun(marker) {
-  const completion = loadHunterCompletion();
+  const completion = loadAgentCompletion();
   return completion.evaluateEvidenceCompletion(marker);
 }
 
 function evidenceTelemetryInput({ payload, marker, now, status, block_code = null, handoff = null }) {
-  const completion = loadHunterCompletion();
+  const completion = loadAgentCompletion();
   return completion.evidenceTelemetryInput({
     marker,
     status,
@@ -141,7 +141,7 @@ function evidenceTelemetryInput({ payload, marker, now, status, block_code = nul
 }
 
 function isEvidenceMarker(marker) {
-  const completion = loadHunterCompletion();
+  const completion = loadAgentCompletion();
   return completion && typeof completion.isEvidenceMarker === "function" && completion.isEvidenceMarker(marker);
 }
 
@@ -152,10 +152,10 @@ function transcriptPathFromPayload(payload) {
 }
 
 function finalizeMarker(marker, payload, now) {
-  const completion = loadHunterCompletion();
-  return completion.finalizeHunterCompletion(marker, {
+  const completion = loadAgentCompletion();
+  return completion.finalizeAgentCompletion(marker, {
     transcript_path: transcriptPathFromPayload(payload),
-    telemetry_source: "hunter-subagent-stop",
+    telemetry_source: "agent-run-stop",
     now,
   });
 }
@@ -180,7 +180,7 @@ function markerTelemetryInput({
     agent: marker?.agent,
     surface_id: marker?.surface_id,
     transcript_path: transcriptPathFromPayload(payload),
-    telemetry_source: "hunter-subagent-stop",
+    telemetry_source: "agent-run-stop",
     now,
   };
 }
@@ -200,7 +200,7 @@ function main() {
   marker = markerResult.marker;
   if (!marker) {
     block(
-      `Hunter stop blocked: write the wave handoff with bounty_write_wave_handoff, then emit ${MARKER} {"target_domain":"...","wave":"wN","agent":"aN","surface_id":"..."}.`,
+      `Evaluator stop blocked: write the wave handoff with bounty_write_wave_handoff, then emit ${MARKER} {"target_domain":"...","wave":"wN","agent":"aN","surface_id":"..."}.`,
       markerTelemetryInput({
         payload,
         now,
@@ -231,7 +231,7 @@ function main() {
         block_code: evidenceResult.block_code,
       }));
     }
-    recordHunterCompletionTelemetry(evidenceTelemetryInput({
+    recordAgentCompletionTelemetry(evidenceTelemetryInput({
       payload, marker, now, status: "allowed",
       handoff: evidenceResult.handoff,
     }));

@@ -1,15 +1,15 @@
 "use strict";
 
-const { hunterRoleSpecs } = require("../../mcp/lib/capability-packs.js");
+const { evaluatorRoleSpecs } = require("../../mcp/lib/capability-packs.js");
 
 const CODEX_ROLE_SPECS = Object.freeze({
-  recon: Object.freeze({
-    bob_role: "recon-agent",
+  "surface-discovery": Object.freeze({
+    bob_role: "surface-discovery-agent",
     agent_type: "worker",
     lifecycle: "wait",
   }),
-  "deep-recon": Object.freeze({
-    bob_role: "deep-recon-agent",
+  "deep-surface-discovery": Object.freeze({
+    bob_role: "deep-surface-discovery-agent",
     agent_type: "worker",
     lifecycle: "wait",
   }),
@@ -18,18 +18,18 @@ const CODEX_ROLE_SPECS = Object.freeze({
     agent_type: "worker",
     lifecycle: "wait",
   }),
-  hunter: Object.freeze({
-    bob_role: "hunter-agent",
+  evaluator: Object.freeze({
+    bob_role: "evaluator-agent",
     agent_type: "worker",
     lifecycle: "async_wave",
     bob_agent_id_source: "wave-start result.data.assignments[].agent",
   }),
-  // Per-chain hunter Codex role specs derived from HUNTER_ROLES. Multiple
+  // Per-chain evaluator Codex role specs derived from EVALUATOR_ROLES. Multiple
   // capability packs that share a role_id collapse to a single codex spec —
   // matching the role-model.js + Claude-role-renderer.js dedup. Adding a
-  // new hunter role auto-extends this object.
+  // new evaluator role auto-extends this object.
   ...Object.fromEntries(
-    hunterRoleSpecs().map((role) => [
+    evaluatorRoleSpecs().map((role) => [
       role.role_id,
       Object.freeze({
         bob_role: role.name,

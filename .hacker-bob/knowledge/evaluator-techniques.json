@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Curated read-only hunter guidance distilled from claude-bug-bounty methodology, web2 bug classes, advanced techniques, payload notes, and selected wordlist patterns. This file is reference material only; execution remains in hacker-bob MCP tools and agents.",
+  "description": "Curated read-only evaluator guidance distilled from claude-bug-bounty methodology, web2 bug classes, advanced techniques, payload notes, and selected wordlist patterns. This file is reference material only; execution remains in hacker-bob MCP tools and agents.",
   "entries": [
     {
       "id": "generic-rest-api",
@@ -34,7 +34,7 @@
         "hints": ["graphql", "field-level auth", "node id"]
       },
       "techniques": [
-        "Treat introspection as mapping, not a finding. Hunt for missing field-level auth, node/global ID object access, and mutation authorization gaps.",
+        "Treat introspection as mapping, not a finding. Evaluation for missing field-level auth, node/global ID object access, and mutation authorization gaps.",
         "If introspection is blocked, use type suggestions, aliases, GET-vs-POST, content-type changes, and partial schema errors to discover fields.",
         "Use aliases to test multiple object IDs in one request and compare attacker vs victim visibility with the same auth profile.",
         "Check batching only where rate limits or OTP/login flows exist; record only if it enables practical bypass or account takeover."
@@ -56,10 +56,10 @@
         "hints": ["cms", "wordpress", "plugin", "theme"]
       },
       "techniques": [
-        "Enumerate REST users, author redirects, plugins, themes, uploads, debug logs, and backup config files, but only record when sensitive data or a real exploit path exists.",
+        "Enumerate REST users, author redirects, plugins, themes, uploads, debug logs, and backup config files, but only record when sensitive data or a real impact path exists.",
         "For authenticated testing, use the lowest role available and test plugin admin-ajax actions for nonce-only auth, role confusion, upload, export, and privilege changes.",
         "Treat xmlrpc.php as a signal for brute-force or pingback SSRF only when you can show bypassed controls or meaningful internal interaction.",
-        "Use plugin/theme names and versions as leads for exploit research; banner disclosure alone is not reportable."
+        "Use plugin/theme names and versions as leads for impact research; banner disclosure alone is not reportable."
       ],
       "payload_hints": [
         "/wp-json/wp/v2/users and /?author=1",
@@ -166,7 +166,7 @@
         "hints": ["business_logic", "billing", "checkout", "refund", "payments", "money movement", "invites"]
       },
       "techniques": [
-        "Hunt workflow skips, negative/zero values, stale state, privilege-changing invitation flows, plan upgrades, refunds, and credit transfers.",
+        "Evaluation workflow skips, negative/zero values, stale state, privilege-changing invitation flows, plan upgrades, refunds, and credit transfers.",
         "Race only critical state transitions: coupon redemption, credit spend, password reset, MFA verify, invite accept, checkout, refund, and file processing.",
         "Compare UI-enforced constraints with direct API requests. The best bugs live where client steps imply server trust.",
         "Record only if money, credits, access, inventory, or account state changes in a way a real attacker can use."

@@ -21,16 +21,16 @@ const RESOURCE_SETS = Object.freeze([
     source: path.join(BOB_RESOURCE_DIR, "bypass-tables"),
     destination: path.join(BOB_RESOURCE_DIR, "bypass-tables"),
     predicate: (name) => name.endsWith(".txt"),
-    missingMessage: ".hacker-bob/bypass-tables/ is missing. HUNT phase requires these files.",
-    emptyMessage: ".hacker-bob/bypass-tables/ is empty. HUNT phase requires these files.",
+    missingMessage: ".hacker-bob/bypass-tables/ is missing. EVALUATE phase requires these files.",
+    emptyMessage: ".hacker-bob/bypass-tables/ is empty. EVALUATE phase requires these files.",
   },
   {
     name: "knowledge",
     source: path.join(BOB_RESOURCE_DIR, "knowledge"),
     destination: path.join(BOB_RESOURCE_DIR, "knowledge"),
     predicate: (name) => name.endsWith(".json"),
-    missingMessage: ".hacker-bob/knowledge/ is missing. HUNT phase requires these files.",
-    emptyMessage: ".hacker-bob/knowledge/ is empty. HUNT phase requires these files.",
+    missingMessage: ".hacker-bob/knowledge/ is missing. EVALUATE phase requires these files.",
+    emptyMessage: ".hacker-bob/knowledge/ is empty. EVALUATE phase requires these files.",
   },
 ]);
 
@@ -66,8 +66,8 @@ function detectInstalledAdapterIds(targetAbs) {
   if (
     fs.existsSync(path.join(targetAbs, ".claude", "bob", "VERSION")) ||
     fs.existsSync(path.join(targetAbs, ".claude", "commands", "bob-update.md")) ||
-    fs.existsSync(path.join(targetAbs, ".claude", "commands", "bob", "hunt.md")) ||
-    fs.existsSync(path.join(targetAbs, ".claude", "skills", "bob-hunt", "SKILL.md"))
+    fs.existsSync(path.join(targetAbs, ".claude", "commands", "bob", "evaluate.md")) ||
+    fs.existsSync(path.join(targetAbs, ".claude", "skills", "bob-evaluate", "SKILL.md"))
   ) {
     ids.push("claude");
   }
@@ -475,7 +475,7 @@ function printInstallSummary(summary) {
   if (summary.adapterResults.claude) {
     console.log(`  ${summary.agents} Claude agent definitions`);
     console.log("  Claude command shims (/bob-update, /bob-egress, /bob-export)");
-    console.log("  Claude bob-hunt + bob-status + bob-debug skills");
+    console.log("  Claude bob-evaluate + bob-status + bob-debug skills");
     console.log(`  ${summary.rules} Claude rules`);
     console.log("  Claude session guard hooks, update/export helpers, and status line");
     console.log("  Claude .mcp.json and settings.json merged");
@@ -483,7 +483,7 @@ function printInstallSummary(summary) {
   }
   if (summary.adapterResults.codex) {
     console.log("  Codex plugin (.codex/plugins/hacker-bob) for MCP wiring");
-    console.log("  Codex skills ($bob-hunt, $bob-status, $bob-debug, $bob-update, $bob-export, $bob-egress) in ~/.codex/skills");
+    console.log("  Codex skills ($bob-evaluate, $bob-status, $bob-debug, $bob-update, $bob-export, $bob-egress) in ~/.codex/skills");
     console.log(`  Codex plugin command wrappers (${summary.codexCommands}) and .agents/plugins/marketplace.json`);
     if (summary.codexActivation && summary.codexActivation.ok) {
       console.log("  Codex plugin cache/config activated for MCP discovery");
@@ -497,7 +497,7 @@ function printInstallSummary(summary) {
     console.log(`  Generic MCP prompt docs (${summary.genericPromptDocs}) and .mcp.json merged`);
   }
   console.log(`  ${summary.bypassTables} neutral bypass tables`);
-  console.log(`  ${summary.knowledge} neutral hunter knowledge files`);
+  console.log(`  ${summary.knowledge} neutral evaluator knowledge files`);
   console.log(`  MCP runtime (mcp/server.js, auto-signup.js, redaction.js, lib/*.js, lib/tools/*.js, dependency files ${summary.runtimeDependencyFiles})`);
   console.log("  .hacker-bob/ resources");
   console.log("  .hacker-bob/VERSION and install.json");
@@ -523,13 +523,13 @@ function printInstallSummary(summary) {
     console.log("    Get a key at https://capsolver.com and export CAPSOLVER_API_KEY=...");
   }
   console.log("");
-  console.log("Optional recon tools (hunting works without these, recon steps are skipped):");
+  console.log("Optional surface-discovery tools (evaluating works without these, surface-discovery steps are skipped):");
   for (const tool of ["subfinder", "httpx", "nuclei", "amass", "assetfinder", "chaos", "dnsx", "tlsx", "katana", "subzy"]) {
     console.log(`  ${commandOrGoBinExists(tool) ? "OK" : "MISSING"}: ${tool}`);
   }
   console.log(`  ${jwtToolExists() ? "OK" : "MISSING"}: jwt_tool`);
   console.log("");
-  console.log("Install recon tools (optional):");
+  console.log("Install surface-discovery tools (optional):");
   console.log("  go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest");
   console.log("  go install github.com/projectdiscovery/httpx/cmd/httpx@latest");
   console.log("  go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest");
@@ -543,9 +543,9 @@ function printInstallSummary(summary) {
   console.log("  git clone https://github.com/ticarpi/jwt_tool ~/jwt_tool && python3 -m pip install -r ~/jwt_tool/requirements.txt");
   console.log("");
   if (summary.adapters.length === 1 && summary.adapters[0] === "claude") {
-    console.log(`Done. Restart Claude Code in ${summary.targetAbs}, then run: /bob-hunt target.com`);
+    console.log(`Done. Restart Claude Code in ${summary.targetAbs}, then run: /bob-evaluate target.com`);
   } else if (summary.adapters.length === 1 && summary.adapters[0] === "codex") {
-    console.log(`Done. Restart Codex in ${summary.targetAbs}, then run: $bob-hunt target.com`);
+    console.log(`Done. Restart Codex in ${summary.targetAbs}, then run: $bob-evaluate target.com`);
   } else if (summary.adapters.length === 1 && summary.adapters[0] === "generic-mcp") {
     console.log(`Done. Connect your MCP host to ${path.join(summary.targetAbs, "mcp", "server.js")} and read .hacker-bob/generic-mcp/hacker-bob.md.`);
   } else {

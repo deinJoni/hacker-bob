@@ -41,7 +41,7 @@ const {
 const {
   CAPABILITY_PACKS,
   DEFAULT_CONTEXT_BUDGET,
-  hunterAgentNamesForCapabilityPacks,
+  evaluatorAgentNamesForCapabilityPacks,
   SMART_CONTRACT_CONTEXT_BUDGET,
 } = require("../mcp/lib/capability-packs.js");
 
@@ -81,7 +81,7 @@ function generatedAllowedMcpTools() {
 
 function orchestratorReferencedMcpTools() {
   return new Set(
-    Array.from(readFile(".claude/skills/bob-hunt/SKILL.md").matchAll(/\b(bounty_[A-Za-z0-9_]+)\b/g))
+    Array.from(readFile(".claude/skills/bob-evaluate/SKILL.md").matchAll(/\b(bounty_[A-Za-z0-9_]+)\b/g))
       .map((match) => match[1]),
   );
 }
@@ -243,32 +243,32 @@ test("Codex plugin manifest and direct skills expose portable Bob contracts", ()
   assert.equal(mcp.mcpServers.bountyagent.command, "node");
   assert.match(mcp.mcpServers.bountyagent.args[0], /mcp\/server\.js$/);
 
-  const hunt = readFile("adapters/codex/skills/bob-hunt/SKILL.md");
+  const evaluate = readFile("adapters/codex/skills/bob-evaluate/SKILL.md");
   const status = readFile("adapters/codex/skills/bob-status/SKILL.md");
   const debug = readFile("adapters/codex/skills/bob-debug/SKILL.md");
   const exportSkill = readFile("adapters/codex/skills/bob-export/SKILL.md");
   const egressSkill = readFile("adapters/codex/skills/bob-egress/SKILL.md");
-  assert.equal(parseFrontmatter(hunt, "adapters/codex/skills/bob-hunt/SKILL.md").name, "bob-hunt");
+  assert.equal(parseFrontmatter(evaluate, "adapters/codex/skills/bob-evaluate/SKILL.md").name, "bob-evaluate");
   assert.equal(parseFrontmatter(status, "adapters/codex/skills/bob-status/SKILL.md").name, "bob-status");
   assert.equal(parseFrontmatter(debug, "adapters/codex/skills/bob-debug/SKILL.md").name, "bob-debug");
   assert.equal(parseFrontmatter(exportSkill, "adapters/codex/skills/bob-export/SKILL.md").name, "bob-export");
   assert.equal(parseFrontmatter(egressSkill, "adapters/codex/skills/bob-egress/SKILL.md").name, "bob-egress");
-  assert.match(hunt, /bounty_finalize_hunter_run/);
-  assert.match(hunt, /Codex Agent Mapping/);
-  assert.match(hunt, /Codex Worker Role Contracts/);
-  assert.match(hunt, /BEGIN recon CONTRACT/);
-  assert.match(hunt, /BEGIN hunter CONTRACT/);
-  assert.match(hunt, /spawn_agent/);
-  assert.match(hunt, /agent_type: "worker"/);
-  assert.match(hunt, /bounty_read_hunter_brief\(\{ target_domain:[\s\S]*egress_profile:[\s\S]*block_internal_hosts: \[block_internal_hosts\]/);
-  assert.match(hunt, /wait_agent/);
-  assert.match(hunt, /close_agent/);
-  assert.match(hunt, /host_agent_id -> w\[wave\]\/a\[agent\]\/surface_id/);
-  assert.doesNotMatch(hunt + status + debug + exportSkill + egressSkill, /CLAUDE_PROJECT_DIR|mcp__bountyagent__|\/bob:|\bClaude\b|Agent\(subagent_type|subagent_type|run_in_background|\bTask\b|SubagentStop/);
+  assert.match(evaluate, /bounty_finalize_agent_run/);
+  assert.match(evaluate, /Codex Agent Mapping/);
+  assert.match(evaluate, /Codex Worker Role Contracts/);
+  assert.match(evaluate, /BEGIN surface-discovery CONTRACT/);
+  assert.match(evaluate, /BEGIN evaluator CONTRACT/);
+  assert.match(evaluate, /spawn_agent/);
+  assert.match(evaluate, /agent_type: "worker"/);
+  assert.match(evaluate, /bounty_read_assignment_brief\(\{ target_domain:[\s\S]*egress_profile:[\s\S]*block_internal_hosts: \[block_internal_hosts\]/);
+  assert.match(evaluate, /wait_agent/);
+  assert.match(evaluate, /close_agent/);
+  assert.match(evaluate, /host_agent_id -> w\[wave\]\/a\[agent\]\/surface_id/);
+  assert.doesNotMatch(evaluate + status + debug + exportSkill + egressSkill, /CLAUDE_PROJECT_DIR|mcp__bountyagent__|\/bob:|\bClaude\b|Agent\(subagent_type|subagent_type|run_in_background|\bTask\b|SubagentStop/);
   assert.match(status, /mcp\/lib\/update-check\.js/);
   assert.match(exportSkill, /mcp\/lib\/bob-export\.js/);
   assert.match(exportSkill, /no v1 flags/);
-  assert.match(exportSkill, /does not hunt, resume sessions, or interact with targets/);
+  assert.match(exportSkill, /does not evaluate, resume sessions, or interact with targets/);
   assert.match(egressSkill, /mcp\/lib\/egress-cli\.js/);
   assert.match(egressSkill, /Never print proxy URLs or credentials/);
 
@@ -287,7 +287,7 @@ test("Codex plugin manifest and direct skills expose portable Bob contracts", ()
 
 test("Generic MCP prompt docs describe manual host mode without host-native files", () => {
   const doc = readFile("adapters/generic-mcp/prompts/hacker-bob.md");
-  assert.match(doc, /bounty_finalize_hunter_run/);
+  assert.match(doc, /bounty_finalize_agent_run/);
   assert.match(doc, /Generic MCP mode does not provide host-native background agents/);
   assert.doesNotMatch(doc, /CLAUDE_PROJECT_DIR|mcp__bountyagent__|\.claude|\.codex/);
 });
@@ -350,8 +350,8 @@ test("neutral role prompt bodies do not contain host-specific MCP permission syn
 test("shared orchestrator keeps launch mechanics adapter-owned", () => {
   const body = readFile("prompts/roles/orchestrator.md");
   for (const placeholder of [
-    "{{SPAWN_RECON_AGENT}}",
-    "{{SPAWN_HUNTER_AGENT}}",
+    "{{SPAWN_SURFACE_DISCOVERY_AGENT}}",
+    "{{SPAWN_EVALUATOR_AGENT}}",
     "{{SPAWN_CHAIN_AGENT}}",
     "{{SPAWN_BRUTALIST_VERIFIER}}",
     "{{SPAWN_BALANCED_VERIFIER}}",
@@ -391,8 +391,8 @@ test("orchestrator playbook guidance lives in external playbooks and rendered sk
   assert.match(accountPlaybook, /bounty_read_auth_differential_results/);
   assert.match(accountPlaybook, /unauth_succeeds_where_auth_blocked/);
 
-  const claudeSkill = readFile(".claude/skills/bob-hunt/SKILL.md");
-  const codexSkill = readFile("adapters/codex/skills/bob-hunt/SKILL.md");
+  const claudeSkill = readFile(".claude/skills/bob-evaluate/SKILL.md");
+  const codexSkill = readFile("adapters/codex/skills/bob-evaluate/SKILL.md");
   assert.match(claudeSkill, /severity_class.*security/);
   assert.match(codexSkill, /severity_class.*security/);
   assert.match(claudeSkill, /Doc-vs-Behavior Differential/);
@@ -401,15 +401,15 @@ test("orchestrator playbook guidance lives in external playbooks and rendered sk
   assert.match(codexSkill, /Multi-Account Differential/);
 });
 
-test("hunter frontmatter excludes Write and still exposes wave handoff MCP tools", () => {
-  const document = readFile(".claude/agents/hunter-agent.md");
-  const frontmatter = parseFrontmatter(document, "hunter-agent.md");
+test("evaluator frontmatter excludes Write and still exposes wave handoff MCP tools", () => {
+  const document = readFile(".claude/agents/evaluator-agent.md");
+  const frontmatter = parseFrontmatter(document, "evaluator-agent.md");
   const tools = frontmatter.tools.split(/\s*,\s*/).filter(Boolean);
 
   assert.ok(!tools.includes("Write"));
   assert.ok(tools.includes("Bash"));
   assert.ok(tools.includes("mcp__bountyagent__bounty_write_wave_handoff"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_finalize_hunter_run"));
+  assert.ok(tools.includes("mcp__bountyagent__bounty_finalize_agent_run"));
   assert.ok(tools.includes("mcp__bountyagent__bounty_record_finding"));
   assert.ok(tools.includes("mcp__bountyagent__bounty_list_auth_profiles"));
   assert.ok(tools.includes("mcp__bountyagent__bounty_log_coverage"));
@@ -428,7 +428,7 @@ test("hunter frontmatter excludes Write and still exposes wave handoff MCP tools
   assert.ok(!tools.includes("mcp__bountyagent__bounty_read_handoff"));
 });
 
-test("surface-router-agent is thin and cannot hunt or write directly", () => {
+test("surface-router-agent is thin and cannot evaluate or write directly", () => {
   const document = readFile(".claude/agents/surface-router-agent.md");
   const frontmatter = parseFrontmatter(document, "surface-router-agent.md");
   const tools = frontmatter.tools.split(/\s*,\s*/).filter(Boolean);
@@ -441,15 +441,15 @@ test("surface-router-agent is thin and cannot hunt or write directly", () => {
   assert.match(document, /bounty_route_surfaces/);
   assert.match(document, /surface-routes\.json/);
   assert.doesNotMatch(frontmatter.tools, /Bash|Write|bounty_http_scan|curl|browser/i);
-  assert.match(document, /Do not do recon, hunting, auth, HTTP requests, browser work, Bash, or direct file writes/);
+  assert.match(document, /Do not do surface-discovery, evaluating, auth, HTTP requests, browser work, Bash, or direct file writes/);
 });
 
-test("generated hunter-agent tools come from the hunter-shared and hunter-web bundles only", () => {
-  const spec = AGENT_TOOL_SPECS["hunter-agent.md"];
-  assert.deepEqual(spec.roleBundles, ["hunter-shared", "hunter-web"]);
+test("generated evaluator-agent tools come from the evaluator-shared and evaluator-web bundles only", () => {
+  const spec = AGENT_TOOL_SPECS["evaluator-agent.md"];
+  assert.deepEqual(spec.roleBundles, ["evaluator-shared", "evaluator-web"]);
   assert.deepEqual(
     toolsForSpec(spec).filter((tool) => tool.startsWith("mcp__bountyagent__")).sort(),
-    permissionsForRoleBundles(["hunter-shared", "hunter-web"]).sort(),
+    permissionsForRoleBundles(["evaluator-shared", "evaluator-web"]).sort(),
   );
 });
 
@@ -493,7 +493,7 @@ test("manifest, settings, and generated Claude config keep global MCP permission
   assert.deepEqual(TOOL_MANIFEST.bounty_route_surfaces.role_bundles, ["orchestrator", "router"]);
   assert.equal(TOOL_MANIFEST.bounty_route_surfaces.global_preapproval, false);
   assert.equal(TOOL_MANIFEST.bounty_route_surfaces.mutating, true);
-  assert.deepEqual(TOOL_MANIFEST.bounty_record_surface_leads.role_bundles, ["hunter-web", "orchestrator"]);
+  assert.deepEqual(TOOL_MANIFEST.bounty_record_surface_leads.role_bundles, ["evaluator-web", "orchestrator"]);
   assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.global_preapproval, true);
   assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.global_preapproval, true);
   assert.equal(TOOL_MANIFEST.bounty_start_next_wave.global_preapproval, false);
@@ -501,10 +501,10 @@ test("manifest, settings, and generated Claude config keep global MCP permission
   assert.deepEqual(TOOL_MANIFEST.bounty_start_next_wave.session_artifacts_written, ["surface-routes.json", "wave-N-assignments.json", "state.json", "surface-leads.json", "attack_surface.json"]);
   assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.global_preapproval, false);
   assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.mutating, true);
-  assert.deepEqual(TOOL_MANIFEST.bounty_get_context_budget.role_bundles, ["hunter-shared", "orchestrator"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_select_technique_packs.role_bundles, ["hunter-web", "orchestrator"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_read_technique_pack.role_bundles, ["hunter-web", "orchestrator"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_log_technique_attempt.role_bundles, ["hunter-web", "orchestrator"]);
+  assert.deepEqual(TOOL_MANIFEST.bounty_get_context_budget.role_bundles, ["evaluator-shared", "orchestrator"]);
+  assert.deepEqual(TOOL_MANIFEST.bounty_select_technique_packs.role_bundles, ["evaluator-web", "orchestrator"]);
+  assert.deepEqual(TOOL_MANIFEST.bounty_read_technique_pack.role_bundles, ["evaluator-web", "orchestrator"]);
+  assert.deepEqual(TOOL_MANIFEST.bounty_log_technique_attempt.role_bundles, ["evaluator-web", "orchestrator"]);
   assert.equal(TOOL_MANIFEST.bounty_get_context_budget.mutating, false);
   assert.equal(TOOL_MANIFEST.bounty_select_technique_packs.mutating, false);
   assert.equal(TOOL_MANIFEST.bounty_read_technique_pack.mutating, true);
@@ -575,7 +575,7 @@ test("standard hook test script runs both write and read guards", () => {
 test("MCP-dependent agents declare official mcpServers bountyagent metadata", () => {
   const agents = [
     "surface-router-agent",
-    "hunter-agent",
+    "evaluator-agent",
     "brutalist-verifier",
     "balanced-verifier",
     "final-verifier",
@@ -593,8 +593,8 @@ test("MCP-dependent agents declare official mcpServers bountyagent metadata", ()
   }
 });
 
-test("recon agents remain MCP-free", () => {
-  for (const agent of ["recon-agent", "deep-recon-agent"]) {
+test("surface-discovery agents remain MCP-free", () => {
+  for (const agent of ["surface-discovery-agent", "deep-surface-discovery-agent"]) {
     const document = readFile(`.claude/agents/${agent}.md`);
     assert.doesNotMatch(document, /mcpServers:/, `${agent} should not declare MCP servers`);
     assert.doesNotMatch(document, /requiredMcpServers:/, `${agent} should not require MCP servers`);
@@ -603,7 +603,7 @@ test("recon agents remain MCP-free", () => {
 });
 
 test("global rules stay small and keep scope plus MCP-owned artifact guardrails", () => {
-  for (const ruleFile of [".claude/rules/hunting.md", ".claude/rules/reporting.md"]) {
+  for (const ruleFile of [".claude/rules/evaluating.md", ".claude/rules/reporting.md"]) {
     const document = readFile(ruleFile);
     assert.ok(lineCount(ruleFile) <= 60, `${ruleFile} is too large for always-active context`);
     assert.match(document, /scope/i, `${ruleFile} must mention scope`);
@@ -611,21 +611,21 @@ test("global rules stay small and keep scope plus MCP-owned artifact guardrails"
   }
 });
 
-test("hunter-evm-agent ships with the EVM tool surface and SC anti-stop rule", () => {
-  const document = readFile(".claude/agents/hunter-evm-agent.md");
-  const frontmatter = parseFrontmatter(document, "hunter-evm-agent.md");
+test("evaluator-evm-agent ships with the EVM tool surface and SC anti-stop rule", () => {
+  const document = readFile(".claude/agents/evaluator-evm-agent.md");
+  const frontmatter = parseFrontmatter(document, "evaluator-evm-agent.md");
   const tools = frontmatter.tools.split(/\s*,\s*/).filter(Boolean);
 
   assert.ok(tools.includes("Bash"));
   assert.ok(tools.includes("Read"));
-  assert.ok(tools.includes("Write"), "hunter-evm needs Write to scaffold Foundry tests");
+  assert.ok(tools.includes("Write"), "evaluator-evm needs Write to scaffold Foundry tests");
   assert.ok(tools.includes("mcp__bountyagent__bounty_evm_call"));
   assert.ok(tools.includes("mcp__bountyagent__bounty_evm_storage_read"));
   assert.ok(tools.includes("mcp__bountyagent__bounty_evm_fetch_source"));
   assert.ok(tools.includes("mcp__bountyagent__bounty_evm_role_table"));
   assert.ok(tools.includes("mcp__bountyagent__bounty_foundry_run"));
   assert.ok(tools.includes("mcp__bountyagent__bounty_write_wave_handoff"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_finalize_hunter_run"));
+  assert.ok(tools.includes("mcp__bountyagent__bounty_finalize_agent_run"));
   assert.ok(tools.includes("mcp__bountyagent__bounty_record_finding"));
 
   assert.match(document, /surface_type[^\n]*smart_contract/i);
@@ -633,31 +633,31 @@ test("hunter-evm-agent ships with the EVM tool surface and SC anti-stop rule", (
   assert.match(document, /bounty_foundry_run/);
   assert.match(document, /bypass_attempts/);
   assert.match(document, /blocked_harness_runs/);
-  assert.match(document, /BOB_HUNTER_DONE/);
+  assert.match(document, /BOB_AGENT_RUN_DONE/);
 });
 
-test("hunting rules and hunter prompt encode the smart_contract anti-stop rule", () => {
-  const huntingRules = readFile(".claude/rules/hunting.md");
-  assert.match(huntingRules, /smart_contract/i, "hunting.md missing smart_contract rule");
-  assert.match(huntingRules, /bypass_attempts/i, "hunting.md missing bypass_attempts requirement");
+test("evaluating rules and evaluator prompt encode the smart_contract anti-stop rule", () => {
+  const evaluatingRules = readFile(".claude/rules/evaluating.md");
+  assert.match(evaluatingRules, /smart_contract/i, "evaluating.md missing smart_contract rule");
+  assert.match(evaluatingRules, /bypass_attempts/i, "evaluating.md missing bypass_attempts requirement");
 
-  const hunterPrompt = readFile(".claude/agents/hunter-agent.md");
-  assert.match(hunterPrompt, /surface_type: smart_contract/, "hunter prompt missing smart_contract surface_type reference");
-  assert.match(hunterPrompt, /bypass_attempts/, "hunter prompt missing bypass_attempts reference");
-  assert.match(hunterPrompt, /blocked_harness_runs/, "hunter prompt missing blocked_harness_runs reference");
+  const evaluatorPrompt = readFile(".claude/agents/evaluator-agent.md");
+  assert.match(evaluatorPrompt, /surface_type: smart_contract/, "evaluator prompt missing smart_contract surface_type reference");
+  assert.match(evaluatorPrompt, /bypass_attempts/, "evaluator prompt missing bypass_attempts reference");
+  assert.match(evaluatorPrompt, /blocked_harness_runs/, "evaluator prompt missing blocked_harness_runs reference");
   assert.match(
-    hunterPrompt,
+    evaluatorPrompt,
     /MCP server (also )?rejects `surface_status: complete`/i,
-    "hunter prompt missing server-side rejection guidance",
+    "evaluator prompt missing server-side rejection guidance",
   );
 });
 
-test("hunter prompt teaches the blocked_prereqs[] policy and orchestrator handles terminally_blocked surfaces", () => {
-  const hunterPrompt = readFile(".claude/agents/hunter-agent.md");
-  assert.match(hunterPrompt, /blocked_prereqs/, "hunter prompt missing blocked_prereqs policy");
-  assert.match(hunterPrompt, /auth_missing/, "hunter prompt missing auth_missing kind reference");
-  assert.match(hunterPrompt, /egress_unreachable/, "hunter prompt missing egress_unreachable kind reference");
-  assert.match(hunterPrompt, /bounty_clear_terminal_block/, "hunter prompt missing bounty_clear_terminal_block reference");
+test("evaluator prompt teaches the blocked_prereqs[] policy and orchestrator handles terminally_blocked surfaces", () => {
+  const evaluatorPrompt = readFile(".claude/agents/evaluator-agent.md");
+  assert.match(evaluatorPrompt, /blocked_prereqs/, "evaluator prompt missing blocked_prereqs policy");
+  assert.match(evaluatorPrompt, /auth_missing/, "evaluator prompt missing auth_missing kind reference");
+  assert.match(evaluatorPrompt, /egress_unreachable/, "evaluator prompt missing egress_unreachable kind reference");
+  assert.match(evaluatorPrompt, /bounty_clear_terminal_block/, "evaluator prompt missing bounty_clear_terminal_block reference");
 
   const orchestratorPrompt = readFile("prompts/roles/orchestrator.md");
   assert.match(orchestratorPrompt, /terminally_blocked/, "orchestrator prompt missing terminally_blocked exclusion guidance");
@@ -674,12 +674,12 @@ test("hunter prompt teaches the blocked_prereqs[] policy and orchestrator handle
   assert.match(reporterPrompt, /canonical session report/, "reporter prompt must require canonical report.md path");
 });
 
-test("bob-spec loader is wired into the hunter brief", () => {
-  const briefSource = readFile("mcp/lib/hunter-brief.js");
+test("bob-spec loader is wired into the evaluator brief", () => {
+  const briefSource = readFile("mcp/lib/assignment-brief.js");
   assert.match(
     briefSource,
     /require\(['"]\.\/bob-spec(\.js)?['"]\)/,
-    "hunter-brief.js must import the bob-spec loader",
+    "assignment-brief.js must import the bob-spec loader",
   );
   assert.match(briefSource, /summarizeBobSpecForBrief\(loadBobSpec\(domain\)/);
 
@@ -688,7 +688,7 @@ test("bob-spec loader is wired into the hunter brief", () => {
   assert.equal(typeof summarizeBobSpecForBrief, "function");
 
   // Empty-state shape — when no bob-spec.json exists in a fresh domain, the
-  // brief still surfaces a present:false summary so the hunter prompt can
+  // brief still surfaces a present:false summary so the evaluator prompt can
   // branch instead of crashing.
   const summary = summarizeBobSpecForBrief({ present: false, reason: "missing" }, "surface-a");
   assert.equal(summary.present, false);
@@ -702,7 +702,7 @@ test("bob-spec loader is wired into the hunter brief", () => {
 });
 
 test("bountyagent skill stays orchestration-sized and preserves FSM shape", () => {
-  const orchestrator = readFile(".claude/skills/bob-hunt/SKILL.md");
+  const orchestrator = readFile(".claude/skills/bob-evaluate/SKILL.md");
   // Line cap is 360: web orchestration plus the EVM/SVM/Move/Substrate/
   // CosmWasm spawn templates fit, plus the post-v2 capability tool surface
   // (C2 doc-vs-behavior, C4 multi-account, I1 surface graph, I6 findings index,
@@ -711,9 +711,9 @@ test("bountyagent skill stays orchestration-sized and preserves FSM shape", () =
   // extract per-family spawn details to separate skill files
   // (e.g., bob-spawn-substrate.md, bob-spawn-cosmwasm.md) and reference them
   // from this orchestrator skill via @-includes or short cross-links.
-  assert.ok(lineCount(".claude/skills/bob-hunt/SKILL.md") <= 360, "bountyagent skill is too large");
-  assert.match(orchestrator, /RECON\s*→\s*AUTH\s*→\s*HUNT\s*→\s*CHAIN\s*→\s*VERIFY\s*→\s*GRADE\s*→\s*REPORT/);
-  for (const phase of ["RECON", "AUTH", "HUNT", "CHAIN", "VERIFY", "GRADE", "REPORT", "EXPLORE"]) {
+  assert.ok(lineCount(".claude/skills/bob-evaluate/SKILL.md") <= 360, "bountyagent skill is too large");
+  assert.match(orchestrator, /SURFACE_DISCOVERY\s*→\s*AUTH\s*→\s*EVALUATE\s*→\s*CHAIN\s*→\s*VERIFY\s*→\s*GRADE\s*→\s*REPORT/);
+  for (const phase of ["SURFACE_DISCOVERY", "AUTH", "EVALUATE", "CHAIN", "VERIFY", "GRADE", "REPORT", "EXPLORE"]) {
     assert.match(orchestrator, new RegExp(`PHASE [0-9]+: ${phase}|${phase}`), `missing ${phase}`);
   }
   assert.match(orchestrator, /must never call `bounty_write_wave_handoff`/);
@@ -721,7 +721,7 @@ test("bountyagent skill stays orchestration-sized and preserves FSM shape", () =
 });
 
 test("orchestrator validates brutalist and balanced rounds before proceeding", () => {
-  const orchestrator = readFile(".claude/skills/bob-hunt/SKILL.md");
+  const orchestrator = readFile(".claude/skills/bob-evaluate/SKILL.md");
   assert.match(
     orchestrator,
     /After the brutalist agent completes, validate/,
@@ -745,7 +745,7 @@ test("orchestrator validates brutalist and balanced rounds before proceeding", (
 });
 
 test("v2 verification prompt contracts use context, independent rounds, adjudication, and replay metadata", () => {
-  const orchestrator = readFile(".claude/skills/bob-hunt/SKILL.md");
+  const orchestrator = readFile(".claude/skills/bob-evaluate/SKILL.md");
   const brutalist = readFile(".claude/agents/brutalist-verifier.md");
   const balanced = readFile(".claude/agents/balanced-verifier.md");
   const final = readFile(".claude/agents/final-verifier.md");
@@ -823,8 +823,8 @@ test("evidence-agent exists, is MCP-only, and cannot mutate unrelated artifacts"
   assert.doesNotMatch(frontmatter.tools, /bounty_write_chain_attempt|bounty_transition_phase/);
 });
 
-test("bob-hunt spawns evidence before grade and validates evidence packs", () => {
-  const orchestrator = readFile(".claude/skills/bob-hunt/SKILL.md");
+test("bob-evaluate spawns evidence before grade and validates evidence packs", () => {
+  const orchestrator = readFile(".claude/skills/bob-evaluate/SKILL.md");
   const evidenceIndex = orchestrator.indexOf('subagent_type: "evidence-agent"');
   // The no-reportables branch transitions to GRADE without spawning the
   // evidence agent. The evidence-present branch transitions only after
@@ -839,8 +839,8 @@ test("bob-hunt spawns evidence before grade and validates evidence packs", () =>
   assert.match(orchestrator, /write only through bounty_write_evidence_packs/);
 });
 
-test("bob-hunt closes no-finding verification through SKIP grade and report", () => {
-  const orchestrator = readFile(".claude/skills/bob-hunt/SKILL.md");
+test("bob-evaluate closes no-finding verification through SKIP grade and report", () => {
+  const orchestrator = readFile(".claude/skills/bob-evaluate/SKILL.md");
   const grader = readFile(".claude/agents/grader.md");
   const reporter = readFile(".claude/agents/report-writer.md");
 
@@ -884,7 +884,7 @@ test("settings.json registers session guards for Bash, Read, and Write", () => {
 test("prompts do not tell agents to read auth.json directly", () => {
   for (const relativePath of [
     ".claude/commands/bob-update.md",
-    ".claude/skills/bob-hunt/SKILL.md",
+    ".claude/skills/bob-evaluate/SKILL.md",
     ".claude/skills/bob-status/SKILL.md",
     ".claude/skills/bob-debug/SKILL.md",
     ...allMarkdown(".claude/agents"),
@@ -906,14 +906,14 @@ test("chain-builder uses structured handoffs without Bash or markdown dependency
 });
 
 test("orchestrator has no blanket bypassPermissions rule", () => {
-  const orchestrator = readFile(".claude/skills/bob-hunt/SKILL.md");
+  const orchestrator = readFile(".claude/skills/bob-evaluate/SKILL.md");
   assert.doesNotMatch(orchestrator, /Every Agent tool call MUST use `mode: "bypassPermissions"`/);
   assert.doesNotMatch(orchestrator, /mode:\s*"bypassPermissions"/);
 });
 
 test("bountyagent skill allowed-tools match orchestrator and auth bundles", () => {
-  const skill = readFile(".claude/skills/bob-hunt/SKILL.md");
-  const allowedTools = parseYamlListFrontmatter(skill, "allowed-tools", "bob-hunt/SKILL.md");
+  const skill = readFile(".claude/skills/bob-evaluate/SKILL.md");
+  const allowedTools = parseYamlListFrontmatter(skill, "allowed-tools", "bob-evaluate/SKILL.md");
   const expectedTools = bountyagentSkillAllowedTools();
   assert.deepEqual(allowedTools.sort(), expectedTools.slice().sort());
   assert.deepEqual(
@@ -940,7 +940,7 @@ test("Claude ships generated command shims for update and export", () => {
   assert.deepEqual(Object.keys(claudeAdapter.COMMAND_SPECS).sort(), ["export", "update"]);
   assert.equal(updateCommand, claudeAdapter.renderCommand("update"));
   assert.equal(exportCommand, claudeAdapter.renderCommand("export"));
-  assert.equal(fs.existsSync(path.join(ROOT, ".claude", "commands", "bob", "hunt.md")), false);
+  assert.equal(fs.existsSync(path.join(ROOT, ".claude", "commands", "bob", "evaluate.md")), false);
   assert.equal(fs.existsSync(path.join(ROOT, ".claude", "commands", "bob", "status.md")), false);
   assert.equal(fs.existsSync(path.join(ROOT, ".claude", "commands", "bob", "debug.md")), false);
   assert.equal(fs.existsSync(path.join(ROOT, ".claude", "commands", "bob", "update.md")), false);
@@ -948,7 +948,7 @@ test("Claude ships generated command shims for update and export", () => {
   assert.match(updateCommand, /Update now\?/);
   assert.match(updateCommand, /fully restart Claude Code/);
   assert.match(exportCommand, /bob-export\.js/);
-  assert.match(exportCommand, /Do not add flags or run a hunt/);
+  assert.match(exportCommand, /Do not add flags or run a evaluate/);
   assert.deepEqual(
     parseYamlListFrontmatter(updateCommand, "allowed-tools", "bob-update.md").sort(),
     ["AskUserQuestion", "Bash"].sort(),
@@ -976,7 +976,7 @@ test("bountyagentstatus skill is compact, read-only, and points to next commands
     "mcp__bountyagent__bounty_auth_store",
     "mcp__bountyagent__bounty_write_handoff",
     "mcp__bountyagent__bounty_write_wave_handoff",
-    "mcp__bountyagent__bounty_finalize_hunter_run",
+    "mcp__bountyagent__bounty_finalize_agent_run",
     "mcp__bountyagent__bounty_write_verification_round",
     "mcp__bountyagent__bounty_write_grade_verdict",
     "mcp__bountyagent__bounty_record_finding",
@@ -1006,7 +1006,7 @@ test("bountyagentstatus skill is compact, read-only, and points to next commands
   assert.match(skill, /evidence status/);
   assert.match(skill, /bounty_read_pipeline_analytics\.data\.sessions\[0\]\.evidence/);
   assert.match(skill, /bounty_read_evidence_packs\(\{ target_domain \}\)/);
-  assert.match(skill, /\/bob-hunt resume <target_domain>/);
+  assert.match(skill, /\/bob-evaluate resume <target_domain>/);
   assert.match(skill, /\/bob-debug --deep <target_domain>/);
   assert.match(skill, /V2 Verification Panel/);
   assert.match(skill, /archived_attempts/);
@@ -1064,7 +1064,7 @@ test("bountyagentdebug skill allowed-tools are read-only and exclude mutators", 
     "mcp__bountyagent__bounty_auth_store",
     "mcp__bountyagent__bounty_write_handoff",
     "mcp__bountyagent__bounty_write_wave_handoff",
-    "mcp__bountyagent__bounty_finalize_hunter_run",
+    "mcp__bountyagent__bounty_finalize_agent_run",
     "mcp__bountyagent__bounty_write_verification_round",
     "mcp__bountyagent__bounty_write_grade_verdict",
     "mcp__bountyagent__bounty_record_finding",
@@ -1105,10 +1105,10 @@ test("installer and dev-sync ship Claude hyphen skills and prune legacy slash pa
   assert.match(install, /bin\/hacker-bob\.js/);
   assert.match(claudeAdapter, /bob-update\.md/);
   assert.match(claudeAdapter, /bob-export\.md/);
-  assert.match(claudeAdapter, /bob-hunt/);
+  assert.match(claudeAdapter, /bob-evaluate/);
   assert.match(claudeAdapter, /bob-status/);
   assert.match(claudeAdapter, /bob-debug/);
-  assert.match(claudeAdapter, /hunt\.md/);
+  assert.match(claudeAdapter, /evaluate\.md/);
   assert.match(claudeAdapter, /status\.md/);
   assert.match(claudeAdapter, /debug\.md/);
   assert.match(claudeAdapter, /update\.md/);
@@ -1118,13 +1118,13 @@ test("installer and dev-sync ship Claude hyphen skills and prune legacy slash pa
   assert.match(devSync, /\.claude\/commands\/bob-update\.md/);
   assert.match(devSync, /\.claude\/commands\/bob-export\.md/);
   assert.match(devSync, /\.claude\/hooks\/bob-export\.js/);
-  assert.match(devSync, /rm -f "\$CLAUDE_DIR\/commands\/bob\/hunt\.md"/);
+  assert.match(devSync, /rm -f "\$CLAUDE_DIR\/commands\/bob\/evaluate\.md"/);
   assert.match(devSync, /"\$CLAUDE_DIR\/commands\/bob\/update\.md"/);
   assert.match(claudeAdapter, /bountyagentstatus/);
   assert.match(devSync, /\.claude\/skills\/bob-status\/SKILL\.md/);
   assert.match(claudeAdapter, /bountyagentdebug/);
   assert.match(devSync, /\.claude\/skills\/bob-debug\/SKILL\.md/);
-  assert.match(devSync, /\.claude\/skills\/bob-hunt\/SKILL\.md/);
+  assert.match(devSync, /\.claude\/skills\/bob-evaluate\/SKILL\.md/);
 });
 
 test("dev-sync accepts adapters and gates Claude-specific sync paths", () => {
@@ -1141,9 +1141,9 @@ test("dev-sync accepts adapters and gates Claude-specific sync paths", () => {
 
 test("root-orchestrator MCP calls are covered by skill allowed-tools", () => {
   const allowedTools = new Set(parseYamlListFrontmatter(
-    readFile(".claude/skills/bob-hunt/SKILL.md"),
+    readFile(".claude/skills/bob-evaluate/SKILL.md"),
     "allowed-tools",
-    "bob-hunt/SKILL.md",
+    "bob-evaluate/SKILL.md",
   ).filter((tool) => tool.startsWith("mcp__bountyagent__"))
     .map((tool) => tool.replace(/^mcp__bountyagent__/, "")));
 
@@ -1156,45 +1156,45 @@ test("root-orchestrator MCP calls are covered by skill allowed-tools", () => {
   }
 });
 
-test("recon agent preserves exactly seven Bash collection calls", () => {
-  const reconPrompt = readFile(".claude/agents/recon-agent.md");
-  const bashBlocks = Array.from(reconPrompt.matchAll(/```bash\n/g));
+test("surface-discovery agent preserves exactly seven Bash collection calls", () => {
+  const surfaceDiscoveryPrompt = readFile(".claude/agents/surface-discovery-agent.md");
+  const bashBlocks = Array.from(surfaceDiscoveryPrompt.matchAll(/```bash\n/g));
 
   assert.equal(bashBlocks.length, 7);
-  assert.match(reconPrompt, /Use exactly the 7 Bash calls below, in order/);
-  assert.match(reconPrompt, /Do not make any additional Bash calls/);
+  assert.match(surfaceDiscoveryPrompt, /Use exactly the 7 Bash calls below, in order/);
+  assert.match(surfaceDiscoveryPrompt, /Do not make any additional Bash calls/);
 });
 
-test("normal recon agent is single-purpose and has no deep-only contract", () => {
-  const reconPrompt = readFile(".claude/agents/recon-agent.md");
+test("normal surface-discovery agent is single-purpose and has no deep-only contract", () => {
+  const surfaceDiscoveryPrompt = readFile(".claude/agents/surface-discovery-agent.md");
 
-  assert.doesNotMatch(reconPrompt, /\[MODE\]|MODE=/);
-  assert.doesNotMatch(reconPrompt, /amass/);
-  assert.doesNotMatch(reconPrompt, /assetfinder/);
-  assert.doesNotMatch(reconPrompt, /chaos/);
-  assert.doesNotMatch(reconPrompt, /dnsx/);
-  assert.doesNotMatch(reconPrompt, /tlsx/);
-  assert.doesNotMatch(reconPrompt, /subzy/);
-  assert.doesNotMatch(reconPrompt, /surface-leads\.json/);
-  assert.doesNotMatch(reconPrompt, /deep-summary\.json/);
+  assert.doesNotMatch(surfaceDiscoveryPrompt, /\[MODE\]|MODE=/);
+  assert.doesNotMatch(surfaceDiscoveryPrompt, /amass/);
+  assert.doesNotMatch(surfaceDiscoveryPrompt, /assetfinder/);
+  assert.doesNotMatch(surfaceDiscoveryPrompt, /chaos/);
+  assert.doesNotMatch(surfaceDiscoveryPrompt, /dnsx/);
+  assert.doesNotMatch(surfaceDiscoveryPrompt, /tlsx/);
+  assert.doesNotMatch(surfaceDiscoveryPrompt, /subzy/);
+  assert.doesNotMatch(surfaceDiscoveryPrompt, /surface-leads\.json/);
+  assert.doesNotMatch(surfaceDiscoveryPrompt, /deep-summary\.json/);
 });
 
-test("recon agents include optional Katana crawl and JWT candidate artifacts", () => {
-  for (const agent of ["recon-agent", "deep-recon-agent"]) {
-    const reconPrompt = readFile(`.claude/agents/${agent}.md`);
+test("surface-discovery agents include optional Katana crawl and JWT candidate artifacts", () => {
+  for (const agent of ["surface-discovery-agent", "deep-surface-discovery-agent"]) {
+    const surfaceDiscoveryPrompt = readFile(`.claude/agents/${agent}.md`);
 
-    assert.match(reconPrompt, /OK:katana/);
-    assert.match(reconPrompt, /MISSING:katana/);
-    assert.match(reconPrompt, /katana_urls\.txt/);
-    assert.match(reconPrompt, /OK:jwt_tool/);
-    assert.match(reconPrompt, /MISSING:jwt_tool/);
-    assert.match(reconPrompt, /jwt_candidates\.txt/);
-    assert.match(reconPrompt, /JWT-shaped candidates|jwt_candidates/);
+    assert.match(surfaceDiscoveryPrompt, /OK:katana/);
+    assert.match(surfaceDiscoveryPrompt, /MISSING:katana/);
+    assert.match(surfaceDiscoveryPrompt, /katana_urls\.txt/);
+    assert.match(surfaceDiscoveryPrompt, /OK:jwt_tool/);
+    assert.match(surfaceDiscoveryPrompt, /MISSING:jwt_tool/);
+    assert.match(surfaceDiscoveryPrompt, /jwt_candidates\.txt/);
+    assert.match(surfaceDiscoveryPrompt, /JWT-shaped candidates|jwt_candidates/);
   }
 });
 
-test("recon attack_surface schema keeps required fields and adds optional enrichment", () => {
-  const reconPrompt = readFile(".claude/agents/recon-agent.md");
+test("surface-discovery attack_surface schema keeps required fields and adds optional enrichment", () => {
+  const surfaceDiscoveryPrompt = readFile(".claude/agents/surface-discovery-agent.md");
 
   for (const field of [
     "id",
@@ -1205,7 +1205,7 @@ test("recon attack_surface schema keeps required fields and adds optional enrich
     "nuclei_hits",
     "priority",
   ]) {
-    assert.match(reconPrompt, new RegExp(`"${field}"`), `missing required field ${field}`);
+    assert.match(surfaceDiscoveryPrompt, new RegExp(`"${field}"`), `missing required field ${field}`);
   }
 
   for (const field of [
@@ -1215,67 +1215,67 @@ test("recon attack_surface schema keeps required fields and adds optional enrich
     "evidence",
     "ranking",
   ]) {
-    assert.match(reconPrompt, new RegExp(`"${field}"`), `missing optional field ${field}`);
+    assert.match(surfaceDiscoveryPrompt, new RegExp(`"${field}"`), `missing optional field ${field}`);
   }
 
-  assert.match(reconPrompt, /Required per-surface fields remain/);
-  assert.match(reconPrompt, /Optional enrichment fields are additive/);
+  assert.match(surfaceDiscoveryPrompt, /Required per-surface fields remain/);
+  assert.match(surfaceDiscoveryPrompt, /Optional enrichment fields are additive/);
 });
 
-test("deep recon agent preserves exactly seven Bash collection calls", () => {
-  const deepReconPrompt = readFile(".claude/agents/deep-recon-agent.md");
-  const bashBlocks = Array.from(deepReconPrompt.matchAll(/```bash\n/g));
+test("deep surface-discovery agent preserves exactly seven Bash collection calls", () => {
+  const deepSurfaceDiscoveryPrompt = readFile(".claude/agents/deep-surface-discovery-agent.md");
+  const bashBlocks = Array.from(deepSurfaceDiscoveryPrompt.matchAll(/```bash\n/g));
 
   assert.equal(bashBlocks.length, 7);
-  assert.match(deepReconPrompt, /Use exactly the 7 Bash calls below, in order/);
-  assert.match(deepReconPrompt, /Do not make any additional Bash calls/);
+  assert.match(deepSurfaceDiscoveryPrompt, /Use exactly the 7 Bash calls below, in order/);
+  assert.match(deepSurfaceDiscoveryPrompt, /Do not make any additional Bash calls/);
 });
 
-test("deep recon stays bounded, broad, and writes compact ranked lead artifacts", () => {
-  const deepReconPrompt = readFile(".claude/agents/deep-recon-agent.md");
+test("deep surface-discovery stays bounded, broad, and writes compact ranked lead artifacts", () => {
+  const deepSurfaceDiscoveryPrompt = readFile(".claude/agents/deep-surface-discovery-agent.md");
 
-  assert.match(deepReconPrompt, /Passive subdomain and CT aggregation/i);
-  assert.match(deepReconPrompt, /crt\.sh/);
-  assert.match(deepReconPrompt, /amass/);
-  assert.match(deepReconPrompt, /assetfinder/);
-  assert.match(deepReconPrompt, /chaos/);
-  assert.match(deepReconPrompt, /dnsx/);
-  assert.match(deepReconPrompt, /tlsx/);
-  assert.match(deepReconPrompt, /katana/);
-  assert.match(deepReconPrompt, /subzy/);
-  assert.match(deepReconPrompt, /subzy_takeovers\.txt/);
-  assert.match(deepReconPrompt, /tlsx_sans\.txt/);
-  assert.match(deepReconPrompt, /CDX\/Wayback/);
-  assert.match(deepReconPrompt, /JS extraction/i);
-  assert.match(deepReconPrompt, /JWT and OIDC token review candidates/);
-  assert.match(deepReconPrompt, /takeover_candidates/);
-  assert.match(deepReconPrompt, /tech\/CVE hints/);
-  assert.match(deepReconPrompt, /sibling-domain-candidates\.txt/);
-  assert.match(deepReconPrompt, /brand-sibling-probe-candidates\.txt/);
-  assert.match(deepReconPrompt, /Brand-linked sibling properties lightly probed/);
-  assert.match(deepReconPrompt, /Sibling domain candidates recorded for review/);
-  assert.match(deepReconPrompt, /deep-summary\.json/);
-  assert.match(deepReconPrompt, /surface-leads\.json/);
-  assert.match(deepReconPrompt, /Do not duplicate every URL/);
-  assert.match(deepReconPrompt, /Do not dump raw URLs, JavaScript bodies, or scanner output into prose/);
-  assert.match(deepReconPrompt, /Do not copy raw secrets, bearer values, or JWT-looking strings/);
-  assert.match(deepReconPrompt, /record counts and local artifact names only/);
+  assert.match(deepSurfaceDiscoveryPrompt, /Passive subdomain and CT aggregation/i);
+  assert.match(deepSurfaceDiscoveryPrompt, /crt\.sh/);
+  assert.match(deepSurfaceDiscoveryPrompt, /amass/);
+  assert.match(deepSurfaceDiscoveryPrompt, /assetfinder/);
+  assert.match(deepSurfaceDiscoveryPrompt, /chaos/);
+  assert.match(deepSurfaceDiscoveryPrompt, /dnsx/);
+  assert.match(deepSurfaceDiscoveryPrompt, /tlsx/);
+  assert.match(deepSurfaceDiscoveryPrompt, /katana/);
+  assert.match(deepSurfaceDiscoveryPrompt, /subzy/);
+  assert.match(deepSurfaceDiscoveryPrompt, /subzy_takeovers\.txt/);
+  assert.match(deepSurfaceDiscoveryPrompt, /tlsx_sans\.txt/);
+  assert.match(deepSurfaceDiscoveryPrompt, /CDX\/Wayback/);
+  assert.match(deepSurfaceDiscoveryPrompt, /JS extraction/i);
+  assert.match(deepSurfaceDiscoveryPrompt, /JWT and OIDC token review candidates/);
+  assert.match(deepSurfaceDiscoveryPrompt, /takeover_candidates/);
+  assert.match(deepSurfaceDiscoveryPrompt, /tech\/CVE hints/);
+  assert.match(deepSurfaceDiscoveryPrompt, /sibling-domain-candidates\.txt/);
+  assert.match(deepSurfaceDiscoveryPrompt, /brand-sibling-probe-candidates\.txt/);
+  assert.match(deepSurfaceDiscoveryPrompt, /Brand-linked sibling properties lightly probed/);
+  assert.match(deepSurfaceDiscoveryPrompt, /Sibling domain candidates recorded for review/);
+  assert.match(deepSurfaceDiscoveryPrompt, /deep-summary\.json/);
+  assert.match(deepSurfaceDiscoveryPrompt, /surface-leads\.json/);
+  assert.match(deepSurfaceDiscoveryPrompt, /Do not duplicate every URL/);
+  assert.match(deepSurfaceDiscoveryPrompt, /Do not dump raw URLs, JavaScript bodies, or scanner output into prose/);
+  assert.match(deepSurfaceDiscoveryPrompt, /Do not copy raw secrets, bearer values, or JWT-looking strings/);
+  assert.match(deepSurfaceDiscoveryPrompt, /record counts and local artifact names only/);
 });
 
-test("deep recon target family probing stays bounded and sibling liveness is gated", () => {
-  const deepReconPrompt = readFile(".claude/agents/deep-recon-agent.md");
-  const familyStart = deepReconPrompt.indexOf("4. First-party family discovery");
-  const familyEnd = deepReconPrompt.indexOf("5. Archived URLs with CDX/Wayback");
-  const cdxEnd = deepReconPrompt.indexOf("6. JS extraction and endpoint clustering");
-  const step7Start = deepReconPrompt.indexOf("7. Compact summaries, ranked leads, and attack surface");
-  assert.ok(familyStart >= 0 && familyEnd > familyStart, "missing deep recon family discovery section");
-  assert.ok(step7Start > cdxEnd, "missing deep recon compact summary section");
-  const familySection = deepReconPrompt.slice(familyStart, familyEnd);
-  const cdxSection = deepReconPrompt.slice(familyEnd, cdxEnd);
-  const jsSection = deepReconPrompt.slice(cdxEnd, step7Start);
-  const step7Section = deepReconPrompt.slice(step7Start);
+test("deep surface-discovery target family probing stays bounded and sibling liveness is gated", () => {
+  const deepSurfaceDiscoveryPrompt = readFile(".claude/agents/deep-surface-discovery-agent.md");
+  const familyStart = deepSurfaceDiscoveryPrompt.indexOf("4. First-party family discovery");
+  const familyEnd = deepSurfaceDiscoveryPrompt.indexOf("5. Archived URLs with CDX/Wayback");
+  const cdxEnd = deepSurfaceDiscoveryPrompt.indexOf("6. JS extraction and endpoint clustering");
+  const step7Start = deepSurfaceDiscoveryPrompt.indexOf("7. Compact summaries, ranked leads, and attack surface");
+  assert.ok(familyStart >= 0 && familyEnd > familyStart, "missing deep surface-discovery family discovery section");
+  assert.ok(step7Start > cdxEnd, "missing deep surface-discovery compact summary section");
+  const familySection = deepSurfaceDiscoveryPrompt.slice(familyStart, familyEnd);
+  const cdxSection = deepSurfaceDiscoveryPrompt.slice(familyEnd, cdxEnd);
+  const jsSection = deepSurfaceDiscoveryPrompt.slice(cdxEnd, step7Start);
+  const step7Section = deepSurfaceDiscoveryPrompt.slice(step7Start);
   const liveUrlsEnd = step7Section.indexOf(': > "$SESSION/nuclei_results.txt"');
-  assert.ok(liveUrlsEnd > 0, "missing deep recon live_urls builder");
+  assert.ok(liveUrlsEnd > 0, "missing deep surface-discovery live_urls builder");
   const liveUrlsBuilder = step7Section.slice(0, liveUrlsEnd);
 
   assert.match(familySection, /Target-domain family probing remains bounded/i);
@@ -1301,26 +1301,26 @@ test("deep recon target family probing stays bounded and sibling liveness is gat
   }
 });
 
-test("recon prompts remain enrichment-only without new commands or imported toolsets", () => {
-  for (const agent of ["recon-agent", "deep-recon-agent"]) {
-    const reconPrompt = readFile(`.claude/agents/${agent}.md`);
+test("surface-discovery prompts remain enrichment-only without new commands or imported toolsets", () => {
+  for (const agent of ["surface-discovery-agent", "deep-surface-discovery-agent"]) {
+    const surfaceDiscoveryPrompt = readFile(`.claude/agents/${agent}.md`);
 
-    assert.doesNotMatch(reconPrompt, /\/bob-hunt/, `${agent} should not mention slash commands`);
-    assert.doesNotMatch(reconPrompt, /slash commands?/i, `${agent} should not mention slash commands`);
-    assert.doesNotMatch(reconPrompt, /claude-bug-bounty/i, `${agent} should not import external prompts`);
-    assert.doesNotMatch(reconPrompt, /scripts\/|tools\//i, `${agent} should not require repo scripts or tools`);
-    assert.doesNotMatch(reconPrompt, /mcp__/i, `${agent} should not use MCP tools`);
+    assert.doesNotMatch(surfaceDiscoveryPrompt, /\/bob-evaluate/, `${agent} should not mention slash commands`);
+    assert.doesNotMatch(surfaceDiscoveryPrompt, /slash commands?/i, `${agent} should not mention slash commands`);
+    assert.doesNotMatch(surfaceDiscoveryPrompt, /claude-bug-bounty/i, `${agent} should not import external prompts`);
+    assert.doesNotMatch(surfaceDiscoveryPrompt, /scripts\/|tools\//i, `${agent} should not require repo scripts or tools`);
+    assert.doesNotMatch(surfaceDiscoveryPrompt, /mcp__/i, `${agent} should not use MCP tools`);
   }
 });
 
-test("recon prompts avoid session scratch paths blocked by guards", () => {
-  for (const agent of ["recon-agent", "deep-recon-agent"]) {
-    const reconPrompt = readFile(`.claude/agents/${agent}.md`);
+test("surface-discovery prompts avoid session scratch paths blocked by guards", () => {
+  for (const agent of ["surface-discovery-agent", "deep-surface-discovery-agent"]) {
+    const surfaceDiscoveryPrompt = readFile(`.claude/agents/${agent}.md`);
 
-    assert.doesNotMatch(reconPrompt, /\bsubdomains\.tmp\b/, `${agent} should not use non-allowlisted session temp files`);
-    assert.doesNotMatch(reconPrompt, /(?:\[SESSION\]|\$SESSION)\/raw\b/, `${agent} should not read bulky captures from the session raw dir`);
-    assert.doesNotMatch(reconPrompt, /\b(?:family|js)_raw\.txt\b/, `${agent} should not use guard-blocked raw capture names`);
-    assert.match(reconPrompt, /mktemp/, `${agent} should use local temporary scratch for bulky captures`);
+    assert.doesNotMatch(surfaceDiscoveryPrompt, /\bsubdomains\.tmp\b/, `${agent} should not use non-allowlisted session temp files`);
+    assert.doesNotMatch(surfaceDiscoveryPrompt, /(?:\[SESSION\]|\$SESSION)\/raw\b/, `${agent} should not read bulky captures from the session raw dir`);
+    assert.doesNotMatch(surfaceDiscoveryPrompt, /\b(?:family|js)_raw\.txt\b/, `${agent} should not use guard-blocked raw capture names`);
+    assert.match(surfaceDiscoveryPrompt, /mktemp/, `${agent} should use local temporary scratch for bulky captures`);
   }
 });
 
@@ -1331,11 +1331,11 @@ test("installer and dev-sync copy and configure session guards", () => {
 
   assert.match(claudeAdapter, /session-write-guard\.sh/);
   assert.match(claudeAdapter, /session-read-guard\.sh/);
-  assert.match(claudeAdapter, /hunter-subagent-stop\.js/);
-  assert.match(devSync, /cp "\$SCRIPT_DIR\/\.claude\/hooks\/hunter-subagent-stop\.js"/);
+  assert.match(claudeAdapter, /agent-run-stop\.js/);
+  assert.match(devSync, /cp "\$SCRIPT_DIR\/\.claude\/hooks\/agent-run-stop\.js"/);
   assert.match(claudeAdapter, /bountyagent/);
-  assert.match(devSync, /\.claude\/skills\/bob-hunt\/SKILL\.md/);
-  assert.match(claudeAdapter, /hunt\.md/);
+  assert.match(devSync, /\.claude\/skills\/bob-evaluate\/SKILL\.md/);
+  assert.match(claudeAdapter, /evaluate\.md/);
   assert.match(devSync, /\.claude\/commands\/bob-update\.md/);
   assert.match(devSync, /\.claude\/commands\/bob-export\.md/);
   assert.match(install, /"mcp", "lib", "tools"/);
@@ -1350,24 +1350,24 @@ test("installer and dev-sync copy and configure session guards", () => {
   assert.match(hookText, /"matcher":"Bash"[\s\S]*session-read-guard\.sh/);
   assert.match(hookText, /"matcher":"Read"[\s\S]*session-read-guard\.sh/);
   assert.match(hookText, /"matcher":"Write"[\s\S]*session-write-guard\.sh/);
-  assert.match(JSON.stringify(defaultClaudeSettings().hooks.SubagentStop), /hunter-subagent-stop\.js/);
+  assert.match(JSON.stringify(defaultClaudeSettings().hooks.SubagentStop), /agent-run-stop\.js/);
   assert.match(JSON.stringify(defaultClaudeSettings().hooks.SessionStart), /bob-check-update\.js/);
 });
 
-test("SubagentStop hooks cover every routed capability-pack hunter agent", () => {
-  const expectedHunters = hunterAgentNamesForCapabilityPacks().sort();
-  const configuredHunters = (defaultClaudeSettings().hooks.SubagentStop || [])
-    .filter((entry) => (entry.hooks || []).some((hook) => /hunter-subagent-stop\.js/.test(hook.command)))
+test("SubagentStop hooks cover every routed capability-pack evaluator agent", () => {
+  const expectedEvaluators = evaluatorAgentNamesForCapabilityPacks().sort();
+  const configuredEvaluators = (defaultClaudeSettings().hooks.SubagentStop || [])
+    .filter((entry) => (entry.hooks || []).some((hook) => /agent-run-stop\.js/.test(hook.command)))
     .map((entry) => entry.matcher)
     .sort();
 
-  assert.deepEqual(configuredHunters, expectedHunters);
+  assert.deepEqual(configuredEvaluators, expectedEvaluators);
 });
 
-test("capability packs expose versioned context budgets for routed hunters", () => {
+test("capability packs expose versioned context budgets for routed evaluators", () => {
   for (const pack of Object.values(CAPABILITY_PACKS)) {
     assert.equal(pack.capability_pack_version, 1);
-    assert.ok(pack.hunter_agent);
+    assert.ok(pack.evaluator_agent);
     assert.ok(pack.brief_profile);
     assert.deepEqual(
       Object.keys(pack.context_budget).sort(),
@@ -1391,8 +1391,8 @@ test("no rendered prompt artifact leaks an unsubstituted {{...}} placeholder (re
     ...fs.readdirSync(path.join(ROOT, ".claude/agents"))
       .filter((name) => name.endsWith(".md"))
       .map((name) => `.claude/agents/${name}`),
-    ".claude/skills/bob-hunt/SKILL.md",
-    "adapters/codex/skills/bob-hunt/SKILL.md",
+    ".claude/skills/bob-evaluate/SKILL.md",
+    "adapters/codex/skills/bob-evaluate/SKILL.md",
     "adapters/codex/skills/bob-status/SKILL.md",
     "adapters/codex/skills/bob-debug/SKILL.md",
   ];
@@ -1407,21 +1407,21 @@ test("no rendered prompt artifact leaks an unsubstituted {{...}} placeholder (re
   }
 });
 
-test("hunter prompt sources do not hand-code handoff field limits", () => {
+test("evaluator prompt sources do not hand-code handoff field limits", () => {
   // Limits for fields written by bounty_write_wave_handoff are owned by its
-  // JSON schema and rendered into hunter prompts via {{HANDOFF_FIELD_LIMITS}}.
+  // JSON schema and rendered into evaluator prompts via {{HANDOFF_FIELD_LIMITS}}.
   // Hand-coded character counts on these specific fields would drift
   // independently of schema bumps. Other character bounds (e.g. on
   // match_test or chain-specific contract_address shapes) are owned by
   // their respective tools, not by bounty_write_wave_handoff, so they stay
   // hand-coded here.
-  // Derive the prompt-source list from HUNTER_ROLES (per-chain hunters)
-  // plus the generic web hunter, so adding a 7th chain pack auto-extends
+  // Derive the prompt-source list from EVALUATOR_ROLES (per-chain evaluators)
+  // plus the generic web evaluator, so adding a 7th chain pack auto-extends
   // this guard without an edit here.
-  const { HUNTER_ROLES } = require("../mcp/lib/capability-packs.js");
-  const hunterPromptFiles = [
-    "prompts/roles/hunter.md",
-    ...Object.values(HUNTER_ROLES).map((role) => `prompts/roles/${role.prompt_body_filename}`),
+  const { EVALUATOR_ROLES } = require("../mcp/lib/capability-packs.js");
+  const evaluatorPromptFiles = [
+    "prompts/roles/evaluator.md",
+    ...Object.values(EVALUATOR_ROLES).map((role) => `prompts/roles/${role.prompt_body_filename}`),
   ];
   const HANDOFF_FIELD_NAMES = [
     "summary",
@@ -1434,7 +1434,7 @@ test("hunter prompt sources do not hand-code handoff field limits", () => {
   // Trip when a handoff field name and a char-count assertion sit on the
   // same line or in adjacent text — that's a duplicate of the schema-rendered
   // table.
-  for (const relativePath of hunterPromptFiles) {
+  for (const relativePath of evaluatorPromptFiles) {
     const body = readFile(relativePath);
     for (const line of body.split(/\r?\n/)) {
       const hasFieldName = HANDOFF_FIELD_NAMES.some((name) => line.includes(`\`${name}\``) || line.includes(name));
@@ -1450,14 +1450,14 @@ test("hunter prompt sources do not hand-code handoff field limits", () => {
   }
 });
 
-test("rendered hunter prompts include the schema-derived handoff field limits", () => {
+test("rendered evaluator prompts include the schema-derived handoff field limits", () => {
   // The renderer reads the live schema in mcp/lib/tools/write-wave-handoff.js
-  // and emits one block per hunter prompt. Any hunter agent must see the
+  // and emits one block per evaluator prompt. Any evaluator agent must see the
   // limits before submission, not from rejection messages.
-  const renderedHunterAgents = fs.readdirSync(path.join(ROOT, ".claude/agents"))
-    .filter((name) => name.startsWith("hunter") && name.endsWith(".md"))
+  const renderedEvaluatorAgents = fs.readdirSync(path.join(ROOT, ".claude/agents"))
+    .filter((name) => name.startsWith("evaluator") && name.endsWith(".md"))
     .map((name) => `.claude/agents/${name}`);
-  for (const relativePath of renderedHunterAgents) {
+  for (const relativePath of renderedEvaluatorAgents) {
     const body = readFile(relativePath);
     assert.match(
       body,
@@ -1470,19 +1470,19 @@ test("rendered hunter prompts include the schema-derived handoff field limits", 
   }
 });
 
-test("checked-in .claude/settings.json SubagentStop matches every capability-pack hunter agent", () => {
+test("checked-in .claude/settings.json SubagentStop matches every capability-pack evaluator agent", () => {
   // The repo-local settings.json is what direct-from-repo Claude usage reads
   // (e.g., when developing the framework itself or running ./dev-sync.sh).
   // It must stay in lock-step with defaultClaudeSettings() — otherwise SC
-  // hunter stop hooks silently fail to fire in repo-local runs.
+  // evaluator stop hooks silently fail to fire in repo-local runs.
   const checkedInSettings = JSON.parse(readFile(".claude/settings.json"));
-  const expectedHunters = hunterAgentNamesForCapabilityPacks().sort();
-  const checkedInHunters = (checkedInSettings.hooks.SubagentStop || [])
-    .filter((entry) => (entry.hooks || []).some((hook) => /hunter-subagent-stop\.js/.test(hook.command)))
+  const expectedEvaluators = evaluatorAgentNamesForCapabilityPacks().sort();
+  const checkedInEvaluators = (checkedInSettings.hooks.SubagentStop || [])
+    .filter((entry) => (entry.hooks || []).some((hook) => /agent-run-stop\.js/.test(hook.command)))
     .map((entry) => entry.matcher)
     .sort();
 
-  assert.deepEqual(checkedInHunters, expectedHunters);
+  assert.deepEqual(checkedInEvaluators, expectedEvaluators);
 });
 
 test("each capability pack's role_bundles match the routed Claude role's mcp_role_bundles", () => {
@@ -1496,10 +1496,10 @@ test("each capability pack's role_bundles match the routed Claude role's mcp_rol
     }
   }
   for (const pack of Object.values(CAPABILITY_PACKS)) {
-    const roleId = agentNameToRoleId[pack.hunter_agent];
+    const roleId = agentNameToRoleId[pack.evaluator_agent];
     assert.ok(
       roleId,
-      `capability pack ${pack.id} hunter_agent ${pack.hunter_agent} has no Claude role spec`,
+      `capability pack ${pack.id} evaluator_agent ${pack.evaluator_agent} has no Claude role spec`,
     );
     const role = roleDefinition(roleId);
     const packBundles = Array.from(pack.role_bundles).sort();
@@ -1513,7 +1513,7 @@ test("each capability pack's role_bundles match the routed Claude role's mcp_rol
 });
 
 test("every SC pack ships a complete spawn block consumed by the catalogue renderer", () => {
-  // The orchestrator skill embeds {{HUNTER_PACK_CATALOGUE}}; the renderer
+  // The orchestrator skill embeds {{EVALUATOR_PACK_CATALOGUE}}; the renderer
   // calls assertSpawnField() for every pack, so a missing or non-string
   // spawn field will throw at render time. This test catches missing fields
   // in the source registry without waiting for the renderer to throw.
@@ -1522,14 +1522,14 @@ test("every SC pack ships a complete spawn block consumed by the catalogue rende
     assert.ok(pack.spawn, `pack ${pack.id} must declare a spawn block`);
     assert.ok(typeof pack.spawn.profile === "string", `pack ${pack.id} spawn.profile must be a string`);
     if (pack.spawn.profile === "smart_contract") {
-      for (const field of ["chain_family", "hunter_name_prefix", "chain_id_description", "workflow_summary", "cli_dependency", "blocked_harness_kind_options"]) {
+      for (const field of ["chain_family", "evaluator_name_prefix", "chain_id_description", "workflow_summary", "cli_dependency", "blocked_harness_kind_options"]) {
         assert.ok(
           typeof pack.spawn[field] === "string" && pack.spawn[field].trim(),
           `SC pack ${pack.id} spawn.${field} must be a non-empty string`,
         );
       }
       // Every kind in blocked_harness_kind_options must be in the
-      // bounty_write_wave_handoff schema enum, otherwise hunters that
+      // bounty_write_wave_handoff schema enum, otherwise evaluators that
       // follow the catalogue will fail finalization.
       const kinds = pack.spawn.blocked_harness_kind_options.split(/\s+or\s+/).map((t) => t.trim()).filter(Boolean);
       for (const kind of kinds) {
@@ -1546,7 +1546,7 @@ test("BLOCKED_HARNESS_RUN_KINDS, schema enum, and wave handoff normalizer all st
   // Three-way mirror: the renderer constant, the JSON schema enum, and
   // the runtime normalizer in wave-handoff-contracts.js (which throws on unknown kinds
   // before the schema check would even run). If any of the three
-  // diverges, hunters following the catalogue will fail finalization.
+  // diverges, evaluators following the catalogue will fail finalization.
   const { BLOCKED_HARNESS_RUN_KINDS } = require("../mcp/lib/capability-packs-rendering.js");
   const { BLOCKED_HARNESS_KIND_VALUES } = require("../mcp/lib/wave-handoff-contracts.js");
   const schema = require("../mcp/lib/tools/write-wave-handoff.js").inputSchema;
@@ -1560,7 +1560,7 @@ test("BLOCKED_HARNESS_RUN_KINDS, schema enum, and wave handoff normalizer all st
 
 test("BLOCKED_PREREQ_KINDS, schema enum, and wave handoff normalizer all stay in sync", () => {
   // Same three-way mirror invariant as BLOCKED_HARNESS_RUN_KINDS. Adding a
-  // new prereq kind requires updating all three sites, otherwise hunters
+  // new prereq kind requires updating all three sites, otherwise evaluators
   // either get rejected by the schema or fail finalization in the runtime
   // normalizer.
   const { BLOCKED_PREREQ_KINDS } = require("../mcp/lib/capability-packs-rendering.js");
@@ -1576,7 +1576,7 @@ test("BLOCKED_PREREQ_KINDS, schema enum, and wave handoff normalizer all stay in
 
 test("blocked_prereqs identifier_hint screens match between schema and runtime normalizer", () => {
   // The schema regex and the runtime normalizer must reject the same
-  // strings, otherwise hunters can submit secret-shaped values that pass
+  // strings, otherwise evaluators can submit secret-shaped values that pass
   // one check and fail the other (or worse, leak through).
   const {
     BLOCKED_PREREQ_IDENTIFIER_HINT_LONG_HEX_PATTERN,
@@ -1603,14 +1603,14 @@ test("bypass_attempts min lengths match between schema and runtime normalizer", 
     "bypass_attempts[].attempt_summary minLength must match the wave handoff runtime normalizer");
 });
 
-test("rendered hunter prompts include blocked_prereqs handoff field limits", () => {
+test("rendered evaluator prompts include blocked_prereqs handoff field limits", () => {
   // The placeholder substitution in capability-packs-rendering.js writes
-  // limits for blocked_prereqs[] into every hunter prompt. Without this,
-  // hunters learn the constraints by rejection.
+  // limits for blocked_prereqs[] into every evaluator prompt. Without this,
+  // evaluators learn the constraints by rejection.
   const { renderHandoffFieldLimits, BLOCKED_PREREQ_KINDS } = require("../mcp/lib/capability-packs-rendering.js");
   const limits = renderHandoffFieldLimits();
   assert.match(limits, /blocked_prereqs\[\]\.kind/,
-    "renderHandoffFieldLimits must surface blocked_prereqs[].kind for hunter prompts");
+    "renderHandoffFieldLimits must surface blocked_prereqs[].kind for evaluator prompts");
   for (const kind of BLOCKED_PREREQ_KINDS) {
     assert.ok(limits.includes(kind),
       `renderHandoffFieldLimits must list every BLOCKED_PREREQ_KIND in the rendered limits — missing ${kind}`);
@@ -1618,7 +1618,7 @@ test("rendered hunter prompts include blocked_prereqs handoff field limits", () 
   assert.match(limits, /blocked_prereqs\[\]\.identifier_hint/,
     "renderHandoffFieldLimits must surface blocked_prereqs[].identifier_hint with its lowercase-handle constraint");
   assert.match(limits, /no secrets/,
-    "renderHandoffFieldLimits must remind hunters that identifier_hint cannot hold secret-shaped values");
+    "renderHandoffFieldLimits must remind evaluators that identifier_hint cannot hold secret-shaped values");
 });
 
 test("rendered orchestrator catalogue lists every smart-contract pack exactly once", () => {
@@ -1627,11 +1627,11 @@ test("rendered orchestrator catalogue lists every smart-contract pack exactly on
   // double-renders or skips a pack is caught immediately. Catalogue is
   // keyed by capability_pack (the value wave-start assignments return
   // on each assignment), not chain_family.
-  const rendered = readFile(".claude/skills/bob-hunt/SKILL.md");
+  const rendered = readFile(".claude/skills/bob-evaluate/SKILL.md");
   for (const pack of Object.values(CAPABILITY_PACKS)) {
     if (pack.spawn.profile !== "smart_contract") continue;
     const escaped = pack.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const lineRegex = new RegExp(`- \`capability_pack: "${escaped}"\` \\(chain_family \`[^\`]+\`\\) -> hunter_agent \`${pack.hunter_agent}\``, "g");
+    const lineRegex = new RegExp(`- \`capability_pack: "${escaped}"\` \\(chain_family \`[^\`]+\`\\) -> evaluator_agent \`${pack.evaluator_agent}\``, "g");
     const matches = rendered.match(lineRegex) || [];
     assert.equal(
       matches.length,
@@ -1642,18 +1642,18 @@ test("rendered orchestrator catalogue lists every smart-contract pack exactly on
 });
 
 test("adding a chain pack costs the documented number of files (registry consolidation gate)", () => {
-  // HUNTER_ROLES + CAPABILITY_PACKS in mcp/lib/capability-packs.js are the
-  // source of truth for hunter routing. role-model.js,
+  // EVALUATOR_ROLES + CAPABILITY_PACKS in mcp/lib/capability-packs.js are the
+  // source of truth for evaluator routing. role-model.js,
   // claude-role-renderer.js, codex/role-specs.js, and tool-registry.js all
-  // derive their hunter role specs / chain bundles from the registry instead
+  // derive their evaluator role specs / chain bundles from the registry instead
   // of carrying parallel hand-coded entries.
   //
   // This test asserts that no chain-specific identifiers leak into the four
   // consumer files outside the cross-cutting bundles. If a future maintainer
-  // adds a chain literal back ("hunter-evm" / "hunter-svm" / etc.) outside
+  // adds a chain literal back ("evaluator-evm" / "evaluator-svm" / etc.) outside
   // the canonical registry, this test fails — forcing the maintainer either
   // to remove the duplication or to update this gate's known-allowed list.
-  const chainBundles = ["hunter-evm", "hunter-svm", "hunter-move", "hunter-substrate", "hunter-cosmwasm"];
+  const chainBundles = ["evaluator-evm", "evaluator-svm", "evaluator-move", "evaluator-substrate", "evaluator-cosmwasm"];
   const consumers = [
     "mcp/lib/role-model.js",
     "mcp/lib/tool-registry.js",
@@ -1668,22 +1668,22 @@ test("adding a chain pack costs the documented number of files (registry consoli
       assert.equal(
         matches.length,
         0,
-        `${consumer} hardcodes "${bundle}" — chain-specific identifiers must come from HUNTER_ROLES in capability-packs.js, not be repeated in consumer files`,
+        `${consumer} hardcodes "${bundle}" — chain-specific identifiers must come from EVALUATOR_ROLES in capability-packs.js, not be repeated in consumer files`,
       );
     }
   }
 
   // Also pin the file-cost: enumerate the files that must change to add a
   // 7th chain pack today. This is the abstraction's promise.
-  // - mcp/lib/capability-packs.js: define HUNTER_ROLES + CAPABILITY_PACKS entries
+  // - mcp/lib/capability-packs.js: define EVALUATOR_ROLES + CAPABILITY_PACKS entries
   // - mcp/lib/findings.js: chain_id + address validation (irreducible per chain)
-  // - prompts/roles/hunter-X.md: hunter prompt body (irreducible)
+  // - prompts/roles/evaluator-X.md: evaluator prompt body (irreducible)
   // - prompts/roles/chain.md: pivot patterns (irreducible)
   const KNOWN_PACK_TOUCH_FILES = [
     "mcp/lib/capability-packs.js",
     "mcp/lib/findings.js",
     "prompts/roles/chain.md",
-    "prompts/roles/hunter-NEW_CHAIN.md (new file)",
+    "prompts/roles/evaluator-NEW_CHAIN.md (new file)",
   ];
   // Anchor the count so a maintainer adding a new chain coupling outside
   // the registry has to either fix the abstraction or extend this list.
@@ -1693,22 +1693,22 @@ test("adding a chain pack costs the documented number of files (registry consoli
   );
 });
 
-test("HUNTER_ROLES is the single source of truth for hunter role specs across consumers", () => {
+test("EVALUATOR_ROLES is the single source of truth for evaluator role specs across consumers", () => {
   // role-model.js, claude-role-renderer.js, codex/role-specs.js all
-  // generate their hunter entries from HUNTER_ROLES at module load. This
-  // test asserts cross-consumer consistency: every HUNTER_ROLES entry
+  // generate their evaluator entries from EVALUATOR_ROLES at module load. This
+  // test asserts cross-consumer consistency: every EVALUATOR_ROLES entry
   // surfaces in each consumer with matching name and bundle list.
-  const { HUNTER_ROLES } = require("../mcp/lib/capability-packs.js");
+  const { EVALUATOR_ROLES } = require("../mcp/lib/capability-packs.js");
   const { ROLE_DEFINITIONS } = require("../mcp/lib/role-model.js");
 
-  for (const role of Object.values(HUNTER_ROLES)) {
+  for (const role of Object.values(EVALUATOR_ROLES)) {
     const claudeSpec = CLAUDE_ROLE_SPECS[role.role_id];
     const codexSpec = CODEX_ROLE_SPECS[role.role_id];
     const roleDef = ROLE_DEFINITIONS[role.role_id];
 
-    assert.ok(claudeSpec, `HUNTER_ROLES.${role.role_id} missing CLAUDE_ROLE_SPECS entry`);
-    assert.ok(codexSpec, `HUNTER_ROLES.${role.role_id} missing CODEX_ROLE_SPECS entry`);
-    assert.ok(roleDef, `HUNTER_ROLES.${role.role_id} missing ROLE_DEFINITIONS entry`);
+    assert.ok(claudeSpec, `EVALUATOR_ROLES.${role.role_id} missing CLAUDE_ROLE_SPECS entry`);
+    assert.ok(codexSpec, `EVALUATOR_ROLES.${role.role_id} missing CODEX_ROLE_SPECS entry`);
+    assert.ok(roleDef, `EVALUATOR_ROLES.${role.role_id} missing ROLE_DEFINITIONS entry`);
 
     assert.equal(claudeSpec.name, role.name, `Claude spec name mismatch for ${role.role_id}`);
     assert.equal(claudeSpec.color, role.color, `Claude spec color mismatch for ${role.role_id}`);
@@ -1717,7 +1717,7 @@ test("HUNTER_ROLES is the single source of truth for hunter role specs across co
     assert.deepEqual(
       [...roleDef.mcp_role_bundles].sort(),
       [...role.role_bundles].sort(),
-      `role-model.js mcp_role_bundles drifted from HUNTER_ROLES for ${role.role_id}`,
+      `role-model.js mcp_role_bundles drifted from EVALUATOR_ROLES for ${role.role_id}`,
     );
   }
 });
@@ -1748,16 +1748,16 @@ test("renderer source files contain no per-chain workflow strings (pack.spawn is
       `codex-role-renderer.js must not inline workflow fragment "${fragment}" — move it to pack.spawn`,
     );
   }
-  // Also pin: no SPAWN_HUNTER_*_AGENT placeholder per-chain bodies in the
+  // Also pin: no SPAWN_EVALUATOR_*_AGENT placeholder per-chain bodies in the
   // renderer constants — pack.spawn is the only source.
-  assert.doesNotMatch(claudeRenderer, /SPAWN_HUNTER_EVM_AGENT|SPAWN_HUNTER_SVM_AGENT|SPAWN_HUNTER_MOVE_AGENT|SPAWN_HUNTER_SUBSTRATE_AGENT|SPAWN_HUNTER_COSMWASM_AGENT/);
-  assert.doesNotMatch(codexRenderer, /SPAWN_HUNTER_EVM_AGENT|SPAWN_HUNTER_SVM_AGENT|SPAWN_HUNTER_MOVE_AGENT|SPAWN_HUNTER_SUBSTRATE_AGENT|SPAWN_HUNTER_COSMWASM_AGENT/);
+  assert.doesNotMatch(claudeRenderer, /SPAWN_EVALUATOR_EVM_AGENT|SPAWN_EVALUATOR_SVM_AGENT|SPAWN_EVALUATOR_MOVE_AGENT|SPAWN_EVALUATOR_SUBSTRATE_AGENT|SPAWN_EVALUATOR_COSMWASM_AGENT/);
+  assert.doesNotMatch(codexRenderer, /SPAWN_EVALUATOR_EVM_AGENT|SPAWN_EVALUATOR_SVM_AGENT|SPAWN_EVALUATOR_MOVE_AGENT|SPAWN_EVALUATOR_SUBSTRATE_AGENT|SPAWN_EVALUATOR_COSMWASM_AGENT/);
 });
 
-test("hunter agent tool counts stay bounded under capability packs (anti-cruft budget)", () => {
-  // Cap routed hunters tightly. The web hunter has explicit web-only technique
-  // pack tools; smart-contract hunters stay on the stricter pack budget.
-  const HUNTER_MCP_TOOL_BUDGET = 16;
+test("evaluator agent tool counts stay bounded under capability packs (anti-cruft budget)", () => {
+  // Cap routed evaluators tightly. The web evaluator has explicit web-only technique
+  // pack tools; smart-contract evaluators stay on the stricter pack budget.
+  const EVALUATOR_MCP_TOOL_BUDGET = 16;
   const agentNameToRoleId = {};
   for (const [roleId, spec] of Object.entries(CLAUDE_ROLE_SPECS)) {
     if (spec.kind === "agent" && typeof spec.output_path === "string") {
@@ -1766,12 +1766,12 @@ test("hunter agent tool counts stay bounded under capability packs (anti-cruft b
     }
   }
   for (const pack of Object.values(CAPABILITY_PACKS)) {
-    const roleId = agentNameToRoleId[pack.hunter_agent];
+    const roleId = agentNameToRoleId[pack.evaluator_agent];
     const tools = mcpToolNamesForRole(roleId);
-    const budget = pack.brief_profile === "web" ? 18 : HUNTER_MCP_TOOL_BUDGET;
+    const budget = pack.brief_profile === "web" ? 18 : EVALUATOR_MCP_TOOL_BUDGET;
     assert.ok(
       tools.length <= budget,
-      `pack ${pack.id} hunter ${pack.hunter_agent} has ${tools.length} MCP tools (budget ${budget}); justify or split before raising the cap`,
+      `pack ${pack.id} evaluator ${pack.evaluator_agent} has ${tools.length} MCP tools (budget ${budget}); justify or split before raising the cap`,
     );
   }
 });
@@ -1799,7 +1799,7 @@ test("verifier role bundle has only documented mutating tools and no orchestrati
   // included bounty_evm_fetch_source, which writes to the per-session
   // contracts cache (mutating:true). That one is an intentional, documented
   // exception. NO mutator that advances orchestration (recordFinding,
-  // write_wave_handoff, finalize_hunter_run, log_coverage, log_dead_ends,
+  // write_wave_handoff, finalize_evaluator_run, log_coverage, log_dead_ends,
   // write_grade_verdict) may slip into the verifier bundle.
   const verifierBundleTools = TOOLS.filter((tool) => {
     const meta = TOOL_MANIFEST[tool.name];
@@ -1818,7 +1818,7 @@ test("verifier role bundle has only documented mutating tools and no orchestrati
   const forbidden = [
     "bounty_record_finding",
     "bounty_write_wave_handoff",
-    "bounty_finalize_hunter_run",
+    "bounty_finalize_agent_run",
     "bounty_log_coverage",
     "bounty_log_dead_ends",
     "bounty_write_grade_verdict",
@@ -1832,7 +1832,7 @@ test("verifier role bundle has only documented mutating tools and no orchestrati
     if (!meta) continue;
     assert.ok(
       !meta.role_bundles.includes("verifier"),
-      `${tool} must NOT be in the verifier role bundle — orchestration mutators stay hunter/orchestrator-only.`,
+      `${tool} must NOT be in the verifier role bundle — orchestration mutators stay evaluator/orchestrator-only.`,
     );
   }
 });
@@ -1940,7 +1940,7 @@ test("verifier prompt sources instruct pack-driven dispatch and embed the capabi
     assert.match(prompt, /smart_contract|smart-contract/i, `${role}.md does not branch on smart_contract`);
     assert.match(
       prompt,
-      /Pass.*reproduce|reproduce.*Pass|assert(s|ed)?\s+the\s+bug|exploit harness|exploit-test/i,
+      /Pass.*reproduce|reproduce.*Pass|assert(s|ed)?\s+the\s+bug|proof harness|impact proof-test/i,
       `${role}.md does not document the test-pass = bug-reproduced convention`,
     );
     assert.match(
@@ -2028,46 +2028,46 @@ test("verifier prompt sources stay below the chain_family branching budget (anti
   }
 });
 
-test("hunter-svm-agent ships with the SVM tool surface", () => {
-  const document = readFile(".claude/agents/hunter-svm-agent.md");
-  const frontmatter = parseFrontmatter(document, "hunter-svm-agent.md");
+test("evaluator-svm-agent ships with the SVM tool surface", () => {
+  const document = readFile(".claude/agents/evaluator-svm-agent.md");
+  const frontmatter = parseFrontmatter(document, "evaluator-svm-agent.md");
   const tools = frontmatter.tools.split(",").map((tool) => tool.trim());
-  assert.ok(tools.includes("mcp__bountyagent__bounty_svm_fetch_account"), "hunter-svm needs svm_fetch_account");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_svm_fetch_program"), "hunter-svm needs svm_fetch_program for upgrade authority");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_anchor_run"), "hunter-svm needs anchor_run for PoCs");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_record_finding"), "hunter-svm needs record_finding");
-  assert.ok(tools.includes("Write"), "hunter-svm needs Write to scaffold Anchor tests");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_svm_fetch_account"), "evaluator-svm needs svm_fetch_account");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_svm_fetch_program"), "evaluator-svm needs svm_fetch_program for upgrade authority");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_anchor_run"), "evaluator-svm needs anchor_run for PoCs");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_record_finding"), "evaluator-svm needs record_finding");
+  assert.ok(tools.includes("Write"), "evaluator-svm needs Write to scaffold Anchor tests");
 });
 
-test("hunter-svm prompt encodes the chain_family=svm anti-stop rule and sc_evidence shape", () => {
-  const prompt = readFile("prompts/roles/hunter-svm.md");
+test("evaluator-svm prompt encodes the chain_family=svm anti-stop rule and sc_evidence shape", () => {
+  const prompt = readFile("prompts/roles/evaluator-svm.md");
   // Chain-family confirmation pattern
-  assert.match(prompt, /chain_family.*svm|svm.*chain_family/i, "hunter-svm must confirm chain_family is svm");
+  assert.match(prompt, /chain_family.*svm|svm.*chain_family/i, "evaluator-svm must confirm chain_family is svm");
   // sc_evidence shape — must teach the SVM-specific contract_address (program_id) + cluster
-  assert.match(prompt, /chain_family.*"svm"/i, "hunter-svm must instruct chain_family: svm in sc_evidence");
-  assert.match(prompt, /base58/i, "hunter-svm must teach base58 program_id encoding");
-  assert.match(prompt, /cluster/i, "hunter-svm must teach cluster as chain_id");
+  assert.match(prompt, /chain_family.*"svm"/i, "evaluator-svm must instruct chain_family: svm in sc_evidence");
+  assert.match(prompt, /base58/i, "evaluator-svm must teach base58 program_id encoding");
+  assert.match(prompt, /cluster/i, "evaluator-svm must teach cluster as chain_id");
   // Anchor harness primitive
-  assert.match(prompt, /bounty_anchor_run/, "hunter-svm must document bounty_anchor_run");
+  assert.match(prompt, /bounty_anchor_run/, "evaluator-svm must document bounty_anchor_run");
 });
 
-test("orchestrator dispatches by chain_family to hunter-evm or hunter-svm via pack catalogue", () => {
-  // Per-chain SPAWN_HUNTER_*_AGENT placeholders are absent. The orchestrator
-  // embeds a single {{HUNTER_PACK_CATALOGUE}} that the renderer fills from
+test("orchestrator dispatches by chain_family to evaluator-evm or evaluator-svm via pack catalogue", () => {
+  // Per-chain SPAWN_EVALUATOR_*_AGENT placeholders are absent. The orchestrator
+  // embeds a single {{EVALUATOR_PACK_CATALOGUE}} that the renderer fills from
   // the pack registry; the rendered skill must list every SC pack's
-  // chain_family + hunter_agent in the catalogue lines.
+  // chain_family + evaluator_agent in the catalogue lines.
   const source = readFile("prompts/roles/orchestrator.md");
-  assert.match(source, /\{\{HUNTER_PACK_CATALOGUE\}\}/, "orchestrator source must embed the HUNTER_PACK_CATALOGUE placeholder");
-  assert.doesNotMatch(source, /SPAWN_HUNTER_EVM_AGENT|SPAWN_HUNTER_SVM_AGENT|SPAWN_HUNTER_MOVE_AGENT|SPAWN_HUNTER_SUBSTRATE_AGENT|SPAWN_HUNTER_COSMWASM_AGENT/, "orchestrator source must not contain per-chain spawn placeholders");
+  assert.match(source, /\{\{EVALUATOR_PACK_CATALOGUE\}\}/, "orchestrator source must embed the EVALUATOR_PACK_CATALOGUE placeholder");
+  assert.doesNotMatch(source, /SPAWN_EVALUATOR_EVM_AGENT|SPAWN_EVALUATOR_SVM_AGENT|SPAWN_EVALUATOR_MOVE_AGENT|SPAWN_EVALUATOR_SUBSTRATE_AGENT|SPAWN_EVALUATOR_COSMWASM_AGENT/, "orchestrator source must not contain per-chain spawn placeholders");
 
   assert.equal(CAPABILITY_PACKS.smart_contract_evm.spawn.chain_family, "evm");
-  assert.equal(CAPABILITY_PACKS.smart_contract_evm.hunter_agent, "hunter-evm-agent");
+  assert.equal(CAPABILITY_PACKS.smart_contract_evm.evaluator_agent, "evaluator-evm-agent");
   assert.equal(CAPABILITY_PACKS.smart_contract_svm.spawn.chain_family, "svm");
-  assert.equal(CAPABILITY_PACKS.smart_contract_svm.hunter_agent, "hunter-svm-agent");
+  assert.equal(CAPABILITY_PACKS.smart_contract_svm.evaluator_agent, "evaluator-svm-agent");
 
-  const rendered = readFile(".claude/skills/bob-hunt/SKILL.md");
-  assert.match(rendered, /capability_pack: "smart_contract_evm".*hunter-evm-agent/, "rendered orchestrator must list smart_contract_evm -> hunter-evm-agent in catalogue");
-  assert.match(rendered, /capability_pack: "smart_contract_svm".*hunter-svm-agent/, "rendered orchestrator must list smart_contract_svm -> hunter-svm-agent in catalogue");
+  const rendered = readFile(".claude/skills/bob-evaluate/SKILL.md");
+  assert.match(rendered, /capability_pack: "smart_contract_evm".*evaluator-evm-agent/, "rendered orchestrator must list smart_contract_evm -> evaluator-evm-agent in catalogue");
+  assert.match(rendered, /capability_pack: "smart_contract_svm".*evaluator-svm-agent/, "rendered orchestrator must list smart_contract_svm -> evaluator-svm-agent in catalogue");
 });
 
 test("chain-builder prompt enumerates SVM patterns and enforces svm-cite-finding", () => {
@@ -2123,12 +2123,12 @@ test("verifier prompts document the SC tooling fail-mode taxonomy at least once"
 test("Aptos and Sui packs route to the correct Move runners", () => {
   // smart_contract_aptos and smart_contract_sui are separate packs so
   // verifier dispatch is one runner per pack. Both still use
-  // hunter-move-agent (the agent's tool list covers both).
+  // evaluator-move-agent (the agent's tool list covers both).
   const { CAPABILITY_PACKS } = require("../mcp/lib/capability-packs.js");
   assert.equal(CAPABILITY_PACKS.smart_contract_aptos.verifier.replay_tool, "bounty_aptos_run");
-  assert.equal(CAPABILITY_PACKS.smart_contract_aptos.hunter_agent, "hunter-move-agent");
+  assert.equal(CAPABILITY_PACKS.smart_contract_aptos.evaluator_agent, "evaluator-move-agent");
   assert.equal(CAPABILITY_PACKS.smart_contract_sui.verifier.replay_tool, "bounty_sui_run");
-  assert.equal(CAPABILITY_PACKS.smart_contract_sui.hunter_agent, "hunter-move-agent");
+  assert.equal(CAPABILITY_PACKS.smart_contract_sui.evaluator_agent, "evaluator-move-agent");
   // Move compile fail-mode must be documented in at least one verifier source
   // (it's shared by aptos+sui and applies in the rendered table footer).
   for (const role of ["brutalist-verifier", "balanced-verifier", "final-verifier"]) {
@@ -2137,49 +2137,49 @@ test("Aptos and Sui packs route to the correct Move runners", () => {
   }
 });
 
-test("hunter-move-agent ships with the Move tool surface", () => {
-  const document = readFile(".claude/agents/hunter-move-agent.md");
-  const frontmatter = parseFrontmatter(document, "hunter-move-agent.md");
+test("evaluator-move-agent ships with the Move tool surface", () => {
+  const document = readFile(".claude/agents/evaluator-move-agent.md");
+  const frontmatter = parseFrontmatter(document, "evaluator-move-agent.md");
   const tools = frontmatter.tools.split(",").map((tool) => tool.trim());
-  assert.ok(tools.includes("mcp__bountyagent__bounty_aptos_fetch_resource"), "hunter-move needs aptos_fetch_resource");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_aptos_fetch_module"), "hunter-move needs aptos_fetch_module");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_aptos_run"), "hunter-move needs aptos_run for PoCs");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_sui_fetch_object"), "hunter-move needs sui_fetch_object");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_sui_fetch_package"), "hunter-move needs sui_fetch_package");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_sui_run"), "hunter-move needs sui_run for PoCs");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_record_finding"), "hunter-move needs record_finding");
-  assert.ok(tools.includes("Write"), "hunter-move needs Write to scaffold Move tests");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_aptos_fetch_resource"), "evaluator-move needs aptos_fetch_resource");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_aptos_fetch_module"), "evaluator-move needs aptos_fetch_module");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_aptos_run"), "evaluator-move needs aptos_run for PoCs");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_sui_fetch_object"), "evaluator-move needs sui_fetch_object");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_sui_fetch_package"), "evaluator-move needs sui_fetch_package");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_sui_run"), "evaluator-move needs sui_run for PoCs");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_record_finding"), "evaluator-move needs record_finding");
+  assert.ok(tools.includes("Write"), "evaluator-move needs Write to scaffold Move tests");
 });
 
-test("hunter-move prompt encodes the chain_family={aptos,sui} branching and sc_evidence shape", () => {
-  const prompt = readFile("prompts/roles/hunter-move.md");
+test("evaluator-move prompt encodes the chain_family={aptos,sui} branching and sc_evidence shape", () => {
+  const prompt = readFile("prompts/roles/evaluator-move.md");
   // Family confirmation pattern — both aptos and sui must be named
-  assert.match(prompt, /chain_family.*aptos|aptos.*chain_family/i, "hunter-move must confirm chain_family aptos");
-  assert.match(prompt, /chain_family.*sui|sui.*chain_family/i, "hunter-move must confirm chain_family sui");
+  assert.match(prompt, /chain_family.*aptos|aptos.*chain_family/i, "evaluator-move must confirm chain_family aptos");
+  assert.match(prompt, /chain_family.*sui|sui.*chain_family/i, "evaluator-move must confirm chain_family sui");
   // sc_evidence shape: chain_family enum
-  assert.match(prompt, /chain_family.*"aptos"/i, "hunter-move must instruct chain_family: aptos in sc_evidence");
-  assert.match(prompt, /chain_family.*"sui"/i, "hunter-move must instruct chain_family: sui in sc_evidence");
+  assert.match(prompt, /chain_family.*"aptos"/i, "evaluator-move must instruct chain_family: aptos in sc_evidence");
+  assert.match(prompt, /chain_family.*"sui"/i, "evaluator-move must instruct chain_family: sui in sc_evidence");
   // Move test primitives
-  assert.match(prompt, /bounty_aptos_run/, "hunter-move must document bounty_aptos_run");
-  assert.match(prompt, /bounty_sui_run/, "hunter-move must document bounty_sui_run");
+  assert.match(prompt, /bounty_aptos_run/, "evaluator-move must document bounty_aptos_run");
+  assert.match(prompt, /bounty_sui_run/, "evaluator-move must document bounty_sui_run");
   // Bug class catalog
-  assert.match(prompt, /capability_leakage/, "hunter-move must list capability_leakage bug class");
-  assert.match(prompt, /object_ownership_violation/, "hunter-move must list Sui object_ownership_violation bug class");
-  assert.match(prompt, /package_upgrade_authority/, "hunter-move must list package_upgrade_authority bug class");
+  assert.match(prompt, /capability_leakage/, "evaluator-move must list capability_leakage bug class");
+  assert.match(prompt, /object_ownership_violation/, "evaluator-move must list Sui object_ownership_violation bug class");
+  assert.match(prompt, /package_upgrade_authority/, "evaluator-move must list package_upgrade_authority bug class");
 });
 
-test("orchestrator dispatches by chain_family to hunter-move for aptos and sui packs", () => {
+test("orchestrator dispatches by chain_family to evaluator-move for aptos and sui packs", () => {
   // smart_contract_aptos and smart_contract_sui are separate packs (one
-  // verifier runner per pack), both routing to hunter-move-agent. The pack
+  // verifier runner per pack), both routing to evaluator-move-agent. The pack
   // catalogue renders one entry per pack.
   assert.equal(CAPABILITY_PACKS.smart_contract_aptos.spawn.chain_family, "aptos");
-  assert.equal(CAPABILITY_PACKS.smart_contract_aptos.hunter_agent, "hunter-move-agent");
+  assert.equal(CAPABILITY_PACKS.smart_contract_aptos.evaluator_agent, "evaluator-move-agent");
   assert.equal(CAPABILITY_PACKS.smart_contract_sui.spawn.chain_family, "sui");
-  assert.equal(CAPABILITY_PACKS.smart_contract_sui.hunter_agent, "hunter-move-agent");
+  assert.equal(CAPABILITY_PACKS.smart_contract_sui.evaluator_agent, "evaluator-move-agent");
 
-  const rendered = readFile(".claude/skills/bob-hunt/SKILL.md");
-  assert.match(rendered, /capability_pack: "smart_contract_aptos".*hunter-move-agent/, "rendered orchestrator must list smart_contract_aptos -> hunter-move-agent");
-  assert.match(rendered, /capability_pack: "smart_contract_sui".*hunter-move-agent/, "rendered orchestrator must list smart_contract_sui -> hunter-move-agent");
+  const rendered = readFile(".claude/skills/bob-evaluate/SKILL.md");
+  assert.match(rendered, /capability_pack: "smart_contract_aptos".*evaluator-move-agent/, "rendered orchestrator must list smart_contract_aptos -> evaluator-move-agent");
+  assert.match(rendered, /capability_pack: "smart_contract_sui".*evaluator-move-agent/, "rendered orchestrator must list smart_contract_sui -> evaluator-move-agent");
 });
 
 test("chain-builder prompt enumerates Aptos + Sui patterns and enforces aptos/sui-cite-finding", () => {
@@ -2193,7 +2193,7 @@ test("chain-builder prompt enumerates Aptos + Sui patterns and enforces aptos/su
 });
 
 test("Aptos and Sui packs declare the address-disambiguation read tool", () => {
-  // Aptos and Sui share 0x+64-hex address space. A hunter could record
+  // Aptos and Sui share 0x+64-hex address space. A evaluator could record
   // chain_family=aptos with a Sui package_id (or vice versa); the runner
   // alone cannot detect this. The disambiguation requirement lives in the
   // pack manifest's verifier block, not in prompt prose.
@@ -2255,64 +2255,64 @@ test("report-writer prompt renders Aptos network + module_address + Sui network 
   assert.match(prompt, /Sui owner-field rendering|AddressOwner\(0x/i, "reporter.md must specify how to flatten Sui owner JSON shapes into prose");
 });
 
-test("hunter-substrate-agent ships with the Substrate / ink! tool surface", () => {
-  const document = readFile(".claude/agents/hunter-substrate-agent.md");
-  const frontmatter = parseFrontmatter(document, "hunter-substrate-agent.md");
+test("evaluator-substrate-agent ships with the Substrate / ink! tool surface", () => {
+  const document = readFile(".claude/agents/evaluator-substrate-agent.md");
+  const frontmatter = parseFrontmatter(document, "evaluator-substrate-agent.md");
   const tools = frontmatter.tools.split(",").map((tool) => tool.trim());
-  assert.ok(tools.includes("mcp__bountyagent__bounty_substrate_run"), "hunter-substrate needs substrate_run for PoCs");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_substrate_fetch_storage"), "hunter-substrate needs substrate_fetch_storage");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_substrate_fetch_runtime"), "hunter-substrate needs substrate_fetch_runtime");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_record_finding"), "hunter-substrate needs record_finding");
-  assert.ok(tools.includes("Write"), "hunter-substrate needs Write to scaffold ink! tests");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_substrate_run"), "evaluator-substrate needs substrate_run for PoCs");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_substrate_fetch_storage"), "evaluator-substrate needs substrate_fetch_storage");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_substrate_fetch_runtime"), "evaluator-substrate needs substrate_fetch_runtime");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_record_finding"), "evaluator-substrate needs record_finding");
+  assert.ok(tools.includes("Write"), "evaluator-substrate needs Write to scaffold ink! tests");
 });
 
-test("hunter-cosmwasm-agent ships with the CosmWasm tool surface", () => {
-  const document = readFile(".claude/agents/hunter-cosmwasm-agent.md");
-  const frontmatter = parseFrontmatter(document, "hunter-cosmwasm-agent.md");
+test("evaluator-cosmwasm-agent ships with the CosmWasm tool surface", () => {
+  const document = readFile(".claude/agents/evaluator-cosmwasm-agent.md");
+  const frontmatter = parseFrontmatter(document, "evaluator-cosmwasm-agent.md");
   const tools = frontmatter.tools.split(",").map((tool) => tool.trim());
-  assert.ok(tools.includes("mcp__bountyagent__bounty_cosmwasm_run"), "hunter-cosmwasm needs cosmwasm_run for PoCs");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_cosmwasm_fetch_contract"), "hunter-cosmwasm needs cosmwasm_fetch_contract");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_cosmwasm_smart_query"), "hunter-cosmwasm needs cosmwasm_smart_query");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_record_finding"), "hunter-cosmwasm needs record_finding");
-  assert.ok(tools.includes("Write"), "hunter-cosmwasm needs Write to scaffold cw-multi-test integration tests");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_cosmwasm_run"), "evaluator-cosmwasm needs cosmwasm_run for PoCs");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_cosmwasm_fetch_contract"), "evaluator-cosmwasm needs cosmwasm_fetch_contract");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_cosmwasm_smart_query"), "evaluator-cosmwasm needs cosmwasm_smart_query");
+  assert.ok(tools.includes("mcp__bountyagent__bounty_record_finding"), "evaluator-cosmwasm needs record_finding");
+  assert.ok(tools.includes("Write"), "evaluator-cosmwasm needs Write to scaffold cw-multi-test integration tests");
 });
 
-test("hunter-substrate prompt encodes chain_family=substrate branching, sc_evidence shape, and bug class catalog", () => {
-  const prompt = readFile("prompts/roles/hunter-substrate.md");
-  assert.match(prompt, /chain_family.*"substrate"|chain_family.*: substrate|substrate.*chain_family/i, "hunter-substrate must reference chain_family substrate");
-  assert.match(prompt, /chain_family: "substrate"/, "hunter-substrate must instruct chain_family: \"substrate\" in sc_evidence");
-  assert.match(prompt, /bounty_substrate_run/, "hunter-substrate must document bounty_substrate_run");
-  assert.match(prompt, /bounty_substrate_fetch_storage/, "hunter-substrate must document bounty_substrate_fetch_storage");
+test("evaluator-substrate prompt encodes chain_family=substrate branching, sc_evidence shape, and bug class catalog", () => {
+  const prompt = readFile("prompts/roles/evaluator-substrate.md");
+  assert.match(prompt, /chain_family.*"substrate"|chain_family.*: substrate|substrate.*chain_family/i, "evaluator-substrate must reference chain_family substrate");
+  assert.match(prompt, /chain_family: "substrate"/, "evaluator-substrate must instruct chain_family: \"substrate\" in sc_evidence");
+  assert.match(prompt, /bounty_substrate_run/, "evaluator-substrate must document bounty_substrate_run");
+  assert.match(prompt, /bounty_substrate_fetch_storage/, "evaluator-substrate must document bounty_substrate_fetch_storage");
   // Bug class catalog
-  assert.match(prompt, /set_code_hash_unauthorized/, "hunter-substrate must list set_code_hash_unauthorized");
-  assert.match(prompt, /caller_spoof/, "hunter-substrate must list caller_spoof");
-  assert.match(prompt, /reentrancy_cross_contract/, "hunter-substrate must list reentrancy_cross_contract");
-  assert.match(prompt, /SS58/, "hunter-substrate must reference SS58 address format");
+  assert.match(prompt, /set_code_hash_unauthorized/, "evaluator-substrate must list set_code_hash_unauthorized");
+  assert.match(prompt, /caller_spoof/, "evaluator-substrate must list caller_spoof");
+  assert.match(prompt, /reentrancy_cross_contract/, "evaluator-substrate must list reentrancy_cross_contract");
+  assert.match(prompt, /SS58/, "evaluator-substrate must reference SS58 address format");
 });
 
-test("hunter-cosmwasm prompt encodes chain_family=cosmwasm branching, sc_evidence shape, and bug class catalog", () => {
-  const prompt = readFile("prompts/roles/hunter-cosmwasm.md");
-  assert.match(prompt, /chain_family.*"cosmwasm"|chain_family.*: cosmwasm|cosmwasm.*chain_family/i, "hunter-cosmwasm must reference chain_family cosmwasm");
-  assert.match(prompt, /chain_family: "cosmwasm"/, "hunter-cosmwasm must instruct chain_family: \"cosmwasm\" in sc_evidence");
-  assert.match(prompt, /bounty_cosmwasm_run/, "hunter-cosmwasm must document bounty_cosmwasm_run");
-  assert.match(prompt, /bounty_cosmwasm_fetch_contract/, "hunter-cosmwasm must document bounty_cosmwasm_fetch_contract");
-  assert.match(prompt, /bounty_cosmwasm_smart_query/, "hunter-cosmwasm must document bounty_cosmwasm_smart_query");
+test("evaluator-cosmwasm prompt encodes chain_family=cosmwasm branching, sc_evidence shape, and bug class catalog", () => {
+  const prompt = readFile("prompts/roles/evaluator-cosmwasm.md");
+  assert.match(prompt, /chain_family.*"cosmwasm"|chain_family.*: cosmwasm|cosmwasm.*chain_family/i, "evaluator-cosmwasm must reference chain_family cosmwasm");
+  assert.match(prompt, /chain_family: "cosmwasm"/, "evaluator-cosmwasm must instruct chain_family: \"cosmwasm\" in sc_evidence");
+  assert.match(prompt, /bounty_cosmwasm_run/, "evaluator-cosmwasm must document bounty_cosmwasm_run");
+  assert.match(prompt, /bounty_cosmwasm_fetch_contract/, "evaluator-cosmwasm must document bounty_cosmwasm_fetch_contract");
+  assert.match(prompt, /bounty_cosmwasm_smart_query/, "evaluator-cosmwasm must document bounty_cosmwasm_smart_query");
   // Bug class catalog
-  assert.match(prompt, /migrate_msg_open|migrate.*open/i, "hunter-cosmwasm must list migrate_msg_open");
-  assert.match(prompt, /submessage_reply_misuse/, "hunter-cosmwasm must list submessage_reply_misuse");
-  assert.match(prompt, /non_payable_check_missing|non_payable/i, "hunter-cosmwasm must list non_payable_check_missing");
-  assert.match(prompt, /bech32/i, "hunter-cosmwasm must reference bech32 address format");
+  assert.match(prompt, /migrate_msg_open|migrate.*open/i, "evaluator-cosmwasm must list migrate_msg_open");
+  assert.match(prompt, /submessage_reply_misuse/, "evaluator-cosmwasm must list submessage_reply_misuse");
+  assert.match(prompt, /non_payable_check_missing|non_payable/i, "evaluator-cosmwasm must list non_payable_check_missing");
+  assert.match(prompt, /bech32/i, "evaluator-cosmwasm must reference bech32 address format");
 });
 
-test("orchestrator dispatches by chain_family to hunter-substrate and hunter-cosmwasm via pack catalogue", () => {
+test("orchestrator dispatches by chain_family to evaluator-substrate and evaluator-cosmwasm via pack catalogue", () => {
   assert.equal(CAPABILITY_PACKS.smart_contract_substrate.spawn.chain_family, "substrate");
-  assert.equal(CAPABILITY_PACKS.smart_contract_substrate.hunter_agent, "hunter-substrate-agent");
+  assert.equal(CAPABILITY_PACKS.smart_contract_substrate.evaluator_agent, "evaluator-substrate-agent");
   assert.equal(CAPABILITY_PACKS.smart_contract_cosmwasm.spawn.chain_family, "cosmwasm");
-  assert.equal(CAPABILITY_PACKS.smart_contract_cosmwasm.hunter_agent, "hunter-cosmwasm-agent");
+  assert.equal(CAPABILITY_PACKS.smart_contract_cosmwasm.evaluator_agent, "evaluator-cosmwasm-agent");
 
-  const rendered = readFile(".claude/skills/bob-hunt/SKILL.md");
-  assert.match(rendered, /capability_pack: "smart_contract_substrate".*hunter-substrate-agent/, "rendered orchestrator must list smart_contract_substrate -> hunter-substrate-agent");
-  assert.match(rendered, /capability_pack: "smart_contract_cosmwasm".*hunter-cosmwasm-agent/, "rendered orchestrator must list smart_contract_cosmwasm -> hunter-cosmwasm-agent");
+  const rendered = readFile(".claude/skills/bob-evaluate/SKILL.md");
+  assert.match(rendered, /capability_pack: "smart_contract_substrate".*evaluator-substrate-agent/, "rendered orchestrator must list smart_contract_substrate -> evaluator-substrate-agent");
+  assert.match(rendered, /capability_pack: "smart_contract_cosmwasm".*evaluator-cosmwasm-agent/, "rendered orchestrator must list smart_contract_cosmwasm -> evaluator-cosmwasm-agent");
 });
 
 test("Substrate and CosmWasm packs declare disambiguation reads", () => {
@@ -2425,22 +2425,22 @@ test("bounty_record_finding inputSchema requires sc_evidence sub-fields for SC f
 });
 
 test("REPORT phase uses compact session summary instead of root reading report markdown", () => {
-  const orchestrator = readFile(".claude/skills/bob-hunt/SKILL.md");
+  const orchestrator = readFile(".claude/skills/bob-evaluate/SKILL.md");
 
   assert.match(orchestrator, /After the report writer finishes[\s\S]*bounty_read_session_summary/);
   assert.match(orchestrator, /result\.data\.summary\.report\.path/);
   assert.match(orchestrator, /Do not read `report\.md` in the root orchestrator/);
 });
 
-test("resume instructions continue from MCP summaries and do not reconstruct from markdown", () => {
-  const orchestrator = readFile(".claude/skills/bob-hunt/SKILL.md");
+test("resume instructions continue from MCP summaries and do not rebuild from markdown", () => {
+  const orchestrator = readFile(".claude/skills/bob-evaluate/SKILL.md");
 
   assert.match(orchestrator, /First call `bounty_read_state_summary\(\{ target_domain \}\)`/);
-  assert.match(orchestrator, /do not reconstruct resume state from markdown/i);
+  assert.match(orchestrator, /do not rebuild resume state from markdown/i);
   assert.match(orchestrator, /handoff markdown/);
 });
 
-test("non-hunter agents require compact final markers and forbid raw final payloads", () => {
+test("non-evaluator agents require compact final markers and forbid raw final payloads", () => {
   const expectations = {
     "chain-builder": "BOB_CHAIN_DONE",
     "brutalist-verifier": "BOB_VERIFY_DONE",
@@ -2460,7 +2460,7 @@ test("non-hunter agents require compact final markers and forbid raw final paylo
 });
 
 test("orchestrator documents --no-auth flag and skips AUTH when set", () => {
-  const orchestrator = readFile(".claude/skills/bob-hunt/SKILL.md");
+  const orchestrator = readFile(".claude/skills/bob-evaluate/SKILL.md");
   assert.match(
     orchestrator,
     /--no-auth/,
@@ -2478,24 +2478,24 @@ test("orchestrator documents --no-auth flag and skips AUTH when set", () => {
   );
 });
 
-test("orchestrator documents deep mode persistence, recon mode, and lead debt", () => {
-  const orchestrator = readFile(".claude/skills/bob-hunt/SKILL.md");
+test("orchestrator documents deep mode persistence, surface-discovery mode, and lead debt", () => {
+  const orchestrator = readFile(".claude/skills/bob-evaluate/SKILL.md");
 
   assert.match(orchestrator, /argument-hint: .*--no-auth/);
   assert.match(orchestrator, /argument-hint: .*--normal\|--paranoid\|--yolo/);
   assert.match(orchestrator, /argument-hint: .*--deep/);
-  assert.match(orchestrator, /`--deep` enables broader script-heavy recon/);
+  assert.match(orchestrator, /`--deep` enables broader script-heavy surface-discovery/);
   assert.match(orchestrator, /bounty_init_session\(\{ target_domain, target_url, deep_mode, checkpoint_mode, egress_profile, block_internal_hosts, allow_internal_hosts \}\)/);
   assert.match(orchestrator, /egress_profile_identity_hash/);
   assert.match(orchestrator, /route\/profile\/source drift fails closed/);
   assert.match(orchestrator, /persisted `state\.deep_mode` keeps deep behavior/);
-  assert.match(orchestrator, /deep_mode false: Agent\(subagent_type: "recon-agent"/);
-  assert.match(orchestrator, /deep_mode true: Agent\(subagent_type: "deep-recon-agent"/);
+  assert.match(orchestrator, /deep_mode false: Agent\(subagent_type: "surface-discovery-agent"/);
+  assert.match(orchestrator, /deep_mode true: Agent\(subagent_type: "deep-surface-discovery-agent"/);
   assert.doesNotMatch(orchestrator, /MODE=\[normal\|deep\]/);
-  assert.doesNotMatch(orchestrator, /After recon, in deep mode call `bounty_promote_surface_leads/);
+  assert.doesNotMatch(orchestrator, /After surface-discovery, in deep mode call `bounty_promote_surface_leads/);
   assert.match(orchestrator, /bounty_start_next_wave\(\{ target_domain \}\)/);
   assert.match(orchestrator, /bounty_read_surface_leads\(\{ target_domain, limit: 20 \}\)/);
-  assert.match(orchestrator, /Standard HUNT\/EXPLORE wave assignment policy is MCP-owned/);
+  assert.match(orchestrator, /Standard EVALUATE\/EXPLORE wave assignment policy is MCP-owned/);
   assert.match(orchestrator, /normal-path deep lead promotion/);
   assert.match(orchestrator, /call `bounty_start_next_wave`/);
   assert.doesNotMatch(orchestrator, /maximum 8/);
@@ -2503,7 +2503,7 @@ test("orchestrator documents deep mode persistence, recon mode, and lead debt", 
 });
 
 test("orchestrator documents checkpoint modes and MCP-owned traffic/audit/intel/static state", () => {
-  const orchestrator = readFile(".claude/skills/bob-hunt/SKILL.md");
+  const orchestrator = readFile(".claude/skills/bob-evaluate/SKILL.md");
 
   assert.match(orchestrator, /--paranoid/);
   assert.match(orchestrator, /--normal/);
@@ -2521,7 +2521,7 @@ test("orchestrator documents checkpoint modes and MCP-owned traffic/audit/intel/
 });
 
 test("orchestrator handles auto-signup manual fallback through data fallback fields", () => {
-  const orchestrator = readFile(".claude/skills/bob-hunt/SKILL.md");
+  const orchestrator = readFile(".claude/skills/bob-evaluate/SKILL.md");
 
   assert.match(orchestrator, /bounty_auto_signup/);
   assert.match(orchestrator, /result\.data\.fallback === "manual"/);
@@ -2548,18 +2548,18 @@ test("production CI runs npm test on supported Node versions without browser ins
 });
 
 test("bounty_http_scan prompt contracts require target_domain on every call", () => {
-  const hunterPrompt = readFile(".claude/agents/hunter-agent.md");
-  const orchestratorPrompt = readFile(".claude/skills/bob-hunt/SKILL.md");
+  const evaluatorPrompt = readFile(".claude/agents/evaluator-agent.md");
+  const orchestratorPrompt = readFile(".claude/skills/bob-evaluate/SKILL.md");
   const verifierPrompts = [
     readFile(".claude/agents/brutalist-verifier.md"),
     readFile(".claude/agents/balanced-verifier.md"),
     readFile(".claude/agents/final-verifier.md"),
   ];
 
-  assert.match(hunterPrompt, /Every `bounty_http_scan` call must include `target_domain`/);
-  assert.match(hunterPrompt, /`bounty_http_scan` with `target_domain`/);
-  assert.doesNotMatch(hunterPrompt, /different domain than the target[\s\S]{0,160}target_domain/i);
-  assert.doesNotMatch(hunterPrompt, /cross-domain[\s\S]{0,160}target_domain/i);
+  assert.match(evaluatorPrompt, /Every `bounty_http_scan` call must include `target_domain`/);
+  assert.match(evaluatorPrompt, /`bounty_http_scan` with `target_domain`/);
+  assert.doesNotMatch(evaluatorPrompt, /different domain than the target[\s\S]{0,160}target_domain/i);
+  assert.doesNotMatch(evaluatorPrompt, /cross-domain[\s\S]{0,160}target_domain/i);
 
   assert.match(orchestratorPrompt, /bounty_http_scan\(\{ target_domain/);
   assert.match(orchestratorPrompt, /`bounty_http_scan` with `target_domain`/);
@@ -2575,27 +2575,27 @@ test("bounty_http_scan prompt contracts require target_domain on every call", ()
   }
 });
 
-test("hunter and orchestrator prompts keep the structured handoff contract explicit", () => {
-  const hunterPrompt = readFile(".claude/agents/hunter-agent.md");
-  const orchestratorPrompt = readFile(".claude/skills/bob-hunt/SKILL.md");
+test("evaluator and orchestrator prompts keep the structured handoff contract explicit", () => {
+  const evaluatorPrompt = readFile(".claude/agents/evaluator-agent.md");
+  const orchestratorPrompt = readFile(".claude/skills/bob-evaluate/SKILL.md");
 
-  assert.match(hunterPrompt, /surface_type[\s\S]*bug_class_hints[\s\S]*high_value_flows/);
+  assert.match(evaluatorPrompt, /surface_type[\s\S]*bug_class_hints[\s\S]*high_value_flows/);
   assert.match(orchestratorPrompt, /surface_type[\s\S]*bug_class_hints[\s\S]*high_value_flows/);
-  assert.match(hunterPrompt, /traffic_summary[\s\S]*audit_summary[\s\S]*circuit_breaker_summary[\s\S]*ranking_summary[\s\S]*intel_hints[\s\S]*static_scan_hints/);
-  assert.match(hunterPrompt, /run_context/);
-  assert.match(hunterPrompt, /run_context\.context_budget/);
-  assert.match(hunterPrompt, /technique_packs\.selected/);
-  assert.match(hunterPrompt, /technique_packs\.selected` as the primary technique context/);
-  assert.match(hunterPrompt, /top-level `techniques` and `payload_hints` fields are smaller legacy compatibility summaries/);
-  assert.match(hunterPrompt, /bounty_read_technique_pack/);
-  assert.match(hunterPrompt, /full_pack_read_limit/);
-  assert.match(hunterPrompt, /bounty_log_technique_attempt/);
-  assert.match(hunterPrompt, /Every call requires a valid `status` and non-empty `evidence`; include `outcome` when the attempt has a concrete result/);
-  assert.match(hunterPrompt, /completion-status `bounty_log_technique_attempt`/);
-  assert.match(hunterPrompt, /If finalization says the technique-attempt log is missing/);
-  assert.match(hunterPrompt, /technique-pack-reads\.jsonl/);
-  assert.match(hunterPrompt, /never write `technique-attempts\.jsonl` or `technique-pack-reads\.jsonl` through Bash/);
-  assert.match(orchestratorPrompt, /bounty_read_hunter_brief\(\{ target_domain:[\s\S]*egress_profile:[\s\S]*block_internal_hosts/);
+  assert.match(evaluatorPrompt, /traffic_summary[\s\S]*audit_summary[\s\S]*circuit_breaker_summary[\s\S]*ranking_summary[\s\S]*intel_hints[\s\S]*static_scan_hints/);
+  assert.match(evaluatorPrompt, /run_context/);
+  assert.match(evaluatorPrompt, /run_context\.context_budget/);
+  assert.match(evaluatorPrompt, /technique_packs\.selected/);
+  assert.match(evaluatorPrompt, /technique_packs\.selected` as the primary technique context/);
+  assert.match(evaluatorPrompt, /top-level `techniques` and `payload_hints` fields are smaller legacy compatibility summaries/);
+  assert.match(evaluatorPrompt, /bounty_read_technique_pack/);
+  assert.match(evaluatorPrompt, /full_pack_read_limit/);
+  assert.match(evaluatorPrompt, /bounty_log_technique_attempt/);
+  assert.match(evaluatorPrompt, /Every call requires a valid `status` and non-empty `evidence`; include `outcome` when the attempt has a concrete result/);
+  assert.match(evaluatorPrompt, /completion-status `bounty_log_technique_attempt`/);
+  assert.match(evaluatorPrompt, /If finalization says the technique-attempt log is missing/);
+  assert.match(evaluatorPrompt, /technique-pack-reads\.jsonl/);
+  assert.match(evaluatorPrompt, /never write `technique-attempts\.jsonl` or `technique-pack-reads\.jsonl` through Bash/);
+  assert.match(orchestratorPrompt, /bounty_read_assignment_brief\(\{ target_domain:[\s\S]*egress_profile:[\s\S]*block_internal_hosts/);
   assert.match(orchestratorPrompt, /block_internal_hosts: \[block_internal_hosts\]/);
   assert.doesNotMatch(orchestratorPrompt, /block_internal_hosts: false/);
   assert.match(orchestratorPrompt, /Egress profile: \[egress_profile\]\. Block internal hosts: \[block_internal_hosts\]/);
@@ -2603,25 +2603,25 @@ test("hunter and orchestrator prompts keep the structured handoff contract expli
   assert.match(orchestratorPrompt, /technique_packs\.selected/);
   assert.match(orchestratorPrompt, /registry warnings, and small legacy technique summaries/);
   assert.match(orchestratorPrompt, /bounty_read_technique_pack[\s\S]*bounty_log_technique_attempt/);
-  assert.match(hunterPrompt, /Prefer real observed authenticated endpoints from `traffic_summary`/);
-  assert.match(hunterPrompt, /Log coverage before switching away from a promising traffic-derived endpoint|log coverage before switching away from promising traffic-derived endpoints/i);
+  assert.match(evaluatorPrompt, /Prefer real observed authenticated endpoints from `traffic_summary`/);
+  assert.match(evaluatorPrompt, /Log coverage before switching away from a promising traffic-derived endpoint|log coverage before switching away from promising traffic-derived endpoints/i);
   assert.match(orchestratorPrompt, /traffic_summary[\s\S]*audit_summary[\s\S]*circuit_breaker_summary[\s\S]*ranking_summary[\s\S]*intel_hints[\s\S]*static_scan_hints/);
-  assert.match(hunterPrompt, /bounty_import_static_artifact[\s\S]*bounty_static_scan/);
-  assert.match(hunterPrompt, /never pass or scan arbitrary filesystem paths/i);
-  assert.match(hunterPrompt, /Do not manually create orchestrator-consumed handoff files\./);
-  assert.match(hunterPrompt, /bounty_finalize_hunter_run/);
-  assert.match(hunterPrompt, /BOB_HUNTER_DONE/);
-  assert.match(orchestratorPrompt, /bounty_finalize_hunter_run/);
+  assert.match(evaluatorPrompt, /bounty_import_static_artifact[\s\S]*bounty_static_scan/);
+  assert.match(evaluatorPrompt, /never pass or scan arbitrary filesystem paths/i);
+  assert.match(evaluatorPrompt, /Do not manually create orchestrator-consumed handoff files\./);
+  assert.match(evaluatorPrompt, /bounty_finalize_agent_run/);
+  assert.match(evaluatorPrompt, /BOB_AGENT_RUN_DONE/);
+  assert.match(orchestratorPrompt, /bounty_finalize_agent_run/);
   assert.match(orchestratorPrompt, /Claude `SubagentStop` is only an adapter guardrail/);
-  assert.match(orchestratorPrompt, /BOB_HUNTER_DONE/);
-  assert.match(hunterPrompt, /Durable hunt state must flow only through MCP tools\./);
-  assert.match(hunterPrompt, /bounty_record_surface_leads/);
-  assert.match(hunterPrompt, /surface_leads/);
-  assert.match(hunterPrompt, /surface-leads\.json/);
-  assert.match(hunterPrompt, /bounty_log_coverage/);
-  assert.match(hunterPrompt, /never write `coverage\.jsonl` through Bash/);
-  assert.match(hunterPrompt, /Never create or backfill[\s\S]*technique-attempts\.jsonl[\s\S]*technique-pack-reads\.jsonl[\s\S]*http-audit\.jsonl[\s\S]*traffic\.jsonl[\s\S]*public-intel\.json[\s\S]*static-artifacts\.jsonl[\s\S]*static-scan-results\.jsonl/);
-  assert.match(hunterPrompt, /status` \(`tested`, `blocked`, `promising`, `needs_auth`, or `requeue`\)/);
+  assert.match(orchestratorPrompt, /BOB_AGENT_RUN_DONE/);
+  assert.match(evaluatorPrompt, /Durable evaluate state must flow only through MCP tools\./);
+  assert.match(evaluatorPrompt, /bounty_record_surface_leads/);
+  assert.match(evaluatorPrompt, /surface_leads/);
+  assert.match(evaluatorPrompt, /surface-leads\.json/);
+  assert.match(evaluatorPrompt, /bounty_log_coverage/);
+  assert.match(evaluatorPrompt, /never write `coverage\.jsonl` through Bash/);
+  assert.match(evaluatorPrompt, /Never create or backfill[\s\S]*technique-attempts\.jsonl[\s\S]*technique-pack-reads\.jsonl[\s\S]*http-audit\.jsonl[\s\S]*traffic\.jsonl[\s\S]*public-intel\.json[\s\S]*static-artifacts\.jsonl[\s\S]*static-scan-results\.jsonl/);
+  assert.match(evaluatorPrompt, /status` \(`tested`, `blocked`, `promising`, `needs_auth`, or `requeue`\)/);
   assert.match(orchestratorPrompt, /MCP-owned JSON artifacts are authoritative for orchestration\./);
   assert.match(orchestratorPrompt, /must never call `bounty_write_wave_handoff`/);
   assert.match(orchestratorPrompt, /must never synthesize or repair authoritative handoff JSON from markdown or `SESSION_HANDOFF\.md`/);
@@ -2663,11 +2663,11 @@ test("public and generated surfaces describe central session authority", () => {
   const packageSurfaces = readFile("docs/PACKAGE_SURFACES.md");
   const genericPrompt = readFile("adapters/generic-mcp/prompts/hacker-bob.md");
   const generatedSurfaces = [
-    ".claude/skills/bob-hunt/SKILL.md",
+    ".claude/skills/bob-evaluate/SKILL.md",
     ".claude/skills/bob-status/SKILL.md",
     ".claude/skills/bob-debug/SKILL.md",
-    ".claude/agents/hunter-agent.md",
-    "adapters/codex/skills/bob-hunt/SKILL.md",
+    ".claude/agents/evaluator-agent.md",
+    "adapters/codex/skills/bob-evaluate/SKILL.md",
     "adapters/codex/skills/bob-status/SKILL.md",
     "adapters/codex/skills/bob-debug/SKILL.md",
   ].map(readFile).join("\n");
@@ -2699,8 +2699,8 @@ test("context scaling architecture doc is durable and matches enforced budget co
   assert.match(doc, /candidate_pack_limit/);
   assert.match(doc, /full_pack_read_limit/);
   assert.match(doc, /attempt_log_required/);
-  assert.match(doc, /technique_packs\.selected` is the canonical web-hunter context/);
-  assert.match(doc, /Smart-contract hunters currently set `attempt_log_required: false`/);
+  assert.match(doc, /technique_packs\.selected` is the canonical web-evaluator context/);
+  assert.match(doc, /Smart-contract evaluators currently set `attempt_log_required: false`/);
   assert.doesNotMatch(doc, /Eric['’]s agent/i);
   assert.doesNotMatch(doc, /rebase/i);
   assert.doesNotMatch(doc, /brief_max_tokens|team_escalation_allowed/);
@@ -2710,40 +2710,40 @@ test("context scaling architecture doc is durable and matches enforced budget co
 // Merge integration: SC × main mechanisms (chain attempts, evidence packs)
 // ----------------------------------------------------------------------
 
-test("bob-hunt routes surfaces after recon and spawns returned hunter agents", () => {
-  const orchestratorPrompt = readFile(".claude/skills/bob-hunt/SKILL.md");
-  const reconSection = orchestratorPrompt.match(/## PHASE 1: RECON([\s\S]*?)## PHASE 2: AUTH/)[1];
+test("bob-evaluate routes surfaces after surface-discovery and spawns returned evaluator agents", () => {
+  const orchestratorPrompt = readFile(".claude/skills/bob-evaluate/SKILL.md");
+  const surfaceDiscoverySection = orchestratorPrompt.match(/## PHASE 1: SURFACE_DISCOVERY([\s\S]*?)## PHASE 2: AUTH/)[1];
 
   assert.match(
-    reconSection,
+    surfaceDiscoverySection,
     /Agent\(subagent_type: "surface-router-agent", name: "surface-router", prompt: "/,
   );
-  assert.match(reconSection, /Domain: \[domain\]\. Session: ~\/bounty-agent-sessions\/\[domain\]\./);
-  assert.match(reconSection, /bounty_route_surfaces\(\{ target_domain: '\[domain\]' \}\) and use \.data/);
-  assert.match(reconSection, /If routing fails or returns zero surfaces, report the error and stop/);
+  assert.match(surfaceDiscoverySection, /Domain: \[domain\]\. Session: ~\/bounty-agent-sessions\/\[domain\]\./);
+  assert.match(surfaceDiscoverySection, /bounty_route_surfaces\(\{ target_domain: '\[domain\]' \}\) and use \.data/);
+  assert.match(surfaceDiscoverySection, /If routing fails or returns zero surfaces, report the error and stop/);
   assert.match(
-    reconSection,
+    surfaceDiscoverySection,
     /only after successful routing call `bounty_transition_phase\(\{ target_domain, to_phase: "AUTH" \}\)`/,
   );
   assert.match(orchestratorPrompt, /result\.data\.assignments\[\]/);
-  assert.match(orchestratorPrompt, /returned assignment's `hunter_agent`/);
-  assert.match(orchestratorPrompt, /subagent_type: "\[assignment\.hunter_agent\]"/);
+  assert.match(orchestratorPrompt, /returned assignment's `evaluator_agent`/);
+  assert.match(orchestratorPrompt, /subagent_type: "\[assignment\.evaluator_agent\]"/);
   assert.match(orchestratorPrompt, /Capability pack: \[assignment\.capability_pack\]\. Brief profile: \[assignment\.brief_profile\]/);
   assert.match(orchestratorPrompt, /Context budget: \[assignment\.context_budget\]/);
 });
 
-test("post-report evidence hunters are explicit and do not masquerade as wave handoffs", () => {
-  const hunterPrompt = readFile(".claude/agents/hunter-agent.md");
-  const orchestratorPrompt = readFile(".claude/skills/bob-hunt/SKILL.md");
+test("post-report evidence evaluators are explicit and do not masquerade as wave handoffs", () => {
+  const evaluatorPrompt = readFile(".claude/agents/evaluator-agent.md");
+  const orchestratorPrompt = readFile(".claude/skills/bob-evaluate/SKILL.md");
 
   assert.match(orchestratorPrompt, /Post-REPORT user intent stays flexible/);
   assert.match(orchestratorPrompt, /transition `REPORT -> EXPLORE`/);
   assert.match(orchestratorPrompt, /post-report evidence mode without transitioning to EXPLORE/);
-  assert.match(orchestratorPrompt, /BOB_HUNTER_DONE \{"target_domain":"\[domain\]","mode":"evidence"/);
-  assert.match(hunterPrompt, /Post-report evidence mode is different/);
-  assert.match(hunterPrompt, /Do not call `bounty_read_hunter_brief`/);
-  assert.match(hunterPrompt, /Do not call `bounty_record_finding`, `bounty_write_wave_handoff`/);
-  assert.match(hunterPrompt, /"mode":"evidence"/);
+  assert.match(orchestratorPrompt, /BOB_AGENT_RUN_DONE \{"target_domain":"\[domain\]","mode":"evidence"/);
+  assert.match(evaluatorPrompt, /Post-report evidence mode is different/);
+  assert.match(evaluatorPrompt, /Do not call `bounty_read_assignment_brief`/);
+  assert.match(evaluatorPrompt, /Do not call `bounty_record_finding`, `bounty_write_wave_handoff`/);
+  assert.match(evaluatorPrompt, /"mode":"evidence"/);
 });
 
 test("chain.md instructs bounty_write_chain_attempt for every SC pivot with terminal outcomes", () => {
@@ -2804,10 +2804,10 @@ test("evidence-agent dispatches by capability_pack with pack-driven runner workf
   assert.match(source, /tooling-blocker reason[^\n]*evidence pack still gets written/i, "evidence source must describe tooling-blocker fallback so gate clears");
 });
 
-test("hunter-completion.js exports evidence-mode helpers (post-merge refactor)", () => {
-  const completion = require("../mcp/lib/hunter-completion.js");
+test("agent-run-completion.js exports evidence-mode helpers (post-merge refactor)", () => {
+  const completion = require("../mcp/lib/agent-run-completion.js");
   for (const fn of ["isEvidenceMarker", "evidenceMarkerValidationError", "evaluateEvidenceCompletion", "evidenceTelemetryInput", "EVIDENCE_MODE", "markerMode"]) {
-    assert.ok(completion[fn] !== undefined, `hunter-completion must export ${fn}`);
+    assert.ok(completion[fn] !== undefined, `agent-run-completion must export ${fn}`);
   }
   assert.equal(completion.EVIDENCE_MODE, "evidence");
   // isEvidenceMarker on a wave-mode marker returns false; on a mode='evidence' marker returns true.
@@ -2850,7 +2850,7 @@ test("brutalist-verifier wires the @brutalist/mcp roast layer with graceful fall
   for (const filePath of [
     "prompts/roles/brutalist-verifier.md",
     ".claude/agents/brutalist-verifier.md",
-    "adapters/codex/skills/bob-hunt/SKILL.md",
+    "adapters/codex/skills/bob-evaluate/SKILL.md",
   ]) {
     const body = readFile(filePath);
     assert.match(body, /mcp__brutalist__roast\b/, `${filePath} must reference mcp__brutalist__roast`);

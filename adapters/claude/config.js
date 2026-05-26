@@ -9,7 +9,7 @@ const {
   mcpToolNamesForRole,
 } = require("../../mcp/lib/role-model.js");
 const {
-  hunterAgentNamesForCapabilityPacks,
+  evaluatorAgentNamesForCapabilityPacks,
 } = require("../../mcp/lib/capability-packs.js");
 
 const BASE_PERMISSIONS = Object.freeze([
@@ -111,13 +111,13 @@ function defaultPreToolUseHooks() {
 }
 
 function defaultSubagentStopHooks() {
-  return hunterAgentNamesForCapabilityPacks().map((hunterAgent) => (
+  return evaluatorAgentNamesForCapabilityPacks().map((evaluatorAgent) => (
     {
-      matcher: hunterAgent,
+      matcher: evaluatorAgent,
       hooks: [
         {
           type: "command",
-          command: `node "${PROJECT_DIR_EXPR}/.claude/hooks/hunter-subagent-stop.js"`,
+          command: `node "${PROJECT_DIR_EXPR}/.claude/hooks/agent-run-stop.js"`,
           timeout: 10,
         },
       ],

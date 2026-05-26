@@ -12,7 +12,7 @@ const {
 } = require("./lib/claude-role-renderer.js");
 
 const ROOT = path.join(__dirname, "..");
-const SKILL_PATH = path.join(ROOT, ".claude", "skills", "bob-hunt", "SKILL.md");
+const SKILL_PATH = path.join(ROOT, ".claude", "skills", "bob-evaluate", "SKILL.md");
 
 function splitFrontmatter(document) {
   const match = document.match(/^---\n[\s\S]*?\n---\n/);
@@ -26,7 +26,7 @@ function renderFrontmatter() {
     .join("\n");
   return [
     "---",
-    "name: bob-hunt",
+    "name: bob-evaluate",
     "disable-model-invocation: true",
     'argument-hint: "[target-url | resume <domain> [force-merge]] [--no-auth] [--normal|--paranoid|--yolo] [--deep] [--egress <profile>] [--block-internal-hosts|--allow-internal-hosts]"',
     "allowed-tools:",
@@ -49,7 +49,7 @@ function updateSkill({ check = false } = {}) {
 function main() {
   const check = process.argv.includes("--check");
   const changed = updateSkill({ check });
-  if (changed && !check) console.log("updated bob-hunt skill frontmatter");
+  if (changed && !check) console.log("updated bob-evaluate skill frontmatter");
 }
 
 if (require.main === module) {

@@ -60,14 +60,14 @@ MCP_OWNED_PATTERNS = [
 ]
 
 # Files that agents are allowed to write directly. JSON entries here are
-# compact recon/report artifacts; bulky raw captures remain blocked by name on
+# compact surface-discovery/report artifacts; bulky raw captures remain blocked by name on
 # the read side and should not be written as ad hoc session files.
 AGENT_ALLOWED_EXACT = {
     "chains.md",
     "report.md",
     "attack_surface.json",
     "deep-summary.json",
-    "recon-summary.json",
+    "surface-discovery-summary.json",
     "scope-warnings.log",
     "deny-list.txt",
 }

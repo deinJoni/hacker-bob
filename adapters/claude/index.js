@@ -20,7 +20,7 @@ const HOOK_FILES = Object.freeze([
   "session-read-guard.sh",
   "session-write-guard.sh",
   "bounty-statusline.js",
-  "hunter-subagent-stop.js",
+  "agent-run-stop.js",
   "bob-egress.js",
   "bob-export.js",
   "bob-update.js",
@@ -37,7 +37,7 @@ const STALE_HOOK_FILES = Object.freeze([
 const EXECUTABLE_HOOKS = Object.freeze([
   "session-read-guard.sh",
   "session-write-guard.sh",
-  "hunter-subagent-stop.js",
+  "agent-run-stop.js",
   "bob-egress.js",
   "bob-export.js",
   "bob-update.js",
@@ -52,7 +52,7 @@ const BOB_COMMAND_FILES = Object.freeze([
 ]);
 
 const LEGACY_BOB_COMMAND_FILES = Object.freeze([
-  "hunt.md",
+  "evaluate.md",
   "status.md",
   "debug.md",
   "update.md",
@@ -70,7 +70,7 @@ const COMMAND_SPECS = Object.freeze({
 });
 
 const BOB_SKILLS = Object.freeze([
-  "bob-hunt",
+  "bob-evaluate",
   "bob-status",
   "bob-debug",
 ]);
@@ -114,7 +114,7 @@ function managedDirs() {
   return [
     path.join(".claude", "commands", "bob"),
     path.join(".claude", "commands"),
-    path.join(".claude", "skills", "bob-hunt"),
+    path.join(".claude", "skills", "bob-evaluate"),
     path.join(".claude", "skills", "bob-status"),
     path.join(".claude", "skills", "bob-debug"),
     path.join(".claude", "skills", "bountyagent"),
@@ -180,7 +180,7 @@ function renderExportCommand() {
     "Run:",
     '   `node "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/bob-export.js" "${CLAUDE_PROJECT_DIR:-$PWD}"`',
     "",
-    "Report the helper output exactly. Do not add flags or run a hunt.",
+    "Report the helper output exactly. Do not add flags or run a evaluate.",
     "",
   ].join("\n");
 }
@@ -629,7 +629,7 @@ function doctor({
     "case-schema.mjs",
     "bench.mjs",
     "README.md",
-    path.join("cases", "sample-hunter-refusal.json"),
+    path.join("cases", "sample-evaluator-refusal.json"),
   ];
   const missingPolicyReplay = POLICY_REPLAY_FILES
     .map((name) => path.join("testing", "policy-replay", name))

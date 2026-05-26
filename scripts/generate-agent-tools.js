@@ -17,11 +17,11 @@ const ROOT = path.join(__dirname, "..");
 const AGENTS_DIR = path.join(ROOT, ".claude", "agents");
 
 const AGENT_TOOL_SPECS = Object.freeze({
-  "recon-agent.md": {
+  "surface-discovery-agent.md": {
     roleBundles: [],
     extras: ["Bash", "Read", "Write", "Glob", "Grep"],
   },
-  "deep-recon-agent.md": {
+  "deep-surface-discovery-agent.md": {
     roleBundles: [],
     extras: ["Bash", "Read", "Write", "Glob", "Grep"],
   },
@@ -29,8 +29,8 @@ const AGENT_TOOL_SPECS = Object.freeze({
     roleBundles: [],
     extras: ["Read", "mcp__bountyagent__bounty_route_surfaces"],
   },
-  "hunter-agent.md": {
-    roleBundles: ["hunter-shared", "hunter-web"],
+  "evaluator-agent.md": {
+    roleBundles: ["evaluator-shared", "evaluator-web"],
     extras: ["Bash", "Read", "Grep", "Glob"],
   },
   "brutalist-verifier.md": {

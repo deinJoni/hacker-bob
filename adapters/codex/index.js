@@ -20,14 +20,14 @@ const DIRECT_SKILL_NAMES = Object.freeze(
   Object.values(CODEX_SKILL_SPECS).map((spec) => spec.name),
 );
 const LEGACY_SKILL_DIRS = Object.freeze([
-  "hacker-bob-hunt",
+  "hacker-bob-evaluate",
   "hacker-bob-status",
   "hacker-bob-debug",
   "hacker-bob-update",
   "hacker-bob-export",
 ]);
 const STALE_PLUGIN_SKILL_DIRS = Object.freeze([
-  "hunt",
+  "evaluate",
   "status",
   "debug",
   "update",
@@ -35,16 +35,16 @@ const STALE_PLUGIN_SKILL_DIRS = Object.freeze([
   ...DIRECT_SKILL_NAMES,
 ]);
 const STALE_COMMAND_FILES = Object.freeze([
-  "hunt.md",
+  "evaluate.md",
   "status.md",
   "debug.md",
   "update.md",
 ]);
 const COMMAND_SPECS = Object.freeze({
-  hunt: Object.freeze({
-    file: "bob-hunt.md",
-    skill: "bob-hunt",
-    description: "Run or resume a Hacker Bob bug bounty hunt.",
+  evaluate: Object.freeze({
+    file: "bob-evaluate.md",
+    skill: "bob-evaluate",
+    description: "Run or resume a Hacker Bob bug bounty evaluate.",
     argumentHint: "<target|resume target [force-merge]> [--no-auth|--normal|--paranoid|--yolo] [--deep] [--egress <profile>] [--block-internal-hosts|--allow-internal-hosts]",
   }),
   status: Object.freeze({

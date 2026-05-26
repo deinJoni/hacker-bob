@@ -101,28 +101,28 @@ sync_shared_runtime() {
 }
 
 sync_claude_adapter() {
-  mkdir -p "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/commands" "$CLAUDE_DIR/bob" "$CLAUDE_DIR/skills/bob-hunt" "$CLAUDE_DIR/skills/bob-status" "$CLAUDE_DIR/skills/bob-debug"
+  mkdir -p "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/commands" "$CLAUDE_DIR/bob" "$CLAUDE_DIR/skills/bob-evaluate" "$CLAUDE_DIR/skills/bob-status" "$CLAUDE_DIR/skills/bob-debug"
   rm -f "$CLAUDE_DIR/hooks/bob-update-lib.js"
   cp "$SCRIPT_DIR/.claude/hooks/session-write-guard.sh" "$CLAUDE_DIR/hooks/"
-  cp "$SCRIPT_DIR/.claude/hooks/hunter-subagent-stop.js" "$CLAUDE_DIR/hooks/"
+  cp "$SCRIPT_DIR/.claude/hooks/agent-run-stop.js" "$CLAUDE_DIR/hooks/"
   cp "$SCRIPT_DIR/.claude/hooks/bob-egress.js" "$CLAUDE_DIR/hooks/"
   cp "$SCRIPT_DIR/.claude/hooks/bob-export.js" "$CLAUDE_DIR/hooks/"
   cp "$SCRIPT_DIR/.claude/hooks/bob-update.js" "$CLAUDE_DIR/hooks/"
   cp "$SCRIPT_DIR/.claude/hooks/bob-check-update.js" "$CLAUDE_DIR/hooks/"
   cp "$SCRIPT_DIR/.claude/hooks/bob-check-update-worker.js" "$CLAUDE_DIR/hooks/"
-  chmod +x "$CLAUDE_DIR/hooks/session-write-guard.sh" "$CLAUDE_DIR/hooks/hunter-subagent-stop.js" "$CLAUDE_DIR/hooks/bob-egress.js" "$CLAUDE_DIR/hooks/bob-export.js" "$CLAUDE_DIR/hooks/bob-update.js" "$CLAUDE_DIR/hooks/bob-check-update.js" "$CLAUDE_DIR/hooks/bob-check-update-worker.js"
+  chmod +x "$CLAUDE_DIR/hooks/session-write-guard.sh" "$CLAUDE_DIR/hooks/agent-run-stop.js" "$CLAUDE_DIR/hooks/bob-egress.js" "$CLAUDE_DIR/hooks/bob-export.js" "$CLAUDE_DIR/hooks/bob-update.js" "$CLAUDE_DIR/hooks/bob-check-update.js" "$CLAUDE_DIR/hooks/bob-check-update-worker.js"
   cp "$SCRIPT_DIR/.claude/bob/egress-profiles.example.json" "$CLAUDE_DIR/bob/"
   if [[ ! -f "$CLAUDE_DIR/bob/egress-profiles.json" ]]; then
     node -e 'const e=require(process.argv[1]); e.writeEgressProfilesDocument(process.argv[2], e.defaultEgressProfilesDocument())' "$SCRIPT_DIR/mcp/lib/egress-profiles.js" "$TARGET_ABS"
   fi
   rm -f "$CLAUDE_DIR/commands/bountyagent.md" "$CLAUDE_DIR/commands/bountyagentdebug.md"
-  rm -f "$CLAUDE_DIR/commands/bob/hunt.md" "$CLAUDE_DIR/commands/bob/status.md" "$CLAUDE_DIR/commands/bob/debug.md" "$CLAUDE_DIR/commands/bob/update.md"
+  rm -f "$CLAUDE_DIR/commands/bob/evaluate.md" "$CLAUDE_DIR/commands/bob/status.md" "$CLAUDE_DIR/commands/bob/debug.md" "$CLAUDE_DIR/commands/bob/update.md"
   rmdir "$CLAUDE_DIR/commands/bob" 2>/dev/null || true
   rm -rf "$CLAUDE_DIR/skills/bountyagent" "$CLAUDE_DIR/skills/bountyagentstatus" "$CLAUDE_DIR/skills/bountyagentdebug"
   cp "$SCRIPT_DIR/.claude/commands/bob-update.md" "$CLAUDE_DIR/commands/"
   cp "$SCRIPT_DIR/.claude/commands/bob-egress.md" "$CLAUDE_DIR/commands/"
   cp "$SCRIPT_DIR/.claude/commands/bob-export.md" "$CLAUDE_DIR/commands/"
-  cp "$SCRIPT_DIR/.claude/skills/bob-hunt/SKILL.md" "$CLAUDE_DIR/skills/bob-hunt/"
+  cp "$SCRIPT_DIR/.claude/skills/bob-evaluate/SKILL.md" "$CLAUDE_DIR/skills/bob-evaluate/"
   cp "$SCRIPT_DIR/.claude/skills/bob-status/SKILL.md" "$CLAUDE_DIR/skills/bob-status/"
   cp "$SCRIPT_DIR/.claude/skills/bob-debug/SKILL.md" "$CLAUDE_DIR/skills/bob-debug/"
 

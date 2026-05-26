@@ -33,7 +33,7 @@ For each finding:
    - Substrate: `bounty_substrate_fetch_storage` / `bounty_substrate_fetch_runtime`.
    - CosmWasm: `bounty_cosmwasm_fetch_contract` / `bounty_cosmwasm_smart_query`.
 5. A test matching `match_test` with `status: "Pass"` confirms the bug reproduced; `status: "Fail"` means the assertion held. The runners normalize Foundry `Success`/`Failure`, mocha empty/non-empty `err`, Move `[ PASS ]`/`[ FAIL ]`/`[ TIMEOUT ]`, and cargo `ok`/`FAILED`/`ignored` to `Pass`/`Fail`/`Skipped`.
-6. In v1 only: if brutalist denied a SC finding because of any tooling failure (`<runner>_not_in_path`, `<runner>_dependency_missing`, `<runner>_test_runner_unknown`, `move_compile_failed`, `cargo_compile_failed`, `reason: "rpc_unreachable"`): re-run yourself; if your run succeeds, you can REINSTATE the finding. CRITICAL: brutalist's denial only ruled out tooling, NOT the hunter's claimed severity. Independently re-judge severity from the on-chain effect (`response_evidence`), trust-map reads, and the bug class. Do NOT rubber-stamp the hunter's original severity. Note "reinstated after fresh fork; severity re-judged" in reasoning.
+6. In v1 only: if brutalist denied a SC finding because of any tooling failure (`<runner>_not_in_path`, `<runner>_dependency_missing`, `<runner>_test_runner_unknown`, `move_compile_failed`, `cargo_compile_failed`, `reason: "rpc_unreachable"`): re-run yourself; if your run succeeds, you can REINSTATE the finding. CRITICAL: brutalist's denial only ruled out tooling, NOT the evaluator's claimed severity. Independently re-judge severity from the on-chain effect (`response_evidence`), trust-map reads, and the bug class. Do NOT rubber-stamp the evaluator's original severity. Note "reinstated after fresh fork; severity re-judged" in reasoning.
 - Move severity heuristics (Aptos / Sui) — apply when re-judging:
   - `capability_leakage` of `TreasuryCap` / `MintCap` / `BurnCap` / `UpgradeCap` (the cap controls money or code) → HIGH or CRITICAL.
   - `capability_leakage` of a read-only / configuration-only capability → LOW.
@@ -48,7 +48,7 @@ For each finding:
   - `set_code_hash_unauthorized` enabling code replacement on a contract that holds value → HIGH or CRITICAL.
   - `caller_spoof` / `transferred_value_misuse` enabling fund theft → HIGH; enabling state read-only access → LOW.
   - `reentrancy_cross_contract` where the inner call drains funds → HIGH; where it only re-reads state → LOW.
-  - `selector_collision` is exploitable only when the colliding selector reaches a privileged path — severity follows the impact of that path.
+  - `selector_collision` is demonstrable only when the colliding selector reaches a privileged path — severity follows the impact of that path.
   - `delegate_call_misuse` to attacker-controlled `code_hash` → HIGH or CRITICAL (full takeover).
   - `storage_layout_mismatch` / `lazy_storage_layout_drift` after upgrade → HIGH if an attacker can trigger the upgrade; LOW if the path is admin-only.
   - `integer_overflow_unchecked` matters when the overflow attack path is reachable AND the wrapped value drives a balance check.
@@ -66,7 +66,7 @@ For each finding:
   - `indexed_map_key_collision` (cw-storage-plus) → severity follows the leaked or overwritten record's value (financial Map → HIGH; metadata Map → LOW).
   - `wasmd_migrate_admin_lockout` permanent brick of contract holding value → HIGH; brick of low-value contract → LOW.
   - `post_dispatch_state_consistency` (CW 2.x) → MEDIUM unless the stale state drives a balance write (HIGH).
-  - `cw_multi_test_only_passes` is a partial finding — does NOT confirm a real-chain bug. Downgrade to LOW or deny unless the hunter also demonstrated on a real wasmd fork.
+  - `cw_multi_test_only_passes` is a partial finding — does NOT confirm a real-chain bug. Downgrade to LOW or deny unless the evaluator also demonstrated on a real wasmd fork.
 - If your own run also fails with the same tooling unavailable (`<runner>_not_in_path`, `<runner>_dependency_missing`, compile failures, `reason: "rpc_unreachable"`, a reason starting with `no_fork_endpoints`, or populated `rpc_policy_rejections[]`): pass the brutalist verdict through unchanged with reasoning that records the persistent direct-public-HTTPS RPC/REST unavailability.
 
 Focus your re-testing on findings the brutalist denied or downgraded, plus any remaining `HIGH`/`CRITICAL` findings.

@@ -15,7 +15,7 @@ Sum the scores. Issue a verdict:
 - `HOLD`: total 20-39
 - `SKIP`: total < 20
 
-For `HOLD`, include specific feedback on what would elevate the findings (deeper exploitation, better PoC, chain opportunity).
+For `HOLD`, include specific feedback on what would elevate the findings (deeper impact demonstration, better PoC, chain opportunity).
 
 If final verification has no `reportable: true` `medium`/`high`/`critical` result, write a terminal SKIP verdict with `total_score: 0`, `findings: []`, and feedback explaining that no reportable medium-or-higher finding survived final verification. Do not stop without writing the grade.
 

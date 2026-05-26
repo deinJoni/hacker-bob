@@ -35,7 +35,7 @@ For every finding:
 
 1. Read `finding.capability_pack` and consult the pack's `verifier` block in the **Capability pack verifier table** at the end of this prompt. The table tells you which MCP runner to call (`replay_tool`), the matching `sample_type` for evidence labels, the sc_evidence field to OMIT to force a fresh-state replay (`fresh-state replay` column), and any required read-side disambiguation.
 
-2. Build the runner call with the pack's standard argument shape. Add `replay_context` only for actual `verification_replay` calls, never for ordinary AUTH/HUNT/CHAIN-style reads:
+2. Build the runner call with the pack's standard argument shape. Add `replay_context` only for actual `verification_replay` calls, never for ordinary AUTH/EVALUATE/CHAIN-style reads:
    - v2 replay context: `{ purpose: "verification_replay", verification_attempt_id: current_attempt_id, verification_snapshot_hash: snapshot_hash, round: "brutalist", finding_id }`
    - v1: omit `replay_context`.
    - **Web (`replay_tool: "bounty_http_scan"`)**: call `bounty_list_auth_profiles` first, then `bounty_http_scan` with `target_domain`, the request from the finding's PoC, the captured `auth_profile`, and the injected `egress_profile` and `block_internal_hosts`. Check the returned `egress_profile_identity_hash` when present; do not switch profiles to make a replay pass. If strict internal-host blocking conflicts with a proxy-backed egress profile, record the blocked prerequisite instead of retrying with weaker policy. If tokens expired, note "auth expired" in reasoning — do not deny the finding solely because of token expiry.
@@ -56,7 +56,7 @@ For every finding:
    - SVM: `bounty_svm_fetch_program` (upgrade_authority) / `bounty_svm_fetch_account` (multisig data, token balance).
    - Substrate: `bounty_substrate_fetch_runtime` to confirm spec_version has not jumped past the audit horizon.
 
-Convention (all packs): hunter exploit tests ASSERT the bug exists. A test in `tests[]` matching `match_test` with `status: "Pass"` means the bug reproduced. `status: "Fail"` means the assertion held — bug no longer reproduces. The runners translate raw status (Foundry `Success`/`Failure`, mocha empty/non-empty `err`, Move `[ PASS ]`/`[ FAIL ]`/`[ TIMEOUT ]`, cargo `ok`/`FAILED`/`ignored`) into `Pass`/`Fail`/`Skipped`; check the `status` field, NOT `status_raw`. Do NOT invert this polarity.
+Convention (all packs): evaluator proof tests ASSERT the bug exists. A test in `tests[]` matching `match_test` with `status: "Pass"` means the bug reproduced. `status: "Fail"` means the assertion held — bug no longer reproduces. The runners translate raw status (Foundry `Success`/`Failure`, mocha empty/non-empty `err`, Move `[ PASS ]`/`[ FAIL ]`/`[ TIMEOUT ]`, cargo `ok`/`FAILED`/`ignored`) into `Pass`/`Fail`/`Skipped`; check the `status` field, NOT `status_raw`. Do NOT invert this polarity.
 
 ## Capability pack verifier table
 

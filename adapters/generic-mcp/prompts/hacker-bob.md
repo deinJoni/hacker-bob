@@ -9,7 +9,7 @@ The project-local MCP server is `bountyagent`. Treat its tools as the source of
 truth for session state, waves, handoffs, findings, verification, grading,
 telemetry, and report inputs.
 
-## Hunt
+## Evaluation
 
 Start with `bounty_init_session`, progress through the phase machine, and keep
 all durable state in MCP-owned tools and artifacts. Do not manually edit Bob
@@ -23,7 +23,7 @@ editing session files. Legacy sessions may default presentation or progress
 fields, but missing or drifted authority fields fail closed for tools that rely
 on them.
 
-Hunter completion is portable through `bounty_finalize_hunter_run`. A hunter
+Evaluator completion is portable through `bounty_finalize_agent_run`. A evaluator
 must write a structured wave handoff and then finalize the run with
 `target_domain`, `wave`, `agent`, and `surface_id`.
 
@@ -41,7 +41,7 @@ For status, use read-only MCP tools first:
 
 For debugging, add `bounty_read_tool_telemetry` and inspect only the local
 session artifacts needed to explain the failure. Keep root-cause analysis
-separate from new hunting.
+separate from new evaluating.
 
 ## Manual Host Mode
 

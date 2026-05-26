@@ -52,7 +52,7 @@ BLOCKED_EXACT = {
 ALLOWED_EXACT = {
     "attack_surface.json",
     "deep-summary.json",
-    "recon-summary.json",
+    "surface-discovery-summary.json",
     "surface-leads.json",
 }
 
@@ -66,7 +66,7 @@ BLOCKED_PATTERNS = [
     re.compile(r"^live-dead-ends-w[1-9][0-9]*-a[1-9][0-9]*\.jsonl$"),
 ]
 
-RISKY_PATH_RE = re.compile(r"(?:^|[._/\-])(raw|proof|poc|dump|body|exploit)(?:[._/\-]|$)", re.I)
+RISKY_PATH_RE = re.compile(r"(?:^|[._/\-])(raw|proof|poc|dump|body|impact proof)(?:[._/\-]|$)", re.I)
 PATH_FRAGMENT_RE = re.compile(r"(~|\$\{?SESSION\}?|\$\{?HOME\}?|/)[^\s'\";|&)<>,]*")
 READ_COMMANDS = {
     "awk",

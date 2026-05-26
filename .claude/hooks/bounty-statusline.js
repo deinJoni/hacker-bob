@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Bounty status line — model, context bar, active hunt status
+// Bounty status line — model, context bar, active evaluate status
 
 const fs = require('fs');
 const path = require('path');
@@ -48,11 +48,11 @@ process.stdin.on('end', () => {
       if (dirs.length > 0) {
         const s = dirs[0].state;
         const phase = s.phase || '?';
-        const wave = s.hunt_wave || 0;
+        const wave = s.evaluation_wave || 0;
         const findings = s.total_findings || 0;
         const target = s.target || dirs[0].dir;
 
-        const waveStr = phase === 'HUNT' ? ` W${wave}` : '';
+        const waveStr = phase === 'EVALUATE' ? ` W${wave}` : '';
         const findingsStr = findings > 0 ? ` \x1b[32m${findings}f\x1b[0m` : '';
         bounty = ` │ \x1b[1m${phase}${waveStr}\x1b[0m${findingsStr} │ ${target}`;
       }

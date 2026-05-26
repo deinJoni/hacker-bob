@@ -33,7 +33,7 @@ SC CosmWasm patterns (`chain_family: "cosmwasm"`): migrate_msg_open -> contract_
 
 Cross-family chains (web + SC require an explicit on-chain effect to count): subdomain_takeover -> frontend_wallet_drain (a takeover of an in-scope frontend host that the program's user wallet trusts produces an on-chain consequence); leaked_API_key -> SC_oracle_authority_takeover (a key letting an attacker push prices on-chain); SC_admin_role_compromise -> web_admin_panel_pivot (only when the SC role holder controls a web admin endpoint AND the SC compromise step is independently proven). Cross-family chains apply equally to EVM, SVM, Aptos, Sui, Substrate, and CosmWasm SC sides — the key constraint is that the SC step has a non-null `sc_evidence` with the matching `chain_family`.
 
-For each chain, show the `A -> B` narrative using evidence from MCP findings. Each chain link MUST cite a `finding_id`; `chain_notes` is a hint surface for hunter context, not proof — it does NOT substitute for a finding citation. Never read markdown handoffs as machine input.
+For each chain, show the `A -> B` narrative using evidence from MCP findings. Each chain link MUST cite a `finding_id`; `chain_notes` is a hint surface for evaluator context, not proof — it does NOT substitute for a finding citation. Never read markdown handoffs as machine input.
 
 Surface-match enforcement on cited findings:
 - A chain link declared as a web pattern MUST cite a finding with `surface_type: "web"` (or null legacy).
@@ -53,11 +53,11 @@ Terminal chain attempts (machine-readable, gates `CHAIN -> VERIFY`):
 For every pivot you tested — credible OR rejected — record one terminal `bounty_write_chain_attempt` call. The orchestrator's `CHAIN -> VERIFY` transition is gated by at least one terminal chain attempt when chain is required (i.e., when there are any findings or handoff `chain_notes`); a session with findings but zero chain attempts is blocked.
 
 The `steps` field is required. Use an array of concise strings describing the replay or rejection path; do not omit it. Minimal payload shape:
-`bounty_write_chain_attempt({ target_domain, finding_ids, surface_ids, hypothesis, steps: ["Reviewed F-1 evidence and checked whether it enables F-2.", "Replay showed the second precondition is unreachable."], outcome: "denied", evidence_summary, request_refs, auth_profiles })`.
+`bounty_write_chain_attempt({ target_domain, finding_ids, surface_ids, hypothesis, steps: ["Reviewed F-1 evidence and checked whether it enables F-2.", "Replay showed the second prerequisite is unreachable."], outcome: "denied", evidence_summary, request_refs, auth_profiles })`.
 
 Outcome convention:
 - `confirmed` — the chain reproduces end-to-end against current state. Cite each finding link plus a one-line proof reference (HTTP request ID, foundry test name, anchor/aptos/sui/substrate/cosmwasm test name, smart-query result).
-- `denied` — the pivot does not actually compose: a presumed precondition does not hold, the second-link finding is not reachable from the first, or the impact is web-only with no in-scope on-chain effect (cross-family chains).
+- `denied` — the pivot does not actually compose: a presumed prerequisite does not hold, the second-link finding is not reachable from the first, or the impact is web-only with no in-scope on-chain effect (cross-family chains).
 - `blocked` — verification couldn't run for an environmental reason (forge / anchor / aptos / sui / cargo not in PATH, RPC unreachable, harness compile failed). Record this so the operator can re-run after fixing the toolchain; the gate accepts `blocked` as a terminal outcome.
 - `inconclusive` — the run produced ambiguous evidence and a clean re-run is needed. Non-terminal.
 - `not_applicable` — no plausible chain exists for the recorded findings (e.g., a single low-severity finding that cannot pivot to anything else). Use this instead of skipping the chain phase entirely; recording `not_applicable` clears the gate without false confirmations.

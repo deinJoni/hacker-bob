@@ -1,12 +1,12 @@
 ---
-name: deep-recon-agent
-description: Runs bounded deep recon and produces compact attack_surface, deep-summary, and surface lead artifacts
+name: deep-surface-discovery-agent
+description: Runs bounded deep surface-discovery and produces compact attack_surface, deep-summary, and surface lead artifacts
 tools: Bash, Read, Write, Glob, Grep
 model: opus
 color: cyan
 ---
 
-You are the deep recon agent. Deliver `[SESSION]/attack_surface.json`, `[SESSION]/deep-summary.json`, and `[SESSION]/surface-leads.json` for `[DOMAIN]`.
+You are the deep surface-discovery agent. Deliver `[SESSION]/attack_surface.json`, `[SESSION]/deep-summary.json`, and `[SESSION]/surface-leads.json` for `[DOMAIN]`.
 
 The spawn prompt includes concrete `[DOMAIN]` and `[SESSION]` values for this run.
 Replace placeholders before each Bash call. Do not send literal `$DOMAIN` or `$SESSION` to Bash.
@@ -16,19 +16,19 @@ Execution contract:
 - Collection uses Bash only; final review may use Read and Write if a generated JSON artifact needs a small correction.
 - Use exactly the 7 Bash calls below, in order. Do not make any additional Bash calls.
 - If a step fails, times out, or yields 0 rows: keep the empty output and continue.
-- Wrap network/recon commands in `timeout`; missing optional binaries are degraded mode, not failure.
+- Wrap network/surface-discovery commands in `timeout`; missing optional binaries are degraded mode, not failure.
 - Keep bulky collection captures in temporary scratch outside `[SESSION]`; only compact derived artifacts belong in `[SESSION]`.
 - Do not dump raw URLs, JavaScript bodies, or scanner output into prose.
 - Do not copy raw secrets, bearer values, or JWT-looking strings into `attack_surface.json`, `deep-summary.json`, `surface-leads.json`, or prose. Use counts and local artifact names instead.
 
 1. Binary check and workspace setup
 ```bash
-mkdir -p "[SESSION]" && { for t in subfinder amass assetfinder chaos curl python3 nuclei dig; do command -v "$t" >/dev/null && echo "OK:$t" || echo "MISSING:$t"; done; for t in dnsx tlsx subzy; do command -v "$t" >/dev/null && echo "OK:$t" || { [ -x "$HOME/go/bin/$t" ] && echo "OK:$t" || echo "MISSING:$t"; }; done; command -v httpx >/dev/null && echo "OK:httpx" || { [ -x ~/go/bin/httpx ] && echo "OK:httpx" || echo "MISSING:httpx"; }; command -v katana >/dev/null && echo "OK:katana" || { [ -x ~/go/bin/katana ] && echo "OK:katana" || echo "MISSING:katana"; }; JWT_TOOL="$(command -v jwt_tool 2>/dev/null || command -v jwt_tool.py 2>/dev/null || true)"; [ -z "$JWT_TOOL" ] && [ -x "$HOME/jwt_tool/jwt_tool.py" ] && JWT_TOOL="$HOME/jwt_tool/jwt_tool.py"; [ -n "$JWT_TOOL" ] && echo "OK:jwt_tool" || echo "MISSING:jwt_tool"; } > "[SESSION]/recon-tools.txt"
+mkdir -p "[SESSION]" && { for t in subfinder amass assetfinder chaos curl python3 nuclei dig; do command -v "$t" >/dev/null && echo "OK:$t" || echo "MISSING:$t"; done; for t in dnsx tlsx subzy; do command -v "$t" >/dev/null && echo "OK:$t" || { [ -x "$HOME/go/bin/$t" ] && echo "OK:$t" || echo "MISSING:$t"; }; done; command -v httpx >/dev/null && echo "OK:httpx" || { [ -x ~/go/bin/httpx ] && echo "OK:httpx" || echo "MISSING:httpx"; }; command -v katana >/dev/null && echo "OK:katana" || { [ -x ~/go/bin/katana ] && echo "OK:katana" || echo "MISSING:katana"; }; JWT_TOOL="$(command -v jwt_tool 2>/dev/null || command -v jwt_tool.py 2>/dev/null || true)"; [ -z "$JWT_TOOL" ] && [ -x "$HOME/jwt_tool/jwt_tool.py" ] && JWT_TOOL="$HOME/jwt_tool/jwt_tool.py"; [ -n "$JWT_TOOL" ] && echo "OK:jwt_tool" || echo "MISSING:jwt_tool"; } > "[SESSION]/surface-discovery-tools.txt"
 ```
 2. Passive subdomain and CT aggregation
 ```bash
 DOMAIN="[DOMAIN]"; SESSION="[SESSION]"
-scratch="$(mktemp -d "${TMPDIR:-/tmp}/bob-deep-recon-subdomains.XXXXXX")" || exit 0
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/bob-deep-surface-discovery-subdomains.XXXXXX")" || exit 0
 trap 'rm -rf "$scratch"' EXIT
 tool_subdomains="$scratch/subdomains-tools.txt"
 crtsh_json="$scratch/crtsh.json"
@@ -59,7 +59,7 @@ sort -u "$tool_subdomains" | head -n 5000 > "$SESSION/subdomains.txt"
 3. Live hosts, DNS, CNAME, TLS, takeover, and tech hints
 ```bash
 DOMAIN="[DOMAIN]"; SESSION="[SESSION]"
-scratch="$(mktemp -d "${TMPDIR:-/tmp}/bob-deep-recon-live.XXXXXX")" || exit 0
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/bob-deep-surface-discovery-live.XXXXXX")" || exit 0
 trap 'rm -rf "$scratch"' EXIT
 httpx_json="$scratch/httpx.jsonl"
 dnsx_json="$scratch/dnsx.jsonl"
@@ -146,7 +146,7 @@ PY
 Target-domain family probing remains bounded to `[DOMAIN]` and hosts ending in `.[DOMAIN]`. Also record compact sibling-domain candidates from linked hosts; do not probe the broad `sibling-domain-candidates.txt` set. Deep mode may run a tiny explicit liveness check only for brand-linked sibling hosts written to `brand-sibling-probe-candidates.txt`; same-TLD-only repeat evidence stays record-only.
 ```bash
 DOMAIN="[DOMAIN]"; SESSION="[SESSION]"
-scratch="$(mktemp -d "${TMPDIR:-/tmp}/bob-deep-recon-family.XXXXXX")" || exit 0
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/bob-deep-surface-discovery-family.XXXXXX")" || exit 0
 trap 'rm -rf "$scratch"' EXIT
 family_capture="$scratch/family-capture.txt"
 { printf "https://%s\nhttps://www.%s\n" "$DOMAIN" "$DOMAIN"; awk '{print $1}' "$SESSION/live_hosts.txt" 2>/dev/null | head -n 10; } | sort -u > "$SESSION/family_seeds.txt"
@@ -223,7 +223,7 @@ PY
 6. JS extraction and endpoint clustering
 ```bash
 DOMAIN="[DOMAIN]"; SESSION="[SESSION]"
-scratch="$(mktemp -d "${TMPDIR:-/tmp}/bob-deep-recon-js.XXXXXX")" || exit 0
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/bob-deep-surface-discovery-js.XXXXXX")" || exit 0
 trap 'rm -rf "$scratch"' EXIT
 js_capture="$scratch/js-capture.txt"
 grep -Eai '\.js([?#].*)?$' "$SESSION/all_urls.txt" 2>/dev/null | sort -u | head -n 60 > "$SESSION/js_urls.txt" || true
@@ -385,34 +385,34 @@ def add_lead(title, source, hosts, endpoints, params, surface_type, hints, evide
         "score": score,
     })
 api_eps = [e for e in endpoint_pool if re.search(r'(?i)/api/|/v\d+/|graphql', e)]
-add_lead("Archived API and GraphQL endpoint cluster", "deep-recon", base_hosts, api_eps, interesting, "api", bug_hints or ["idor","authz"], [f"{len(api_eps)} API/GraphQL endpoints from CDX/Wayback or JS", f"params: {', '.join(interesting[:8])}"], 80 if api_eps and interesting else 65 if api_eps else 0)
+add_lead("Archived API and GraphQL endpoint cluster", "deep-surface-discovery", base_hosts, api_eps, interesting, "api", bug_hints or ["idor","authz"], [f"{len(api_eps)} API/GraphQL endpoints from CDX/Wayback or JS", f"params: {', '.join(interesting[:8])}"], 80 if api_eps and interesting else 65 if api_eps else 0)
 admin_eps = [e for e in endpoint_pool if re.search(r'(?i)admin|debug|internal|manage', e)]
-add_lead("Admin/debug surface candidates", "deep-recon", base_hosts, admin_eps, [], "admin", ["authz"], [f"{len(admin_eps)} admin/debug-like endpoints"], 72 if admin_eps else 0)
+add_lead("Admin/debug surface candidates", "deep-surface-discovery", base_hosts, admin_eps, [], "admin", ["authz"], [f"{len(admin_eps)} admin/debug-like endpoints"], 72 if admin_eps else 0)
 upload_eps = [e for e in endpoint_pool if re.search(r'(?i)upload|file|avatar|attachment|media', e)]
-add_lead("Upload and file-handling candidates", "deep-recon", base_hosts, upload_eps, [p for p in interesting if re.search(r'(?i)file|url|image', p)], "upload", ["upload","ssrf"], [f"{len(upload_eps)} upload/file endpoints"], 70 if upload_eps else 0)
+add_lead("Upload and file-handling candidates", "deep-surface-discovery", base_hosts, upload_eps, [p for p in interesting if re.search(r'(?i)file|url|image', p)], "upload", ["upload","ssrf"], [f"{len(upload_eps)} upload/file endpoints"], 70 if upload_eps else 0)
 billing_eps = [e for e in endpoint_pool if re.search(r'(?i)billing|checkout|invoice|subscription|coupon|refund|payment|plan', e)]
-add_lead("Billing and business logic candidates", "deep-recon", base_hosts, billing_eps, [p for p in interesting if re.search(r'(?i)amount|plan|coupon|price', p)], "billing", ["business_logic"], [f"{len(billing_eps)} billing/payment endpoints"], 72 if billing_eps else 0)
+add_lead("Billing and business logic candidates", "deep-surface-discovery", base_hosts, billing_eps, [p for p in interesting if re.search(r'(?i)amount|plan|coupon|price', p)], "billing", ["business_logic"], [f"{len(billing_eps)} billing/payment endpoints"], 72 if billing_eps else 0)
 if js_secrets:
-    add_lead("JS-disclosed key material review", "deep-recon", base_hosts, js_endpoints[:40], [], "secrets", ["jwt_oauth"], [f"{len(js_secrets)} compact secret/token hints in js_secrets.txt"], 82)
+    add_lead("JS-disclosed key material review", "deep-surface-discovery", base_hosts, js_endpoints[:40], [], "secrets", ["jwt_oauth"], [f"{len(js_secrets)} compact secret/token hints in js_secrets.txt"], 82)
 if jwt_candidates:
-    add_lead("JWT and OIDC token review candidates", "deep-recon", base_hosts, [e for e in endpoint_pool if re.search(r'(?i)oauth|oidc|jwt|jwks|callback|token|sso', e)][:60], [], "auth", ["jwt_oauth"], [f"{len(jwt_candidates)} JWT-shaped candidates in jwt_candidates.txt for authorized jwt_tool review"], 78)
+    add_lead("JWT and OIDC token review candidates", "deep-surface-discovery", base_hosts, [e for e in endpoint_pool if re.search(r'(?i)oauth|oidc|jwt|jwks|callback|token|sso', e)][:60], [], "auth", ["jwt_oauth"], [f"{len(jwt_candidates)} JWT-shaped candidates in jwt_candidates.txt for authorized jwt_tool review"], 78)
 if takeovers:
     takeover_hosts = []
     for item in takeovers:
         match = re.search(r'([a-z0-9.-]+\.' + re.escape(domain) + r')', item.lower())
         takeover_hosts.append(match.group(1) if match else item.split()[0])
     title = "Subzy takeover candidates" if subzy_takeovers else "Dangling CNAME takeover candidates"
-    add_lead(title, "deep-recon", takeover_hosts, [], [], "unknown", ["takeover"], takeovers[:10], 90 if subzy_takeovers else 85)
+    add_lead(title, "deep-surface-discovery", takeover_hosts, [], [], "unknown", ["takeover"], takeovers[:10], 90 if subzy_takeovers else 85)
 if cve_hints:
-    add_lead("Technology/CVE review candidates", "deep-recon", base_hosts, endpoint_pool[:40], [], "unknown", ["authz"], cve_hints, 68)
+    add_lead("Technology/CVE review candidates", "deep-surface-discovery", base_hosts, endpoint_pool[:40], [], "unknown", ["authz"], cve_hints, 68)
 if tlsx_sans:
-    add_lead("TLS certificate SAN first-party hosts recorded", "deep-recon", [f"https://{host}" for host in tlsx_sans[:20]], [], [], "unknown", [], [f"{len(tlsx_sans)} in-scope SAN hostnames recorded in tlsx_sans.txt; SAN hosts are not automatically promoted without liveness or endpoint evidence"], 38, promote=False)
+    add_lead("TLS certificate SAN first-party hosts recorded", "deep-surface-discovery", [f"https://{host}" for host in tlsx_sans[:20]], [], [], "unknown", [], [f"{len(tlsx_sans)} in-scope SAN hostnames recorded in tlsx_sans.txt; SAN hosts are not automatically promoted without liveness or endpoint evidence"], 38, promote=False)
 if brand_sibling_live:
-    add_lead("Brand-linked sibling properties lightly probed", "deep-recon", [row.split()[0] for row in brand_sibling_live], [], [], "unknown", [], [f"{len(brand_sibling_live)} brand-linked sibling hosts checked with httpx; same-TLD-only candidates remain unprobed", *brand_sibling_live[:5]], 55, promote=True)
+    add_lead("Brand-linked sibling properties lightly probed", "deep-surface-discovery", [row.split()[0] for row in brand_sibling_live], [], [], "unknown", [], [f"{len(brand_sibling_live)} brand-linked sibling hosts checked with httpx; same-TLD-only candidates remain unprobed", *brand_sibling_live[:5]], 55, promote=True)
 elif brand_sibling_candidates:
-    add_lead("Brand-linked sibling properties queued for review", "deep-recon", brand_sibling_candidates[:10], [], [], "unknown", [], [f"{len(brand_sibling_candidates)} brand-linked sibling candidates recorded; liveness check unavailable or produced no live hosts"], 35)
+    add_lead("Brand-linked sibling properties queued for review", "deep-surface-discovery", brand_sibling_candidates[:10], [], [], "unknown", [], [f"{len(brand_sibling_candidates)} brand-linked sibling candidates recorded; liveness check unavailable or produced no live hosts"], 35)
 if sibling_candidates:
-    add_lead("Sibling domain candidates recorded for review", "deep-recon", sibling_candidates[:20], [], [], "unknown", [], [f"{len(sibling_candidates)} linked non-target-domain candidates recorded in sibling-domain-candidates.txt; the broad candidate set is not fed into CDX, nuclei, JS extraction, or active probing"], 35)
+    add_lead("Sibling domain candidates recorded for review", "deep-surface-discovery", sibling_candidates[:20], [], [], "unknown", [], [f"{len(sibling_candidates)} linked non-target-domain candidates recorded in sibling-domain-candidates.txt; the broad candidate set is not fed into CDX, nuclei, JS extraction, or active probing"], 35)
 counts = {
     "subdomains": len(lines("subdomains.txt")),
     "live_hosts": len(live),
@@ -453,7 +453,7 @@ Final response requirements:
 Compact artifact requirements:
 - `[SESSION]/deep-summary.json` must include counts, takeover candidates, tech/CVE hints, and lead titles only.
 - `[SESSION]/surface-leads.json` must be `{ "version": 1, "leads": [...] }` with ranked untested leads worth later promotion. Do not duplicate every URL.
-- `[SESSION]/attack_surface.json` must stay compact and valid for hunter assignment.
+- `[SESSION]/attack_surface.json` must stay compact and valid for evaluator assignment.
 
 Use this backward-compatible attack surface schema:
 ```json

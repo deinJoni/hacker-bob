@@ -20,7 +20,7 @@
       "mcp__bountyagent__bounty_read_grade_verdict",
       "mcp__bountyagent__bounty_read_session_state",
       "mcp__bountyagent__bounty_write_wave_handoff",
-      "mcp__bountyagent__bounty_finalize_hunter_run",
+      "mcp__bountyagent__bounty_finalize_agent_run",
       "mcp__bountyagent__bounty_wave_handoff_status",
       "mcp__bountyagent__bounty_read_wave_handoffs",
       "mcp__bountyagent__bounty_log_dead_ends",
@@ -33,7 +33,7 @@
       "mcp__bountyagent__bounty_auto_signup",
       "mcp__bountyagent__bounty_read_state_summary",
       "mcp__bountyagent__bounty_read_session_summary",
-      "mcp__bountyagent__bounty_read_hunter_brief",
+      "mcp__bountyagent__bounty_read_assignment_brief",
       "mcp__bountyagent__bounty_read_capability_playbook",
       "mcp__bountyagent__bounty_get_context_budget",
       "mcp__bountyagent__bounty_select_technique_packs",
@@ -123,61 +123,61 @@
     ],
     "SubagentStop": [
       {
-        "matcher": "hunter-agent",
+        "matcher": "evaluator-agent",
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/hunter-subagent-stop.js\"",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/agent-run-stop.js\"",
             "timeout": 10
           }
         ]
       },
       {
-        "matcher": "hunter-evm-agent",
+        "matcher": "evaluator-evm-agent",
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/hunter-subagent-stop.js\"",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/agent-run-stop.js\"",
             "timeout": 10
           }
         ]
       },
       {
-        "matcher": "hunter-svm-agent",
+        "matcher": "evaluator-svm-agent",
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/hunter-subagent-stop.js\"",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/agent-run-stop.js\"",
             "timeout": 10
           }
         ]
       },
       {
-        "matcher": "hunter-move-agent",
+        "matcher": "evaluator-move-agent",
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/hunter-subagent-stop.js\"",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/agent-run-stop.js\"",
             "timeout": 10
           }
         ]
       },
       {
-        "matcher": "hunter-substrate-agent",
+        "matcher": "evaluator-substrate-agent",
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/hunter-subagent-stop.js\"",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/agent-run-stop.js\"",
             "timeout": 10
           }
         ]
       },
       {
-        "matcher": "hunter-cosmwasm-agent",
+        "matcher": "evaluator-cosmwasm-agent",
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/hunter-subagent-stop.js\"",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/agent-run-stop.js\"",
             "timeout": 10
           }
         ]
