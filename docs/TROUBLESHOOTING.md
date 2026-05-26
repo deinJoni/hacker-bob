@@ -29,7 +29,7 @@ claude mcp list
 
 If `hacker-bob doctor` reports a missing or mismatched `.mcp.json` entry, rerun the install command for that project directory.
 
-For Codex installs, check that `.codex/plugins/hacker-bob/.codex-plugin/plugin.json`, `.codex/plugins/hacker-bob/.mcp.json`, `~/.codex/skills/bob-{hunt,status,debug,update,export,egress}/SKILL.md`, `.agents/plugins/marketplace.json`, and the doctor `codex_plugin_activation` and `codex_global_skills` checks are present. For generic MCP installs, check `.hacker-bob/generic-mcp/hacker-bob.md` and the root `.mcp.json`.
+For Codex installs, check that `.codex/plugins/hacker-bob/.codex-plugin/plugin.json`, `.codex/plugins/hacker-bob/.mcp.json`, `~/.codex/skills/bob-{evaluate,status,debug,update,export,egress}/SKILL.md`, `.agents/plugins/marketplace.json`, and the doctor `codex_plugin_activation` and `codex_global_skills` checks are present. For generic MCP installs, check `.hacker-bob/generic-mcp/hacker-bob.md` and the root `.mcp.json`.
 
 ## Codex Skills Are Missing
 
@@ -41,7 +41,7 @@ cd /path/to/your/project
 codex
 ```
 
-The install should print `Codex plugin cache/config activated for MCP discovery`. Then look for `$bob-hunt`, `$bob-status`, `$bob-debug`, `$bob-update`, `$bob-export`, and `$bob-egress`. If they still do not appear, run:
+The install should print `Codex plugin cache/config activated for MCP discovery`. Then look for `$bob-evaluate`, `$bob-status`, `$bob-debug`, `$bob-update`, `$bob-export`, and `$bob-egress`. If they still do not appear, run:
 
 ```bash
 hacker-bob doctor /path/to/your/project --adapter codex --json
@@ -49,7 +49,7 @@ hacker-bob doctor /path/to/your/project --adapter codex --json
 
 ## Claude Restart Required
 
-Claude Code reads project MCP and settings during startup. After installing or updating Bob, fully restart Claude Code in that project before running `/bob-hunt`.
+Claude Code reads project MCP and settings during startup. After installing or updating Bob, fully restart Claude Code in that project before running `/bob-evaluate`.
 
 ## `/bob-update` Is Missing
 
@@ -95,11 +95,11 @@ cd hacker-bob
 ./install.sh /path/to/your/project
 ```
 
-## Optional Recon Tools Missing
+## Optional Surface-discovery Tools Missing
 
-Bob works without optional recon tools, but some recon steps are skipped. `hacker-bob doctor` reports these as warnings.
+Bob works without optional surface-discovery tools, but some surface-discovery steps are skipped. `hacker-bob doctor` reports these as warnings.
 
-Install the optional recon tools when you want deeper recon:
+Install the optional surface-discovery tools when you want deeper surface-discovery:
 
 ```bash
 go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest

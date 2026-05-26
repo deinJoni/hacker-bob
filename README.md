@@ -15,9 +15,9 @@
   <a href="https://securityscorecards.dev/viewer/?uri=github.com/vmihalis/hacker-bob"><img alt="OpenSSF Scorecard" src="https://api.securityscorecards.dev/projects/github.com/vmihalis/hacker-bob/badge" /></a>
 </p>
 
-Hacker Bob installs a local MCP runtime into a project directory and connects it to Claude Code, Codex, or another MCP-capable host. The runtime coordinates reconnaissance, authentication setup, parallel surface testing, finding verification, grading, reporting, and local evidence handling.
+Hacker Bob installs a local MCP runtime into a project directory and connects it to Claude Code, Codex, or another MCP-capable host. The runtime coordinates surface mapping, authentication setup, parallel surface testing, finding verification, grading, reporting, and local evidence handling.
 
-Bob is designed for authorized security testing. It can send real network requests, run local recon tools, import local artifacts, and preserve sensitive run data on disk. You are responsible for using it only where you have permission.
+Bob is designed for authorized security testing. It can send real network requests, run local surface-discovery tools, import local artifacts, and preserve sensitive run data on disk. You are responsible for using it only where you have permission.
 
 ## Quickstart
 
@@ -33,11 +33,11 @@ Restart your host CLI from the same project directory, then run the matching com
 
 | Host | Command |
 |---|---|
-| Claude Code | `/bob-hunt target.com` |
-| Codex | `$bob-hunt target.com` |
+| Claude Code | `/bob-evaluate target.com` |
+| Codex | `$bob-evaluate target.com` |
 | Generic MCP host | Connect the generated `.mcp.json`, then follow `.hacker-bob/generic-mcp/hacker-bob.md`. |
 
-Run a status check before a full hunt if you want to confirm the integration is loaded:
+Run a status check before a full evaluate if you want to confirm the integration is loaded:
 
 | Host | Status command |
 |---|---|
@@ -47,11 +47,11 @@ Run a status check before a full hunt if you want to confirm the integration is 
 
 ## Safety
 
-Only run Bob against targets, accounts, applications, APIs, and infrastructure you own or are explicitly authorized to test. Read the target program's scope and rules of engagement before starting a hunt.
+Only run Bob against targets, accounts, applications, APIs, and infrastructure you own or are explicitly authorized to test. Read the target program's scope and rules of engagement before starting a evaluate.
 
-Bob does not prove authorization, enforce a program policy, or guarantee containment. For session-bound MCP tools, caller `target_domain` is only a lookup key: Bob authorizes against initialized session state, validates the stored `target` and `target_url`, and rejects drift before handlers run. Bob's MCP-scoped HTTP tools additionally require a public `target_domain` and only send first-party target-host requests; browser auto-signup routes page HTTP requests through a target-host guard but refuses effective `block_internal_hosts: true` because Chromium resolves network destinations outside Bob's safeFetch transport. Bob does not control arbitrary host shell commands, unrelated browser activity, or external recon binaries. By default, `normal`, `yolo`, and compatible legacy sessions allow public first-party hostnames that resolve to private infrastructure; `paranoid` sessions default to direct-egress DNS/private-address blocking unless the operator starts the session with `--allow-internal-hosts` for an explicitly authorized internal/lab program. First-party host scope is not DNS-rebinding or SSRF protection. Bob uses the packaged Public Suffix List via `psl` to reject public-suffix-only `target_domain` values and isolate registrable tenant domains. If that packaged list is stale, an operator can set `BOB_PSL_OVERLAY_FILE` to a local suffix file before running Bob; overlay matches are recorded in HTTP audit rows with `public_suffix_source` and `psl_overlay_file`, and the overlay is not a per-request bypass. For tools that support it, pass `--block-internal-hosts` or `block_internal_hosts: true` when you need local DNS/private-address blocking outside paranoid mode. The effective value is persisted in state and HTTP audit rows. That stricter mode is only available on direct egress, not proxy-backed egress profiles where target DNS and routing happen outside Bob.
+Bob does not prove authorization, enforce a program policy, or guarantee containment. For session-bound MCP tools, caller `target_domain` is only a lookup key: Bob authorizes against initialized session state, validates the stored `target` and `target_url`, and rejects drift before handlers run. Bob's MCP-scoped HTTP tools additionally require a public `target_domain` and only send first-party target-host requests; browser auto-signup routes page HTTP requests through a target-host guard but refuses effective `block_internal_hosts: true` because Chromium resolves network destinations outside Bob's safeFetch transport. Bob does not control arbitrary host shell commands, unrelated browser activity, or external surface-discovery binaries. By default, `normal`, `yolo`, and compatible legacy sessions allow public first-party hostnames that resolve to private infrastructure; `paranoid` sessions default to direct-egress DNS/private-address blocking unless the operator starts the session with `--allow-internal-hosts` for an explicitly authorized internal/lab program. First-party host scope is not DNS-rebinding or SSRF protection. Bob uses the packaged Public Suffix List via `psl` to reject public-suffix-only `target_domain` values and isolate registrable tenant domains. If that packaged list is stale, an operator can set `BOB_PSL_OVERLAY_FILE` to a local suffix file before running Bob; overlay matches are recorded in HTTP audit rows with `public_suffix_source` and `psl_overlay_file`, and the overlay is not a per-request bypass. For tools that support it, pass `--block-internal-hosts` or `block_internal_hosts: true` when you need local DNS/private-address blocking outside paranoid mode. The effective value is persisted in state and HTTP audit rows. That stricter mode is only available on direct egress, not proxy-backed egress profiles where target DNS and routing happen outside Bob.
 
-Bob binds the selected `egress_profile` to the session at `bounty_init_session` and records a redacted `egress_profile_identity_hash` in state, HTTP audit, hunter briefs, signup responses, pipeline events, and analytics. Egress-bound HTTP and signup tools require initialized session state; legacy sessions may default presentation/progress fields, but missing or drifted authority fields such as `target`, `target_url`, internal-host policy, or egress identity fail closed for tools that rely on them. Bob hashes the profile name, region, proxy-configured bit, proxy route, and env/source identity, excluding raw credentials and description text; credential rotation on the same proxy route is allowed, but profile, route, or source drift fails closed.
+Bob binds the selected `egress_profile` to the session at `bounty_init_session` and records a redacted `egress_profile_identity_hash` in state, HTTP audit, evaluator briefs, signup responses, pipeline events, and analytics. Egress-bound HTTP and signup tools require initialized session state; legacy sessions may default presentation/progress fields, but missing or drifted authority fields such as `target`, `target_url`, internal-host policy, or egress identity fail closed for tools that rely on them. Bob hashes the profile name, region, proxy-configured bit, proxy route, and env/source identity, excluding raw credentials and description text; credential rotation on the same proxy route is allowed, but profile, route, or source drift fails closed.
 
 Smart-contract RPC/REST tools use a separate direct-only model: shipped public ladders, explicit `endpoints` / `fork_urls`, and `BOB_<FAMILY>_RPCS_<NETWORK>` env overrides must be public HTTPS endpoints. Bob filters localhost/private/internal literals and performs bounded DNS private-address preflight for SC endpoints. Bob-owned Node SC reads and EVM source fetches then pin the HTTPS socket lookup to one of those preflighted public DNS answers. Fork runners are different: Foundry, Anchor, Aptos, Sui, Substrate, CosmWasm, and Halmos subprocesses run with proxy/RPC/secret env scrubbed, then receive only runner-created fork URL env or CLI args that came from preflighted public endpoints; Bob does not control or DNS-pin the downstream CLI socket. SC RPC does not use `egress_profile` proxy routing, and private/localnet RPC is unsupported by default until a per-family opt-in policy exists. Returned endpoint evidence and policy rejections redact credentials and query values.
 
@@ -115,9 +115,9 @@ cd hacker-bob
 Claude Code commands:
 
 ```text
-/bob-hunt target.com         # start a normal hunt
-/bob-hunt target.com --deep  # broader recon and deep lead follow-up
-/bob-hunt resume target.com  # resume an existing session
+/bob-evaluate target.com         # start a normal evaluate
+/bob-evaluate target.com --deep  # broader surface-discovery and deep lead follow-up
+/bob-evaluate resume target.com  # resume an existing session
 /bob-status                  # show latest session status
 /bob-debug                   # inspect the latest local run
 /bob-update                  # preview and install the latest release
@@ -128,7 +128,7 @@ Claude Code commands:
 Codex uses the same command names with a `$` prefix:
 
 ```text
-$bob-hunt target.com
+$bob-evaluate target.com
 $bob-status
 $bob-debug
 $bob-update
@@ -143,23 +143,23 @@ hacker-bob doctor /path/to/your/project
 hacker-bob doctor /path/to/your/project --adapter codex
 ```
 
-## How A Hunt Works
+## How A Evaluation Works
 
 Bob follows a structured workflow:
 
 ```text
-RECON -> AUTH -> HUNT -> CHAIN -> VERIFY -> GRADE -> REPORT
+SURFACE_DISCOVERY -> AUTH -> EVALUATE -> CHAIN -> VERIFY -> GRADE -> REPORT
 ```
 
-- `RECON`: Collects subdomains, live hosts, archived URLs, crawled URLs, nuclei signals, JavaScript hints, and optional deep-recon lead data.
+- `SURFACE_DISCOVERY`: Collects subdomains, live hosts, archived URLs, crawled URLs, nuclei signals, JavaScript hints, and optional deep-surface-discovery lead data.
 - `AUTH`: Attempts authorized account setup when possible and records usable profiles for later differential testing.
-- `HUNT`: Starts parallel hunters against runtime-prioritized attack surfaces.
+- `EVALUATE`: Starts parallel evaluators against runtime-prioritized attack surfaces.
 - `CHAIN`: Evaluates whether individual findings combine into higher-impact scenarios.
 - `VERIFY`: Runs independent verification passes and collects bounded evidence for surviving reportable findings.
 - `GRADE`: Scores confirmed findings and decides whether they are ready to submit, should be held, or should be discarded.
 - `REPORT`: Produces a clean report with verified proof and evidence references.
 
-MCP ranking computes runtime priority for status views and hunter briefs. Imports and public-intel fetches do not rewrite `attack_surface.json`.
+MCP ranking computes runtime priority for status views and evaluator briefs. Imports and public-intel fetches do not rewrite `attack_surface.json`.
 
 ## Requirements
 
@@ -168,7 +168,7 @@ MCP ranking computes runtime priority for status views and hunter briefs. Import
 - `curl` and `python3`
 - A dedicated project directory for the installed runtime
 
-Optional recon tools improve coverage when they are installed:
+Optional surface-discovery tools improve coverage when they are installed:
 
 ```bash
 go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
@@ -185,7 +185,7 @@ git clone https://github.com/ticarpi/jwt_tool ~/jwt_tool
 python3 -m pip install -r ~/jwt_tool/requirements.txt
 ```
 
-Bob still runs without the optional tools; the installed toolset determines which recon paths are available.
+Bob still runs without the optional tools; the installed toolset determines which surface-discovery paths are available.
 
 ## Updates
 
@@ -249,7 +249,7 @@ Detailed guides:
 
 Bob stores local run state, telemetry, and evidence under `~/bounty-agent-sessions`. Treat that directory as sensitive. It can contain target names, request metadata, notes, credentials metadata, and report evidence from authorized testing.
 
-During a hunt, Bob may make outbound HTTP requests, run local recon tools, import HTTP or static artifacts, and use host-side reasoning over the collected context. Optional third-party services and dependencies, such as browser automation dependencies, CAPTCHA solving, public-intel sources, or external recon tools, are used only when you configure the relevant dependencies or credentials.
+During a evaluate, Bob may make outbound HTTP requests, run local surface-discovery tools, import HTTP or static artifacts, and use host-side reasoning over the collected context. Optional third-party services and dependencies, such as browser automation dependencies, CAPTCHA solving, public-intel sources, or external surface-discovery tools, are used only when you configure the relevant dependencies or credentials.
 
 The npm packages are published through the project release workflow with npm provenance. `hacker-bob` is the canonical package; `hacker-bob-cc` and `hacker-bob-codex` are small wrapper packages that depend on the matching canonical version.
 

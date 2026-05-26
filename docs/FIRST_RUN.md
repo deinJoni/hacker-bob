@@ -19,7 +19,7 @@ npx -y hacker-bob@latest install /path/to/your/project --adapter generic-mcp
 npx -y hacker-bob@latest install /path/to/your/project --adapter all
 ```
 
-The installer writes shared runtime files into `mcp/` and `.hacker-bob/`, then writes the selected adapter surface. Claude uses `.claude/`, Codex uses direct `$bob-*` skills in `~/.codex/skills` plus `.codex/plugins/hacker-bob`, `.agents/plugins/marketplace.json`, and Codex cache/config activation for MCP wiring, and generic MCP uses root `.mcp.json` plus `.hacker-bob/generic-mcp/` prompt docs. Codex exposes Bob as `$bob-hunt`, `$bob-status`, `$bob-debug`, `$bob-update`, `$bob-export`, and `$bob-egress` skills. A global npm install adds the `hacker-bob` command to your `PATH`, but it does not install Bob into every project automatically.
+The installer writes shared runtime files into `mcp/` and `.hacker-bob/`, then writes the selected adapter surface. Claude uses `.claude/`, Codex uses direct `$bob-*` skills in `~/.codex/skills` plus `.codex/plugins/hacker-bob`, `.agents/plugins/marketplace.json`, and Codex cache/config activation for MCP wiring, and generic MCP uses root `.mcp.json` plus `.hacker-bob/generic-mcp/` prompt docs. Codex exposes Bob as `$bob-evaluate`, `$bob-status`, `$bob-debug`, `$bob-update`, `$bob-export`, and `$bob-egress` skills. A global npm install adds the `hacker-bob` command to your `PATH`, but it does not install Bob into every project automatically.
 
 ## Doctor Check
 
@@ -56,13 +56,13 @@ OK: claude_settings_permissions - .claude/settings.json contains Bob MCP permiss
 OK: claude_settings_statusline - .claude/settings.json contains Bob statusline
 OK: mcp_server_file - mcp/server.js is installed
 OK: mcp_server_loadable - mcp/server.js loads successfully
-WARN: optional_tool_subfinder - subfinder is missing; related recon steps will be skipped
-WARN: optional_tool_nuclei - nuclei is missing; related recon steps will be skipped
-WARN: optional_tool_httpx - httpx is missing; related recon steps will be skipped
-WARN: optional_tool_dnsx - dnsx is missing; related recon steps will be skipped
-WARN: optional_tool_tlsx - tlsx is missing; related recon steps will be skipped
-WARN: optional_tool_katana - katana is missing; related recon steps will be skipped
-WARN: optional_tool_subzy - subzy is missing; related recon steps will be skipped
+WARN: optional_tool_subfinder - subfinder is missing; related surface-discovery steps will be skipped
+WARN: optional_tool_nuclei - nuclei is missing; related surface-discovery steps will be skipped
+WARN: optional_tool_httpx - httpx is missing; related surface-discovery steps will be skipped
+WARN: optional_tool_dnsx - dnsx is missing; related surface-discovery steps will be skipped
+WARN: optional_tool_tlsx - tlsx is missing; related surface-discovery steps will be skipped
+WARN: optional_tool_katana - katana is missing; related surface-discovery steps will be skipped
+WARN: optional_tool_subzy - subzy is missing; related surface-discovery steps will be skipped
 WARN: optional_tool_jwt_tool - jwt_tool is missing; JWT candidate review helpers will be skipped
 WARN: optional_patchright - patchright is missing; Tier 2 auto-signup is disabled
 WARN: optional_capsolver - CAPSOLVER_API_KEY is not set; CAPTCHA solving is disabled
@@ -70,7 +70,7 @@ WARN: optional_capsolver - CAPSOLVER_API_KEY is not set; CAPTCHA solving is disa
 No required problems found.
 ```
 
-The exact list can grow as diagnostics improve. Treat any `ERROR` line as something to fix before starting a hunt. Optional tools can be missing without blocking first use.
+The exact list can grow as diagnostics improve. Treat any `ERROR` line as something to fix before starting a evaluate. Optional tools can be missing without blocking first use.
 
 If doctor reports `WARN: install_version` or `WARN: install_metadata_json` and mentions legacy `.claude/bob/` metadata, the runtime can still read the legacy fallback. Rerun the installer to write neutral `.hacker-bob/` metadata.
 
@@ -87,7 +87,7 @@ Warning: `--dangerously-skip-permissions` disables Claude Code permission prompt
 
 The restart is required because Claude Code reads slash commands, MCP config, settings, hooks, and statusline setup at startup.
 
-For Codex, restart Codex in the target directory and confirm `$bob-hunt`, `$bob-status`, `$bob-debug`, `$bob-update`, `$bob-export`, and `$bob-egress` are available. The installer activates `hacker-bob@hacker-bob-local` in Codex's cache/config for MCP wiring; if skills are still missing, run `hacker-bob doctor /path/to/your/project --adapter codex --json`. For generic MCP hosts, reload the host's MCP server configuration and use `.hacker-bob/generic-mcp/hacker-bob.md` as the operator prompt guide.
+For Codex, restart Codex in the target directory and confirm `$bob-evaluate`, `$bob-status`, `$bob-debug`, `$bob-update`, `$bob-export`, and `$bob-egress` are available. The installer activates `hacker-bob@hacker-bob-local` in Codex's cache/config for MCP wiring; if skills are still missing, run `hacker-bob doctor /path/to/your/project --adapter codex --json`. For generic MCP hosts, reload the host's MCP server configuration and use `.hacker-bob/generic-mcp/hacker-bob.md` as the operator prompt guide.
 
 ## Smoke Check
 
@@ -103,12 +103,12 @@ For Codex, invoke `$bob-status`. For generic MCP hosts, list the `bountyagent` t
 
 ## Pre-Run Checklist
 
-Before running `/bob-hunt`, confirm that you have written authorization for the target and accounts, and that the authorization explicitly covers the testing methods Bob may use. Check that automated scanning, authenticated testing, signup or account creation, third-party pivots, internal or private-network targets, rate limits, and data handling rules are all allowed for this engagement.
+Before running `/bob-evaluate`, confirm that you have written authorization for the target and accounts, and that the authorization explicitly covers the testing methods Bob may use. Check that automated scanning, authenticated testing, signup or account creation, third-party pivots, internal or private-network targets, rate limits, and data handling rules are all allowed for this engagement.
 
 For a first smoke test, use a private lab target or an intentionally vulnerable training app you control:
 
 ```text
-/bob-hunt lab.example.test
+/bob-evaluate lab.example.test
 ```
 
 Do not use a real company, public service, customer environment, or bug bounty target until you have confirmed that the target is in scope and you understand the allowed testing methods.

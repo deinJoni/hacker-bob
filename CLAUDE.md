@@ -1,13 +1,13 @@
 # Hacker Bob Repo Instructions
 
-This repository is the install source for the Hacker Bob `/bob-hunt` Claude Code framework.
+This repository is the install source for the Hacker Bob `/bob-evaluate` Claude Code framework.
 
 If a user asks you to install this framework into a project:
 
 1. Clone this repo locally.
 2. Run `./install.sh /absolute/path/to/target/project` from the cloned repo.
 3. The installer copies the skills, update command shim, agents, rules, hooks, knowledge, bypass tables, MCP runtime, and generated settings. It merges `.mcp.json` and `.claude/settings.json` instead of overwriting unrelated config.
-4. After install, run Claude Code from the target project and use `/bob-hunt <target>`.
+4. After install, run Claude Code from the target project and use `/bob-evaluate <target>`.
 
 Do not assume this cloned repo is the user's active workspace unless they explicitly want that.
 
@@ -37,12 +37,12 @@ Maintainer workflow:
 - `TOOLS`, MCP dispatch, role-bundle permissions, agent tool frontmatter, skill
   allowed-tools, Claude settings, and scope-hook registration must remain
   registry-driven.
-- Lifecycle hooks enforce contracts only. Hunter `SubagentStop` validates the
+- Lifecycle hooks enforce contracts only. Evaluator `SubagentStop` validates the
   final marker and structured handoff but must not advance `pending_wave`,
-  `hunt_wave`, `explored`, findings summaries, or phase state.
+  `evaluation_wave`, `explored`, findings summaries, or phase state.
 - Markdown mirrors are human/debug artifacts. Chain evidence is MCP-owned in
   `chain-attempts.jsonl`; `report.md` remains the final human-facing
   agent-written report.
-- Hunter briefs must stay bounded: array counts are capped, scalar strings are
+- Evaluator briefs must stay bounded: array counts are capped, scalar strings are
   capped or omitted, and agents should use auth through `bounty_list_auth_profiles`
   rather than reading secret files directly.
