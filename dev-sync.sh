@@ -182,5 +182,5 @@ elif adapter_includes "codex"; then
 else
   echo "  1. Configure your MCP host to use $TARGET_ABS/mcp/server.js"
   echo "  2. Read $BOB_DIR/generic-mcp/hacker-bob.md"
-  echo "  3. Smoke test by listing or calling the bountyagent MCP tools"
+  echo "  3. Smoke test by listing or calling the hacker-bob MCP tools"
 fi

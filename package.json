@@ -63,7 +63,7 @@
     "check:syntax": "find mcp .claude/hooks -type f -name '*.js' -print0 | xargs -0 -n1 node --check",
     "check:agent-tools": "node scripts/generate-agent-tools.js --check",
     "check:authority-inventory": "node scripts/authority-inventory.js --check",
-    "check:skill": "node scripts/generate-bountyagent-skill.js --check",
+    "check:skill": "node scripts/generate-hacker-bob-skill.js --check",
     "test:mcp": "node scripts/run-mcp-tests.js",
     "test:prompts": "npm run check:agent-tools && npm run check:skill && node --test test/prompt-contracts.test.js",
     "test:install": "node --test test/install-smoke.test.js",

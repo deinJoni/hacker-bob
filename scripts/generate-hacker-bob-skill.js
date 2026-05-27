@@ -4,7 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const {
-  bountyagentSkillAllowedTools,
+  hackerBobSkillAllowedTools,
 } = require("../adapters/claude/config.js");
 const {
   renderClaudeRole,
@@ -21,7 +21,7 @@ function splitFrontmatter(document) {
 }
 
 function renderFrontmatter() {
-  const allowedTools = bountyagentSkillAllowedTools()
+  const allowedTools = hackerBobSkillAllowedTools()
     .map((tool) => `  - ${tool}`)
     .join("\n");
   return [

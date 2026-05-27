@@ -84,7 +84,7 @@ The installer is idempotent and preserves unrelated host configuration. It write
 
 When `--adapter` is omitted, Bob chooses an adapter from prior install metadata, host environment markers, project files, and installed host CLIs. Claude is the final fallback.
 
-The MCP server namespace is still `bountyagent`. Seeing `bountyagent` in `.mcp.json`, `claude mcp list`, or tool names such as `mcp__bountyagent__bounty_*` is expected and kept for compatibility.
+The MCP server name is `hacker-bob`. You will see `hacker-bob` in `.mcp.json`, in `claude mcp list`, and as the prefix on tool names such as `mcp__hacker-bob__bob_*`. Installs that came from v1.x still carry the legacy `bountyagent` MCP-permission identifier as a one-release compatibility alias; new v2.x installs use `hacker-bob` throughout.
 
 Small wrapper packages are available when you want the host choice encoded in the package name:
 
@@ -234,7 +234,7 @@ Common checks:
 - `node -e "require('./mcp/server.js'); console.log('MCP ok')"` should pass from the installed project.
 - Claude Code must be restarted after install or update before `/bob-*` commands and MCP settings load.
 - Codex must be restarted after install or update before `$bob-*` skills and local plugin wiring load.
-- `.mcp.json` should contain an `mcpServers.bountyagent` entry pointing at the installed project's `mcp/server.js`.
+- `.mcp.json` should contain an `mcpServers.hacker-bob` entry pointing at the installed project's `mcp/server.js`. v1.x installs may still expose the entry under the legacy `bountyagent` key during the v2.0 → v2.1 deprecation window.
 - If an upgrade leaves `mcp/lib/tools/` missing, rerun the installer with `hacker-bob@latest`.
 
 Detailed guides:
@@ -247,7 +247,7 @@ Detailed guides:
 
 ## Data And Security Model
 
-Bob stores local run state, telemetry, and evidence under `~/hacker-bob-sessions`. The legacy `~/bounty-agent-sessions` directory remains readable as a fallback for sessions created before the v2.0 rename and is preserved on disk; on first session access, Bob copies — never moves — any legacy domain directories into the canonical root, and explicit cleanup is reserved for the v2.1.0 `--purge-legacy-session-root` flag. Treat both directories as sensitive. They can contain target names, request metadata, notes, credentials metadata, and report evidence from authorized testing.
+Bob stores local run state, telemetry, and evidence under `~/hacker-bob-sessions`. Legacy `~/bounty-agent-sessions/` is migrated to `~/hacker-bob-sessions/` on first use; preserved until v2.1.0 (`--purge-legacy-session-root`). Bob copies — never moves — any legacy domain directories into the canonical root on first session access, so the legacy directory remains readable as a fallback for sessions created before the v2.0 rename. Treat both directories as sensitive. They can contain target names, request metadata, notes, credentials metadata, and report evidence from authorized testing.
 
 During a evaluate, Bob may make outbound HTTP requests, run local surface-discovery tools, import HTTP or static artifacts, and use host-side reasoning over the collected context. Optional third-party services and dependencies, such as browser automation dependencies, CAPTCHA solving, public-intel sources, or external surface-discovery tools, are used only when you configure the relevant dependencies or credentials.
 

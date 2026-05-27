@@ -1,10 +1,12 @@
 ---
 title: "Hacker Bob Offline Code Walkthrough"
-subtitle: "How the project, agent pipeline, MCP memory, context management, and JSON state fit together"
+subtitle: "v1.3.5 snapshot — How the project, agent pipeline, MCP memory, context management, and JSON state fit together"
 author: "Generated for local code review"
 date: "2026-05-01"
 lang: en
 ---
+
+> **v1.3.5 snapshot.** This walkthrough was generated against the v1.x codebase prior to the v2.0.0 frontier-topology rewrite. It uses the legacy vocabulary throughout (`bountyagent` MCP server, `bounty_*` tool prefix, eight-phase FSM, `~/bounty-agent-sessions/` session root, `findings.jsonl` claim ledger). Treat every named tool, namespace, and session path here as a v1.x identifier. For target-state vocabulary see [CHANGELOG.md v2.0.0](../CHANGELOG.md), [docs/releases/v2.0.0.md](releases/v2.0.0.md), and the rewritten [docs/FIRST_RUN.md](FIRST_RUN.md) / [docs/SMART_CONTRACTS_SPEC.md](SMART_CONTRACTS_SPEC.md) / [docs/capability-hypergraph.md](capability-hypergraph.md).
 
 # How To Use This Guide
 

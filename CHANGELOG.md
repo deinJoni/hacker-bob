@@ -1,5 +1,63 @@
 # Changelog
 
+## v2.0.0
+
+### Topology realization
+
+v2.0.0 realizes the frontier-topology hypergraph against the live codebase. The session model is no longer a phase-ordered FIFO mutating a single `state.json`; it is four append-only planes (governance, frontier, scheduler, claim) coordinated by a six-state lifecycle FSM.
+
+- New planes:
+  - Governance plane (`session-nucleus.json`, `session-events.jsonl`) — authoritative scope policy, egress identity, operator constraints, lifecycle state. Mutations append events with `prior_nucleus_hash → nucleus_hash` transitions.
+  - Frontier plane (`frontier-events.jsonl` + materialized `surface-index.json` / `task-queue.json`) — append-only discovery progress: seeded surfaces, lead enqueues, observations, closures, blockers.
+  - Scheduler plane (`assignments/<id>.json`, `agent-runs.jsonl`, `scheduler-decisions.jsonl`) — immutable wave assignments and AgentRun ledger drive merge gates from state instead of file presence.
+  - Claim plane (`claims.jsonl`, `claim-clusters.jsonl`, `claim-freeze/<id>.json`, `report-snapshots.jsonl`) — CandidateClaim records, cluster grouping, immutable frozen batches for verification, and report snapshots.
+- Lifecycle FSM: `SETUP -> OPEN_FRONTIER -> CLAIM_FREEZE -> VERIFY -> GRADE -> REPORT`. `OPEN_FRONTIER` is re-entrant from every later state. Each transition emits a `governance.lifecycle.advanced` event with explicit `from_state`, `to_state`, and `nucleus_hash` fields. The old eight-phase FSM (`SURFACE_DISCOVERY -> AUTH -> EVALUATE -> CHAIN -> VERIFY -> GRADE -> REPORT -> EXPLORE`) is retired; the lifecycle tool `bob_advance_session(to_state)` replaces `bounty_transition_phase(target_phase)`.
+- Tool prefix renamed `bounty_*` -> `bob_*`. Every primary tool now declares a `bob_*` name; v1.x callers keep working through a one-release alias layer in `tool-registry.js`. Invoking an alias appends a `governance.tool_deprecated` event to `session-events.jsonl` when a `target_domain` is in scope. The alias layer is removed in v2.1.0.
+- MCP server name renamed `bountyagent` -> `hacker-bob`. Installed `.mcp.json` files now register `mcpServers.hacker-bob`. Permission-string compatibility is preserved: settings carrying `mcp__bountyagent__*` entries continue to resolve through the deprecation window. The transport advertises `hacker-bob` as the product identifier on the wire.
+- Vocabulary: per-finding records are now `CandidateClaim` written to `claims.jsonl` (the old `Finding`/`findings.jsonl` writer is preserved read-only). Cluster grouping (`ClaimCluster` in `claim-clusters.jsonl`) and frozen verification batches (`ClaimFreeze` in `claim-freeze/<id>.json`) are new claim-plane artifacts. Verification produces `VerificationResult[]` over a frozen payload instead of re-reading the live findings ledger; reports produce `ReportSnapshot` records in `report-snapshots.jsonl`.
+- Session root migrated `~/bounty-agent-sessions/` -> `~/hacker-bob-sessions/`. On first access of any legacy domain directory, Bob **copies — never moves —** the directory into the canonical root and preserves the legacy copy on disk. The legacy root remains readable as a fallback through v2.0.x; v2.1.0 ships the `--purge-legacy-session-root` flag for explicit cleanup.
+
+### Renamed tools (sample)
+
+Every `bounty_<verb>` invocation now resolves through a `bob_<verb>` primary name. The complete rename map covers 100+ tools and is materialized at registry boot in `mcp/lib/tool-registry.js`. The top-20 renames most visible to operators and downstream integrations:
+
+| v1.x name (alias)               | v2.x name (primary)            |
+|---------------------------------|--------------------------------|
+| `bounty_http_scan`              | `bob_http_scan`                |
+| `bounty_read_http_audit`        | `bob_read_http_audit`          |
+| `bounty_record_finding`         | `bob_record_candidate_claim`   |
+| `bounty_read_findings`          | `bob_read_candidate_claims`    |
+| `bounty_list_findings`          | `bob_list_candidate_claims`    |
+| `bounty_index_finding`          | `bob_index_candidate_claim`    |
+| `bounty_query_findings_index`   | `bob_query_candidate_claims_index` |
+| `bounty_write_chain_attempt`    | `bob_write_chain_attempt`      |
+| `bounty_write_verification_round` | `bob_write_verification_round` |
+| `bounty_read_verification_round` | `bob_read_verification_round` |
+| `bounty_read_verification_context` | `bob_read_verification_context` |
+| `bounty_write_grade_verdict`    | `bob_write_grade_verdict`      |
+| `bounty_read_grade_verdict`     | `bob_read_grade_verdict`       |
+| `bounty_write_evidence_packs`   | `bob_write_evidence_packs`     |
+| `bounty_read_evidence_packs`    | `bob_read_evidence_packs`      |
+| `bounty_write_wave_handoff`     | `bob_write_wave_handoff`       |
+| `bounty_apply_wave_merge`       | `bob_apply_wave_merge`         |
+| `bounty_start_wave`             | `bob_start_wave`               |
+| `bounty_start_next_wave`        | `bob_start_next_wave`          |
+| `bounty_route_surfaces`         | `bob_route_surfaces`           |
+| `bounty_transition_phase`       | `bob_advance_session` (semantics change: lifecycle states, not phases) |
+
+Smart-contract family runners and read tools (EVM, SVM, Aptos, Sui, Substrate, CosmWasm), authorization tools, surface-leads tools, technique-pack readers, scheduling/queue-policy tools, audit-report ingestion, invariant runners, capability metrics, and verification-attempt diff tools all rename under the same `bounty_*` -> `bob_*` rule; their alias entries are listed in `mcp/lib/tools/*.js`.
+
+### Migration
+
+Downstream consumers should:
+
+- Update any hard-coded `mcp__bountyagent__bounty_*` permission strings to `mcp__hacker-bob__bob_*`. The legacy form continues to resolve during the v2.0.0 alias window.
+- Update phase-driven scripts to call `bob_advance_session(to_state)` with the new lifecycle state enum; the old `bounty_transition_phase(target_phase)` shim still routes but emits a deprecation event and is removed in v2.1.0.
+- Treat `~/bounty-agent-sessions/` as legacy-read-only. New sessions are written to `~/hacker-bob-sessions/`; legacy directories are copied on first read and preserved on disk until `--purge-legacy-session-root` lands in v2.1.0.
+- Read findings through `claims.jsonl` (`CandidateClaim` shape). The legacy `findings.jsonl` writer is retained for back-compat reads through v2.0.x and removed in a later release.
+
+Release notes: [docs/releases/v2.0.0.md](docs/releases/v2.0.0.md).
+
 ## [Unreleased]
 
 - Renamed the telemetry-rooted `agent-runs.jsonl` to `tool-invocations.jsonl` to resolve the filename collision with the session-rooted AgentRun ledger. Consumers of `mcp/lib/tool-telemetry.js` must use the renamed exports: `toolInvocationTelemetryPath`, `appendToolInvocationTelemetryEvent`, `buildToolInvocationTelemetryEvent`, `readToolInvocationTelemetryEvents`, `recordToolInvocationTelemetry`, `safeRecordToolInvocationTelemetry`, `summarizeToolInvocationTelemetryEvents`, `toolInvocationSidecarPath`, `TOOL_INVOCATIONS_FILE_NAME`, `TOOL_INVOCATION_TELEMETRY_VERSION`, and `TOOL_INVOCATION_TELEMETRY_MAX_RECORDS`. The export-bundle filename moved from `agent-runs.filtered.jsonl` to `tool-invocations.filtered.jsonl`. An idempotent in-process migration shim (`mcp/lib/telemetry-migration.js`) renames any existing legacy `<telemetryDir>/agent-runs.jsonl` to `<telemetryDir>/tool-invocations.jsonl` on first write/read of the canonical path.

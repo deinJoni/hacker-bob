@@ -22,7 +22,7 @@ local Claude Code workspace:
 3. It is intended for a dedicated local test workspace because it overwrites
    Bob-owned runtime files after backing up the target MCP/settings files.
 4. After `dev-sync.sh`, fully restart Claude Code in the test workspace, run
-   `/mcp`, and smoke test `bounty_http_scan` with
+   `/mcp`, and smoke test `bob_http_scan` with
    `target_domain: "example.com"` against `https://example.com`.
 
 Maintainer workflow:
@@ -32,7 +32,7 @@ Maintainer workflow:
   `npm run check:syntax`.
 - Generated prompt/config surfaces must stay current. Run
   `node scripts/generate-agent-tools.js` after role-bundle metadata changes and
-  `node scripts/generate-bountyagent-skill.js` after orchestrator/auth bundle
+  `node scripts/generate-hacker-bob-skill.js` after orchestrator/auth bundle
   changes.
 - `TOOLS`, MCP dispatch, role-bundle permissions, agent tool frontmatter, skill
   allowed-tools, Claude settings, and scope-hook registration must remain
@@ -44,5 +44,5 @@ Maintainer workflow:
   `chain-attempts.jsonl`; `report.md` remains the final human-facing
   agent-written report.
 - Evaluator briefs must stay bounded: array counts are capped, scalar strings are
-  capped or omitted, and agents should use auth through `bounty_list_auth_profiles`
+  capped or omitted, and agents should use auth through `bob_list_auth_profiles`
   rather than reading secret files directly.

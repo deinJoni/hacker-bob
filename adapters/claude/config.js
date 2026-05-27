@@ -171,7 +171,7 @@ function defaultSessionStartHooks() {
   ];
 }
 
-function bountyagentSkillAllowedTools() {
+function hackerBobSkillAllowedTools() {
   return uniqueStrings([
     "Task",
     "Read",
@@ -202,7 +202,7 @@ function defaultClaudeSettings() {
 
 module.exports = {
   BASE_PERMISSIONS,
-  bountyagentSkillAllowedTools,
+  hackerBobSkillAllowedTools,
   defaultClaudeSettings,
   defaultGlobalMcpPermissions,
   defaultPreToolUseHooks,

@@ -37,7 +37,7 @@ const {
 } = require("../mcp/lib/tool-registry.js");
 const { ADAPTERS, getAdapter } = require("../adapters/index.js");
 const {
-  bountyagentSkillAllowedTools,
+  hackerBobSkillAllowedTools,
   defaultClaudeSettings,
   defaultGlobalMcpPermissions,
   isOrchestratorOnlyMutator,
@@ -686,7 +686,7 @@ test("evaluator-agent exposes claim-recording, handoff, coverage, and audit tool
 test("orchestrator skill allowed-tools equal the orchestrator + auth permission bundles", () => {
   const skill = readFile(".claude/skills/bob-evaluate/SKILL.md");
   const allowedTools = parseYamlListFrontmatter(skill, "allowed-tools", "bob-evaluate/SKILL.md");
-  assert.deepEqual(allowedTools.slice().sort(), bountyagentSkillAllowedTools().slice().sort());
+  assert.deepEqual(allowedTools.slice().sort(), hackerBobSkillAllowedTools().slice().sort());
   const mcpOnly = allowedTools.filter((t) => t.startsWith(MCP_PERMISSION_PREFIX)).sort();
   assert.deepEqual(mcpOnly, permissionsForRoleBundles(["orchestrator", "auth"]).slice().sort());
 });
