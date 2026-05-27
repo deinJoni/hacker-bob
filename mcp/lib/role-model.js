@@ -10,31 +10,31 @@ const { evaluatorRoleSpecs } = require("./capability-packs.js");
 const ROLE_PROMPT_DIR = path.join("prompts", "roles");
 
 const READ_ONLY_STATUS_TOOLS = Object.freeze([
-  "bounty_read_pipeline_analytics",
-  "bounty_read_session_summary",
-  "bounty_read_state_summary",
-  "bounty_wave_status",
-  "bounty_read_wave_handoffs",
-  "bounty_read_findings",
-  "bounty_read_verification_context",
-  "bounty_read_verification_round",
-  "bounty_read_evidence_packs",
-  "bounty_read_grade_verdict",
+  "bob_read_pipeline_analytics",
+  "bob_read_session_summary",
+  "bob_read_state_summary",
+  "bob_wave_status",
+  "bob_read_wave_handoffs",
+  "bob_read_findings",
+  "bob_read_verification_context",
+  "bob_read_verification_round",
+  "bob_read_evidence_packs",
+  "bob_read_grade_verdict",
 ]);
 
 const READ_ONLY_DEBUG_TOOLS = Object.freeze([
-  "bounty_read_pipeline_analytics",
-  "bounty_read_tool_telemetry",
-  "bounty_read_session_summary",
-  "bounty_read_state_summary",
-  "bounty_wave_status",
-  "bounty_read_wave_handoffs",
-  "bounty_read_findings",
-  "bounty_read_verification_context",
-  "bounty_read_verification_round",
-  "bounty_diff_verification_attempts",
-  "bounty_read_evidence_packs",
-  "bounty_read_grade_verdict",
+  "bob_read_pipeline_analytics",
+  "bob_read_tool_telemetry",
+  "bob_read_session_summary",
+  "bob_read_state_summary",
+  "bob_wave_status",
+  "bob_read_wave_handoffs",
+  "bob_read_findings",
+  "bob_read_verification_context",
+  "bob_read_verification_round",
+  "bob_diff_verification_attempts",
+  "bob_read_evidence_packs",
+  "bob_read_grade_verdict",
 ]);
 
 const ROLE_DEFINITIONS = Object.freeze({

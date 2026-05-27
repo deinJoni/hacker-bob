@@ -152,7 +152,7 @@ async function signupDetect(args) {
   let egressAgent = null;
   try {
     const resolved = resolveAndAssertSessionEgressIdentity(targetDomain, requestedEgressProfile, {
-      source: "bounty_signup_detect",
+      source: "bob_signup_detect",
     });
     egressProfile = resolved.profile;
     egressIdentity = resolved.identity;
@@ -306,7 +306,7 @@ async function autoSignup(args) {
   let internalHostContext;
   try {
     const resolved = resolveAndAssertSessionEgressIdentity(domain, requestedEgressProfile, {
-      source: "bounty_auto_signup",
+      source: "bob_auto_signup",
     });
     egressProfile = resolved.profile;
     egressIdentity = resolved.identity;

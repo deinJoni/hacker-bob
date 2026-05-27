@@ -3,7 +3,8 @@
 const { staticScan } = require("../static-artifacts.js");
 
 module.exports = Object.freeze({
-  name: "bounty_static_scan",
+  name: "bob_static_scan",
+  aliases: ["bounty_static_scan"],
   description:
     "Run a deterministic token-contract static scan on a previously imported session-owned artifact. Results are stored as redacted structured JSON in static-scan-results.jsonl and summarized in evaluator briefs.",
   inputSchema: {

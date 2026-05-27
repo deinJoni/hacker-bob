@@ -36,7 +36,12 @@ function mcpPermissionForTool(toolName) {
 }
 
 function permissionsForAllTools() {
-  return TOOLS.map((tool) => mcpPermissionForTool(tool.name));
+  // Aliases (Cycle P.1) are not surfaced as permissions; the primary bob_*
+  // entry covers both names because the registry routes aliases to the same
+  // handler.
+  return TOOLS
+    .filter((tool) => !TOOL_MANIFEST[tool.name].alias_of)
+    .map((tool) => mcpPermissionForTool(tool.name));
 }
 
 function permissionsForRoleBundle(roleBundle) {
@@ -64,9 +69,16 @@ function isOrchestratorOnlyMutator(toolName) {
 }
 
 function defaultGlobalMcpPermissions() {
+  // Aliases (Cycle P.1 deprecation entries) inherit global_preapproval from
+  // their primary but must not be re-emitted as a separate permission line.
+  // Generated settings carry the canonical bob_* entry; calls through a
+  // bounty_* alias still resolve through the registry alias mapping.
   return TOOLS
     .map((tool) => tool.name)
-    .filter((toolName) => TOOL_MANIFEST[toolName].global_preapproval === true)
+    .filter((toolName) => {
+      const meta = TOOL_MANIFEST[toolName];
+      return meta.global_preapproval === true && !meta.alias_of;
+    })
     .map(mcpPermissionForTool);
 }
 

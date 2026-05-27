@@ -3,7 +3,8 @@
 const { finalizeAgentRun } = require("../agent-run-completion.js");
 
 module.exports = Object.freeze({
-  name: "bounty_finalize_agent_run",
+  name: "bob_finalize_agent_run",
+  aliases: ["bounty_finalize_agent_run"],
   description:
     "Evaluator-final completion check that validates the structured wave handoff and records metadata-only completion telemetry.",
   inputSchema: {

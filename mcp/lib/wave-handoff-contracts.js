@@ -215,7 +215,7 @@ function normalizeChainNotes(value) {
   return notes;
 }
 
-// Runtime mirror of the bounty_write_wave_handoff JSON schema enum and the
+// Runtime mirror of the bob_write_wave_handoff JSON schema enum and the
 // renderer's BLOCKED_HARNESS_RUN_KINDS constant. Mismatch here would cause
 // SVM/Move/Substrate/CosmWasm evaluators to fail finalization even though the
 // schema accepted their handoff. test/prompt-contracts.test.js enforces the
@@ -236,7 +236,7 @@ const BLOCKED_HARNESS_KIND_VALUES = Object.freeze([
 ]);
 
 // Mirror of capability-packs-rendering.js BLOCKED_PREREQ_KINDS and the
-// bounty_write_wave_handoff schema enum for blocked_prereqs[].kind. Like
+// bob_write_wave_handoff schema enum for blocked_prereqs[].kind. Like
 // BLOCKED_HARNESS_KIND_VALUES this is a runtime guard that throws on unknown
 // kinds before the JSON schema would even check; mismatch with the renderer
 // constant or schema enum is caught by the parity test in

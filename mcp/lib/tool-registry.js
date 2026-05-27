@@ -3,6 +3,17 @@
 const { TOOL_MODULES } = require("./tools/index.js");
 const { chainSpecificEvaluatorBundles } = require("./capability-packs.js");
 
+// Cycle P.1 of the frontier-topology realization hypergraph renames the public
+// MCP tool surface from `bounty_*` to `bob_*`. Every tool declares a `bob_*`
+// primary name in its module and optionally an `aliases: ["bounty_*"]` array.
+// The registry materializes one alias entry per alias, routed to the same
+// handler with a `deprecated: true` descriptor. Invoking an alias appends a
+// `governance.tool_deprecated` event to session-events.jsonl when a
+// target_domain is in scope; the alias mechanism lives here so individual
+// tool files do not need separate shim modules. Aliases are time-bound to
+// the v2.0.0 → v2.1.0 window per hypergraph Part IX.
+const ALIAS_DEPRECATION_REPLACEMENT_HINT = "bob_*";
+
 // Cross-cutting role bundles: orchestration, auth, verifier, evidence, etc.
 // — not chain-specific. The per-chain evaluator bundles are derived from
 // EVALUATOR_ROLES in capability-packs.js so adding a 7th evaluator role extends
@@ -117,6 +128,24 @@ function normalizeScopeUrlFields(entry) {
   return Object.freeze(entry.scope_url_fields.slice());
 }
 
+function normalizeAliases(entry) {
+  if (!Object.prototype.hasOwnProperty.call(entry, "aliases")) {
+    return Object.freeze([]);
+  }
+  if (!Array.isArray(entry.aliases)) {
+    throw new Error(`tool registry entry for ${entry.name} has invalid aliases (must be array)`);
+  }
+  for (const alias of entry.aliases) {
+    if (typeof alias !== "string" || !alias.trim()) {
+      throw new Error(`tool registry entry for ${entry.name} has invalid alias entry`);
+    }
+    if (alias === entry.name) {
+      throw new Error(`tool registry entry for ${entry.name} aliases itself`);
+    }
+  }
+  return frozenStringArray(entry.aliases);
+}
+
 function defineTool(entry) {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
     throw new Error("tool registry entry must be an object");
@@ -158,6 +187,72 @@ function defineTool(entry) {
     session_artifacts_written: frozenStringArray(entry.session_artifacts_written),
     capability_id: normalizeCapabilityId(entry),
     scope_url_fields: normalizeScopeUrlFields(entry),
+    aliases: normalizeAliases(entry),
+  });
+}
+
+function aliasDescriptionFor(primaryName, aliasName, primaryDescription) {
+  return `Deprecated alias for ${primaryName}. Prefer ${primaryName}; this entry routes to the same handler and records a governance.tool_deprecated event when invoked. Original description: ${primaryDescription}`;
+}
+
+// Lazily require session-events to avoid an import cycle (session-events ->
+// validation -> paths -> ... -> tool-registry at module-load time on some
+// build paths). The alias handler emits a best-effort telemetry event; if the
+// dependency cannot be loaded yet, the alias still executes the primary
+// handler. The recorder is wrapped in try/catch so registry boot never fails
+// when session-events is mid-construction.
+let _appendSessionEvent = null;
+function recordToolDeprecation({ aliasName, primaryName, args }) {
+  try {
+    if (!_appendSessionEvent) {
+      _appendSessionEvent = require("./session-events.js").appendSessionEvent;
+    }
+    const targetDomain = args && typeof args === "object" && !Array.isArray(args)
+      ? args.target_domain
+      : null;
+    if (typeof targetDomain !== "string" || !targetDomain.trim()) {
+      return;
+    }
+    _appendSessionEvent({
+      target_domain: targetDomain,
+      kind: "governance.tool_deprecated",
+      payload: {
+        tool: aliasName,
+        replacement: primaryName,
+        rename_cycle: "P.1",
+        removal_release: "v2.1.0",
+      },
+    });
+  } catch {
+    // Deprecation telemetry must never break the primary call. The alias is
+    // an observational, time-bound compatibility surface.
+  }
+}
+
+function buildAliasEntry(primary, aliasName) {
+  const primaryName = primary.name;
+  const aliasHandler = (args) => {
+    recordToolDeprecation({ aliasName, primaryName, args });
+    return primary.handler(args);
+  };
+  return Object.freeze({
+    name: aliasName,
+    description: aliasDescriptionFor(primaryName, aliasName, primary.description),
+    inputSchema: primary.inputSchema,
+    handler: aliasHandler,
+    role_bundles: primary.role_bundles,
+    mutating: primary.mutating,
+    global_preapproval: primary.global_preapproval,
+    network_access: primary.network_access,
+    browser_access: primary.browser_access,
+    scope_required: primary.scope_required,
+    sensitive_output: primary.sensitive_output,
+    session_artifacts_written: primary.session_artifacts_written,
+    capability_id: primary.capability_id,
+    scope_url_fields: primary.scope_url_fields,
+    aliases: Object.freeze([]),
+    deprecated: true,
+    alias_of: primaryName,
   });
 }
 
@@ -165,14 +260,23 @@ function buildToolRegistry({
   toolModules = TOOL_MODULES,
 } = {}) {
   const seenNames = new Set();
-  return Object.freeze(toolModules.map((entry) => {
+  const entries = [];
+  for (const entry of toolModules) {
     const tool = defineTool(entry);
     if (seenNames.has(tool.name)) {
       throw new Error(`Duplicate tool name in registry: ${tool.name}`);
     }
     seenNames.add(tool.name);
-    return tool;
-  }));
+    entries.push(tool);
+    for (const aliasName of tool.aliases) {
+      if (seenNames.has(aliasName)) {
+        throw new Error(`Duplicate tool name in registry (alias collision): ${aliasName}`);
+      }
+      seenNames.add(aliasName);
+      entries.push(buildAliasEntry(tool, aliasName));
+    }
+  }
+  return Object.freeze(entries);
 }
 
 const TOOL_REGISTRY = buildToolRegistry();
@@ -183,14 +287,28 @@ function getRegisteredTool(name) {
   return TOOL_BY_NAME.get(name) || null;
 }
 
-const TOOLS = Object.freeze(TOOL_REGISTRY.map((tool) => Object.freeze({
-  name: tool.name,
-  description: tool.description,
-  inputSchema: tool.inputSchema,
-})));
+// Cycle P.1 deprecation aliases are routed by the registry but not surfaced in
+// the discoverable tool list. Existing clients that hard-coded a bounty_* name
+// can still invoke through TOOL_HANDLERS; the public tools/list catalog only
+// advertises the canonical bob_* (or the bona fide deprecation-shim tools that
+// own their own module).
+const TOOLS = Object.freeze(TOOL_REGISTRY
+  .filter((tool) => !tool.alias_of)
+  .map((tool) => Object.freeze({
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+  })));
 
+// TOOL_MANIFEST surfaces only primary tools (and pre-existing standalone
+// deprecation shims like bounty_transition_phase / bounty_report_written that
+// each ship as their own module). Cycle P.1 aliases are registry-only
+// compatibility entries; they share their primary's metadata so the alias
+// manifest entry would be a perfect duplicate. Excluding them keeps tests and
+// permission generators that iterate the manifest from double-counting.
 const TOOL_MANIFEST = Object.freeze(TOOL_REGISTRY.reduce((manifest, tool) => {
-  manifest[tool.name] = Object.freeze({
+  if (tool.alias_of) return manifest;
+  const base = {
     role_bundles: frozenStringArray(tool.role_bundles),
     mutating: tool.mutating,
     global_preapproval: tool.global_preapproval,
@@ -201,7 +319,11 @@ const TOOL_MANIFEST = Object.freeze(TOOL_REGISTRY.reduce((manifest, tool) => {
     session_artifacts_written: frozenStringArray(tool.session_artifacts_written),
     capability_id: tool.capability_id,
     scope_url_fields: frozenStringArray(tool.scope_url_fields),
-  });
+  };
+  if (Array.isArray(tool.aliases) && tool.aliases.length > 0) {
+    base.aliases = frozenStringArray(tool.aliases);
+  }
+  manifest[tool.name] = Object.freeze(base);
   return manifest;
 }, {}));
 
@@ -211,15 +333,35 @@ const TOOL_HANDLERS = Object.freeze(TOOL_REGISTRY.reduce((handlers, tool) => {
 }, {}));
 
 function toolNamesForRoleBundle(roleBundle) {
+  // Returns only primary tool names. Alias entries inherit the role bundles of
+  // their primary so deprecated callers still resolve, but role-bundle
+  // permission lists must surface the canonical name to avoid double-counting.
   return TOOL_REGISTRY
-    .filter((tool) => tool.role_bundles.includes(roleBundle))
+    .filter((tool) => !tool.alias_of && tool.role_bundles.includes(roleBundle))
     .map((tool) => tool.name);
+}
+
+function isAliasName(toolName) {
+  const tool = TOOL_BY_NAME.get(toolName);
+  return !!(tool && tool.alias_of);
+}
+
+function aliasNamesForTool(toolName) {
+  const tool = TOOL_BY_NAME.get(toolName);
+  return tool && Array.isArray(tool.aliases) ? tool.aliases.slice() : [];
+}
+
+function primaryToolName(toolName) {
+  const tool = TOOL_BY_NAME.get(toolName);
+  if (!tool) return null;
+  return tool.alias_of || tool.name;
 }
 
 function capabilityToolMapFromRegistry(registry = TOOL_REGISTRY) {
   const map = {};
   for (const tool of registry) {
     if (tool.capability_id == null) continue;
+    if (tool.alias_of) continue;
     if (!Object.prototype.hasOwnProperty.call(map, tool.capability_id)) {
       map[tool.capability_id] = [];
     }
@@ -237,9 +379,12 @@ module.exports = {
   TOOL_REGISTRY,
   TOOLS,
   VALID_ROLE_BUNDLES,
+  aliasNamesForTool,
   buildToolRegistry,
   capabilityToolMapFromRegistry,
   defineTool,
   getRegisteredTool,
+  isAliasName,
+  primaryToolName,
   toolNamesForRoleBundle,
 };

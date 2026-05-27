@@ -175,28 +175,28 @@ test("installer copies a require-able complete MCP runtime", () => {
         "installedRequire('psl');",
         "installedRequire('proxy-agent');",
         "if (!Array.isArray(server.TOOLS) || server.TOOLS.length !== 112) process.exit(2);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_list_auth_profiles')) process.exit(3);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_list_auth_profiles')) process.exit(3);",
         "if (!server.TOOLS.some((tool) => tool.name === 'bob_finalize_report')) process.exit(25);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_tool_telemetry')) process.exit(6);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_pipeline_analytics')) process.exit(7);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_finalize_agent_run')) process.exit(8);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_write_evidence_packs')) process.exit(9);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_evidence_packs')) process.exit(10);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_promote_surface_leads')) process.exit(11);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_session_summary')) process.exit(12);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_set_operator_note')) process.exit(13);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_clear_operator_note')) process.exit(14);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_route_surfaces')) process.exit(15);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_surface_routes')) process.exit(16);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_start_next_wave')) process.exit(17);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_select_technique_packs')) process.exit(18);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_technique_pack')) process.exit(19);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_log_technique_attempt')) process.exit(20);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_get_context_budget')) process.exit(21);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_verification_context')) process.exit(22);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_build_verification_adjudication')) process.exit(23);",
-        "Promise.resolve(server.executeTool('bounty_init_session', { target_domain: 'example.com', target_url: 'https://example.com/' }))",
-        "  .then((init) => { if (!init.ok) process.exit(24); return server.executeTool('bounty_list_auth_profiles', { target_domain: 'example.com' }); })",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_read_tool_telemetry')) process.exit(6);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_read_pipeline_analytics')) process.exit(7);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_finalize_agent_run')) process.exit(8);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_write_evidence_packs')) process.exit(9);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_read_evidence_packs')) process.exit(10);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_promote_surface_leads')) process.exit(11);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_read_session_summary')) process.exit(12);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_set_operator_note')) process.exit(13);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_clear_operator_note')) process.exit(14);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_route_surfaces')) process.exit(15);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_read_surface_routes')) process.exit(16);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_start_next_wave')) process.exit(17);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_select_technique_packs')) process.exit(18);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_read_technique_pack')) process.exit(19);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_log_technique_attempt')) process.exit(20);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_get_context_budget')) process.exit(21);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_read_verification_context')) process.exit(22);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_build_verification_adjudication')) process.exit(23);",
+        "Promise.resolve(server.executeTool('bob_init_session', { target_domain: 'example.com', target_url: 'https://example.com/' }))",
+        "  .then((init) => { if (!init.ok) process.exit(24); return server.executeTool('bob_list_auth_profiles', { target_domain: 'example.com' }); })",
         "  .then((result) => { if (!result.ok || result.data.target_domain !== 'example.com') process.exit(4); })",
         "  .catch(() => process.exit(5));",
       ].join(" "),
@@ -296,7 +296,7 @@ test("installer merges existing MCP/settings config idempotently", () => {
         allow: [
           "Read",
           "custom-tool",
-          "mcp__bountyagent__bounty_merge_wave_handoffs",
+          "mcp__bountyagent__bob_merge_wave_handoffs",
           "mcp__bountyagent__custom_user_tool",
         ],
       },
@@ -354,8 +354,8 @@ test("installer merges existing MCP/settings config idempotently", () => {
     assert.equal(settings.permissions.allow.length, new Set(settings.permissions.allow).size);
     assert.ok(settings.permissions.allow.includes("custom-tool"));
     assert.ok(settings.permissions.allow.includes("mcp__bountyagent__custom_user_tool"));
-    assert.ok(settings.permissions.allow.includes("mcp__bountyagent__bounty_http_scan"));
-    assert.ok(!settings.permissions.allow.includes("mcp__bountyagent__bounty_merge_wave_handoffs"));
+    assert.ok(settings.permissions.allow.includes("mcp__bountyagent__bob_http_scan"));
+    assert.ok(!settings.permissions.allow.includes("mcp__bountyagent__bob_merge_wave_handoffs"));
     assert.match(settings.statusLine.command, /\$\{CLAUDE_PROJECT_DIR:-\$PWD\}/);
 
     const bashEntry = settings.hooks.PreToolUse.find((entry) => entry.matcher === "Bash");
@@ -366,7 +366,7 @@ test("installer merges existing MCP/settings config idempotently", () => {
       1,
     );
     assert.equal(
-      settings.hooks.PreToolUse.filter((entry) => entry.matcher === "mcp__bountyagent__bounty_http_scan").length,
+      settings.hooks.PreToolUse.filter((entry) => entry.matcher === "mcp__bountyagent__bob_http_scan").length,
       0,
     );
     const stopEntry = settings.hooks.SubagentStop.find((entry) => entry.matcher === "evaluator-agent");

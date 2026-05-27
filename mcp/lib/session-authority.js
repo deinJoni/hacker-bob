@@ -37,67 +37,67 @@ const AUTHORITY_CLASSES = Object.freeze([
 ]);
 
 const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
-  bounty_anchor_run: "smart_contract_contextual",
-  bounty_append_chain_node: "initialized_session_mutation",
-  bounty_apply_wave_merge: "initialized_session_mutation",
-  bounty_aptos_fetch_module: "smart_contract_contextual",
-  bounty_aptos_fetch_resource: "smart_contract_contextual",
-  bounty_aptos_run: "smart_contract_contextual",
-  bounty_auth_store: "initialized_session_mutation",
-  bounty_auto_signup: "scoped_http_network",
-  bounty_build_surface_graph: "initialized_session_mutation",
-  bounty_build_symbol_surface_index: "initialized_session_mutation",
-  bounty_build_verification_adjudication: "initialized_session_mutation",
-  bounty_chain_ancestry: "initialized_session_read",
-  bounty_chain_frontier: "initialized_session_read",
-  bounty_clear_operator_note: "initialized_session_mutation",
-  bounty_clear_terminal_block: "initialized_session_mutation",
-  bounty_cosmwasm_fetch_contract: "smart_contract_contextual",
-  bounty_cosmwasm_run: "smart_contract_contextual",
-  bounty_cosmwasm_smart_query: "smart_contract_contextual",
-  bounty_diff_verification_attempts: "initialized_session_read",
-  bounty_evaluate_capabilities: "global_read",
-  bounty_evm_call: "global_preapproval",
-  bounty_evm_fetch_source: "smart_contract_contextual",
-  bounty_evm_role_table: "global_preapproval",
-  bounty_evm_storage_read: "global_preapproval",
-  bounty_extract_routes: "initialized_session_read",
-  bounty_finalize_agent_run: "initialized_session_mutation",
-  bounty_foundry_run: "smart_contract_contextual",
-  bounty_get_context_budget: "mode_dependent_session",
-  bounty_halmos_run: "smart_contract_contextual",
-  bounty_http_scan: "scoped_http_network",
-  bounty_import_http_traffic: "scoped_http_network",
-  bounty_import_static_artifact: "initialized_session_mutation",
-  bounty_index_finding: "initialized_session_mutation",
-  bounty_ingest_audit_report: "initialized_session_mutation",
-  bounty_ingest_schema_doc: "initialized_session_mutation",
-  bounty_init_session: "bootstrap_session",
-  bounty_list_auth_profiles: "initialized_session_read",
-  bounty_list_findings: "initialized_session_read",
-  bounty_log_coverage: "initialized_session_mutation",
-  bounty_log_dead_ends: "initialized_session_mutation",
-  bounty_log_technique_attempt: "initialized_session_mutation",
-  bounty_merge_wave_handoffs: "initialized_session_read",
-  bounty_promote_surface_leads: "initialized_session_mutation",
-  bounty_public_intel: "scoped_http_network",
-  bounty_query_audit_reports: "initialized_session_read",
-  bounty_query_chain_tree: "initialized_session_read",
-  bounty_query_findings_index: "mode_dependent_session",
-  bounty_query_schema_contracts: "initialized_session_read",
-  bounty_query_surface_graph: "initialized_session_read",
-  bounty_read_auth_differential_results: "initialized_session_read",
-  bounty_read_capability_metrics: "mode_dependent_session",
-  bounty_read_capability_playbook: "global_read",
-  bounty_read_chain_attempts: "initialized_session_read",
-  bounty_read_doc_delta_results: "initialized_session_read",
-  bounty_read_evidence_packs: "initialized_session_read",
-  bounty_read_findings: "initialized_session_read",
-  bounty_read_grade_verdict: "initialized_session_read",
-  bounty_read_http_audit: "initialized_session_read",
-  bounty_read_assignment_brief: "initialized_session_read",
-  bounty_read_invariant_runs: "initialized_session_read",
-  bounty_read_pipeline_analytics: "mode_dependent_session",
+  bob_anchor_run: "smart_contract_contextual",
+  bob_append_chain_node: "initialized_session_mutation",
+  bob_apply_wave_merge: "initialized_session_mutation",
+  bob_aptos_fetch_module: "smart_contract_contextual",
+  bob_aptos_fetch_resource: "smart_contract_contextual",
+  bob_aptos_run: "smart_contract_contextual",
+  bob_auth_store: "initialized_session_mutation",
+  bob_auto_signup: "scoped_http_network",
+  bob_build_surface_graph: "initialized_session_mutation",
+  bob_build_symbol_surface_index: "initialized_session_mutation",
+  bob_build_verification_adjudication: "initialized_session_mutation",
+  bob_chain_ancestry: "initialized_session_read",
+  bob_chain_frontier: "initialized_session_read",
+  bob_clear_operator_note: "initialized_session_mutation",
+  bob_clear_terminal_block: "initialized_session_mutation",
+  bob_cosmwasm_fetch_contract: "smart_contract_contextual",
+  bob_cosmwasm_run: "smart_contract_contextual",
+  bob_cosmwasm_smart_query: "smart_contract_contextual",
+  bob_diff_verification_attempts: "initialized_session_read",
+  bob_evaluate_capabilities: "global_read",
+  bob_evm_call: "global_preapproval",
+  bob_evm_fetch_source: "smart_contract_contextual",
+  bob_evm_role_table: "global_preapproval",
+  bob_evm_storage_read: "global_preapproval",
+  bob_extract_routes: "initialized_session_read",
+  bob_finalize_agent_run: "initialized_session_mutation",
+  bob_foundry_run: "smart_contract_contextual",
+  bob_get_context_budget: "mode_dependent_session",
+  bob_halmos_run: "smart_contract_contextual",
+  bob_http_scan: "scoped_http_network",
+  bob_import_http_traffic: "scoped_http_network",
+  bob_import_static_artifact: "initialized_session_mutation",
+  bob_index_finding: "initialized_session_mutation",
+  bob_ingest_audit_report: "initialized_session_mutation",
+  bob_ingest_schema_doc: "initialized_session_mutation",
+  bob_init_session: "bootstrap_session",
+  bob_list_auth_profiles: "initialized_session_read",
+  bob_list_findings: "initialized_session_read",
+  bob_log_coverage: "initialized_session_mutation",
+  bob_log_dead_ends: "initialized_session_mutation",
+  bob_log_technique_attempt: "initialized_session_mutation",
+  bob_merge_wave_handoffs: "initialized_session_read",
+  bob_promote_surface_leads: "initialized_session_mutation",
+  bob_public_intel: "scoped_http_network",
+  bob_query_audit_reports: "initialized_session_read",
+  bob_query_chain_tree: "initialized_session_read",
+  bob_query_findings_index: "mode_dependent_session",
+  bob_query_schema_contracts: "initialized_session_read",
+  bob_query_surface_graph: "initialized_session_read",
+  bob_read_auth_differential_results: "initialized_session_read",
+  bob_read_capability_metrics: "mode_dependent_session",
+  bob_read_capability_playbook: "global_read",
+  bob_read_chain_attempts: "initialized_session_read",
+  bob_read_doc_delta_results: "initialized_session_read",
+  bob_read_evidence_packs: "initialized_session_read",
+  bob_read_findings: "initialized_session_read",
+  bob_read_grade_verdict: "initialized_session_read",
+  bob_read_http_audit: "initialized_session_read",
+  bob_read_assignment_brief: "initialized_session_read",
+  bob_read_invariant_runs: "initialized_session_read",
+  bob_read_pipeline_analytics: "mode_dependent_session",
   bob_advance_session: "initialized_session_mutation",
   bob_append_frontier_event: "initialized_session_mutation",
   bob_finalize_report: "initialized_session_mutation",
@@ -106,49 +106,49 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_read_session_nucleus: "initialized_session_read",
   bob_schedule_tasks: "initialized_session_mutation",
   bob_set_queue_policy: "initialized_session_mutation",
-  bounty_read_session_state: "initialized_session_read",
-  bounty_read_session_summary: "initialized_session_read",
-  bounty_read_state_summary: "initialized_session_read",
-  bounty_read_surface_leads: "initialized_session_read",
-  bounty_read_surface_routes: "initialized_session_read",
-  bounty_read_technique_pack: "mode_dependent_session",
-  bounty_read_tool_telemetry: "mode_dependent_session",
-  bounty_read_verification_context: "initialized_session_read",
-  bounty_read_verification_round: "initialized_session_read",
-  bounty_read_wave_handoffs: "initialized_session_read",
-  bounty_record_finding: "initialized_session_mutation",
-  bounty_record_surface_leads: "initialized_session_mutation",
+  bob_read_session_state: "initialized_session_read",
+  bob_read_session_summary: "initialized_session_read",
+  bob_read_state_summary: "initialized_session_read",
+  bob_read_surface_leads: "initialized_session_read",
+  bob_read_surface_routes: "initialized_session_read",
+  bob_read_technique_pack: "mode_dependent_session",
+  bob_read_tool_telemetry: "mode_dependent_session",
+  bob_read_verification_context: "initialized_session_read",
+  bob_read_verification_round: "initialized_session_read",
+  bob_read_wave_handoffs: "initialized_session_read",
+  bob_record_finding: "initialized_session_mutation",
+  bob_record_surface_leads: "initialized_session_mutation",
   bounty_report_written: "initialized_session_mutation",
-  bounty_route_surfaces: "initialized_session_mutation",
-  bounty_run_auth_differential: "scoped_http_network",
-  bounty_run_doc_delta: "scoped_http_network",
-  bounty_run_invariant_for_finding: "smart_contract_contextual",
-  bounty_select_technique_packs: "initialized_session_read",
-  bounty_set_operator_note: "initialized_session_mutation",
-  bounty_signup_detect: "scoped_http_network",
-  bounty_start_next_wave: "initialized_session_mutation",
-  bounty_start_wave: "initialized_session_mutation",
-  bounty_static_scan: "initialized_session_mutation",
-  bounty_substrate_fetch_runtime: "smart_contract_contextual",
-  bounty_substrate_fetch_storage: "smart_contract_contextual",
-  bounty_substrate_run: "smart_contract_contextual",
-  bounty_suggest_invariants: "global_read",
-  bounty_sui_fetch_object: "smart_contract_contextual",
-  bounty_sui_fetch_package: "smart_contract_contextual",
-  bounty_sui_run: "smart_contract_contextual",
-  bounty_summarize_diff_impact: "initialized_session_read",
-  bounty_svm_fetch_account: "smart_contract_contextual",
-  bounty_svm_fetch_program: "smart_contract_contextual",
-  bounty_temp_email: "global_preapproval",
+  bob_route_surfaces: "initialized_session_mutation",
+  bob_run_auth_differential: "scoped_http_network",
+  bob_run_doc_delta: "scoped_http_network",
+  bob_run_invariant_for_finding: "smart_contract_contextual",
+  bob_select_technique_packs: "initialized_session_read",
+  bob_set_operator_note: "initialized_session_mutation",
+  bob_signup_detect: "scoped_http_network",
+  bob_start_next_wave: "initialized_session_mutation",
+  bob_start_wave: "initialized_session_mutation",
+  bob_static_scan: "initialized_session_mutation",
+  bob_substrate_fetch_runtime: "smart_contract_contextual",
+  bob_substrate_fetch_storage: "smart_contract_contextual",
+  bob_substrate_run: "smart_contract_contextual",
+  bob_suggest_invariants: "global_read",
+  bob_sui_fetch_object: "smart_contract_contextual",
+  bob_sui_fetch_package: "smart_contract_contextual",
+  bob_sui_run: "smart_contract_contextual",
+  bob_summarize_diff_impact: "initialized_session_read",
+  bob_svm_fetch_account: "smart_contract_contextual",
+  bob_svm_fetch_program: "smart_contract_contextual",
+  bob_temp_email: "global_preapproval",
   bounty_transition_phase: "initialized_session_mutation",
-  bounty_wave_handoff_status: "initialized_session_read",
-  bounty_wave_status: "initialized_session_read",
-  bounty_write_chain_attempt: "initialized_session_mutation",
-  bounty_write_evidence_packs: "initialized_session_mutation",
-  bounty_write_grade_verdict: "initialized_session_mutation",
-  bounty_write_handoff: "initialized_session_mutation",
-  bounty_write_verification_round: "initialized_session_mutation",
-  bounty_write_wave_handoff: "initialized_session_mutation",
+  bob_wave_handoff_status: "initialized_session_read",
+  bob_wave_status: "initialized_session_read",
+  bob_write_chain_attempt: "initialized_session_mutation",
+  bob_write_evidence_packs: "initialized_session_mutation",
+  bob_write_grade_verdict: "initialized_session_mutation",
+  bob_write_handoff: "initialized_session_mutation",
+  bob_write_verification_round: "initialized_session_mutation",
+  bob_write_wave_handoff: "initialized_session_mutation",
 });
 
 const LEGACY_DEFAULTABLE_FIELDS = Object.freeze([
@@ -218,11 +218,31 @@ function authorityMode(env = process.env) {
 }
 
 function classForTool(toolName) {
-  return EXPLICIT_AUTHORITY_CLASS_BY_TOOL[toolName] || null;
+  if (Object.prototype.hasOwnProperty.call(EXPLICIT_AUTHORITY_CLASS_BY_TOOL, toolName)) {
+    return EXPLICIT_AUTHORITY_CLASS_BY_TOOL[toolName];
+  }
+  // Cycle P.1: deprecation aliases inherit their primary's authority class.
+  // The class map is keyed on the canonical bob_* name only; bounty_* aliases
+  // resolve through the registry's primaryToolName indirection so we don't
+  // double-list every entry.
+  try {
+    // Lazy-require to avoid a load-order cycle (tool-registry imports
+    // capability-packs, which on some test paths transitively loads this
+    // module before the registry has finished initializing).
+    const { primaryToolName } = require("./tool-registry.js");
+    const primary = primaryToolName(toolName);
+    if (primary && primary !== toolName) {
+      return EXPLICIT_AUTHORITY_CLASS_BY_TOOL[primary] || null;
+    }
+  } catch {
+    // If the registry is mid-construction, fall through and report missing
+    // class; the dispatch path will surface the resulting STATE_CONFLICT.
+  }
+  return null;
 }
 
 function modeRule(toolName, args = {}) {
-  if (toolName === "bounty_query_findings_index") {
+  if (toolName === "bob_query_findings_index") {
     if (args.scope === "cross_target") {
       return {
         authority_class: "cross_session_read",
@@ -238,7 +258,7 @@ function modeRule(toolName, args = {}) {
       authority_source: "session_state",
     };
   }
-  if (toolName === "bounty_get_context_budget") {
+  if (toolName === "bob_get_context_budget") {
     if (args.surface_id != null) {
       return {
         authority_class: "initialized_session_read",
@@ -254,7 +274,7 @@ function modeRule(toolName, args = {}) {
       authority_source: "optional_absent",
     };
   }
-  if (toolName === "bounty_read_technique_pack") {
+  if (toolName === "bob_read_technique_pack") {
     if (args.mode === "full") {
       return {
         authority_class: "initialized_session_mutation",
@@ -270,7 +290,7 @@ function modeRule(toolName, args = {}) {
       authority_source: "optional_absent",
     };
   }
-  if (toolName === "bounty_read_tool_telemetry") {
+  if (toolName === "bob_read_tool_telemetry") {
     if (targetDomainPresent(args)) {
       return {
         authority_class: "initialized_session_read",
@@ -286,7 +306,7 @@ function modeRule(toolName, args = {}) {
       authority_source: "cross_session",
     };
   }
-  if (toolName === "bounty_read_pipeline_analytics") {
+  if (toolName === "bob_read_pipeline_analytics") {
     if (targetDomainPresent(args)) {
       return {
         authority_class: "initialized_session_read",
@@ -302,7 +322,7 @@ function modeRule(toolName, args = {}) {
       authority_source: "cross_session",
     };
   }
-  if (toolName === "bounty_read_capability_metrics") {
+  if (toolName === "bob_read_capability_metrics") {
     if (targetDomainPresent(args)) {
       return {
         authority_class: "initialized_session_read",
@@ -327,7 +347,16 @@ function baseRuleForTool(tool, args) {
     return null;
   }
   if (defaultClass === "mode_dependent_session") {
-    return modeRule(tool.name, args);
+    // Resolve aliases to their primary so mode rules keyed on canonical names
+    // still apply when a deprecated bounty_* name is invoked.
+    let resolvedName = tool.name;
+    try {
+      const { primaryToolName } = require("./tool-registry.js");
+      resolvedName = primaryToolName(tool.name) || tool.name;
+    } catch {
+      // Fall back to alias name if registry not yet initialized.
+    }
+    return modeRule(resolvedName, args);
   }
   if (defaultClass === "bootstrap_session") {
     return {
@@ -523,7 +552,7 @@ function readRawAuthorityState(authorityTargetDomain, rule, args) {
     throw blockedDecision(rule, args, {
       errorCode: "no_session",
       envelopeCode: ERROR_CODES.STATE_CONFLICT,
-      message: `Session authority is missing for ${authorityTargetDomain}; call bounty_init_session first`,
+      message: `Session authority is missing for ${authorityTargetDomain}; call bob_init_session first`,
       authorityTargetDomain,
       sessionPresent: false,
       match: false,

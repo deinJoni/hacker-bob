@@ -325,113 +325,113 @@ const {
 } = require("../mcp/redaction.js");
 
 const EXPECTED_TOOL_NAMES = [
-  "bounty_http_scan",
-  "bounty_read_http_audit",
-  "bounty_start_next_wave",
-  "bounty_start_wave",
-  "bounty_route_surfaces",
-  "bounty_read_surface_routes",
-  "bounty_import_http_traffic",
-  "bounty_public_intel",
-  "bounty_import_static_artifact",
-  "bounty_ingest_schema_doc",
-  "bounty_query_schema_contracts",
-  "bounty_run_doc_delta",
-  "bounty_read_doc_delta_results",
-  "bounty_run_auth_differential",
-  "bounty_read_auth_differential_results",
-  "bounty_static_scan",
-  "bounty_record_finding",
-  "bounty_read_findings",
-  "bounty_list_findings",
-  "bounty_index_finding",
-  "bounty_query_findings_index",
-  "bounty_write_chain_attempt",
-  "bounty_read_chain_attempts",
-  "bounty_append_chain_node",
-  "bounty_query_chain_tree",
-  "bounty_chain_frontier",
-  "bounty_chain_ancestry",
-  "bounty_write_verification_round",
-  "bounty_read_verification_round",
-  "bounty_read_verification_context",
-  "bounty_diff_verification_attempts",
-  "bounty_build_verification_adjudication",
-  "bounty_write_evidence_packs",
-  "bounty_read_evidence_packs",
-  "bounty_write_grade_verdict",
-  "bounty_read_grade_verdict",
-  "bounty_init_session",
-  "bounty_read_session_state",
+  "bob_http_scan",
+  "bob_read_http_audit",
+  "bob_start_next_wave",
+  "bob_start_wave",
+  "bob_route_surfaces",
+  "bob_read_surface_routes",
+  "bob_import_http_traffic",
+  "bob_public_intel",
+  "bob_import_static_artifact",
+  "bob_ingest_schema_doc",
+  "bob_query_schema_contracts",
+  "bob_run_doc_delta",
+  "bob_read_doc_delta_results",
+  "bob_run_auth_differential",
+  "bob_read_auth_differential_results",
+  "bob_static_scan",
+  "bob_record_finding",
+  "bob_read_findings",
+  "bob_list_findings",
+  "bob_index_finding",
+  "bob_query_findings_index",
+  "bob_write_chain_attempt",
+  "bob_read_chain_attempts",
+  "bob_append_chain_node",
+  "bob_query_chain_tree",
+  "bob_chain_frontier",
+  "bob_chain_ancestry",
+  "bob_write_verification_round",
+  "bob_read_verification_round",
+  "bob_read_verification_context",
+  "bob_diff_verification_attempts",
+  "bob_build_verification_adjudication",
+  "bob_write_evidence_packs",
+  "bob_read_evidence_packs",
+  "bob_write_grade_verdict",
+  "bob_read_grade_verdict",
+  "bob_init_session",
+  "bob_read_session_state",
   "bob_read_session_nucleus",
   "bob_advance_session",
   "bounty_transition_phase",
-  "bounty_apply_wave_merge",
-  "bounty_write_handoff",
-  "bounty_write_wave_handoff",
-  "bounty_finalize_agent_run",
-  "bounty_wave_handoff_status",
-  "bounty_merge_wave_handoffs",
-  "bounty_read_wave_handoffs",
-  "bounty_log_dead_ends",
-  "bounty_log_coverage",
-  "bounty_wave_status",
-  "bounty_temp_email",
-  "bounty_signup_detect",
-  "bounty_auth_store",
-  "bounty_list_auth_profiles",
-  "bounty_auto_signup",
-  "bounty_read_state_summary",
-  "bounty_read_session_summary",
-  "bounty_set_operator_note",
-  "bounty_clear_operator_note",
-  "bounty_clear_terminal_block",
+  "bob_apply_wave_merge",
+  "bob_write_handoff",
+  "bob_write_wave_handoff",
+  "bob_finalize_agent_run",
+  "bob_wave_handoff_status",
+  "bob_merge_wave_handoffs",
+  "bob_read_wave_handoffs",
+  "bob_log_dead_ends",
+  "bob_log_coverage",
+  "bob_wave_status",
+  "bob_temp_email",
+  "bob_signup_detect",
+  "bob_auth_store",
+  "bob_list_auth_profiles",
+  "bob_auto_signup",
+  "bob_read_state_summary",
+  "bob_read_session_summary",
+  "bob_set_operator_note",
+  "bob_clear_operator_note",
+  "bob_clear_terminal_block",
   "bounty_report_written",
   "bob_finalize_report",
-  "bounty_read_assignment_brief",
-  "bounty_read_capability_playbook",
-  "bounty_get_context_budget",
-  "bounty_select_technique_packs",
-  "bounty_read_technique_pack",
-  "bounty_log_technique_attempt",
-  "bounty_read_tool_telemetry",
-  "bounty_read_pipeline_analytics",
-  "bounty_read_capability_metrics",
-  "bounty_evaluate_capabilities",
-  "bounty_ingest_audit_report",
-  "bounty_query_audit_reports",
-  "bounty_suggest_invariants",
-  "bounty_run_invariant_for_finding",
-  "bounty_read_invariant_runs",
-  "bounty_extract_routes",
-  "bounty_build_symbol_surface_index",
-  "bounty_summarize_diff_impact",
-  "bounty_evm_call",
-  "bounty_evm_storage_read",
-  "bounty_evm_fetch_source",
-  "bounty_evm_role_table",
-  "bounty_foundry_run",
-  "bounty_halmos_run",
-  "bounty_svm_fetch_account",
-  "bounty_svm_fetch_program",
-  "bounty_anchor_run",
-  "bounty_aptos_fetch_resource",
-  "bounty_aptos_fetch_module",
-  "bounty_aptos_run",
-  "bounty_sui_fetch_object",
-  "bounty_sui_fetch_package",
-  "bounty_sui_run",
-  "bounty_substrate_run",
-  "bounty_substrate_fetch_storage",
-  "bounty_substrate_fetch_runtime",
-  "bounty_cosmwasm_run",
-  "bounty_cosmwasm_fetch_contract",
-  "bounty_cosmwasm_smart_query",
-  "bounty_record_surface_leads",
-  "bounty_read_surface_leads",
-  "bounty_promote_surface_leads",
-  "bounty_build_surface_graph",
-  "bounty_query_surface_graph",
+  "bob_read_assignment_brief",
+  "bob_read_capability_playbook",
+  "bob_get_context_budget",
+  "bob_select_technique_packs",
+  "bob_read_technique_pack",
+  "bob_log_technique_attempt",
+  "bob_read_tool_telemetry",
+  "bob_read_pipeline_analytics",
+  "bob_read_capability_metrics",
+  "bob_evaluate_capabilities",
+  "bob_ingest_audit_report",
+  "bob_query_audit_reports",
+  "bob_suggest_invariants",
+  "bob_run_invariant_for_finding",
+  "bob_read_invariant_runs",
+  "bob_extract_routes",
+  "bob_build_symbol_surface_index",
+  "bob_summarize_diff_impact",
+  "bob_evm_call",
+  "bob_evm_storage_read",
+  "bob_evm_fetch_source",
+  "bob_evm_role_table",
+  "bob_foundry_run",
+  "bob_halmos_run",
+  "bob_svm_fetch_account",
+  "bob_svm_fetch_program",
+  "bob_anchor_run",
+  "bob_aptos_fetch_resource",
+  "bob_aptos_fetch_module",
+  "bob_aptos_run",
+  "bob_sui_fetch_object",
+  "bob_sui_fetch_package",
+  "bob_sui_run",
+  "bob_substrate_run",
+  "bob_substrate_fetch_storage",
+  "bob_substrate_fetch_runtime",
+  "bob_cosmwasm_run",
+  "bob_cosmwasm_fetch_contract",
+  "bob_cosmwasm_smart_query",
+  "bob_record_surface_leads",
+  "bob_read_surface_leads",
+  "bob_promote_surface_leads",
+  "bob_build_surface_graph",
+  "bob_query_surface_graph",
   "bob_append_frontier_event",
   "bob_materialize_frontier",
   "bob_read_queue_policy",
@@ -610,7 +610,7 @@ test("HTTP audit logs local PSL overlay source for allowed scoped requests", asy
         [`https://app.${domain}/ok`]: { status: 200, statusText: "OK", body: "ok" },
         [`https://app.${domain}/fail`]: { error: new Error("connection reset") },
       }, async () => {
-        const result = await executeTool("bounty_http_scan", {
+        const result = await executeTool("bob_http_scan", {
           target_domain: domain,
           method: "GET",
           url: `https://app.${domain}/ok`,
@@ -618,7 +618,7 @@ test("HTTP audit logs local PSL overlay source for allowed scoped requests", asy
         });
 
         assert.equal(result.ok, true);
-        const missingAuth = await executeTool("bounty_http_scan", {
+        const missingAuth = await executeTool("bob_http_scan", {
           target_domain: domain,
           method: "GET",
           url: `https://app.${domain}/missing-auth`,
@@ -628,7 +628,7 @@ test("HTTP audit logs local PSL overlay source for allowed scoped requests", asy
         assert.equal(missingAuth.ok, false);
         assert.equal(missingAuth.error.code, "AUTH_MISSING");
 
-        const requestError = await executeTool("bounty_http_scan", {
+        const requestError = await executeTool("bob_http_scan", {
           target_domain: domain,
           method: "GET",
           url: `https://app.${domain}/fail`,
@@ -658,9 +658,9 @@ test("HTTP audit logs local PSL overlay source for allowed scoped requests", asy
   });
 });
 
-test("bounty_init_session validates PSL-backed target_domain before writing state", async () => {
+test("bob_init_session validates PSL-backed target_domain before writing state", async () => {
   await withTempHome(async () => {
-    const publicSuffix = await executeTool("bounty_init_session", {
+    const publicSuffix = await executeTool("bob_init_session", {
       target_domain: "github.io",
       target_url: "https://foo.github.io",
     });
@@ -668,7 +668,7 @@ test("bounty_init_session validates PSL-backed target_domain before writing stat
     assert.equal(publicSuffix.error.code, "INVALID_ARGUMENTS");
     assert.match(publicSuffix.error.message, /registrable domain, not only a public suffix/);
 
-    const offTargetUrl = await executeTool("bounty_init_session", {
+    const offTargetUrl = await executeTool("bob_init_session", {
       target_domain: "foo.github.io",
       target_url: "https://bar.github.io",
     });
@@ -685,7 +685,7 @@ test("scoped tool policy normalizes IDN target_domain before handlers run", asyn
     await withMockSafeFetch({
       [`https://${asciiDomain}/ok`]: { status: 200, statusText: "OK", body: "ok" },
     }, async (requestedUrls) => {
-      const result = await executeTool("bounty_http_scan", {
+      const result = await executeTool("bob_http_scan", {
         target_domain: "食狮.com.cn",
         method: "GET",
         url: "https://食狮.com.cn/ok",
@@ -1391,26 +1391,53 @@ test("mcp server public exports remain stable", () => {
 });
 
 test("MCP tool registry and dispatch cases stay in sync", async () => {
+  // Cycle P.1: TOOLS publishes only primary names. TOOL_REGISTRY carries both
+  // primaries and bounty_* deprecation aliases for handler routing; aliases
+  // are registry-only entries (alias_of set) that share their primary's
+  // metadata. EXPECTED_TOOL_NAMES enumerates the primary surface.
   const toolNames = TOOLS.map((tool) => tool.name);
+  const primaryRegistryNames = TOOL_REGISTRY
+    .filter((tool) => !tool.alias_of)
+    .map((tool) => tool.name);
   assert.deepEqual(toolNames, EXPECTED_TOOL_NAMES);
-  assert.deepEqual(TOOL_REGISTRY.map((tool) => tool.name), EXPECTED_TOOL_NAMES);
+  assert.deepEqual(primaryRegistryNames, EXPECTED_TOOL_NAMES);
   assert.deepEqual(TOOL_MODULES.map((tool) => defineTool(tool).name), EXPECTED_TOOL_NAMES);
   assert.deepEqual([...toolNames].sort(), [...new Set(toolNames)].sort(), "tool names must be unique");
   assert.ok(toolNames.every((name) => name.startsWith("bounty_") || name.startsWith("bob_")));
-  assert.ok(!toolNames.includes("bounty_auth_manual"));
-  assert.ok(!toolNames.includes("bounty_read_handoff"));
+  assert.ok(!toolNames.includes("bob_auth_manual"));
+  assert.ok(!toolNames.includes("bob_read_handoff"));
   assert.equal(
-    TOOLS.find((tool) => tool.name === "bounty_static_scan").inputSchema.properties.artifact_id.pattern,
+    TOOLS.find((tool) => tool.name === "bob_static_scan").inputSchema.properties.artifact_id.pattern,
     "^SA-[1-9][0-9]*$",
   );
 
-  const dispatchNames = Object.keys(TOOL_HANDLERS);
+  // Every primary that declares aliases must have a corresponding registry
+  // entry for each alias. Aliases must point back to a registered primary.
+  const allRegistryNames = new Set(TOOL_REGISTRY.map((tool) => tool.name));
+  for (const tool of TOOL_REGISTRY) {
+    if (tool.alias_of) {
+      assert.ok(allRegistryNames.has(tool.alias_of), `alias ${tool.name} points to unknown primary ${tool.alias_of}`);
+    } else if (Array.isArray(tool.aliases)) {
+      for (const aliasName of tool.aliases) {
+        assert.ok(allRegistryNames.has(aliasName), `${tool.name} declares missing alias ${aliasName}`);
+      }
+    }
+  }
 
-  assert.deepEqual(dispatchNames, toolNames);
+  // Dispatch resolves both primary and alias names so existing clients that
+  // still call bounty_* can route through the same handler.
+  const dispatchNames = Object.keys(TOOL_HANDLERS);
+  const dispatchPrimaryNames = dispatchNames.filter((name) => {
+    const tool = TOOL_REGISTRY.find((entry) => entry.name === name);
+    return tool && !tool.alias_of;
+  });
+  assert.deepEqual(dispatchPrimaryNames, toolNames);
   assert.deepEqual(Object.keys(TOOL_MANIFEST), toolNames);
   for (const tool of TOOL_REGISTRY) {
     assert.equal(TOOL_HANDLERS[tool.name], tool.handler);
-    assert.equal(TOOLS.find((item) => item.name === tool.name).inputSchema, tool.inputSchema);
+    if (!tool.alias_of) {
+      assert.equal(TOOLS.find((item) => item.name === tool.name).inputSchema, tool.inputSchema);
+    }
   }
   await withTempHome(async () => {
     assert.deepEqual(await executeTool("__unknown_tool__", {}), {
@@ -1445,52 +1472,52 @@ test("MCP tool manifest exposes required policy metadata for every tool", () => 
     assert.equal(Object.isFrozen(metadata.scope_url_fields), true, `${tool.name} scope_url_fields should be frozen`);
     assert.equal(Object.isFrozen(tool.inputSchema), true, `${tool.name} inputSchema should be frozen`);
   }
-  const httpScanSchema = TOOLS.find((tool) => tool.name === "bounty_http_scan").inputSchema;
+  const httpScanSchema = TOOLS.find((tool) => tool.name === "bob_http_scan").inputSchema;
   assert.equal(Object.isFrozen(httpScanSchema.properties), true);
   assert.equal(Object.isFrozen(httpScanSchema.required), true);
 });
 
 test("MCP tool registry exposes capability metadata for metric and eval tools", () => {
   const capabilityMap = capabilityToolMapFromRegistry();
-  assert.equal(TOOL_MANIFEST.bounty_http_scan.capability_id, null);
-  assert.equal(TOOL_MANIFEST.bounty_ingest_schema_doc.capability_id, "C2_doc_vs_behavior");
+  assert.equal(TOOL_MANIFEST.bob_http_scan.capability_id, null);
+  assert.equal(TOOL_MANIFEST.bob_ingest_schema_doc.capability_id, "C2_doc_vs_behavior");
   assert.equal(Object.isFrozen(capabilityMap), true);
   for (const tools of Object.values(capabilityMap)) {
     assert.equal(Object.isFrozen(tools), true);
   }
   assert.deepEqual(capabilityMap, {
     C2_doc_vs_behavior: [
-      "bounty_ingest_schema_doc",
-      "bounty_query_schema_contracts",
-      "bounty_run_doc_delta",
-      "bounty_read_doc_delta_results",
+      "bob_ingest_schema_doc",
+      "bob_query_schema_contracts",
+      "bob_run_doc_delta",
+      "bob_read_doc_delta_results",
     ],
     C4_multi_account_differential: [
-      "bounty_run_auth_differential",
-      "bounty_read_auth_differential_results",
+      "bob_run_auth_differential",
+      "bob_read_auth_differential_results",
     ],
     I6_findings_index: [
-      "bounty_index_finding",
-      "bounty_query_findings_index",
+      "bob_index_finding",
+      "bob_query_findings_index",
     ],
     I7_chain_state_tree: [
-      "bounty_append_chain_node",
-      "bounty_query_chain_tree",
-      "bounty_chain_frontier",
-      "bounty_chain_ancestry",
+      "bob_append_chain_node",
+      "bob_query_chain_tree",
+      "bob_chain_frontier",
+      "bob_chain_ancestry",
     ],
     X2_verification_attempt_diff: [
-      "bounty_diff_verification_attempts",
+      "bob_diff_verification_attempts",
     ],
     I1_surface_graph: [
-      "bounty_build_surface_graph",
-      "bounty_query_surface_graph",
+      "bob_build_surface_graph",
+      "bob_query_surface_graph",
     ],
   });
 });
 
-test("bounty_read_capability_playbook reads playbooks and rejects invalid capability IDs", async () => {
-  const valid = await executeTool("bounty_read_capability_playbook", {
+test("bob_read_capability_playbook reads playbooks and rejects invalid capability IDs", async () => {
+  const valid = await executeTool("bob_read_capability_playbook", {
     capability_id: "C2_doc_vs_behavior",
   });
   assert.equal(valid.ok, true);
@@ -1500,7 +1527,7 @@ test("bounty_read_capability_playbook reads playbooks and rejects invalid capabi
   assert.match(valid.data.playbook, /schema_slice/);
 
   for (const capability_id of ["", " C2_doc_vs_behavior", "-bad", "bad space", "a".repeat(129), null, 42]) {
-    const invalid = await executeTool("bounty_read_capability_playbook", { capability_id });
+    const invalid = await executeTool("bob_read_capability_playbook", { capability_id });
     assert.equal(invalid.ok, false);
     assert.equal(invalid.error.code, "INVALID_ARGUMENTS");
   }
@@ -1508,130 +1535,130 @@ test("bounty_read_capability_playbook reads playbooks and rejects invalid capabi
 
 test("MCP per-tool modules preserve representative tool behavior", () => {
   const byName = new Map(TOOLS.map((tool) => [tool.name, tool]));
-  assert.equal(byName.get("bounty_read_http_audit").inputSchema.required[0], "target_domain");
-  assert.equal(byName.get("bounty_start_next_wave").inputSchema.additionalProperties, false);
-  assert.equal(byName.get("bounty_start_next_wave").inputSchema.properties.target_domain.minLength, 1);
-  assert.equal(byName.get("bounty_start_next_wave").inputSchema.properties.dry_run.type, "boolean");
-  assert.equal(byName.get("bounty_start_wave").inputSchema.properties.assignments.type, "array");
-  assert.deepEqual(TOOL_MANIFEST.bounty_route_surfaces.role_bundles, ["orchestrator", "router"]);
-  assert.equal(TOOL_MANIFEST.bounty_route_surfaces.mutating, true);
-  assert.equal(TOOL_MANIFEST.bounty_route_surfaces.global_preapproval, false);
-  assert.equal(TOOL_MANIFEST.bounty_route_surfaces.network_access, false);
-  assert.equal(TOOL_MANIFEST.bounty_route_surfaces.browser_access, false);
-  assert.equal(TOOL_MANIFEST.bounty_route_surfaces.sensitive_output, false);
-  assert.deepEqual(TOOL_MANIFEST.bounty_route_surfaces.session_artifacts_written, ["surface-routes.json"]);
-  assert.equal(byName.get("bounty_http_scan").inputSchema.properties.url.type, "string");
-  assert.equal(byName.get("bounty_http_scan").inputSchema.properties.egress_profile.type, "string");
-  assert.deepEqual(byName.get("bounty_http_scan").inputSchema.required, ["method", "url", "target_domain"]);
-  assert.equal(TOOL_MANIFEST.bounty_read_http_audit.mutating, false);
-  assert.equal(byName.get("bounty_write_chain_attempt").inputSchema.properties.outcome.enum.includes("inconclusive"), true);
-  assert.deepEqual(TOOL_MANIFEST.bounty_write_chain_attempt.role_bundles, ["chain"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_read_chain_attempts.role_bundles, ["chain", "verifier", "grader", "reporter", "orchestrator"]);
-  assert.equal(byName.get("bounty_write_evidence_packs").inputSchema.properties.packs.items.properties.finding_id.pattern, "^F-[1-9][0-9]*$");
-  assert.deepEqual(TOOL_MANIFEST.bounty_write_evidence_packs.role_bundles, ["evidence"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_write_evidence_packs.session_artifacts_written, ["evidence-packs.json", "evidence-packs.md", "verification-manifest.json"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_read_evidence_packs.role_bundles, ["evidence", "grader", "reporter", "orchestrator"]);
+  assert.equal(byName.get("bob_read_http_audit").inputSchema.required[0], "target_domain");
+  assert.equal(byName.get("bob_start_next_wave").inputSchema.additionalProperties, false);
+  assert.equal(byName.get("bob_start_next_wave").inputSchema.properties.target_domain.minLength, 1);
+  assert.equal(byName.get("bob_start_next_wave").inputSchema.properties.dry_run.type, "boolean");
+  assert.equal(byName.get("bob_start_wave").inputSchema.properties.assignments.type, "array");
+  assert.deepEqual(TOOL_MANIFEST.bob_route_surfaces.role_bundles, ["orchestrator", "router"]);
+  assert.equal(TOOL_MANIFEST.bob_route_surfaces.mutating, true);
+  assert.equal(TOOL_MANIFEST.bob_route_surfaces.global_preapproval, false);
+  assert.equal(TOOL_MANIFEST.bob_route_surfaces.network_access, false);
+  assert.equal(TOOL_MANIFEST.bob_route_surfaces.browser_access, false);
+  assert.equal(TOOL_MANIFEST.bob_route_surfaces.sensitive_output, false);
+  assert.deepEqual(TOOL_MANIFEST.bob_route_surfaces.session_artifacts_written, ["surface-routes.json"]);
+  assert.equal(byName.get("bob_http_scan").inputSchema.properties.url.type, "string");
+  assert.equal(byName.get("bob_http_scan").inputSchema.properties.egress_profile.type, "string");
+  assert.deepEqual(byName.get("bob_http_scan").inputSchema.required, ["method", "url", "target_domain"]);
+  assert.equal(TOOL_MANIFEST.bob_read_http_audit.mutating, false);
+  assert.equal(byName.get("bob_write_chain_attempt").inputSchema.properties.outcome.enum.includes("inconclusive"), true);
+  assert.deepEqual(TOOL_MANIFEST.bob_write_chain_attempt.role_bundles, ["chain"]);
+  assert.deepEqual(TOOL_MANIFEST.bob_read_chain_attempts.role_bundles, ["chain", "verifier", "grader", "reporter", "orchestrator"]);
+  assert.equal(byName.get("bob_write_evidence_packs").inputSchema.properties.packs.items.properties.finding_id.pattern, "^F-[1-9][0-9]*$");
+  assert.deepEqual(TOOL_MANIFEST.bob_write_evidence_packs.role_bundles, ["evidence"]);
+  assert.deepEqual(TOOL_MANIFEST.bob_write_evidence_packs.session_artifacts_written, ["evidence-packs.json", "evidence-packs.md", "verification-manifest.json"]);
+  assert.deepEqual(TOOL_MANIFEST.bob_read_evidence_packs.role_bundles, ["evidence", "grader", "reporter", "orchestrator"]);
   assert.deepEqual(TOOL_MANIFEST.bounty_transition_phase.session_artifacts_written, [
     "state.json",
     "verification-input-snapshot.json",
     "verification-manifest.json",
     "verification-attempts/attempt-*/",
   ]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_write_verification_round.session_artifacts_written, ["brutalist.json", "balanced.json", "verified-final.json", "verification-manifest.json"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_build_verification_adjudication.role_bundles, ["orchestrator"]);
-  assert.equal(TOOL_MANIFEST.bounty_build_verification_adjudication.mutating, true);
-  assert.equal(TOOL_MANIFEST.bounty_build_verification_adjudication.global_preapproval, false);
-  assert.deepEqual(TOOL_MANIFEST.bounty_build_verification_adjudication.session_artifacts_written, ["verification-adjudication.json", "verification-manifest.json"]);
-  assert.equal(TOOL_MANIFEST.bounty_start_next_wave.mutating, true);
-  assert.equal(TOOL_MANIFEST.bounty_start_next_wave.global_preapproval, false);
-  assert.deepEqual(TOOL_MANIFEST.bounty_start_next_wave.session_artifacts_written, [
+  assert.deepEqual(TOOL_MANIFEST.bob_write_verification_round.session_artifacts_written, ["brutalist.json", "balanced.json", "verified-final.json", "verification-manifest.json"]);
+  assert.deepEqual(TOOL_MANIFEST.bob_build_verification_adjudication.role_bundles, ["orchestrator"]);
+  assert.equal(TOOL_MANIFEST.bob_build_verification_adjudication.mutating, true);
+  assert.equal(TOOL_MANIFEST.bob_build_verification_adjudication.global_preapproval, false);
+  assert.deepEqual(TOOL_MANIFEST.bob_build_verification_adjudication.session_artifacts_written, ["verification-adjudication.json", "verification-manifest.json"]);
+  assert.equal(TOOL_MANIFEST.bob_start_next_wave.mutating, true);
+  assert.equal(TOOL_MANIFEST.bob_start_next_wave.global_preapproval, false);
+  assert.deepEqual(TOOL_MANIFEST.bob_start_next_wave.session_artifacts_written, [
     "surface-routes.json",
     "wave-N-assignments.json",
     "state.json",
     "surface-leads.json",
     "attack_surface.json",
   ]);
-  assert.equal(TOOL_MANIFEST.bounty_start_wave.mutating, true);
-  assert.equal(TOOL_MANIFEST.bounty_start_wave.global_preapproval, false);
-  assert.deepEqual(TOOL_MANIFEST.bounty_start_wave.session_artifacts_written, [
+  assert.equal(TOOL_MANIFEST.bob_start_wave.mutating, true);
+  assert.equal(TOOL_MANIFEST.bob_start_wave.global_preapproval, false);
+  assert.deepEqual(TOOL_MANIFEST.bob_start_wave.session_artifacts_written, [
     "surface-routes.json",
     "wave-N-assignments.json",
     "state.json",
   ]);
-  assert.equal(TOOL_MANIFEST.bounty_http_scan.network_access, true);
-  assert.equal(TOOL_MANIFEST.bounty_http_scan.global_preapproval, true);
-  assert.equal(TOOL_MANIFEST.bounty_http_scan.scope_required, true);
-  assert.deepEqual(TOOL_MANIFEST.bounty_http_scan.scope_url_fields, []);
-  assert.deepEqual(TOOL_MANIFEST.bounty_run_doc_delta.scope_url_fields, ["base_url"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_run_auth_differential.scope_url_fields, ["base_url"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_signup_detect.scope_url_fields, ["target_url"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_auto_signup.scope_url_fields, ["signup_url"]);
-  assert.equal(TOOL_MANIFEST.bounty_read_tool_telemetry.mutating, false);
-  assert.equal(TOOL_MANIFEST.bounty_read_tool_telemetry.global_preapproval, false);
-  assert.deepEqual(TOOL_MANIFEST.bounty_read_tool_telemetry.role_bundles, ["orchestrator"]);
-  assert.equal(TOOL_MANIFEST.bounty_read_pipeline_analytics.mutating, false);
-  assert.equal(TOOL_MANIFEST.bounty_read_pipeline_analytics.global_preapproval, false);
-  assert.deepEqual(TOOL_MANIFEST.bounty_read_pipeline_analytics.role_bundles, ["orchestrator"]);
-  assert.equal(TOOL_MANIFEST.bounty_finalize_agent_run.mutating, true);
-  assert.equal(TOOL_MANIFEST.bounty_finalize_agent_run.global_preapproval, true);
-  assert.deepEqual(TOOL_MANIFEST.bounty_finalize_agent_run.role_bundles, ["evaluator-shared"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_record_surface_leads.role_bundles, ["evaluator-web", "orchestrator"]);
-  assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.mutating, true);
-  assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.global_preapproval, true);
-  assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.network_access, false);
-  assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.browser_access, false);
-  assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.scope_required, false);
-  assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.sensitive_output, false);
-  assert.deepEqual(TOOL_MANIFEST.bounty_record_surface_leads.session_artifacts_written, ["surface-leads.json"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_read_surface_leads.role_bundles, ["evaluator-web", "orchestrator"]);
-  assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.mutating, false);
-  assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.global_preapproval, true);
-  assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.network_access, false);
-  assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.browser_access, false);
-  assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.scope_required, false);
-  assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.sensitive_output, false);
-  assert.deepEqual(TOOL_MANIFEST.bounty_read_surface_leads.session_artifacts_written, []);
-  assert.deepEqual(TOOL_MANIFEST.bounty_promote_surface_leads.role_bundles, ["orchestrator"]);
-  assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.mutating, true);
-  assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.global_preapproval, false);
-  assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.network_access, false);
-  assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.browser_access, false);
-  assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.scope_required, false);
-  assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.sensitive_output, false);
-  assert.deepEqual(TOOL_MANIFEST.bounty_promote_surface_leads.session_artifacts_written, ["surface-leads.json", "attack_surface.json", "state.json"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_get_context_budget.role_bundles, ["evaluator-shared", "orchestrator"]);
-  assert.equal(TOOL_MANIFEST.bounty_get_context_budget.mutating, false);
-  assert.equal(TOOL_MANIFEST.bounty_get_context_budget.network_access, false);
-  assert.equal(TOOL_MANIFEST.bounty_get_context_budget.browser_access, false);
-  assert.equal(TOOL_MANIFEST.bounty_get_context_budget.scope_required, false);
-  assert.deepEqual(TOOL_MANIFEST.bounty_get_context_budget.session_artifacts_written, []);
-  assert.deepEqual(TOOL_MANIFEST.bounty_select_technique_packs.role_bundles, ["evaluator-web", "orchestrator"]);
-  assert.equal(TOOL_MANIFEST.bounty_select_technique_packs.mutating, false);
-  assert.deepEqual(TOOL_MANIFEST.bounty_read_technique_pack.role_bundles, ["evaluator-web", "orchestrator"]);
-  assert.equal(TOOL_MANIFEST.bounty_read_technique_pack.mutating, true);
-  assert.equal(byName.get("bounty_read_technique_pack").inputSchema.properties.mode.enum.includes("full"), true);
-  assert.deepEqual(TOOL_MANIFEST.bounty_read_technique_pack.session_artifacts_written, ["technique-pack-reads.jsonl"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_log_technique_attempt.role_bundles, ["evaluator-web", "orchestrator"]);
-  assert.equal(TOOL_MANIFEST.bounty_log_technique_attempt.mutating, true);
-  assert.equal(TOOL_MANIFEST.bounty_log_technique_attempt.network_access, false);
-  assert.equal(TOOL_MANIFEST.bounty_log_technique_attempt.browser_access, false);
-  assert.equal(TOOL_MANIFEST.bounty_log_technique_attempt.scope_required, false);
-  assert.equal(TOOL_MANIFEST.bounty_log_technique_attempt.sensitive_output, false);
-  assert.deepEqual(TOOL_MANIFEST.bounty_log_technique_attempt.session_artifacts_written, ["technique-attempts.jsonl"]);
-  assert.equal(TOOL_MANIFEST.bounty_read_session_summary.mutating, false);
-  assert.equal(TOOL_MANIFEST.bounty_read_session_summary.global_preapproval, true);
-  assert.deepEqual(TOOL_MANIFEST.bounty_read_session_summary.role_bundles, ["orchestrator", "reporter"]);
-  assert.equal(TOOL_MANIFEST.bounty_set_operator_note.mutating, true);
-  assert.equal(TOOL_MANIFEST.bounty_set_operator_note.global_preapproval, false);
-  assert.deepEqual(TOOL_MANIFEST.bounty_set_operator_note.role_bundles, ["orchestrator"]);
-  assert.equal(TOOL_MANIFEST.bounty_clear_operator_note.mutating, true);
-  assert.equal(TOOL_MANIFEST.bounty_clear_operator_note.global_preapproval, false);
-  assert.deepEqual(TOOL_MANIFEST.bounty_clear_operator_note.role_bundles, ["orchestrator"]);
+  assert.equal(TOOL_MANIFEST.bob_http_scan.network_access, true);
+  assert.equal(TOOL_MANIFEST.bob_http_scan.global_preapproval, true);
+  assert.equal(TOOL_MANIFEST.bob_http_scan.scope_required, true);
+  assert.deepEqual(TOOL_MANIFEST.bob_http_scan.scope_url_fields, []);
+  assert.deepEqual(TOOL_MANIFEST.bob_run_doc_delta.scope_url_fields, ["base_url"]);
+  assert.deepEqual(TOOL_MANIFEST.bob_run_auth_differential.scope_url_fields, ["base_url"]);
+  assert.deepEqual(TOOL_MANIFEST.bob_signup_detect.scope_url_fields, ["target_url"]);
+  assert.deepEqual(TOOL_MANIFEST.bob_auto_signup.scope_url_fields, ["signup_url"]);
+  assert.equal(TOOL_MANIFEST.bob_read_tool_telemetry.mutating, false);
+  assert.equal(TOOL_MANIFEST.bob_read_tool_telemetry.global_preapproval, false);
+  assert.deepEqual(TOOL_MANIFEST.bob_read_tool_telemetry.role_bundles, ["orchestrator"]);
+  assert.equal(TOOL_MANIFEST.bob_read_pipeline_analytics.mutating, false);
+  assert.equal(TOOL_MANIFEST.bob_read_pipeline_analytics.global_preapproval, false);
+  assert.deepEqual(TOOL_MANIFEST.bob_read_pipeline_analytics.role_bundles, ["orchestrator"]);
+  assert.equal(TOOL_MANIFEST.bob_finalize_agent_run.mutating, true);
+  assert.equal(TOOL_MANIFEST.bob_finalize_agent_run.global_preapproval, true);
+  assert.deepEqual(TOOL_MANIFEST.bob_finalize_agent_run.role_bundles, ["evaluator-shared"]);
+  assert.deepEqual(TOOL_MANIFEST.bob_record_surface_leads.role_bundles, ["evaluator-web", "orchestrator"]);
+  assert.equal(TOOL_MANIFEST.bob_record_surface_leads.mutating, true);
+  assert.equal(TOOL_MANIFEST.bob_record_surface_leads.global_preapproval, true);
+  assert.equal(TOOL_MANIFEST.bob_record_surface_leads.network_access, false);
+  assert.equal(TOOL_MANIFEST.bob_record_surface_leads.browser_access, false);
+  assert.equal(TOOL_MANIFEST.bob_record_surface_leads.scope_required, false);
+  assert.equal(TOOL_MANIFEST.bob_record_surface_leads.sensitive_output, false);
+  assert.deepEqual(TOOL_MANIFEST.bob_record_surface_leads.session_artifacts_written, ["surface-leads.json"]);
+  assert.deepEqual(TOOL_MANIFEST.bob_read_surface_leads.role_bundles, ["evaluator-web", "orchestrator"]);
+  assert.equal(TOOL_MANIFEST.bob_read_surface_leads.mutating, false);
+  assert.equal(TOOL_MANIFEST.bob_read_surface_leads.global_preapproval, true);
+  assert.equal(TOOL_MANIFEST.bob_read_surface_leads.network_access, false);
+  assert.equal(TOOL_MANIFEST.bob_read_surface_leads.browser_access, false);
+  assert.equal(TOOL_MANIFEST.bob_read_surface_leads.scope_required, false);
+  assert.equal(TOOL_MANIFEST.bob_read_surface_leads.sensitive_output, false);
+  assert.deepEqual(TOOL_MANIFEST.bob_read_surface_leads.session_artifacts_written, []);
+  assert.deepEqual(TOOL_MANIFEST.bob_promote_surface_leads.role_bundles, ["orchestrator"]);
+  assert.equal(TOOL_MANIFEST.bob_promote_surface_leads.mutating, true);
+  assert.equal(TOOL_MANIFEST.bob_promote_surface_leads.global_preapproval, false);
+  assert.equal(TOOL_MANIFEST.bob_promote_surface_leads.network_access, false);
+  assert.equal(TOOL_MANIFEST.bob_promote_surface_leads.browser_access, false);
+  assert.equal(TOOL_MANIFEST.bob_promote_surface_leads.scope_required, false);
+  assert.equal(TOOL_MANIFEST.bob_promote_surface_leads.sensitive_output, false);
+  assert.deepEqual(TOOL_MANIFEST.bob_promote_surface_leads.session_artifacts_written, ["surface-leads.json", "attack_surface.json", "state.json"]);
+  assert.deepEqual(TOOL_MANIFEST.bob_get_context_budget.role_bundles, ["evaluator-shared", "orchestrator"]);
+  assert.equal(TOOL_MANIFEST.bob_get_context_budget.mutating, false);
+  assert.equal(TOOL_MANIFEST.bob_get_context_budget.network_access, false);
+  assert.equal(TOOL_MANIFEST.bob_get_context_budget.browser_access, false);
+  assert.equal(TOOL_MANIFEST.bob_get_context_budget.scope_required, false);
+  assert.deepEqual(TOOL_MANIFEST.bob_get_context_budget.session_artifacts_written, []);
+  assert.deepEqual(TOOL_MANIFEST.bob_select_technique_packs.role_bundles, ["evaluator-web", "orchestrator"]);
+  assert.equal(TOOL_MANIFEST.bob_select_technique_packs.mutating, false);
+  assert.deepEqual(TOOL_MANIFEST.bob_read_technique_pack.role_bundles, ["evaluator-web", "orchestrator"]);
+  assert.equal(TOOL_MANIFEST.bob_read_technique_pack.mutating, true);
+  assert.equal(byName.get("bob_read_technique_pack").inputSchema.properties.mode.enum.includes("full"), true);
+  assert.deepEqual(TOOL_MANIFEST.bob_read_technique_pack.session_artifacts_written, ["technique-pack-reads.jsonl"]);
+  assert.deepEqual(TOOL_MANIFEST.bob_log_technique_attempt.role_bundles, ["evaluator-web", "orchestrator"]);
+  assert.equal(TOOL_MANIFEST.bob_log_technique_attempt.mutating, true);
+  assert.equal(TOOL_MANIFEST.bob_log_technique_attempt.network_access, false);
+  assert.equal(TOOL_MANIFEST.bob_log_technique_attempt.browser_access, false);
+  assert.equal(TOOL_MANIFEST.bob_log_technique_attempt.scope_required, false);
+  assert.equal(TOOL_MANIFEST.bob_log_technique_attempt.sensitive_output, false);
+  assert.deepEqual(TOOL_MANIFEST.bob_log_technique_attempt.session_artifacts_written, ["technique-attempts.jsonl"]);
+  assert.equal(TOOL_MANIFEST.bob_read_session_summary.mutating, false);
+  assert.equal(TOOL_MANIFEST.bob_read_session_summary.global_preapproval, true);
+  assert.deepEqual(TOOL_MANIFEST.bob_read_session_summary.role_bundles, ["orchestrator", "reporter"]);
+  assert.equal(TOOL_MANIFEST.bob_set_operator_note.mutating, true);
+  assert.equal(TOOL_MANIFEST.bob_set_operator_note.global_preapproval, false);
+  assert.deepEqual(TOOL_MANIFEST.bob_set_operator_note.role_bundles, ["orchestrator"]);
+  assert.equal(TOOL_MANIFEST.bob_clear_operator_note.mutating, true);
+  assert.equal(TOOL_MANIFEST.bob_clear_operator_note.global_preapproval, false);
+  assert.deepEqual(TOOL_MANIFEST.bob_clear_operator_note.role_bundles, ["orchestrator"]);
 });
 
 test("MCP tool registry validation rejects incomplete or inconsistent entries", () => {
   const completeModule = {
-    name: "bounty_test_tool",
+    name: "bob_test_tool",
     description: "Test tool.",
     inputSchema: { type: "object", properties: {} },
     handler: () => ({}),
@@ -1768,7 +1795,7 @@ test("MCP runtime no longer imports legacy split tool definition files", () => {
 
 test("executeTool rejects unknown top-level arguments while allowing nested map-like fields", async () => {
   await withTempHome(async () => {
-    const unknown = await executeTool("bounty_http_scan", {
+    const unknown = await executeTool("bob_http_scan", {
       method: "GET",
       url: "https://example.com/",
       target_domain: "example.com",
@@ -1778,13 +1805,13 @@ test("executeTool rejects unknown top-level arguments while allowing nested map-
     assert.equal(unknown.error.code, "INVALID_ARGUMENTS");
     assert.match(unknown.error.message, /surprise is not allowed/);
 
-    const init = await executeTool("bounty_init_session", {
+    const init = await executeTool("bob_init_session", {
       target_domain: "example.com",
       target_url: "https://example.com",
     });
     assert.equal(init.ok, true);
 
-    const traffic = await executeTool("bounty_import_http_traffic", {
+    const traffic = await executeTool("bob_import_http_traffic", {
       target_domain: "example.com",
       source: "har",
       entries: [{
@@ -1799,7 +1826,7 @@ test("executeTool rejects unknown top-level arguments while allowing nested map-
     assert.equal(traffic.ok, true);
     assert.equal(traffic.data.imported, 1);
 
-    const auth = await executeTool("bounty_auth_store", {
+    const auth = await executeTool("bob_auth_store", {
       target_domain: "example.com",
       profile_name: "attacker",
       headers: { "X-Custom": "ok" },
@@ -1820,7 +1847,7 @@ test("executeTool returns standard envelopes and recursively validates schema ar
       meta: { tool: "__unknown_tool__", version: 1 },
     });
 
-    const missingTargetDomain = await executeTool("bounty_http_scan", {
+    const missingTargetDomain = await executeTool("bob_http_scan", {
       method: "GET",
       url: "https://example.com/",
     });
@@ -1828,7 +1855,7 @@ test("executeTool returns standard envelopes and recursively validates schema ar
     assert.equal(missingTargetDomain.error.code, "INVALID_ARGUMENTS");
     assert.match(missingTargetDomain.error.message, /target_domain is required/);
 
-    const nested = await executeTool("bounty_auth_store", {
+    const nested = await executeTool("bob_auth_store", {
       target_domain: "example.com",
       profile_name: "attacker",
       credentials: {
@@ -1841,7 +1868,7 @@ test("executeTool returns standard envelopes and recursively validates schema ar
     assert.equal(nested.error.code, "INVALID_ARGUMENTS");
     assert.match(nested.error.message, /credentials\.unexpected is not allowed/);
 
-    const badWave = await executeTool("bounty_log_coverage", {
+    const badWave = await executeTool("bob_log_coverage", {
       target_domain: "example.com",
       wave: "1",
       agent: "a1",
@@ -1852,7 +1879,7 @@ test("executeTool returns standard envelopes and recursively validates schema ar
     assert.equal(badWave.error.code, "INVALID_ARGUMENTS");
     assert.match(badWave.error.message, /wave must match pattern \^w\[1-9\]\[0-9\]\*\$/);
 
-    const zeroWave = await executeTool("bounty_log_coverage", {
+    const zeroWave = await executeTool("bob_log_coverage", {
       target_domain: "example.com",
       wave: "w0",
       agent: "a1",
@@ -1863,7 +1890,7 @@ test("executeTool returns standard envelopes and recursively validates schema ar
     assert.equal(zeroWave.error.code, "INVALID_ARGUMENTS");
     assert.match(zeroWave.error.message, /wave must match pattern \^w\[1-9\]\[0-9\]\*\$/);
 
-    const zeroAgent = await executeTool("bounty_start_wave", {
+    const zeroAgent = await executeTool("bob_start_wave", {
       target_domain: "example.com",
       wave_number: 1,
       assignments: [{ agent: "a0", surface_id: "surface-a" }],
@@ -1872,7 +1899,7 @@ test("executeTool returns standard envelopes and recursively validates schema ar
     assert.equal(zeroAgent.error.code, "INVALID_ARGUMENTS");
     assert.match(zeroAgent.error.message, /assignments\[0\]\.agent must match pattern \^a\[1-9\]\[0-9\]\*\$/);
 
-    const badEntries = await executeTool("bounty_log_coverage", {
+    const badEntries = await executeTool("bob_log_coverage", {
       target_domain: "example.com",
       wave: "w1",
       agent: "a1",
@@ -1884,7 +1911,7 @@ test("executeTool returns standard envelopes and recursively validates schema ar
     assert.match(badEntries.error.message, /entries must be array/);
 
     seedSessionState("example.com");
-    const traffic = await executeTool("bounty_import_http_traffic", {
+    const traffic = await executeTool("bob_import_http_traffic", {
       target_domain: "example.com",
       source: "har",
       entries: [{
@@ -1907,7 +1934,7 @@ test("executeTool enforces target URL scope for direct and composite HTTP tools"
     await withMockSafeFetch({
       "https://api.example.com/ok": { status: 200, statusText: "OK", body: "ok" },
     }, async (requestedUrls) => {
-      const allowed = await executeTool("bounty_http_scan", {
+      const allowed = await executeTool("bob_http_scan", {
         target_domain: "example.com",
         method: "GET",
         url: "https://api.example.com/ok",
@@ -1915,7 +1942,7 @@ test("executeTool enforces target URL scope for direct and composite HTTP tools"
       });
       assert.equal(allowed.ok, true);
 
-      const directBlocked = await executeTool("bounty_http_scan", {
+      const directBlocked = await executeTool("bob_http_scan", {
         target_domain: "example.com",
         method: "GET",
         url: "https://api.other.test/secret",
@@ -1925,7 +1952,7 @@ test("executeTool enforces target URL scope for direct and composite HTTP tools"
       assert.equal(directBlocked.error.code, "SCOPE_BLOCKED");
       assert.match(directBlocked.error.message, /outside target_domain example\.com/);
 
-      const invalidScopeRoot = await executeTool("bounty_http_scan", {
+      const invalidScopeRoot = await executeTool("bob_http_scan", {
         target_domain: "com",
         method: "GET",
         url: "https://example.com/secret",
@@ -1935,7 +1962,7 @@ test("executeTool enforces target URL scope for direct and composite HTTP tools"
       assert.equal(invalidScopeRoot.error.code, "INVALID_ARGUMENTS");
       assert.match(invalidScopeRoot.error.message, /registrable domain/);
 
-      const internalScopeRoot = await executeTool("bounty_http_scan", {
+      const internalScopeRoot = await executeTool("bob_http_scan", {
         target_domain: "127.0.0.1",
         method: "GET",
         url: "http://127.0.0.1/secret",
@@ -1945,7 +1972,7 @@ test("executeTool enforces target URL scope for direct and composite HTTP tools"
       assert.equal(internalScopeRoot.error.code, "INVALID_ARGUMENTS");
       assert.match(internalScopeRoot.error.message, /public DNS domain/);
 
-      const docDeltaBlocked = await executeTool("bounty_run_doc_delta", {
+      const docDeltaBlocked = await executeTool("bob_run_doc_delta", {
         target_domain: "example.com",
         base_url: "https://docs.other.test",
       });
@@ -1953,7 +1980,7 @@ test("executeTool enforces target URL scope for direct and composite HTTP tools"
       assert.equal(docDeltaBlocked.error.code, "SCOPE_BLOCKED");
       assert.match(docDeltaBlocked.error.message, /base_url is outside target scope/);
 
-      const authDifferentialBlocked = await executeTool("bounty_run_auth_differential", {
+      const authDifferentialBlocked = await executeTool("bob_run_auth_differential", {
         target_domain: "example.com",
         base_url: "https://auth.other.test",
         endpoints: ["/api/me"],
@@ -1963,7 +1990,7 @@ test("executeTool enforces target URL scope for direct and composite HTTP tools"
       assert.equal(authDifferentialBlocked.error.code, "SCOPE_BLOCKED");
       assert.match(authDifferentialBlocked.error.message, /base_url is outside target scope/);
 
-      const signupBlocked = await executeTool("bounty_signup_detect", {
+      const signupBlocked = await executeTool("bob_signup_detect", {
         target_domain: "example.com",
         target_url: "https://signup.other.test",
       });
@@ -1980,13 +2007,13 @@ test("executeTool writes telemetry rows for success and dispatcher failure modes
   await withTempHome(async () => {
     await withEnv({ BOUNTY_TELEMETRY: undefined, BOUNTY_TELEMETRY_DIR: undefined }, async () => {
       seedSessionState("example.com");
-      const success = await executeTool("bounty_list_auth_profiles", { target_domain: "example.com" });
+      const success = await executeTool("bob_list_auth_profiles", { target_domain: "example.com" });
       assert.equal(success.ok, true);
 
       const unknown = await executeTool("__unknown_tool__", {});
       assert.equal(unknown.error.code, "UNKNOWN_TOOL");
 
-      const invalid = await executeTool("bounty_log_coverage", {
+      const invalid = await executeTool("bob_log_coverage", {
         target_domain: "example.com",
         wave: "w1",
         agent: "a1",
@@ -1995,10 +2022,10 @@ test("executeTool writes telemetry rows for success and dispatcher failure modes
       });
       assert.equal(invalid.error.code, "INVALID_ARGUMENTS");
 
-      const thrown = await executeTool("bounty_read_session_state", { target_domain: "missing.example" });
+      const thrown = await executeTool("bob_read_session_state", { target_domain: "missing.example" });
       assert.equal(thrown.error.code, "STATE_CONFLICT");
 
-      const blocked = await executeTool("bounty_http_scan", {
+      const blocked = await executeTool("bob_http_scan", {
         method: "GET",
         url: "http://127.0.0.1/",
         target_domain: "example.com",
@@ -2010,7 +2037,7 @@ test("executeTool writes telemetry rows for success and dispatcher failure modes
       assert.equal(rows.length, 5);
       assert.equal(rows.every((row) => row.bob_version === PACKAGE_VERSION), true);
 
-      assert.equal(rows[0].tool, "bounty_list_auth_profiles");
+      assert.equal(rows[0].tool, "bob_list_auth_profiles");
       assert.equal(rows[0].ok, true);
       assert.equal(rows[0].error_code, null);
       assert.equal(rows[0].target_domain, "example.com");
@@ -2024,18 +2051,18 @@ test("executeTool writes telemetry rows for success and dispatcher failure modes
       assert.equal(rows[1].registry, null);
       assert.equal(rows[1].error_message, "Unknown tool");
 
-      assert.equal(rows[2].tool, "bounty_log_coverage");
+      assert.equal(rows[2].tool, "bob_log_coverage");
       assert.equal(rows[2].error_code, "INVALID_ARGUMENTS");
       assert.equal(rows[2].wave, "w1");
       assert.equal(rows[2].agent, "a1");
       assert.equal(rows[2].surface_id, "surface-a");
       assert.match(rows[2].error_message, /entries must be array/);
 
-      assert.equal(rows[3].tool, "bounty_read_session_state");
+      assert.equal(rows[3].tool, "bob_read_session_state");
       assert.equal(rows[3].error_code, "STATE_CONFLICT");
       assert.match(rows[3].error_message, /Session authority is missing/);
 
-      assert.equal(rows[4].tool, "bounty_http_scan");
+      assert.equal(rows[4].tool, "bob_http_scan");
       assert.equal(rows[4].error_code, "SCOPE_BLOCKED");
       assert.equal(rows[4].target_domain, "example.com");
       assert.equal(rows[4].registry.sensitive_output, true);
@@ -2048,7 +2075,7 @@ test("tool telemetry can be disabled and writer failures never change envelopes"
   await withTempHome(async () => {
     seedSessionState("example.com");
     await withEnv({ BOUNTY_TELEMETRY: "0", BOUNTY_TELEMETRY_DIR: undefined }, async () => {
-      const result = await executeTool("bounty_list_auth_profiles", { target_domain: "example.com" });
+      const result = await executeTool("bob_list_auth_profiles", { target_domain: "example.com" });
       assert.equal(result.ok, true);
       assert.equal(fs.existsSync(toolTelemetryPath()), false);
     });
@@ -2060,12 +2087,12 @@ test("tool telemetry can be disabled and writer failures never change envelopes"
     fs.writeFileSync(blockingPath, "not a directory\n");
     try {
       await withEnv({ BOUNTY_TELEMETRY: undefined, BOUNTY_TELEMETRY_DIR: blockingPath }, async () => {
-        const result = await executeTool("bounty_list_auth_profiles", { target_domain: "example.com" });
+        const result = await executeTool("bob_list_auth_profiles", { target_domain: "example.com" });
         assert.equal(result.ok, true);
         assert.equal(result.data.version, 1);
         assert.equal(result.data.target_domain, "example.com");
         assert.deepEqual(result.data.profiles, []);
-        assert.deepEqual(result.meta, { tool: "bounty_list_auth_profiles", version: 1 });
+        assert.deepEqual(result.meta, { tool: "bob_list_auth_profiles", version: 1 });
       });
     } finally {
       fs.rmSync(blockingPath, { force: true });
@@ -2076,7 +2103,7 @@ test("tool telemetry can be disabled and writer failures never change envelopes"
 test("central session authority blocks raw target and target_url drift before handlers", async () => {
   await withTempHome(async () => {
     const domain = "authority-drift.example.com";
-    const init = await executeTool("bounty_init_session", {
+    const init = await executeTool("bob_init_session", {
       target_domain: domain,
       target_url: `https://${domain}`,
     });
@@ -2086,7 +2113,7 @@ test("central session authority blocks raw target and target_url drift before ha
     rawTargetDrift.target = "other.example.com";
     fs.writeFileSync(statePath(domain), `${JSON.stringify(rawTargetDrift, null, 2)}\n`, "utf8");
 
-    const targetResult = await executeTool("bounty_read_session_state", { target_domain: domain });
+    const targetResult = await executeTool("bob_read_session_state", { target_domain: domain });
     assert.equal(targetResult.ok, false);
     assert.equal(targetResult.error.code, "SCOPE_BLOCKED");
     assert.equal(targetResult.error.details.authority.authority_error_code, "raw_target_drift");
@@ -2101,13 +2128,13 @@ test("central session authority blocks raw target and target_url drift before ha
     rawTargetDrift.egress_profile_identity_version = 1;
     fs.writeFileSync(statePath(domain), `${JSON.stringify(rawTargetDrift, null, 2)}\n`, "utf8");
 
-    const urlResult = await executeTool("bounty_read_session_state", { target_domain: domain });
+    const urlResult = await executeTool("bob_read_session_state", { target_domain: domain });
     assert.equal(urlResult.ok, false);
     assert.equal(urlResult.error.code, "SCOPE_BLOCKED");
     assert.equal(urlResult.error.details.authority.authority_error_code, "target_url_drift");
 
     const telemetryRows = readJsonl(toolTelemetryPath())
-      .filter((row) => row.tool === "bounty_read_session_state");
+      .filter((row) => row.tool === "bob_read_session_state");
     assert.equal(telemetryRows.length, 2);
     assert.deepEqual(
       telemetryRows.map((row) => row.authority.authority_error_code),
@@ -2116,7 +2143,7 @@ test("central session authority blocks raw target and target_url drift before ha
     assert.equal(JSON.stringify(telemetryRows).includes("outside.example.net"), false);
     assert.equal(JSON.stringify(telemetryRows).includes("authority-telemetry-poison"), false);
 
-    const telemetrySummary = await executeTool("bounty_read_tool_telemetry", { limit: 10 });
+    const telemetrySummary = await executeTool("bob_read_tool_telemetry", { limit: 10 });
     assert.equal(telemetrySummary.ok, true);
     assert.equal(JSON.stringify(telemetrySummary).includes("authority-telemetry-poison"), false);
   });
@@ -2152,7 +2179,7 @@ test("central session authority backfills missing v1.3.4-shaped fields instead o
     };
     fs.writeFileSync(statePath(domain), `${JSON.stringify(legacyShape, null, 2)}\n`, "utf8");
 
-    const result = await executeTool("bounty_read_session_state", { target_domain: domain });
+    const result = await executeTool("bob_read_session_state", { target_domain: domain });
     assert.equal(result.ok, true, `expected v1.3.4 session to load; got ${JSON.stringify(result.error)}`);
     const state = result.data.state;
     assert.equal(state.target, domain);
@@ -2166,7 +2193,7 @@ test("central session authority backfills missing v1.3.4-shaped fields instead o
 
 test("central session authority shadow mode is bounded to missing read-only sessions", async () => {
   await withTempHome(async () => {
-    const missing = await executeTool("bounty_read_session_state", {
+    const missing = await executeTool("bob_read_session_state", {
       target_domain: "missing-authority.example.com",
     });
     assert.equal(missing.ok, false);
@@ -2177,7 +2204,7 @@ test("central session authority shadow mode is bounded to missing read-only sess
 
   await withTempHome(async () => {
     await withEnv({ BOB_SESSION_AUTHORITY_MODE: "shadow" }, async () => {
-      const readOnly = await executeTool("bounty_read_session_state", {
+      const readOnly = await executeTool("bob_read_session_state", {
         target_domain: "shadow-missing.example.com",
       });
       assert.equal(readOnly.ok, false);
@@ -2185,7 +2212,7 @@ test("central session authority shadow mode is bounded to missing read-only sess
       assert.equal(readOnly.error.message.includes(process.env.HOME), false);
       assert.equal(readOnly.error.message.includes("bounty-agent-sessions"), false);
 
-      const mutating = await executeTool("bounty_log_coverage", {
+      const mutating = await executeTool("bob_log_coverage", {
         target_domain: "shadow-missing.example.com",
         wave: "w1",
         agent: "a1",
@@ -2197,8 +2224,8 @@ test("central session authority shadow mode is bounded to missing read-only sess
       assert.equal(mutating.error.details.authority.authority_shadowed, false);
 
       const rows = readJsonl(toolTelemetryPath());
-      const readRow = rows.find((row) => row.tool === "bounty_read_session_state");
-      const writeRow = rows.find((row) => row.tool === "bounty_log_coverage");
+      const readRow = rows.find((row) => row.tool === "bob_read_session_state");
+      const writeRow = rows.find((row) => row.tool === "bob_log_coverage");
       assert.equal(readRow.authority.authority_result, "shadow_blocked");
       assert.equal(readRow.authority.authority_error_code, "no_session");
       assert.equal(readRow.authority.authority_shadowed, true);
@@ -2214,7 +2241,7 @@ test("central session authority shadow mode is bounded to missing read-only sess
 test("central session authority does not persist raw invalid target_domain telemetry", async () => {
   await withTempHome(async () => {
     const hostileTarget = "https://example.com/?access_token=secret";
-    const result = await executeTool("bounty_read_session_state", {
+    const result = await executeTool("bob_read_session_state", {
       target_domain: hostileTarget,
     });
     assert.equal(result.ok, false);
@@ -2232,21 +2259,21 @@ test("central session authority does not persist raw invalid target_domain telem
 
 test("central session authority records allowed bootstrap and initialized-session telemetry", async () => {
   await withTempHome(async () => {
-    const init = await executeTool("bounty_init_session", {
+    const init = await executeTool("bob_init_session", {
       target_domain: "Telemetry-Authority.Example.COM.",
       target_url: "https://telemetry-authority.example.com",
     });
     assert.equal(init.ok, true);
     assert.equal(init.data.state.target, "telemetry-authority.example.com");
 
-    const read = await executeTool("bounty_read_session_state", {
+    const read = await executeTool("bob_read_session_state", {
       target_domain: "telemetry-authority.example.com",
     });
     assert.equal(read.ok, true);
 
     const rows = readJsonl(toolTelemetryPath());
-    const initRow = rows.find((row) => row.tool === "bounty_init_session");
-    const readRow = rows.find((row) => row.tool === "bounty_read_session_state");
+    const initRow = rows.find((row) => row.tool === "bob_init_session");
+    const readRow = rows.find((row) => row.tool === "bob_read_session_state");
     assert.equal(initRow.authority.authority_class, "bootstrap_session");
     assert.equal(initRow.authority.authority_source, "bootstrap");
     assert.equal(initRow.authority.authority_result, "allowed");
@@ -2264,7 +2291,7 @@ test("tool telemetry rows do not store raw secret-bearing payloads", async () =>
     await withEnv({ BOUNTY_TELEMETRY: undefined, BOUNTY_TELEMETRY_DIR: undefined }, async () => {
       seedSessionState("example.com");
 
-      const authFailure = await executeTool("bounty_auth_store", {
+      const authFailure = await executeTool("bob_auth_store", {
         target_domain: "example.com",
         profile_name: "attacker",
         credentials: {
@@ -2275,7 +2302,7 @@ test("tool telemetry rows do not store raw secret-bearing payloads", async () =>
       });
       assert.equal(authFailure.error.code, "INVALID_ARGUMENTS");
 
-      const authSuccess = await executeTool("bounty_auth_store", {
+      const authSuccess = await executeTool("bob_auth_store", {
         target_domain: "example.com",
         profile_name: "attacker",
         headers: { Authorization: "Bearer raw-auth-token" },
@@ -2288,7 +2315,7 @@ test("tool telemetry rows do not store raw secret-bearing payloads", async () =>
       });
       assert.equal(authSuccess.ok, true);
 
-      const httpBlocked = await executeTool("bounty_http_scan", {
+      const httpBlocked = await executeTool("bob_http_scan", {
         method: "POST",
         url: "http://127.0.0.1/?token=raw-query-token",
         target_domain: "example.com",
@@ -2298,7 +2325,7 @@ test("tool telemetry rows do not store raw secret-bearing payloads", async () =>
       });
       assert.equal(httpBlocked.error.code, "SCOPE_BLOCKED");
 
-      const artifact = await executeTool("bounty_import_static_artifact", {
+      const artifact = await executeTool("bob_import_static_artifact", {
         target_domain: "example.com",
         artifact_type: "evm_token_contract",
         content: "contract Secret { string constant password = 'static-artifact-secret'; }",
@@ -2322,7 +2349,7 @@ test("tool telemetry rows do not store raw secret-bearing payloads", async () =>
       }
 
       const authRows = readJsonl(toolTelemetryPath())
-        .filter((row) => row.tool === "bounty_auth_store" && row.ok === false);
+        .filter((row) => row.tool === "bob_auth_store" && row.ok === false);
       assert.equal(authRows.length, 1);
       assert.equal(Object.prototype.hasOwnProperty.call(authRows[0], "error_message"), false);
     });
@@ -2357,13 +2384,13 @@ test("tool telemetry reader summarizes at read time and skips malformed lines", 
     };
     appendToolTelemetryEvent({
       ...base,
-      tool: "bounty_http_scan",
+      tool: "bob_http_scan",
       elapsed_ms: 10,
       authority: allowedHttpAuthority,
     }, { env });
     appendToolTelemetryEvent({
       ...base,
-      tool: "bounty_http_scan",
+      tool: "bob_http_scan",
       ok: false,
       elapsed_ms: 20,
       error_code: "SCOPE_BLOCKED",
@@ -2381,7 +2408,7 @@ test("tool telemetry reader summarizes at read time and skips malformed lines", 
     const egressTelemetryHash = "a".repeat(64);
     appendToolTelemetryEvent({
       ...base,
-      tool: "bounty_http_scan",
+      tool: "bob_http_scan",
       elapsed_ms: 30,
       egress_profile: "operator-eu",
       egress_region: "EU",
@@ -2392,7 +2419,7 @@ test("tool telemetry reader summarizes at read time and skips malformed lines", 
     }, { env });
     appendToolTelemetryEvent({
       ...base,
-      tool: "bounty_read_session_state",
+      tool: "bob_read_session_state",
       ok: false,
       elapsed_ms: 40,
       error_code: "NOT_FOUND",
@@ -2410,7 +2437,7 @@ test("tool telemetry reader summarizes at read time and skips malformed lines", 
     }, { env });
     appendToolTelemetryEvent({
       ...base,
-      tool: "bounty_http_scan",
+      tool: "bob_http_scan",
       bob_version: "1.2.2",
       target_domain: "other.example",
       elapsed_ms: 50,
@@ -2421,7 +2448,7 @@ test("tool telemetry reader summarizes at read time and skips malformed lines", 
     }, { env });
     appendToolTelemetryEvent({
       ...base,
-      tool: "bounty_read_session_state",
+      tool: "bob_read_session_state",
       ok: false,
       elapsed_ms: 60,
       target_domain: "https://example.com/?access_token=raw-target-secret",
@@ -2433,7 +2460,7 @@ test("tool telemetry reader summarizes at read time and skips malformed lines", 
     }, { env });
     appendToolTelemetryEvent({
       ...base,
-      tool: "bounty_auth_store",
+      tool: "bob_auth_store",
       ok: false,
       elapsed_ms: 70,
       target_domain: "https://sensitive.example/?token=raw-sensitive-target",
@@ -2503,7 +2530,7 @@ test("tool telemetry reader summarizes at read time and skips malformed lines", 
     assert.equal(JSON.stringify(summary).includes("raw-secret-token"), false);
     assert.equal(JSON.stringify(summary).includes("bounty-agent-sessions"), false);
 
-    const httpSummary = summary.tools.find((toolSummary) => toolSummary.tool === "bounty_http_scan");
+    const httpSummary = summary.tools.find((toolSummary) => toolSummary.tool === "bob_http_scan");
     assert.ok(httpSummary);
     assert.equal(httpSummary.calls, 3);
     assert.equal(httpSummary.successes, 2);
@@ -2531,12 +2558,12 @@ test("tool telemetry reader summarizes at read time and skips malformed lines", 
       authority_shadowed: false,
     });
 
-    const filtered = readToolTelemetry({ tool: "bounty_http_scan" }, { env });
+    const filtered = readToolTelemetry({ tool: "bob_http_scan" }, { env });
     assert.equal(filtered.telemetry_path, "[telemetry-dir]/tool-events.jsonl");
     assert.equal(filtered.total_events, 4);
     assert.deepEqual(filtered.observed_bob_versions, ["1.2.1", "1.2.2"]);
     assert.equal(filtered.tools.length, 1);
-    assert.equal(filtered.tools[0].tool, "bounty_http_scan");
+    assert.equal(filtered.tools[0].tool, "bob_http_scan");
     assert.equal(filtered.tools[0].calls, 4);
     assert.deepEqual(filtered.authority.by_version, { 1: 3, 2: 1 });
     const unfiltered = readToolTelemetry({ limit: 5 }, { env });
@@ -2561,7 +2588,7 @@ test("tool telemetry reader summarizes at read time and skips malformed lines", 
 
     const poisonedFilter = readToolTelemetry({
       target_domain: "https://example.com/?access_token=reader-filter-secret",
-      tool: "bounty_http_scan?token=reader-tool-secret",
+      tool: "bob_http_scan?token=reader-tool-secret",
     }, { env });
     assert.equal(poisonedFilter.total_events, 0);
     assert.equal(poisonedFilter.filters.target_domain, null);
@@ -3490,13 +3517,13 @@ test("MCP message handler lists tools, routes calls, serializes envelopes, and w
   const successEnvelope = {
     ok: true,
     data: { args: { x: 1 } },
-    meta: { tool: "bounty_fake", version: 1 },
+    meta: { tool: "bob_fake", version: 1 },
   };
   const handleMessage = createMcpMessageHandler({
-    tools: [{ name: "bounty_fake", inputSchema: { type: "object" } }],
+    tools: [{ name: "bob_fake", inputSchema: { type: "object" } }],
     executeTool: async (name, args) => {
       calls.push({ name, args });
-      if (name === "bounty_throw") {
+      if (name === "bob_throw") {
         throw new Error("boom");
       }
       return successEnvelope;
@@ -3509,23 +3536,23 @@ test("MCP message handler lists tools, routes calls, serializes envelopes, and w
     jsonrpc: "2.0",
     id: 2,
     method: "tools/call",
-    params: { name: "bounty_fake", arguments: { x: 1 } },
+    params: { name: "bob_fake", arguments: { x: 1 } },
   });
   await handleMessage({
     jsonrpc: "2.0",
     id: 3,
     method: "tools/call",
-    params: { name: "bounty_throw", arguments: {} },
+    params: { name: "bob_throw", arguments: {} },
   });
 
   assert.deepEqual(sent[0], {
     jsonrpc: "2.0",
     id: 1,
-    result: { tools: [{ name: "bounty_fake", inputSchema: { type: "object" } }] },
+    result: { tools: [{ name: "bob_fake", inputSchema: { type: "object" } }] },
   });
   assert.deepEqual(calls, [
-    { name: "bounty_fake", args: { x: 1 } },
-    { name: "bounty_throw", args: {} },
+    { name: "bob_fake", args: { x: 1 } },
+    { name: "bob_throw", args: {} },
   ]);
   assert.equal(sent[1].result.content[0].type, "text");
   assert.equal(sent[1].result.content[0].text, JSON.stringify(successEnvelope));
@@ -3533,7 +3560,7 @@ test("MCP message handler lists tools, routes calls, serializes envelopes, and w
   assert.deepEqual(JSON.parse(sent[2].result.content[0].text), {
     ok: false,
     error: { code: "INTERNAL_ERROR", message: "boom" },
-    meta: { tool: "bounty_throw", version: 1 },
+    meta: { tool: "bob_throw", version: 1 },
   });
 });
 
@@ -3642,7 +3669,7 @@ test("stdio transport rejects oversized framed messages", () => {
   assert.match(payload.error.message, /frame exceeds 24 bytes/);
 });
 
-test("bounty_init_session creates the initial state and bounty_read_session_state returns public fields only", () => {
+test("bob_init_session creates the initial state and bob_read_session_state returns public fields only", () => {
   withTempHome(() => {
     const domain = "example.com";
     const targetUrl = "https://example.com";
@@ -3711,7 +3738,7 @@ test("bounty_init_session creates the initial state and bounty_read_session_stat
   });
 });
 
-test("bounty_init_session rejects existing state and non-empty session dirs", () => {
+test("bob_init_session rejects existing state and non-empty session dirs", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "SURFACE_DISCOVERY" });
@@ -3731,7 +3758,7 @@ test("bounty_init_session rejects existing state and non-empty session dirs", ()
   });
 });
 
-test("bounty_init_session ignores .session.lock when checking if the session dir is empty", () => {
+test("bob_init_session ignores .session.lock when checking if the session dir is empty", () => {
   withTempHome(() => {
     const domain = "example.com";
     const dir = sessionDir(domain);
@@ -3747,9 +3774,9 @@ test("bounty_init_session ignores .session.lock when checking if the session dir
   });
 });
 
-test("bounty_init_session persists selected-mode internal-host blocking policy", async () => {
+test("bob_init_session persists selected-mode internal-host blocking policy", async () => {
   await withTempHome(async () => {
-    const normal = await executeTool("bounty_init_session", {
+    const normal = await executeTool("bob_init_session", {
       target_domain: "normal.example.com",
       target_url: "https://normal.example.com",
     });
@@ -3758,7 +3785,7 @@ test("bounty_init_session persists selected-mode internal-host blocking policy",
     assert.equal(normal.data.state.block_internal_hosts, false);
     assert.equal(normal.data.state.block_internal_hosts_source, "mode_default");
 
-    const yolo = await executeTool("bounty_init_session", {
+    const yolo = await executeTool("bob_init_session", {
       target_domain: "yolo.example.com",
       target_url: "https://yolo.example.com",
       checkpoint_mode: "yolo",
@@ -3767,7 +3794,7 @@ test("bounty_init_session persists selected-mode internal-host blocking policy",
     assert.equal(yolo.data.state.block_internal_hosts, false);
     assert.equal(yolo.data.state.block_internal_hosts_source, "mode_default");
 
-    const paranoid = await executeTool("bounty_init_session", {
+    const paranoid = await executeTool("bob_init_session", {
       target_domain: "paranoid.example.com",
       target_url: "https://paranoid.example.com",
       checkpoint_mode: "paranoid",
@@ -3782,7 +3809,7 @@ test("bounty_init_session persists selected-mode internal-host blocking policy",
     const paranoidSessionSummary = JSON.parse(readSessionSummary({ target_domain: "paranoid.example.com" })).summary;
     assert.equal(paranoidSessionSummary.block_internal_hosts, true);
 
-    const allow = await executeTool("bounty_init_session", {
+    const allow = await executeTool("bob_init_session", {
       target_domain: "allow.example.com",
       target_url: "https://allow.example.com",
       checkpoint_mode: "paranoid",
@@ -3792,7 +3819,7 @@ test("bounty_init_session persists selected-mode internal-host blocking policy",
     assert.equal(allow.data.state.block_internal_hosts, false);
     assert.equal(allow.data.state.block_internal_hosts_source, "explicit_allow");
 
-    const forced = await executeTool("bounty_init_session", {
+    const forced = await executeTool("bob_init_session", {
       target_domain: "forced.example.com",
       target_url: "https://forced.example.com",
       checkpoint_mode: "normal",
@@ -3802,7 +3829,7 @@ test("bounty_init_session persists selected-mode internal-host blocking policy",
     assert.equal(forced.data.state.block_internal_hosts, true);
     assert.equal(forced.data.state.block_internal_hosts_source, "explicit_block");
 
-    const conflicting = await executeTool("bounty_init_session", {
+    const conflicting = await executeTool("bob_init_session", {
       target_domain: "conflict.example.com",
       target_url: "https://conflict.example.com",
       block_internal_hosts: true,
@@ -3814,7 +3841,7 @@ test("bounty_init_session persists selected-mode internal-host blocking policy",
   });
 });
 
-test("bounty_init_session rejects proxy-backed sessions that would claim internal-host blocking", async () => {
+test("bob_init_session rejects proxy-backed sessions that would claim internal-host blocking", async () => {
   await withTempHome(async () => {
     const document = {
       version: 1,
@@ -3832,7 +3859,7 @@ test("bounty_init_session rejects proxy-backed sessions that would claim interna
 
     await withRepoEgressConfig(document, async () => {
       await withEnv({ BOB_EGRESS_OPERATOR_PROXY: "http://proxy.example:8080" }, async () => {
-        const rejected = await executeTool("bounty_init_session", {
+        const rejected = await executeTool("bob_init_session", {
           target_domain: "proxy-paranoid.example.com",
           target_url: "https://proxy-paranoid.example.com",
           checkpoint_mode: "paranoid",
@@ -3843,7 +3870,7 @@ test("bounty_init_session rejects proxy-backed sessions that would claim interna
         assert.match(rejected.error.message, /block_internal_hosts cannot be enforced with proxy-backed egress_profile "operator-eu"/);
         assert.equal(fs.existsSync(statePath("proxy-paranoid.example.com")), false);
 
-        const allowed = await executeTool("bounty_init_session", {
+        const allowed = await executeTool("bob_init_session", {
           target_domain: "proxy-allow.example.com",
           target_url: "https://proxy-allow.example.com",
           checkpoint_mode: "paranoid",
@@ -3973,7 +4000,7 @@ test("operator note set read and clear works and rejects secret-looking values",
   });
 });
 
-test("bounty_read_session_summary derives compact status without raw proof evidence or report text", () => {
+test("bob_read_session_summary derives compact status without raw proof evidence or report text", () => {
   withTempHome(() => {
     const domain = "summary.example.com";
     const rawPoc = "raw-poc-text-that-must-not-escape";
@@ -4042,7 +4069,7 @@ test("bounty_read_session_summary derives compact status without raw proof evide
   });
 });
 
-test("bounty_read_session_summary aggregates blocked_prereqs by (kind, identifier_hint)", () => {
+test("bob_read_session_summary aggregates blocked_prereqs by (kind, identifier_hint)", () => {
   withTempHome(() => {
     const domain = "summary-blocked.example.com";
     seedSessionState(domain, {
@@ -4071,7 +4098,7 @@ test("bounty_read_session_summary aggregates blocked_prereqs by (kind, identifie
   });
 });
 
-test("bounty_write_chain_attempt records normalized attempts and bounty_read_chain_attempts summarizes outcomes", async () => {
+test("bob_write_chain_attempt records normalized attempts and bob_read_chain_attempts summarizes outcomes", async () => {
   await withTempHome(async () => {
     const domain = "chain-attempt.example.com";
     seedSessionState(domain, { phase: "CHAIN" });
@@ -4108,13 +4135,13 @@ test("bounty_write_chain_attempt records normalized attempts and bounty_read_cha
     assert.equal(directRead.summary.has_terminal_attempt, true);
     assert.deepEqual(readChainAttemptsFromJsonl(domain).map((attempt) => attempt.attempt_id), ["C-1"]);
 
-    const envelope = await executeTool("bounty_read_chain_attempts", { target_domain: domain });
+    const envelope = await executeTool("bob_read_chain_attempts", { target_domain: domain });
     assert.equal(envelope.ok, true);
     assert.equal(envelope.data.summary.by_outcome.denied, 1);
   });
 });
 
-test("bounty_write_chain_attempt rejects malformed references and invalid outcomes", async () => {
+test("bob_write_chain_attempt rejects malformed references and invalid outcomes", async () => {
   await withTempHome(async () => {
     const domain = "chain-validation.example.com";
     seedSessionState(domain, { phase: "CHAIN" });
@@ -4150,7 +4177,7 @@ test("bounty_write_chain_attempt rejects malformed references and invalid outcom
       /unknown surface_id: surface-missing/,
     );
 
-    const invalidOutcome = await executeTool("bounty_write_chain_attempt", {
+    const invalidOutcome = await executeTool("bob_write_chain_attempt", {
       ...base,
       outcome: "maybe",
     });
@@ -4411,7 +4438,7 @@ test("bounty_transition_phase blocks deep EVALUATE -> CHAIN on promotable unprom
 
     assert.throws(
       () => transitionPhase({ target_domain: domain, to_phase: "CHAIN" }),
-      /EVALUATE -> CHAIN blocked: .*bounty_start_next_wave/,
+      /EVALUATE -> CHAIN blocked: .*bob_start_next_wave/,
     );
     const status = JSON.parse(waveStatus({ target_domain: domain }));
     assert.ok(status.transition_blockers.some((blocker) => (
@@ -4786,7 +4813,7 @@ test("capability routing maps current web surface types to the web pack", () => 
   });
 });
 
-test("bounty_route_surfaces writes bounded current routes and removes stale routes", () => {
+test("bob_route_surfaces writes bounded current routes and removes stale routes", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAttackSurfaces(domain, [{
@@ -4821,7 +4848,7 @@ test("bounty_route_surfaces writes bounded current routes and removes stale rout
   });
 });
 
-test("bounty_route_surfaces reports missing or malformed attack surface without writing routes", () => {
+test("bob_route_surfaces reports missing or malformed attack surface without writing routes", () => {
   withTempHome(() => {
     const domain = "example.com";
     assert.throws(
@@ -4840,7 +4867,7 @@ test("bounty_route_surfaces reports missing or malformed attack surface without 
   });
 });
 
-test("bounty_start_wave validates inputs, writes assignments, and updates pending_wave", () => {
+test("bob_start_wave validates inputs, writes assignments, and updates pending_wave", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1 });
@@ -4941,7 +4968,7 @@ test("bounty_start_wave validates inputs, writes assignments, and updates pendin
   });
 });
 
-test("bounty_start_wave rejects invalid state, duplicate inputs, and pre-existing assignment files", () => {
+test("bob_start_wave rejects invalid state, duplicate inputs, and pre-existing assignment files", () => {
   withTempHome(() => {
     const domain = "example.com";
 
@@ -4998,7 +5025,7 @@ test("bounty_start_wave rejects invalid state, duplicate inputs, and pre-existin
   });
 });
 
-test("bounty_start_wave rolls back the assignment file if the state write fails", () => {
+test("bob_start_wave rolls back the assignment file if the state write fails", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 0 });
@@ -5026,7 +5053,7 @@ test("bounty_start_wave rolls back the assignment file if the state write fails"
   });
 });
 
-test("bounty_start_next_wave dry_run plans normal assignments and previews deep promotion without writes", () => {
+test("bob_start_next_wave dry_run plans normal assignments and previews deep promotion without writes", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 0, deep_mode: true });
@@ -5068,7 +5095,7 @@ test("bounty_start_next_wave dry_run plans normal assignments and previews deep 
   });
 });
 
-test("bounty_start_next_wave promotes deep leads, re-ranks, starts a wave, and attributes the event source", () => {
+test("bob_start_next_wave promotes deep leads, re-ranks, starts a wave, and attributes the event source", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 0, deep_mode: true });
@@ -5110,12 +5137,12 @@ test("bounty_start_next_wave promotes deep leads, re-ranks, starts a wave, and a
     assert.ok(routes.routes.some((route) => route.surface_id === "lead-promoted-admin-api"));
     const events = JSON.parse(readPipelineAnalytics({ target_domain: domain, include_events: true })).events;
     const startedEvent = events.find((event) => event.type === "wave_started");
-    assert.equal(startedEvent.source, "bounty_start_next_wave");
-    assert.equal(startedEvent.started_by, "bounty_start_next_wave");
+    assert.equal(startedEvent.source, "bob_start_next_wave");
+    assert.equal(startedEvent.started_by, "bob_start_next_wave");
   });
 });
 
-test("bounty_start_next_wave returns settle and no-candidate decisions without writing", () => {
+test("bob_start_next_wave returns settle and no-candidate decisions without writing", () => {
   withTempHome(() => {
     const pendingDomain = "pending.example";
     seedSessionState(pendingDomain, { phase: "EVALUATE", evaluation_wave: 0, pending_wave: 1 });
@@ -5126,7 +5153,7 @@ test("bounty_start_next_wave returns settle and no-candidate decisions without w
     assert.equal(pending.decision, "pending_wave_settle");
     assert.deepEqual(pending.next_action, {
       kind: "call_tool",
-      tool: "bounty_apply_wave_merge",
+      tool: "bob_apply_wave_merge",
       arguments: {
         target_domain: pendingDomain,
         wave_number: 1,
@@ -5150,7 +5177,7 @@ test("bounty_start_next_wave returns settle and no-candidate decisions without w
   });
 });
 
-test("bounty_start_next_wave rolls back promotion artifacts if wave start state write fails", () => {
+test("bob_start_next_wave rolls back promotion artifacts if wave start state write fails", () => {
   withTempHome(() => {
     const domain = "rollback.example";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 0, deep_mode: true });
@@ -5194,7 +5221,7 @@ test("bounty_start_next_wave rolls back promotion artifacts if wave start state 
   });
 });
 
-test("bounty_apply_wave_merge returns pending without mutating state when handoffs are incomplete", () => {
+test("bob_apply_wave_merge returns pending without mutating state when handoffs are incomplete", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", pending_wave: 1 });
@@ -5382,7 +5409,7 @@ test("EVALUATE -> CHAIN gate exposes blocked_high_surface_ids and blocks transit
   });
 });
 
-test("bounty_start_wave rejects assignment of terminally_blocked surfaces", () => {
+test("bob_start_wave rejects assignment of terminally_blocked surfaces", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAttackSurface(domain, ["surface-a", "surface-b"]);
@@ -5404,7 +5431,7 @@ test("bounty_start_wave rejects assignment of terminally_blocked surfaces", () =
   });
 });
 
-test("bounty_apply_wave_merge adds surface_status: complete surfaces to state.explored even when coverage rows are unfinished", () => {
+test("bob_apply_wave_merge adds surface_status: complete surfaces to state.explored even when coverage rows are unfinished", () => {
   // The structured handoff is the contract. Coverage rows are advisory
   // history. A evaluator that wrote `surface_status: complete` AND has stale
   // unfinished coverage rows for the same wave is internally inconsistent,
@@ -5455,7 +5482,7 @@ test("bounty_apply_wave_merge adds surface_status: complete surfaces to state.ex
   });
 });
 
-test("bounty_apply_wave_merge merges state, findings, requeues, and scope exclusions", () => {
+test("bob_apply_wave_merge merges state, findings, requeues, and scope exclusions", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, {
@@ -5732,7 +5759,7 @@ test("unassignable high-confidence surface leads are not promoted or counted as 
   });
 });
 
-test("bounty_write_wave_handoff persists evaluator surface_leads through the session lock", () => {
+test("bob_write_wave_handoff persists evaluator surface_leads through the session lock", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAssignments(domain, 1, [
@@ -5819,7 +5846,7 @@ test("bounty_write_wave_handoff persists evaluator surface_leads through the ses
   });
 });
 
-test("deep wave merge records handoff surface leads but leaves automatic promotion to bounty_start_next_wave", () => {
+test("deep wave merge records handoff surface leads but leaves automatic promotion to bob_start_next_wave", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", pending_wave: 1, deep_mode: true });
@@ -5860,7 +5887,7 @@ test("deep wave merge records handoff surface leads but leaves automatic promoti
   });
 });
 
-test("bounty_apply_wave_merge requeues unfinished coverage without treating tested or blocked as unfinished", () => {
+test("bob_apply_wave_merge requeues unfinished coverage without treating tested or blocked as unfinished", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", pending_wave: 1 });
@@ -5992,7 +6019,7 @@ test("bounty_apply_wave_merge requeues unfinished coverage without treating test
   });
 });
 
-test("bounty_apply_wave_merge preserves existing scope exclusions when the log is absent", () => {
+test("bob_apply_wave_merge preserves existing scope exclusions when the log is absent", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, {
@@ -6024,7 +6051,7 @@ test("bounty_apply_wave_merge preserves existing scope exclusions when the log i
   });
 });
 
-test("bounty_apply_wave_merge force-merges missing and invalid handoffs and computes requeue_surface_ids", () => {
+test("bob_apply_wave_merge force-merges missing and invalid handoffs and computes requeue_surface_ids", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", pending_wave: 2, evaluation_wave: 1 });
@@ -6079,7 +6106,7 @@ test("bounty_apply_wave_merge force-merges missing and invalid handoffs and comp
   });
 });
 
-test("bounty_apply_wave_merge requires a force_merge_reason for forced settlement", () => {
+test("bob_apply_wave_merge requires a force_merge_reason for forced settlement", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", pending_wave: 1 });
@@ -6104,7 +6131,7 @@ test("bounty_apply_wave_merge requires a force_merge_reason for forced settlemen
   });
 });
 
-test("bounty_apply_wave_merge promotes recurring blocked_prereqs to state.terminally_blocked when registry is unchanged", () => {
+test("bob_apply_wave_merge promotes recurring blocked_prereqs to state.terminally_blocked when registry is unchanged", () => {
   withTempHome(() => {
     const domain = "promote.example.com";
     seedAttackSurfaces(domain, [
@@ -6160,7 +6187,7 @@ test("bounty_apply_wave_merge promotes recurring blocked_prereqs to state.termin
   });
 });
 
-test("bounty_apply_wave_merge does NOT promote auth_missing when the named handle was added between waves", () => {
+test("bob_apply_wave_merge does NOT promote auth_missing when the named handle was added between waves", () => {
   withTempHome(() => {
     const domain = "registry-grew.example.com";
     seedAttackSurfaces(domain, [
@@ -6206,7 +6233,7 @@ test("bounty_apply_wave_merge does NOT promote auth_missing when the named handl
   });
 });
 
-test("bounty_apply_wave_merge DOES promote auth_missing when an unrelated handle was added (closes count-based amnesty bug)", () => {
+test("bob_apply_wave_merge DOES promote auth_missing when an unrelated handle was added (closes count-based amnesty bug)", () => {
   withTempHome(() => {
     const domain = "unrelated-handle.example.com";
     seedAttackSurfaces(domain, [
@@ -6253,7 +6280,7 @@ test("bounty_apply_wave_merge DOES promote auth_missing when an unrelated handle
   });
 });
 
-test("bounty_apply_wave_merge promotes funded_wallet_missing on 2-wave recurrence (no registry-delta path)", () => {
+test("bob_apply_wave_merge promotes funded_wallet_missing on 2-wave recurrence (no registry-delta path)", () => {
   withTempHome(() => {
     const domain = "wallet-blocked.example.com";
     seedAttackSurfaces(domain, [
@@ -6297,7 +6324,7 @@ test("bounty_apply_wave_merge promotes funded_wallet_missing on 2-wave recurrenc
   });
 });
 
-test("bounty_clear_terminal_block removes a surface from terminally_blocked and records the clear in state", () => {
+test("bob_clear_terminal_block removes a surface from terminally_blocked and records the clear in state", () => {
   withTempHome(() => {
     const domain = "clear-block.example.com";
     seedSessionState(domain, {
@@ -6338,7 +6365,7 @@ test("bounty_clear_terminal_block removes a surface from terminally_blocked and 
   });
 });
 
-test("bounty_clear_terminal_block rejects clearing while a wave is pending", () => {
+test("bob_clear_terminal_block rejects clearing while a wave is pending", () => {
   withTempHome(() => {
     const domain = "pending-clear.example.com";
     seedSessionState(domain, {
@@ -6357,7 +6384,7 @@ test("bounty_clear_terminal_block rejects clearing while a wave is pending", () 
   });
 });
 
-test("bounty_clear_terminal_block rejects clearing a surface that was never terminally blocked", () => {
+test("bob_clear_terminal_block rejects clearing a surface that was never terminally blocked", () => {
   withTempHome(() => {
     const domain = "never-blocked.example.com";
     seedSessionState(domain, {
@@ -6373,7 +6400,7 @@ test("bounty_clear_terminal_block rejects clearing a surface that was never term
   });
 });
 
-test("bounty_clear_terminal_block rejects a reason that contains credentials", () => {
+test("bob_clear_terminal_block rejects a reason that contains credentials", () => {
   withTempHome(() => {
     const domain = "secret-reason.example.com";
     seedSessionState(domain, {
@@ -6391,7 +6418,7 @@ test("bounty_clear_terminal_block rejects a reason that contains credentials", (
   });
 });
 
-test("bounty_clear_terminal_block requires a reason of at least 20 characters", () => {
+test("bob_clear_terminal_block requires a reason of at least 20 characters", () => {
   withTempHome(() => {
     const domain = "short-reason.example.com";
     seedSessionState(domain, {
@@ -6409,7 +6436,7 @@ test("bounty_clear_terminal_block requires a reason of at least 20 characters", 
   });
 });
 
-test("bounty_apply_wave_merge emits a surface_terminally_blocked event per (surface, blocker) pair on promotion", () => {
+test("bob_apply_wave_merge emits a surface_terminally_blocked event per (surface, blocker) pair on promotion", () => {
   withTempHome(() => {
     const domain = "promote-event.example.com";
     seedAttackSurfaces(domain, [
@@ -6533,7 +6560,7 @@ test("low_coverage analytics fires on closed_pct (not coverage_pct) so terminall
   });
 });
 
-test("bounty_clear_terminal_block lets a re-blocked surface start fresh recurrence count via clear epoch", () => {
+test("bob_clear_terminal_block lets a re-blocked surface start fresh recurrence count via clear epoch", () => {
   withTempHome(() => {
     const domain = "reblock.example.com";
     seedAttackSurfaces(domain, [
@@ -6585,7 +6612,7 @@ test("bounty_clear_terminal_block lets a re-blocked surface start fresh recurren
   });
 });
 
-test("bounty_apply_wave_merge rejects invalid state invariants and hard-fails on missing or malformed attack_surface.json", () => {
+test("bob_apply_wave_merge rejects invalid state invariants and hard-fails on missing or malformed attack_surface.json", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "CHAIN", pending_wave: 1 });
@@ -6622,7 +6649,7 @@ test("bounty_apply_wave_merge rejects invalid state invariants and hard-fails on
   });
 });
 
-test("bounty_write_wave_handoff rejects unassigned or mismatched handoffs", () => {
+test("bob_write_wave_handoff rejects unassigned or mismatched handoffs", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
@@ -6692,7 +6719,7 @@ test("wave handoff contract normalizes blocked prereqs and validates assignment 
   );
 });
 
-test("bounty_record_finding rejects partial or invalid wave metadata and still allows null/null", () => {
+test("bob_record_finding rejects partial or invalid wave metadata and still allows null/null", () => {
   withTempHome(() => {
     const domain = "example.com";
 
@@ -6762,7 +6789,7 @@ test("bounty_record_finding rejects partial or invalid wave metadata and still a
   });
 });
 
-test("bounty_record_finding emits finding_index_failed and keeps recording when indexing fails", () => {
+test("bob_record_finding emits finding_index_failed and keeps recording when indexing fails", () => {
   withTempHome(() => {
     const domain = "finding-index-failure.example.com";
     seedSessionState(domain, {
@@ -6800,7 +6827,7 @@ test("bounty_record_finding emits finding_index_failed and keeps recording when 
       const eventRead = readPipelineEvents(domain);
       const failureEvents = eventRead.events.filter((event) => event.type === "finding_index_failed");
       assert.equal(failureEvents.length, 1);
-      assert.equal(failureEvents[0].source, "bounty_record_finding");
+      assert.equal(failureEvents[0].source, "bob_record_finding");
       assert.equal(failureEvents[0].surface_id, "surface-a");
       assert.equal(failureEvents[0].status, "medium");
 
@@ -6820,7 +6847,7 @@ test("bounty_record_finding emits finding_index_failed and keeps recording when 
   });
 });
 
-test("bounty_write_handoff still writes SESSION_HANDOFF.md without wave fields", () => {
+test("bob_write_handoff still writes SESSION_HANDOFF.md without wave fields", () => {
   withTempHome(() => {
     const domain = "example.com";
     const result = JSON.parse(writeHandoff({
@@ -6842,7 +6869,7 @@ test("bounty_write_handoff still writes SESSION_HANDOFF.md without wave fields",
   });
 });
 
-test("bounty_write_wave_handoff writes matching markdown and json with normalized defaults", () => {
+test("bob_write_wave_handoff writes matching markdown and json with normalized defaults", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
@@ -6882,7 +6909,7 @@ test("bounty_write_wave_handoff writes matching markdown and json with normalize
   });
 });
 
-test("bounty_write_wave_handoff rejects oversized markdown content", () => {
+test("bob_write_wave_handoff rejects oversized markdown content", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
@@ -6902,7 +6929,7 @@ test("bounty_write_wave_handoff rejects oversized markdown content", () => {
   });
 });
 
-test("bounty_write_wave_handoff rejects surface_status: complete with blocked_harness_runs", () => {
+test("bob_write_wave_handoff rejects surface_status: complete with blocked_harness_runs", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
@@ -6921,7 +6948,7 @@ test("bounty_write_wave_handoff rejects surface_status: complete with blocked_ha
   });
 });
 
-test("bounty_write_wave_handoff accepts surface_status: partial with blocked_harness_runs", () => {
+test("bob_write_wave_handoff accepts surface_status: partial with blocked_harness_runs", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
@@ -6946,7 +6973,7 @@ test("bounty_write_wave_handoff accepts surface_status: partial with blocked_har
   });
 });
 
-test("bounty_write_wave_handoff accepts surface_status: partial with blocked_prereqs", () => {
+test("bob_write_wave_handoff accepts surface_status: partial with blocked_prereqs", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
@@ -6962,7 +6989,7 @@ test("bounty_write_wave_handoff accepts surface_status: partial with blocked_pre
         {
           kind: "auth_missing",
           identifier_hint: "attacker",
-          reason: "Org-scoped IDOR test requires attacker session; bounty_list_auth_profiles returned []",
+          reason: "Org-scoped IDOR test requires attacker session; bob_list_auth_profiles returned []",
           needed_for: "cross-org dashboard authz check",
         },
         {
@@ -6985,7 +7012,7 @@ test("bounty_write_wave_handoff accepts surface_status: partial with blocked_pre
   });
 });
 
-test("bounty_write_wave_handoff rejects surface_status: complete with blocked_prereqs", () => {
+test("bob_write_wave_handoff rejects surface_status: complete with blocked_prereqs", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
@@ -7004,7 +7031,7 @@ test("bounty_write_wave_handoff rejects surface_status: complete with blocked_pr
   });
 });
 
-test("bounty_write_wave_handoff rejects blocked_prereqs with unknown kind", () => {
+test("bob_write_wave_handoff rejects blocked_prereqs with unknown kind", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
@@ -7023,7 +7050,7 @@ test("bounty_write_wave_handoff rejects blocked_prereqs with unknown kind", () =
   });
 });
 
-test("bounty_write_wave_handoff rejects blocked_prereqs identifier_hint that looks like a secret", () => {
+test("bob_write_wave_handoff rejects blocked_prereqs identifier_hint that looks like a secret", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
@@ -7097,7 +7124,7 @@ test("bounty_write_wave_handoff rejects blocked_prereqs identifier_hint that loo
   });
 });
 
-test("bounty_write_wave_handoff accepts blocked_prereqs without identifier_hint", () => {
+test("bob_write_wave_handoff accepts blocked_prereqs without identifier_hint", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
@@ -7123,7 +7150,7 @@ test("bounty_write_wave_handoff accepts blocked_prereqs without identifier_hint"
   });
 });
 
-test("bounty_write_wave_handoff rejects blocked_prereqs reason with embedded secrets", () => {
+test("bob_write_wave_handoff rejects blocked_prereqs reason with embedded secrets", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
@@ -7145,7 +7172,7 @@ test("bounty_write_wave_handoff rejects blocked_prereqs reason with embedded sec
   });
 });
 
-test("bounty_write_wave_handoff rejects blocked_prereqs reason past 240 chars", () => {
+test("bob_write_wave_handoff rejects blocked_prereqs reason past 240 chars", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
@@ -7164,7 +7191,7 @@ test("bounty_write_wave_handoff rejects blocked_prereqs reason past 240 chars", 
   });
 });
 
-test("bounty_write_wave_handoff rejects more than 20 blocked_prereqs", () => {
+test("bob_write_wave_handoff rejects more than 20 blocked_prereqs", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
@@ -7186,7 +7213,7 @@ test("bounty_write_wave_handoff rejects more than 20 blocked_prereqs", () => {
   });
 });
 
-test("bounty_write_wave_handoff rejects smart_contract complete without findings or bypass_attempts", () => {
+test("bob_write_wave_handoff rejects smart_contract complete without findings or bypass_attempts", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAttackSurfaces(domain, [{ id: "surface-a", hosts: [`https://${domain}`], surface_type: "smart_contract", chain_family: "evm" }]);
@@ -7203,7 +7230,7 @@ test("bounty_write_wave_handoff rejects smart_contract complete without findings
   });
 });
 
-test("bounty_write_wave_handoff accepts smart_contract complete with bypass_attempts entry", () => {
+test("bob_write_wave_handoff accepts smart_contract complete with bypass_attempts entry", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAttackSurfaces(domain, [{ id: "surface-a", hosts: [`https://${domain}`], surface_type: "smart_contract", chain_family: "evm" }]);
@@ -7233,7 +7260,7 @@ test("bounty_write_wave_handoff accepts smart_contract complete with bypass_atte
   });
 });
 
-test("bounty_write_wave_handoff accepts smart_contract complete when a finding is recorded for the surface", () => {
+test("bob_write_wave_handoff accepts smart_contract complete when a finding is recorded for the surface", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAttackSurfaces(domain, [{ id: "surface-a", hosts: [`https://${domain}`], surface_type: "smart_contract", chain_family: "evm" }]);
@@ -7265,7 +7292,7 @@ test("bounty_write_wave_handoff accepts smart_contract complete when a finding i
   });
 });
 
-test("bounty_write_wave_handoff requires finding_id when bypass_attempts.outcome is finding_recorded", () => {
+test("bob_write_wave_handoff requires finding_id when bypass_attempts.outcome is finding_recorded", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAttackSurfaces(domain, [{ id: "surface-a", hosts: [`https://${domain}`], surface_type: "smart_contract", chain_family: "evm" }]);
@@ -7289,7 +7316,7 @@ test("bounty_write_wave_handoff requires finding_id when bypass_attempts.outcome
   });
 });
 
-test("bounty_write_wave_handoff allows non-smart_contract surfaces to complete without bypass_attempts", () => {
+test("bob_write_wave_handoff allows non-smart_contract surfaces to complete without bypass_attempts", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAttackSurfaces(domain, [{ id: "surface-a", hosts: [`https://${domain}`], surface_type: "api" }]);
@@ -7478,7 +7505,7 @@ test("tokenized wave handoffs require the correct token and report verified prov
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 0 });
     seedAttackSurface(domain, ["surface-a"]);
 
-    const started = await executeTool("bounty_start_wave", {
+    const started = await executeTool("bob_start_wave", {
       target_domain: domain,
       wave_number: 1,
       assignments: [{ agent: "a1", surface_id: "surface-a" }],
@@ -7490,7 +7517,7 @@ test("tokenized wave handoffs require the correct token and report verified prov
 	    assert.match(assignmentText, /handoff_token_sha256/);
 	    assert.match(assignmentText, /handoff_token_required/);
 
-    const missing = await executeTool("bounty_write_wave_handoff", {
+    const missing = await executeTool("bob_write_wave_handoff", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
@@ -7503,7 +7530,7 @@ test("tokenized wave handoffs require the correct token and report verified prov
     assert.equal(missing.error.code, "INVALID_ARGUMENTS");
     assert.match(missing.error.message, /handoff_token is required/);
 
-    const wrong = await executeTool("bounty_write_wave_handoff", {
+    const wrong = await executeTool("bob_write_wave_handoff", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
@@ -7517,7 +7544,7 @@ test("tokenized wave handoffs require the correct token and report verified prov
     assert.equal(wrong.error.code, "INVALID_ARGUMENTS");
     assert.match(wrong.error.message, /handoff_token does not match/);
 
-    const written = await executeTool("bounty_write_wave_handoff", {
+    const written = await executeTool("bob_write_wave_handoff", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
@@ -7540,7 +7567,7 @@ test("tokenized wave handoffs require the correct token and report verified prov
 	    assert.match(handoffText, /"provenance_assignment_hash": "[0-9a-f]{64}"/);
 	    assert.match(handoffText, /"provenance_signature"/);
 
-    const handoffs = await executeTool("bounty_read_wave_handoffs", {
+    const handoffs = await executeTool("bob_read_wave_handoffs", {
       target_domain: domain,
       wave_number: 1,
     });
@@ -7549,7 +7576,7 @@ test("tokenized wave handoffs require the correct token and report verified prov
     assert.equal(handoffs.data.handoffs[0].summary, "Tested the assigned surface.");
     assert.deepEqual(handoffs.data.handoffs[0].chain_notes, ["No chainable primitive found."]);
 
-    const merged = await executeTool("bounty_apply_wave_merge", {
+    const merged = await executeTool("bob_apply_wave_merge", {
       target_domain: domain,
       wave_number: 1,
       force_merge: false,
@@ -7569,7 +7596,7 @@ test("tampered tokenized handoff JSON is invalid and cannot complete the surface
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 0 });
     seedAttackSurface(domain, ["surface-a"]);
 
-    const started = await executeTool("bounty_start_wave", {
+    const started = await executeTool("bob_start_wave", {
       target_domain: domain,
       wave_number: 1,
       assignments: [{ agent: "a1", surface_id: "surface-a" }],
@@ -7577,7 +7604,7 @@ test("tampered tokenized handoff JSON is invalid and cannot complete the surface
     assert.equal(started.ok, true);
     const token = started.data.assignments[0].handoff_token;
 
-    const written = await executeTool("bounty_write_wave_handoff", {
+    const written = await executeTool("bob_write_wave_handoff", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
@@ -7594,7 +7621,7 @@ test("tampered tokenized handoff JSON is invalid and cannot complete the surface
     tampered.summary = "Tampered after MCP write.";
     writeFileAtomic(handoffPath, `${JSON.stringify(tampered, null, 2)}\n`);
 
-    const handoffs = await executeTool("bounty_read_wave_handoffs", {
+    const handoffs = await executeTool("bob_read_wave_handoffs", {
       target_domain: domain,
       wave_number: 1,
     });
@@ -7607,7 +7634,7 @@ test("tampered tokenized handoff JSON is invalid and cannot complete the surface
     // so a tampered handoff causes apply_wave_merge to gate as "pending" with
     // is_complete:false until the operator explicitly force_merges. Previously
     // the gate ran on file presence only and silently merged.
-    const pending = await executeTool("bounty_apply_wave_merge", {
+    const pending = await executeTool("bob_apply_wave_merge", {
       target_domain: domain,
       wave_number: 1,
       force_merge: false,
@@ -7617,7 +7644,7 @@ test("tampered tokenized handoff JSON is invalid and cannot complete the surface
     assert.equal(pending.data.readiness.is_complete, false);
     assert.deepEqual(pending.data.readiness.invalid_agents, ["a1"]);
 
-    const merged = await executeTool("bounty_apply_wave_merge", {
+    const merged = await executeTool("bob_apply_wave_merge", {
       target_domain: domain,
       wave_number: 1,
       force_merge: true,
@@ -7639,7 +7666,7 @@ test("tokenized assignment cannot downgrade to legacy by losing its token hash",
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 0 });
     seedAttackSurface(domain, ["surface-a"]);
 
-    const started = await executeTool("bounty_start_wave", {
+    const started = await executeTool("bob_start_wave", {
       target_domain: domain,
       wave_number: 1,
       assignments: [{ agent: "a1", surface_id: "surface-a" }],
@@ -7651,7 +7678,7 @@ test("tokenized assignment cannot downgrade to legacy by losing its token hash",
     delete assignmentDoc.assignments[0].handoff_token_sha256;
     writeFileAtomic(assignmentsPath, `${JSON.stringify(assignmentDoc, null, 2)}\n`);
 
-    const attempted = await executeTool("bounty_write_wave_handoff", {
+    const attempted = await executeTool("bob_write_wave_handoff", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
@@ -7673,14 +7700,14 @@ test("tokenized handoff provenance rejects permissive signing key files", async 
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 0 });
     seedAttackSurface(domain, ["surface-a"]);
 
-    const started = await executeTool("bounty_start_wave", {
+    const started = await executeTool("bob_start_wave", {
       target_domain: domain,
       wave_number: 1,
       assignments: [{ agent: "a1", surface_id: "surface-a" }],
     });
     assert.equal(started.ok, true);
 
-    const written = await executeTool("bounty_write_wave_handoff", {
+    const written = await executeTool("bob_write_wave_handoff", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
@@ -7693,7 +7720,7 @@ test("tokenized handoff provenance rejects permissive signing key files", async 
     assert.equal(written.ok, true);
 
     fs.chmodSync(handoffSigningKeyPath(domain), 0o644);
-    const handoffs = await executeTool("bounty_read_wave_handoffs", {
+    const handoffs = await executeTool("bob_read_wave_handoffs", {
       target_domain: domain,
       wave_number: 1,
     });
@@ -7704,13 +7731,13 @@ test("tokenized handoff provenance rejects permissive signing key files", async 
   });
 });
 
-test("bounty_finalize_agent_run blocks missing invalid and mismatched handoffs", async () => {
+test("bob_finalize_agent_run blocks missing invalid and mismatched handoffs", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
 
-    const missing = await executeTool("bounty_finalize_agent_run", {
+    const missing = await executeTool("bob_finalize_agent_run", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
@@ -7722,7 +7749,7 @@ test("bounty_finalize_agent_run blocks missing invalid and mismatched handoffs",
     assert.equal(missing.error.details.handoff.present, false);
 
     writeFileAtomic(path.join(sessionDir(domain), "handoff-w1-a1.json"), "{bad json");
-    const invalid = await executeTool("bounty_finalize_agent_run", {
+    const invalid = await executeTool("bob_finalize_agent_run", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
@@ -7743,7 +7770,7 @@ test("bounty_finalize_agent_run blocks missing invalid and mismatched handoffs",
       chain_notes: ["No chain."],
       content: "# a1",
     });
-    const mismatch = await executeTool("bounty_finalize_agent_run", {
+    const mismatch = await executeTool("bob_finalize_agent_run", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
@@ -7762,22 +7789,22 @@ test("bounty_finalize_agent_run blocks missing invalid and mismatched handoffs",
       "invalid_handoff",
       "handoff_mismatch",
     ]);
-    assert.ok(rows.every((row) => row.telemetry_source === "bounty_finalize_agent_run"));
+    assert.ok(rows.every((row) => row.telemetry_source === "bob_finalize_agent_run"));
 
     const pipelineRows = readJsonl(pipelineEventsJsonlPath(domain));
     assert.deepEqual(
       pipelineRows.filter((row) => row.type === "evaluator_stopped").map((row) => row.source),
-      ["bounty_finalize_agent_run", "bounty_finalize_agent_run", "bounty_finalize_agent_run"],
+      ["bob_finalize_agent_run", "bob_finalize_agent_run", "bob_finalize_agent_run"],
     );
   });
 });
 
-test("bounty_finalize_agent_run blocks unreadable wave assignments and records telemetry", async () => {
+test("bob_finalize_agent_run blocks unreadable wave assignments and records telemetry", async () => {
   await withTempHome(async () => {
     const domain = "unreadable-assignments.example";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
 
-    const missing = await executeTool("bounty_finalize_agent_run", {
+    const missing = await executeTool("bob_finalize_agent_run", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
@@ -7789,7 +7816,7 @@ test("bounty_finalize_agent_run blocks unreadable wave assignments and records t
     assert.match(missing.error.message, /could not read wave assignments/);
 
     writeFileAtomic(path.join(sessionDir(domain), "wave-1-assignments.json"), "{bad json");
-    const malformed = await executeTool("bounty_finalize_agent_run", {
+    const malformed = await executeTool("bob_finalize_agent_run", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
@@ -7805,7 +7832,7 @@ test("bounty_finalize_agent_run blocks unreadable wave assignments and records t
       "unreadable_wave_assignments",
       "unreadable_wave_assignments",
     ]);
-    assert.ok(rows.every((row) => row.telemetry_source === "bounty_finalize_agent_run"));
+    assert.ok(rows.every((row) => row.telemetry_source === "bob_finalize_agent_run"));
 
     const pipelineRows = readJsonl(pipelineEventsJsonlPath(domain));
     assert.deepEqual(
@@ -7815,7 +7842,7 @@ test("bounty_finalize_agent_run blocks unreadable wave assignments and records t
   });
 });
 
-test("bounty_finalize_agent_run allows valid handoff and records metadata-only telemetry", async () => {
+test("bob_finalize_agent_run allows valid handoff and records metadata-only telemetry", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
@@ -7877,7 +7904,7 @@ test("bounty_finalize_agent_run allows valid handoff and records metadata-only t
     assert.equal(rows.length, 1);
     assert.equal(rows[0].status, "allowed");
     assert.equal(rows[0].block_code, null);
-    assert.equal(rows[0].telemetry_source, "bounty_finalize_agent_run");
+    assert.equal(rows[0].telemetry_source, "bob_finalize_agent_run");
     assert.deepEqual(rows[0].coverage, { total: 1, by_status: { tested: 1 } });
     assert.deepEqual(rows[0].findings, { count: 1 });
     assert.equal(JSON.stringify(rows[0]).includes("raw handoff body"), false);
@@ -7885,7 +7912,7 @@ test("bounty_finalize_agent_run allows valid handoff and records metadata-only t
   });
 });
 
-test("bounty_finalize_agent_run enforces web technique attempt requirement", async () => {
+test("bob_finalize_agent_run enforces web technique attempt requirement", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
@@ -7900,7 +7927,7 @@ test("bounty_finalize_agent_run enforces web technique attempt requirement", asy
       content: "# a1",
     });
 
-    const blocked = await executeTool("bounty_finalize_agent_run", {
+    const blocked = await executeTool("bob_finalize_agent_run", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
@@ -7909,13 +7936,13 @@ test("bounty_finalize_agent_run enforces web technique attempt requirement", asy
     assert.equal(blocked.ok, false);
     assert.equal(blocked.error.code, "STATE_CONFLICT");
     assert.equal(blocked.error.details.block_code, "missing_technique_attempt_log");
-    assert.match(blocked.error.message, /bounty_log_technique_attempt/);
+    assert.match(blocked.error.message, /bob_log_technique_attempt/);
 
     seedTechniqueAttempt(domain, {
       status: "selected",
       evidence: "Selected a candidate technique pack but did not execute it yet.",
     });
-    const selectedOnly = await executeTool("bounty_finalize_agent_run", {
+    const selectedOnly = await executeTool("bob_finalize_agent_run", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
@@ -7927,7 +7954,7 @@ test("bounty_finalize_agent_run enforces web technique attempt requirement", asy
     assert.match(selectedOnly.error.message, /real attempt outcome/);
 
     seedTechniqueAttempt(domain);
-    const allowed = await executeTool("bounty_finalize_agent_run", {
+    const allowed = await executeTool("bob_finalize_agent_run", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
@@ -7942,7 +7969,7 @@ test("bounty_finalize_agent_run enforces web technique attempt requirement", asy
   });
 });
 
-test("bounty_finalize_agent_run allows smart-contract handoff without technique attempts", async () => {
+test("bob_finalize_agent_run allows smart-contract handoff without technique attempts", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
@@ -7989,7 +8016,7 @@ test("bounty_finalize_agent_run allows smart-contract handoff without technique 
 test("executeTool smoke path uses envelopes for init, wave, handoff, attempt, and merge", async () => {
   await withTempHome(async () => {
     const domain = "smoke.example";
-    const init = await executeTool("bounty_init_session", {
+    const init = await executeTool("bob_init_session", {
       target_domain: domain,
       target_url: `https://${domain}`,
     });
@@ -8003,14 +8030,14 @@ test("executeTool smoke path uses envelopes for init, wave, handoff, attempt, an
       auth_status: "unauthenticated",
     })).ok, true);
 
-    const started = await executeTool("bounty_start_wave", {
+    const started = await executeTool("bob_start_wave", {
       target_domain: domain,
       wave_number: 1,
       assignments: [{ agent: "a1", surface_id: "surface-a" }],
     });
     assert.equal(started.ok, true);
 
-    const handoff = await executeTool("bounty_write_wave_handoff", {
+    const handoff = await executeTool("bob_write_wave_handoff", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
@@ -8023,7 +8050,7 @@ test("executeTool smoke path uses envelopes for init, wave, handoff, attempt, an
     });
     assert.equal(handoff.ok, true);
 
-    const attempt = await executeTool("bounty_log_technique_attempt", {
+    const attempt = await executeTool("bob_log_technique_attempt", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
@@ -8034,7 +8061,7 @@ test("executeTool smoke path uses envelopes for init, wave, handoff, attempt, an
     });
     assert.equal(attempt.ok, true);
 
-    const finalized = await executeTool("bounty_finalize_agent_run", {
+    const finalized = await executeTool("bob_finalize_agent_run", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
@@ -8043,7 +8070,7 @@ test("executeTool smoke path uses envelopes for init, wave, handoff, attempt, an
     assert.equal(finalized.ok, true);
     assert.equal(finalized.data.status, "allowed");
 
-    const merged = await executeTool("bounty_apply_wave_merge", {
+    const merged = await executeTool("bob_apply_wave_merge", {
       target_domain: domain,
       wave_number: 1,
       force_merge: false,
@@ -8062,7 +8089,7 @@ test("evaluator SubagentStop hook blocks missing final marker", () => {
 
     assert.equal(result.status, 2);
     assert.match(result.stderr, /BOB_AGENT_RUN_DONE/);
-    assert.match(result.stderr, /bounty_write_wave_handoff/);
+    assert.match(result.stderr, /bob_write_wave_handoff/);
 
     const rows = readJsonl(toolInvocationTelemetryPath());
     assert.equal(rows.length, 1);
@@ -8168,7 +8195,7 @@ test("evaluator SubagentStop hook blocks missing structured handoff", async () =
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 0 });
     seedAttackSurface(domain, ["surface-a"]);
-    await executeTool("bounty_start_wave", {
+    await executeTool("bob_start_wave", {
       target_domain: domain,
       wave_number: 1,
       assignments: [{ agent: "a1", surface_id: "surface-a" }],
@@ -8179,7 +8206,7 @@ test("evaluator SubagentStop hook blocks missing structured handoff", async () =
     }, { home: tempHome });
 
     assert.equal(result.status, 2);
-    assert.match(result.stderr, /must call bounty_write_wave_handoff/);
+    assert.match(result.stderr, /must call bob_write_wave_handoff/);
 
     const rows = readJsonl(toolInvocationTelemetryPath());
     assert.equal(rows.length, 1);
@@ -8271,7 +8298,7 @@ test("evaluator SubagentStop hook allows incomplete waves without merging", asyn
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 0 });
     seedAttackSurface(domain, ["surface-a", "surface-b"]);
-    const started = await executeTool("bounty_start_wave", {
+    const started = await executeTool("bob_start_wave", {
       target_domain: domain,
       wave_number: 1,
       assignments: [
@@ -8280,7 +8307,7 @@ test("evaluator SubagentStop hook allows incomplete waves without merging", asyn
       ],
     });
     const token = started.data.assignments.find((assignment) => assignment.agent === "a1").handoff_token;
-    await executeTool("bounty_write_wave_handoff", {
+    await executeTool("bob_write_wave_handoff", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
@@ -8308,12 +8335,12 @@ test("evaluator SubagentStop hook allows a complete wave without merging", async
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 0 });
     seedAttackSurface(domain, ["surface-a"]);
-    const started = await executeTool("bounty_start_wave", {
+    const started = await executeTool("bob_start_wave", {
       target_domain: domain,
       wave_number: 1,
       assignments: [{ agent: "a1", surface_id: "surface-a" }],
     });
-    await executeTool("bounty_write_wave_handoff", {
+    await executeTool("bob_write_wave_handoff", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
@@ -8483,12 +8510,12 @@ test("evaluator SubagentStop hook treats stale completion notifications as valid
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 0 });
     seedAttackSurface(domain, ["surface-a"]);
-    const started = await executeTool("bounty_start_wave", {
+    const started = await executeTool("bob_start_wave", {
       target_domain: domain,
       wave_number: 1,
       assignments: [{ agent: "a1", surface_id: "surface-a" }],
     });
-    await executeTool("bounty_write_wave_handoff", {
+    await executeTool("bob_write_wave_handoff", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
@@ -8499,7 +8526,7 @@ test("evaluator SubagentStop hook treats stale completion notifications as valid
       content: "# a1",
     });
     seedTechniqueAttempt(domain);
-    const merged = await executeTool("bounty_apply_wave_merge", {
+    const merged = await executeTool("bob_apply_wave_merge", {
       target_domain: domain,
       wave_number: 1,
       force_merge: false,
@@ -8519,7 +8546,7 @@ test("evaluator SubagentStop hook treats stale completion notifications as valid
   });
 });
 
-test("bounty_log_coverage appends validated records to coverage.jsonl", () => {
+test("bob_log_coverage appends validated records to coverage.jsonl", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
@@ -8716,7 +8743,7 @@ test("imported traffic retention keeps newest records under the session cap", ()
   });
 });
 
-test("bounty_log_coverage rejects invalid assignment metadata and malformed entries", () => {
+test("bob_log_coverage rejects invalid assignment metadata and malformed entries", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
@@ -8770,7 +8797,7 @@ test("bounty_log_coverage rejects invalid assignment metadata and malformed entr
   });
 });
 
-test("bounty_wave_handoff_status reports complete when all assigned handoffs exist", () => {
+test("bob_wave_handoff_status reports complete when all assigned handoffs exist", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAssignments(domain, 1, [
@@ -8871,7 +8898,7 @@ test("markdown-only handoffs do not satisfy readiness or advance merges", () => 
   });
 });
 
-test("bounty_wave_handoff_status reports partial completion and surfaces invalid handoffs", () => {
+test("bob_wave_handoff_status reports partial completion and surfaces invalid handoffs", () => {
   withTempHome(() => {
     const domain = "example.com";
     const dir = sessionDir(domain);
@@ -8903,7 +8930,7 @@ test("bounty_wave_handoff_status reports partial completion and surfaces invalid
   });
 });
 
-test("bounty_wave_handoff_status hard-fails when the assignment file is missing", () => {
+test("bob_wave_handoff_status hard-fails when the assignment file is missing", () => {
   withTempHome(() => {
     assert.throws(
       () => waveHandoffStatus({ target_domain: "example.com", wave_number: 7 }),
@@ -8912,7 +8939,7 @@ test("bounty_wave_handoff_status hard-fails when the assignment file is missing"
   });
 });
 
-test("bounty_merge_wave_handoffs merges valid handoffs and dedupes optional arrays", () => {
+test("bob_merge_wave_handoffs merges valid handoffs and dedupes optional arrays", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAssignments(domain, 2, [
@@ -8976,7 +9003,7 @@ test("bounty_merge_wave_handoffs merges valid handoffs and dedupes optional arra
   });
 });
 
-test("bounty_merge_wave_handoffs requeues missing and invalid assigned handoffs while ignoring unexpected agents", () => {
+test("bob_merge_wave_handoffs requeues missing and invalid assigned handoffs while ignoring unexpected agents", () => {
   withTempHome(() => {
     const domain = "example.com";
     const dir = sessionDir(domain);
@@ -9027,7 +9054,7 @@ test("bounty_merge_wave_handoffs requeues missing and invalid assigned handoffs 
   });
 });
 
-test("bounty_read_wave_handoffs returns validated structured summaries and ignores markdown", () => {
+test("bob_read_wave_handoffs returns validated structured summaries and ignores markdown", () => {
   withTempHome(() => {
     const domain = "example.com";
     const dir = sessionDir(domain);
@@ -9074,7 +9101,7 @@ test("bounty_read_wave_handoffs returns validated structured summaries and ignor
   });
 });
 
-test("bounty_merge_wave_handoffs hard-fails when the assignment file is missing", () => {
+test("bob_merge_wave_handoffs hard-fails when the assignment file is missing", () => {
   withTempHome(() => {
     assert.throws(
       () => mergeWaveHandoffs({ target_domain: "example.com", wave_number: 4 }),
@@ -9083,7 +9110,7 @@ test("bounty_merge_wave_handoffs hard-fails when the assignment file is missing"
   });
 });
 
-test("bounty_record_finding appends findings.jsonl and bounty_read_findings preserves insertion order", () => {
+test("bob_record_finding appends findings.jsonl and bob_read_findings preserves insertion order", () => {
   withTempHome(() => {
     const domain = "example.com";
     const first = seedFinding(domain);
@@ -9168,7 +9195,7 @@ test("bounty_record_finding appends findings.jsonl and bounty_read_findings pres
   });
 });
 
-test("bounty_record_finding still writes readable findings.md", () => {
+test("bob_record_finding still writes readable findings.md", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedFinding(domain);
@@ -9180,7 +9207,7 @@ test("bounty_record_finding still writes readable findings.md", () => {
   });
 });
 
-test("bounty_record_finding stamps surface_type from the assignment and treats SC findings as requiring sc_evidence", () => {
+test("bob_record_finding stamps surface_type from the assignment and treats SC findings as requiring sc_evidence", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAttackSurfaces(domain, [
@@ -9288,7 +9315,7 @@ test("bounty_record_finding stamps surface_type from the assignment and treats S
   });
 });
 
-test("bounty_record_finding persists capability_pack metadata from the assignment", () => {
+test("bob_record_finding persists capability_pack metadata from the assignment", () => {
   // Web evaluator: the assignment carries the web pack triple and recordFinding
   // must persist all three fields verbatim into findings.jsonl.
   withTempHome(() => {
@@ -9326,7 +9353,7 @@ test("bounty_record_finding persists capability_pack metadata from the assignmen
   });
 });
 
-test("bounty_record_finding persists smart_contract_evm pack metadata for an EVM evaluator wave", () => {
+test("bob_record_finding persists smart_contract_evm pack metadata for an EVM evaluator wave", () => {
   // SC evaluator: the routed pack is smart_contract_evm. Persisting it on the
   // finding lets verifier/grader/reporter dispatch on the routed decision
   // rather than re-deriving from sc_evidence.chain_family.
@@ -9372,7 +9399,7 @@ test("bounty_record_finding persists smart_contract_evm pack metadata for an EVM
   });
 });
 
-test("bounty_record_finding persists smart_contract_substrate pack metadata for a Substrate evaluator wave", () => {
+test("bob_record_finding persists smart_contract_substrate pack metadata for a Substrate evaluator wave", () => {
   // Sanity that non-EVM SC packs round-trip too.
   withTempHome(() => {
     const domain = "example.com";
@@ -9497,7 +9524,7 @@ test("normalizeFindingRecord backfills capability_pack metadata for legacy SC ro
   assert.equal(legacySvm.brief_profile, "smart_contract_svm");
 });
 
-test("bounty_record_finding rejects sc_evidence in the no-wave/no-agent path so SC findings stay routed", () => {
+test("bob_record_finding rejects sc_evidence in the no-wave/no-agent path so SC findings stay routed", () => {
   // The no-wave path hardcodes the web pack triple. If a future caller
   // tries to record SC evidence without wave/agent, the routed pack would
   // silently be web — downstream verifier/evidence dispatch would route to
@@ -9659,7 +9686,7 @@ test("normalizeFindingRecord forbids sc_evidence on legacy null-surface rows (ba
   }), /sc_evidence is only allowed on smart_contract findings/);
 });
 
-test("bounty_record_finding rejects sc_evidence with a symlink that escapes $HOME (realpath check)", () => {
+test("bob_record_finding rejects sc_evidence with a symlink that escapes $HOME (realpath check)", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAttackSurfaces(domain, [
@@ -9700,7 +9727,7 @@ test("bounty_record_finding rejects sc_evidence with a symlink that escapes $HOM
   });
 });
 
-test("bounty_record_finding rejects sc_evidence with harness_path outside the user home", () => {
+test("bob_record_finding rejects sc_evidence with harness_path outside the user home", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAttackSurfaces(domain, [
@@ -9728,7 +9755,7 @@ test("bounty_record_finding rejects sc_evidence with harness_path outside the us
   });
 });
 
-test("bounty_record_finding accepts SVM sc_evidence with chain_family='svm' and base58 program id", () => {
+test("bob_record_finding accepts SVM sc_evidence with chain_family='svm' and base58 program id", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAttackSurfaces(domain, [
@@ -10014,7 +10041,7 @@ test("sc_evidence svm pubkey rejects strings that pass alphabet but decode to <3
   }), /must base58-decode to exactly 32 bytes/);
 });
 
-test("bounty_record_finding accepts Aptos sc_evidence with chain_family='aptos' and 0x64-hex module address", () => {
+test("bob_record_finding accepts Aptos sc_evidence with chain_family='aptos' and 0x64-hex module address", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAttackSurfaces(domain, [
@@ -10057,7 +10084,7 @@ test("bounty_record_finding accepts Aptos sc_evidence with chain_family='aptos' 
   });
 });
 
-test("bounty_record_finding accepts Sui sc_evidence with chain_family='sui' and 0x64-hex package id", () => {
+test("bob_record_finding accepts Sui sc_evidence with chain_family='sui' and 0x64-hex package id", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAttackSurfaces(domain, [
@@ -10280,7 +10307,7 @@ test("sc_evidence rejects chain_family='aptos' with integer chain_id (must be st
   }), /chain_id must be one of: mainnet, testnet, devnet/);
 });
 
-test("bounty_record_finding accepts Substrate sc_evidence with chain_family='substrate' and SS58 address", () => {
+test("bob_record_finding accepts Substrate sc_evidence with chain_family='substrate' and SS58 address", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAttackSurfaces(domain, [
@@ -10324,7 +10351,7 @@ test("bounty_record_finding accepts Substrate sc_evidence with chain_family='sub
   });
 });
 
-test("bounty_record_finding accepts CosmWasm sc_evidence with chain_family='cosmwasm' and bech32 address", () => {
+test("bob_record_finding accepts CosmWasm sc_evidence with chain_family='cosmwasm' and bech32 address", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAttackSurfaces(domain, [
@@ -10810,7 +10837,7 @@ test("svm-fetch-program parses BPFLoaderUpgradeable Program account discriminato
 });
 
 test("svm tools register with verifier and evidence role bundles (so balanced/brutalist/final + evidence-agent can re-run SVM PoCs)", () => {
-  const tools = ["bounty_svm_fetch_account", "bounty_svm_fetch_program", "bounty_anchor_run"];
+  const tools = ["bob_svm_fetch_account", "bob_svm_fetch_program", "bob_anchor_run"];
   for (const name of tools) {
     const meta = TOOL_MANIFEST[name];
     assert.ok(meta, `${name} is in TOOL_MANIFEST`);
@@ -10928,7 +10955,7 @@ test("smart-contract egress policy blocks DNS-private RPC endpoints before fetch
     const secret = "rpc-secret-token";
     const result = await withMockSmartContractRpcLookup({
       "rpc.example.test": [{ address: "198.18.0.9", family: 4 }],
-    }, () => executeTool("bounty_evm_call", {
+    }, () => executeTool("bob_evm_call", {
       chain_id: 1,
       to: "0x" + "11".repeat(20),
       data: "0x",
@@ -11898,12 +11925,12 @@ test("sui runner classifies CLI usage errors as sui_dependency_missing", () => {
 
 test("Move tools register with verifier and evidence role bundles (so balanced/brutalist/final + evidence-agent can re-run Aptos/Sui PoCs)", () => {
   const tools = [
-    "bounty_aptos_fetch_resource",
-    "bounty_aptos_fetch_module",
-    "bounty_aptos_run",
-    "bounty_sui_fetch_object",
-    "bounty_sui_fetch_package",
-    "bounty_sui_run",
+    "bob_aptos_fetch_resource",
+    "bob_aptos_fetch_module",
+    "bob_aptos_run",
+    "bob_sui_fetch_object",
+    "bob_sui_fetch_package",
+    "bob_sui_run",
   ];
   for (const name of tools) {
     const meta = TOOL_MANIFEST[name];
@@ -11913,7 +11940,7 @@ test("Move tools register with verifier and evidence role bundles (so balanced/b
   }
 });
 
-test("bounty_record_finding tolerates legacy findings.jsonl rows with no surface_type or sc_evidence", () => {
+test("bob_record_finding tolerates legacy findings.jsonl rows with no surface_type or sc_evidence", () => {
   withTempHome(() => {
     const domain = "example.com";
     const findingsPath = findingsJsonlPath(domain);
@@ -11945,7 +11972,7 @@ test("bounty_record_finding tolerates legacy findings.jsonl rows with no surface
   });
 });
 
-test("bounty_record_finding deduplicates exact findings unless force_record is set", () => {
+test("bob_record_finding deduplicates exact findings unless force_record is set", () => {
   withTempHome(() => {
     const domain = "example.com";
     const first = seedFinding(domain);
@@ -11969,7 +11996,7 @@ test("bounty_record_finding deduplicates exact findings unless force_record is s
   });
 });
 
-test("bounty_record_finding returns warning metadata when markdown sync fails after JSONL success", () => {
+test("bob_record_finding returns warning metadata when markdown sync fails after JSONL success", () => {
   withTempHome(() => {
     const domain = "example.com";
     const dir = sessionDir(domain);
@@ -11985,7 +12012,7 @@ test("bounty_record_finding returns warning metadata when markdown sync fails af
   });
 });
 
-test("bounty_read_findings, bounty_list_findings, and bounty_wave_status return empty-state results when findings.jsonl is absent", () => {
+test("bob_read_findings, bob_list_findings, and bob_wave_status return empty-state results when findings.jsonl is absent", () => {
   withTempHome(() => {
     const domain = "example.com";
 
@@ -12030,7 +12057,7 @@ test("bounty_read_findings, bounty_list_findings, and bounty_wave_status return 
   });
 });
 
-test("malformed findings.jsonl hard-fails bounty_read_findings, bounty_list_findings, and bounty_wave_status", () => {
+test("malformed findings.jsonl hard-fails bob_read_findings, bob_list_findings, and bob_wave_status", () => {
   withTempHome(() => {
     const domain = "example.com";
     const dir = sessionDir(domain);
@@ -12060,7 +12087,7 @@ test("malformed findings.jsonl hard-fails bounty_read_findings, bounty_list_find
   });
 });
 
-test("bounty_list_findings and bounty_wave_status keep their external shapes while reading findings.jsonl", () => {
+test("bob_list_findings and bob_wave_status keep their external shapes while reading findings.jsonl", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedFinding(domain, { severity: "critical" });
@@ -12140,7 +12167,7 @@ test("bounty_list_findings and bounty_wave_status keep their external shapes whi
   });
 });
 
-test("bounty_write_verification_round writes the correct JSON and markdown pair for each round", () => {
+test("bob_write_verification_round writes the correct JSON and markdown pair for each round", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedFinding(domain);
@@ -12179,7 +12206,7 @@ test("bounty_write_verification_round writes the correct JSON and markdown pair 
   });
 });
 
-test("bounty_write_verification_round accepts notes null and validates duplicate and unknown finding_ids", () => {
+test("bob_write_verification_round accepts notes null and validates duplicate and unknown finding_ids", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedFinding(domain);
@@ -12223,7 +12250,7 @@ test("bounty_write_verification_round accepts notes null and validates duplicate
   });
 });
 
-test("bounty_write_verification_round rejects balanced/final rounds that drop prior-round findings", () => {
+test("bob_write_verification_round rejects balanced/final rounds that drop prior-round findings", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedFinding(domain);
@@ -12279,7 +12306,7 @@ test("bounty_write_verification_round rejects balanced/final rounds that drop pr
   });
 });
 
-test("bounty_write_verification_round requires valid prior round artifacts", () => {
+test("bob_write_verification_round requires valid prior round artifacts", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedFinding(domain);
@@ -12306,7 +12333,7 @@ test("bounty_write_verification_round requires valid prior round artifacts", () 
   });
 });
 
-test("bounty_read_verification_round hard-fails on missing or malformed JSON", () => {
+test("bob_read_verification_round hard-fails on missing or malformed JSON", () => {
   withTempHome(() => {
     const domain = "example.com";
 
@@ -12326,7 +12353,7 @@ test("bounty_read_verification_round hard-fails on missing or malformed JSON", (
   });
 });
 
-test("bounty_read_verification_round rejects JSON that references non-existent findings", () => {
+test("bob_read_verification_round rejects JSON that references non-existent findings", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedFinding(domain);
@@ -13171,7 +13198,7 @@ test("replay-capable tools require context only for verification and evidence re
   await withTempHome(async () => {
     const domain = "example.com";
     seedSessionState(domain);
-    const missingContext = await executeTool("bounty_http_scan", {
+    const missingContext = await executeTool("bob_http_scan", {
       target_domain: domain,
       method: "GET",
       url: "https://example.com/",
@@ -13181,7 +13208,7 @@ test("replay-capable tools require context only for verification and evidence re
     assert.equal(missingContext.error.code, "INVALID_ARGUMENTS");
     assert.match(missingContext.error.message, /replay_context\.verification_attempt_id/);
 
-    const unknownPurpose = await executeTool("bounty_http_scan", {
+    const unknownPurpose = await executeTool("bob_http_scan", {
       target_domain: domain,
       method: "GET",
       url: "not a url",
@@ -13199,7 +13226,7 @@ test("concurrent acquire cannot observe a partial lease file", async () => {
     const context = JSON.parse(readVerificationContext({ target_domain: domain }));
     const replayContext = replayContextFromVerificationContext(context);
     const leasePath = replayLeaseFileFor(domain, replayContext);
-    const tool = { name: "bounty_http_scan" };
+    const tool = { name: "bob_http_scan" };
     const args = { target_domain: domain, replay_context: replayContext };
     const originalOpenSync = fs.openSync;
     let triggered = false;
@@ -13253,7 +13280,7 @@ test("acquire never calls openSync(wx) on the lease path", async () => {
     try {
       assert.equal(
         await runWithReplaySafety(
-          { name: "bounty_http_scan" },
+          { name: "bob_http_scan" },
           { target_domain: domain, replay_context: replayContext },
           async () => "ok",
         ),
@@ -13304,7 +13331,7 @@ test("verification replay safety stays operational across findings.jsonl mutatio
     });
 
     const result = await runWithReplaySafety(
-      { name: "bounty_http_scan" },
+      { name: "bob_http_scan" },
       { target_domain: domain, replay_context: replayContext },
       () => "frozen-batch-still-valid",
     );
@@ -13321,7 +13348,7 @@ test("verification replay policy events preserve acquired event shape and active
 
     assert.equal(
       await runWithReplaySafety(
-        { name: "bounty_http_scan" },
+        { name: "bob_http_scan" },
         { target_domain: domain, replay_context: replayContext },
         async () => "ok",
       ),
@@ -13333,7 +13360,7 @@ test("verification replay policy events preserve acquired event shape and active
     assert.ok(event);
     assert.equal(event.phase, "VERIFY");
     assert.equal(event.status, "lease_acquired");
-    assert.equal(event.source, "bounty_http_scan");
+    assert.equal(event.source, "bob_http_scan");
     assert.equal(event.verification_attempt_id, replayContext.verification_attempt_id);
     assert.equal(event.verification_snapshot_hash, replayContext.verification_snapshot_hash);
     assert.equal(event.capability_pack, "web");
@@ -13351,7 +13378,7 @@ test("verification replay leases serialize same-process and expose active file l
     const replayContext = replayContextFromVerificationContext(context);
     let release;
     const first = runWithReplaySafety(
-      { name: "bounty_http_scan" },
+      { name: "bob_http_scan" },
       { target_domain: domain, replay_context: replayContext },
       () => new Promise((resolve) => { release = resolve; }),
     );
@@ -13381,11 +13408,11 @@ test("verification replay leases serialize same-process and expose active file l
     const activeContext = JSON.parse(readVerificationContext({ target_domain: domain }));
     const webPolicy = activeContext.replay_execution_policy.find((item) => item.capability_pack === "web");
     assert.equal(webPolicy.active_leases.length, 1);
-    assert.equal(webPolicy.active_leases[0].tool, "bounty_http_scan");
+    assert.equal(webPolicy.active_leases[0].tool, "bob_http_scan");
 
     await assert.rejects(
       () => runWithReplaySafety(
-        { name: "bounty_http_scan" },
+        { name: "bob_http_scan" },
         { target_domain: domain, replay_context: replayContext },
         () => "should not run",
       ),
@@ -13411,7 +13438,7 @@ test("verification replay leases reject simulated cross-process locks and clean 
       version: 1,
       lease_id: leaseId,
       target_domain: domain,
-      tool: "bounty_http_scan",
+      tool: "bob_http_scan",
       capability_pack: "web",
       lease_scope: "attempt_pack",
       replay_purpose: "verification_replay",
@@ -13426,7 +13453,7 @@ test("verification replay leases reject simulated cross-process locks and clean 
 
     await assert.rejects(
       () => runWithReplaySafety(
-        { name: "bounty_http_scan" },
+        { name: "bob_http_scan" },
         { target_domain: domain, replay_context: replayContext },
         () => "should not run",
       ),
@@ -13437,7 +13464,7 @@ test("verification replay leases reject simulated cross-process locks and clean 
       version: 1,
       lease_id: leaseId,
       target_domain: domain,
-      tool: "bounty_http_scan",
+      tool: "bob_http_scan",
       capability_pack: "web",
       lease_scope: "attempt_pack",
       replay_purpose: "verification_replay",
@@ -13451,7 +13478,7 @@ test("verification replay leases reject simulated cross-process locks and clean 
     }, null, 2)}\n`);
 
     const result = await runWithReplaySafety(
-      { name: "bounty_http_scan" },
+      { name: "bob_http_scan" },
       { target_domain: domain, replay_context: replayContext },
       () => "fresh lease acquired",
     );
@@ -13473,7 +13500,7 @@ test("verification replay leases do not clean expired leases from live owners", 
       version: 1,
       lease_id: leaseId,
       target_domain: domain,
-      tool: "bounty_http_scan",
+      tool: "bob_http_scan",
       capability_pack: "web",
       lease_scope: "attempt_pack",
       replay_purpose: "verification_replay",
@@ -13489,7 +13516,7 @@ test("verification replay leases do not clean expired leases from live owners", 
     let handlerEntered = false;
     await assert.rejects(
       () => runWithReplaySafety(
-        { name: "bounty_http_scan" },
+        { name: "bob_http_scan" },
         { target_domain: domain, replay_context: replayContext },
         () => {
           handlerEntered = true;
@@ -13515,7 +13542,7 @@ test("externally-created empty lease is cleaned up and acquired", async () => {
     const leaseId = path.basename(leasePath, ".json");
     const h = holdingHandler(leasePath);
     const wrapperPromise = runWithReplaySafety(
-      { name: "bounty_http_scan" },
+      { name: "bob_http_scan" },
       { target_domain: domain, replay_context: replayContext },
       h.handler,
     );
@@ -13526,7 +13553,7 @@ test("externally-created empty lease is cleaned up and acquired", async () => {
       assertCompleteReplayLeaseSnapshot(h.leaseSnapshot(), {
         lease_id: leaseId,
         target_domain: domain,
-        tool: "bounty_http_scan",
+        tool: "bob_http_scan",
         capability_pack: "web",
         lease_scope: "attempt_pack",
         replay_purpose: replayContext.purpose,
@@ -13553,7 +13580,7 @@ test("lease release does not remove a replacement lease owned by another process
     const leasePath = replayLeaseFileFor(domain, replayContext);
 
     const result = await runWithReplaySafety(
-      { name: "bounty_http_scan" },
+      { name: "bob_http_scan" },
       { target_domain: domain, replay_context: replayContext },
       async () => {
         const replacement = {
@@ -13583,7 +13610,7 @@ test("handler exception releases the lease file", async () => {
 
     await assert.rejects(
       () => runWithReplaySafety(
-        { name: "bounty_http_scan" },
+        { name: "bob_http_scan" },
         { target_domain: domain, replay_context: replayContext },
         async () => { throw new Error("boom"); },
       ),
@@ -13601,7 +13628,7 @@ test("two concurrent acquires on the new model: second wins, first rejects", asy
     const replayContext = replayContextFromVerificationContext(context);
     const leasePath = replayLeaseFileFor(domain, replayContext);
     const leaseId = path.basename(leasePath, ".json");
-    const tool = { name: "bounty_http_scan" };
+    const tool = { name: "bob_http_scan" };
     const args = { target_domain: domain, replay_context: replayContext };
     const originalLinkSync = fs.linkSync;
     let triggered = false;
@@ -13633,7 +13660,7 @@ test("two concurrent acquires on the new model: second wins, first rejects", asy
       assertCompleteReplayLeaseSnapshot(holdingHandler2.leaseSnapshot(), {
         lease_id: leaseId,
         target_domain: domain,
-        tool: "bounty_http_scan",
+        tool: "bob_http_scan",
         capability_pack: "web",
         lease_scope: "attempt_pack",
         replay_purpose: replayContext.purpose,
@@ -13667,7 +13694,7 @@ test("linkSync EEXIST during retry triggers stale cleanup once", async () => {
       version: 1,
       lease_id: leaseId,
       target_domain: domain,
-      tool: "bounty_http_scan",
+      tool: "bob_http_scan",
       capability_pack: "web",
       lease_scope: "attempt_pack",
       replay_purpose: "verification_replay",
@@ -13694,7 +13721,7 @@ test("linkSync EEXIST during retry triggers stale cleanup once", async () => {
 
     try {
       const result = await runWithReplaySafety(
-        { name: "bounty_http_scan" },
+        { name: "bob_http_scan" },
         { target_domain: domain, replay_context: replayContext },
         async () => "fresh lease acquired",
       );
@@ -13707,7 +13734,7 @@ test("linkSync EEXIST during retry triggers stale cleanup once", async () => {
   });
 });
 
-test("bounty_write_evidence_packs writes JSON and markdown mirror", () => {
+test("bob_write_evidence_packs writes JSON and markdown mirror", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedFinding(domain);
@@ -13763,7 +13790,7 @@ test("bounty_write_evidence_packs writes JSON and markdown mirror", () => {
   });
 });
 
-test("bounty_write_evidence_packs rejects unknown and duplicate finding IDs", () => {
+test("bob_write_evidence_packs rejects unknown and duplicate finding IDs", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedFinding(domain);
@@ -13787,7 +13814,7 @@ test("bounty_write_evidence_packs rejects unknown and duplicate finding IDs", ()
   });
 });
 
-test("bounty_write_evidence_packs requires coverage for all final reportable findings", () => {
+test("bob_write_evidence_packs requires coverage for all final reportable findings", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedFinding(domain);
@@ -13821,7 +13848,7 @@ test("bounty_write_evidence_packs requires coverage for all final reportable fin
   });
 });
 
-test("bounty_read_evidence_packs allows skip only when final verification has no reportable findings", () => {
+test("bob_read_evidence_packs allows skip only when final verification has no reportable findings", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedFinding(domain);
@@ -13865,7 +13892,7 @@ test("bounty_read_evidence_packs allows skip only when final verification has no
   });
 });
 
-test("bounty_write_grade_verdict writes grade.json and grade.md and accepts empty findings", () => {
+test("bob_write_grade_verdict writes grade.json and grade.md and accepts empty findings", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedFinding(domain);
@@ -13920,13 +13947,13 @@ test("bounty_write_grade_verdict writes grade.json and grade.md and accepts empt
   });
 });
 
-test("bounty_write_grade_verdict requires valid final verification before grading", async () => {
+test("bob_write_grade_verdict requires valid final verification before grading", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
     seedSessionState(domain);
     seedFinding(domain);
 
-    const result = await executeTool("bounty_write_grade_verdict", {
+    const result = await executeTool("bob_write_grade_verdict", {
       target_domain: domain,
       verdict: "SKIP",
       total_score: 0,
@@ -13942,7 +13969,7 @@ test("bounty_write_grade_verdict requires valid final verification before gradin
     const finalPaths = verificationRoundPaths(domain, "final");
     fs.mkdirSync(path.dirname(finalPaths.json), { recursive: true });
     fs.writeFileSync(finalPaths.json, "{bad json");
-    const malformed = await executeTool("bounty_write_grade_verdict", {
+    const malformed = await executeTool("bob_write_grade_verdict", {
       target_domain: domain,
       verdict: "SKIP",
       total_score: 0,
@@ -13955,7 +13982,7 @@ test("bounty_write_grade_verdict requires valid final verification before gradin
   });
 });
 
-test("bounty_write_grade_verdict enforces score totals, thresholds, and final reportability", () => {
+test("bob_write_grade_verdict enforces score totals, thresholds, and final reportability", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedFinding(domain, { severity: "high" });
@@ -14007,7 +14034,7 @@ test("bounty_write_grade_verdict enforces score totals, thresholds, and final re
   });
 });
 
-test("bounty_write_grade_verdict requires evidence packs for final reportables before writing", () => {
+test("bob_write_grade_verdict requires evidence packs for final reportables before writing", () => {
   withTempHome(() => {
     const domain = "grade-evidence-required.example.com";
     seedFinding(domain, { severity: "high" });
@@ -14055,7 +14082,7 @@ test("bounty_write_grade_verdict requires evidence packs for final reportables b
   });
 });
 
-test("bounty_write_grade_verdict permits only SKIP when final verification has no medium-or-higher reportable finding", () => {
+test("bob_write_grade_verdict permits only SKIP when final verification has no medium-or-higher reportable finding", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedFinding(domain, { severity: "high" });
@@ -14106,7 +14133,7 @@ test("bounty_write_grade_verdict permits only SKIP when final verification has n
   });
 });
 
-test("bounty_write_grade_verdict rejects duplicate or unknown finding_ids", () => {
+test("bob_write_grade_verdict rejects duplicate or unknown finding_ids", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedFinding(domain);
@@ -14173,7 +14200,7 @@ test("dispatch validator accepts explicit null for required+nullable fields", as
       reasoning: "Confirmed.",
     }]);
 
-    const round = await executeTool("bounty_write_verification_round", {
+    const round = await executeTool("bob_write_verification_round", {
       target_domain: domain,
       round: "brutalist",
       notes: null,
@@ -14186,16 +14213,16 @@ test("dispatch validator accepts explicit null for required+nullable fields", as
       }],
     });
     assert.ok(!round.error || !/notes is required/.test(round.error.message || ""),
-      `bounty_write_verification_round rejected notes:null at dispatch: ${round.error && round.error.message}`);
+      `bob_write_verification_round rejected notes:null at dispatch: ${round.error && round.error.message}`);
 
-    const pack = await executeTool("bounty_write_evidence_packs", {
+    const pack = await executeTool("bob_write_evidence_packs", {
       target_domain: domain,
       packs: [{ ...evidencePack("F-1"), redaction_notes: null }],
     });
     assert.ok(!pack.error || !/redaction_notes is required/.test(pack.error.message || ""),
-      `bounty_write_evidence_packs rejected redaction_notes:null at dispatch: ${pack.error && pack.error.message}`);
+      `bob_write_evidence_packs rejected redaction_notes:null at dispatch: ${pack.error && pack.error.message}`);
 
-    const verdict = await executeTool("bounty_write_grade_verdict", {
+    const verdict = await executeTool("bob_write_grade_verdict", {
       target_domain: domain,
       verdict: "SKIP",
       total_score: 0,
@@ -14214,11 +14241,11 @@ test("dispatch validator accepts explicit null for required+nullable fields", as
       feedback: null,
     });
     assert.ok(!verdict.error || !/feedback is required/.test(verdict.error.message || ""),
-      `bounty_write_grade_verdict rejected feedback:null at dispatch: ${verdict.error && verdict.error.message}`);
+      `bob_write_grade_verdict rejected feedback:null at dispatch: ${verdict.error && verdict.error.message}`);
   });
 });
 
-test("bounty_read_grade_verdict hard-fails on missing or malformed JSON", () => {
+test("bob_read_grade_verdict hard-fails on missing or malformed JSON", () => {
   withTempHome(() => {
     const domain = "example.com";
     const paths = gradeArtifactPaths(domain);
@@ -14238,7 +14265,7 @@ test("bounty_read_grade_verdict hard-fails on missing or malformed JSON", () => 
   });
 });
 
-test("bounty_read_grade_verdict rejects grade artifacts when final verification is missing", async () => {
+test("bob_read_grade_verdict rejects grade artifacts when final verification is missing", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
     seedSessionState(domain);
@@ -14254,14 +14281,14 @@ test("bounty_read_grade_verdict rejects grade artifacts when final verification 
       feedback: null,
     }, null, 2)}\n`);
 
-    const result = await executeTool("bounty_read_grade_verdict", { target_domain: domain });
+    const result = await executeTool("bob_read_grade_verdict", { target_domain: domain });
     assert.equal(result.ok, false);
     assert.equal(result.error.code, "STATE_CONFLICT");
     assert.match(result.error.message, /Final verification must exist and be valid before grading/);
   });
 });
 
-test("bounty_read_grade_verdict rejects JSON that references non-existent findings", () => {
+test("bob_read_grade_verdict rejects JSON that references non-existent findings", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedFinding(domain);
@@ -14295,9 +14322,9 @@ test("bounty_read_grade_verdict rejects JSON that references non-existent findin
   });
 });
 
-// ── bounty_auth_store tests ──
+// ── bob_auth_store tests ──
 
-test("bounty_auth_store writes v2 auth.json with attacker profile", async () => {
+test("bob_auth_store writes v2 auth.json with attacker profile", async () => {
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-test-"));
   const previousHome = process.env.HOME;
   process.env.HOME = tempHome;
@@ -14306,7 +14333,7 @@ test("bounty_auth_store writes v2 auth.json with attacker profile", async () => 
     fs.mkdirSync(path.join(sessionsDir, "target.com"), { recursive: true });
     seedSessionState("target.com");
 
-    const result = await executeTool("bounty_auth_store", {
+    const result = await executeTool("bob_auth_store", {
       target_domain: "target.com",
       profile_name: "attacker",
       headers: { "Authorization": "Bearer atok" },
@@ -14330,7 +14357,7 @@ test("bounty_auth_store writes v2 auth.json with attacker profile", async () => 
   }
 });
 
-test("bounty_auth_store adds victim profile to existing v2 auth.json", async () => {
+test("bob_auth_store adds victim profile to existing v2 auth.json", async () => {
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-test-"));
   const previousHome = process.env.HOME;
   process.env.HOME = tempHome;
@@ -14341,14 +14368,14 @@ test("bounty_auth_store adds victim profile to existing v2 auth.json", async () 
     seedSessionState("target.com");
 
     // Write attacker first
-    await executeTool("bounty_auth_store", {
+    await executeTool("bob_auth_store", {
       target_domain: "target.com",
       profile_name: "attacker",
       headers: { "Authorization": "Bearer atok" },
     });
 
     // Now add victim
-    const result = await executeTool("bounty_auth_store", {
+    const result = await executeTool("bob_auth_store", {
       target_domain: "target.com",
       profile_name: "victim",
       headers: { "Authorization": "Bearer vtok" },
@@ -14369,15 +14396,15 @@ test("bounty_auth_store adds victim profile to existing v2 auth.json", async () 
   }
 });
 
-test("bounty_auth_store accepts arbitrary profile names without clobbering existing profiles", async () => {
+test("bob_auth_store accepts arbitrary profile names without clobbering existing profiles", async () => {
   await withTempHome(async () => {
     seedSessionState("target.com");
-    await executeTool("bounty_auth_store", {
+    await executeTool("bob_auth_store", {
       target_domain: "target.com",
       profile_name: "attacker",
       headers: { Authorization: "Bearer attacker" },
     });
-    await executeTool("bounty_auth_store", {
+    await executeTool("bob_auth_store", {
       target_domain: "target.com",
       profile_name: "tenant_b",
       headers: { Authorization: "Bearer tenant-b" },
@@ -14390,7 +14417,7 @@ test("bounty_auth_store accepts arbitrary profile names without clobbering exist
   });
 });
 
-test("bounty_auth_store migrates legacy auth.json", async () => {
+test("bob_auth_store migrates legacy auth.json", async () => {
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-test-"));
   const previousHome = process.env.HOME;
   process.env.HOME = tempHome;
@@ -14407,7 +14434,7 @@ test("bounty_auth_store migrates legacy auth.json", async () => {
     }));
 
     // Add victim — should migrate legacy to attacker and add victim
-    const result = await executeTool("bounty_auth_store", {
+    const result = await executeTool("bob_auth_store", {
       target_domain: "target.com",
       profile_name: "victim",
       headers: { "Authorization": "Bearer vtok" },
@@ -14428,7 +14455,7 @@ test("bounty_auth_store migrates legacy auth.json", async () => {
   }
 });
 
-test("bounty_auth_store stores credentials alongside headers", async () => {
+test("bob_auth_store stores credentials alongside headers", async () => {
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-test-"));
   const previousHome = process.env.HOME;
   process.env.HOME = tempHome;
@@ -14437,7 +14464,7 @@ test("bounty_auth_store stores credentials alongside headers", async () => {
     fs.mkdirSync(path.join(sessionsDir, "target.com"), { recursive: true });
     seedSessionState("target.com");
 
-    await executeTool("bounty_auth_store", {
+    await executeTool("bob_auth_store", {
       target_domain: "target.com",
       profile_name: "attacker",
       headers: { "Authorization": "Bearer t" },
@@ -14453,7 +14480,7 @@ test("bounty_auth_store stores credentials alongside headers", async () => {
   }
 });
 
-test("bounty_auth_store writes and migrates auth.json with 0600 permissions", async () => {
+test("bob_auth_store writes and migrates auth.json with 0600 permissions", async () => {
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-test-"));
   const previousHome = process.env.HOME;
   process.env.HOME = tempHome;
@@ -14463,7 +14490,7 @@ test("bounty_auth_store writes and migrates auth.json with 0600 permissions", as
     fs.mkdirSync(targetDir, { recursive: true });
     seedSessionState("target.com");
 
-    await executeTool("bounty_auth_store", {
+    await executeTool("bob_auth_store", {
       target_domain: "target.com",
       profile_name: "attacker",
       cookies: { sessionid: "abc" },
@@ -14471,7 +14498,7 @@ test("bounty_auth_store writes and migrates auth.json with 0600 permissions", as
     assert.equal(fs.statSync(authPath).mode & 0o777, 0o600);
 
     fs.writeFileSync(authPath, JSON.stringify({ Authorization: "Bearer legacy" }), { mode: 0o644 });
-    await executeTool("bounty_auth_store", {
+    await executeTool("bob_auth_store", {
       target_domain: "target.com",
       profile_name: "victim",
       headers: { Authorization: "Bearer victim" },
@@ -14483,7 +14510,7 @@ test("bounty_auth_store writes and migrates auth.json with 0600 permissions", as
   }
 });
 
-test("bounty_auth_store reports persistence failures instead of claiming success", async () => {
+test("bob_auth_store reports persistence failures instead of claiming success", async () => {
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-test-"));
   const previousHome = process.env.HOME;
   process.env.HOME = tempHome;
@@ -14492,7 +14519,7 @@ test("bounty_auth_store reports persistence failures instead of claiming success
     seedSessionState("target.com");
     fs.mkdirSync(authPath, { recursive: true });
 
-    const envelope = await executeTool("bounty_auth_store", {
+    const envelope = await executeTool("bob_auth_store", {
       target_domain: "target.com",
       profile_name: "attacker",
       headers: { "Authorization": "Bearer atok" },
@@ -14510,16 +14537,16 @@ test("bounty_auth_store reports persistence failures instead of claiming success
   }
 });
 
-test("bounty_auth_store preserves concurrent attacker and victim profile writes", async () => {
+test("bob_auth_store preserves concurrent attacker and victim profile writes", async () => {
   await withTempHome(async () => {
     seedSessionState("target.com");
     await Promise.all([
-      executeTool("bounty_auth_store", {
+      executeTool("bob_auth_store", {
         target_domain: "target.com",
         profile_name: "attacker",
         headers: { Authorization: "Bearer attacker" },
       }),
-      executeTool("bounty_auth_store", {
+      executeTool("bob_auth_store", {
         target_domain: "target.com",
         profile_name: "victim",
         headers: { Authorization: "Bearer victim" },
@@ -14532,13 +14559,13 @@ test("bounty_auth_store preserves concurrent attacker and victim profile writes"
   });
 });
 
-test("bounty_list_auth_profiles redacts secrets while reporting profile status", async () => {
+test("bob_list_auth_profiles redacts secrets while reporting profile status", async () => {
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-test-"));
   const previousHome = process.env.HOME;
   process.env.HOME = tempHome;
   try {
     seedSessionState("target.com");
-    await executeTool("bounty_auth_store", {
+    await executeTool("bob_auth_store", {
       target_domain: "target.com",
       profile_name: "attacker",
       headers: { "Authorization": "Bearer secret-token" },
@@ -14587,16 +14614,16 @@ test("candidateAuthDomains binds auth lookup to the request host", () => {
   );
 });
 
-test("bounty_http_scan resolves auth by explicit target_domain and first-party subdomain only", async () => {
+test("bob_http_scan resolves auth by explicit target_domain and first-party subdomain only", async () => {
   await withTempHome(async () => {
     seedSessionState("target.com");
     seedSessionState("missing.com");
-    await executeTool("bounty_auth_store", {
+    await executeTool("bob_auth_store", {
       target_domain: "target.com",
       profile_name: "attacker",
       headers: { Authorization: "Bearer target-token" },
     });
-    await executeTool("bounty_auth_store", {
+    await executeTool("bob_auth_store", {
       target_domain: "other.com",
       profile_name: "attacker",
       headers: { Authorization: "Bearer other-token" },
@@ -14608,7 +14635,7 @@ test("bounty_http_scan resolves auth by explicit target_domain and first-party s
       status: requestOptions.headers.Authorization === "Bearer target-token" ? 200 : 401,
       body: "ok",
     }), async (requestedUrls) => {
-      const allowed = await executeTool("bounty_http_scan", {
+      const allowed = await executeTool("bob_http_scan", {
         target_domain: "target.com",
         method: "GET",
         url: "https://api.target.com/private",
@@ -14618,7 +14645,7 @@ test("bounty_http_scan resolves auth by explicit target_domain and first-party s
       assert.equal(allowed.ok, true);
       assert.equal(allowed.data.status, 200);
 
-      const blocked = await executeTool("bounty_http_scan", {
+      const blocked = await executeTool("bob_http_scan", {
         target_domain: "missing.com",
         method: "GET",
         url: "https://api.missing.com/private",
@@ -14629,7 +14656,7 @@ test("bounty_http_scan resolves auth by explicit target_domain and first-party s
       assert.equal(blocked.error.code, "AUTH_MISSING");
       assert.match(blocked.error.message, /auth_profile "attacker" requested but not found/);
 
-      const crossHost = await executeTool("bounty_http_scan", {
+      const crossHost = await executeTool("bob_http_scan", {
         target_domain: "target.com",
         method: "GET",
         url: "https://api.other.com/private",
@@ -14644,7 +14671,7 @@ test("bounty_http_scan resolves auth by explicit target_domain and first-party s
   });
 });
 
-test("bounty_evm_call resolves the latest block via eth_blockNumber and returns block_used", async () => {
+test("bob_evm_call resolves the latest block via eth_blockNumber and returns block_used", async () => {
   let callCount = 0;
   await withMockSmartContractHttpRequest(async (_url, request) => {
     callCount += 1;
@@ -14670,7 +14697,7 @@ test("bounty_evm_call resolves the latest block via eth_blockNumber and returns 
   }, async () => {
     const result = await withMockSmartContractRpcLookup({
       "eth.llamarpc.com": [{ address: "93.184.216.34", family: 4 }],
-    }, () => executeTool("bounty_evm_call", {
+    }, () => executeTool("bob_evm_call", {
       chain_id: 1,
       to: "0x" + "11".repeat(20),
       data: "0x70a08231" + "00".repeat(32),
@@ -14684,9 +14711,9 @@ test("bounty_evm_call resolves the latest block via eth_blockNumber and returns 
   });
 });
 
-// ── bounty_temp_email tests ──
+// ── bob_temp_email tests ──
 
-test("bounty_temp_email create returns email with mocked mail.tm", async () => {
+test("bob_temp_email create returns email with mocked mail.tm", async () => {
   const originalFetch = global.fetch;
   try {
     global.fetch = async (url, opts) => {
@@ -14702,7 +14729,7 @@ test("bounty_temp_email create returns email with mocked mail.tm", async () => {
       return { ok: false, status: 500 };
     };
 
-    const result = await executeTool("bounty_temp_email", { operation: "create" });
+    const result = await executeTool("bob_temp_email", { operation: "create" });
     assert.equal(result.ok, true);
     assert.equal(result.data.success, true);
     assert.ok(result.data.email_address.endsWith("@test.tm"));
@@ -14713,7 +14740,7 @@ test("bounty_temp_email create returns email with mocked mail.tm", async () => {
   }
 });
 
-test("bounty_temp_email create falls back to guerrillamail on mail.tm failure", async () => {
+test("bob_temp_email create falls back to guerrillamail on mail.tm failure", async () => {
   const originalFetch = global.fetch;
   try {
     global.fetch = async (url) => {
@@ -14726,7 +14753,7 @@ test("bounty_temp_email create falls back to guerrillamail on mail.tm failure", 
       return { ok: false, status: 500, text: async () => "" };
     };
 
-    const result = await executeTool("bounty_temp_email", { operation: "create" });
+    const result = await executeTool("bob_temp_email", { operation: "create" });
     assert.equal(result.ok, true);
     assert.equal(result.data.success, true);
     assert.equal(result.data.email_address, "test_user@guerrillamail.com");
@@ -14736,12 +14763,12 @@ test("bounty_temp_email create falls back to guerrillamail on mail.tm failure", 
   }
 });
 
-test("bounty_temp_email create returns error when all providers fail", async () => {
+test("bob_temp_email create returns error when all providers fail", async () => {
   const originalFetch = global.fetch;
   try {
     global.fetch = async () => ({ ok: false, status: 500, text: async () => "Internal Server Error" });
 
-    const result = await executeTool("bounty_temp_email", { operation: "create" });
+    const result = await executeTool("bob_temp_email", { operation: "create" });
     assert.equal(result.ok, false);
     assert.equal(result.error.code, "INTERNAL_ERROR");
     assert.equal(result.error.details.success, false);
@@ -14751,7 +14778,7 @@ test("bounty_temp_email create returns error when all providers fail", async () 
   }
 });
 
-test("bounty_temp_email poll returns messages with mocked mail.tm", async () => {
+test("bob_temp_email poll returns messages with mocked mail.tm", async () => {
   const originalFetch = global.fetch;
   try {
     // First create a mailbox to populate tempMailboxes
@@ -14778,9 +14805,9 @@ test("bounty_temp_email poll returns messages with mocked mail.tm", async () => 
       return { ok: false, status: 500 };
     };
 
-    const createResult = await executeTool("bounty_temp_email", { operation: "create" });
+    const createResult = await executeTool("bob_temp_email", { operation: "create" });
     assert.equal(createResult.ok, true);
-    const pollResult = await executeTool("bounty_temp_email", {
+    const pollResult = await executeTool("bob_temp_email", {
       operation: "poll",
       email_address: createResult.data.email_address,
     });
@@ -14794,7 +14821,7 @@ test("bounty_temp_email poll returns messages with mocked mail.tm", async () => 
   }
 });
 
-test("bounty_temp_email extract finds codes and links", async () => {
+test("bob_temp_email extract finds codes and links", async () => {
   const originalFetch = global.fetch;
   try {
     // Create mailbox first
@@ -14819,9 +14846,9 @@ test("bounty_temp_email extract finds codes and links", async () => {
       return { ok: false, status: 500 };
     };
 
-    const createResult = await executeTool("bounty_temp_email", { operation: "create" });
+    const createResult = await executeTool("bob_temp_email", { operation: "create" });
     assert.equal(createResult.ok, true);
-    const extractResult = await executeTool("bounty_temp_email", {
+    const extractResult = await executeTool("bob_temp_email", {
       operation: "extract",
       email_address: createResult.data.email_address,
       message_id: "msg1",
@@ -14836,8 +14863,8 @@ test("bounty_temp_email extract finds codes and links", async () => {
   }
 });
 
-test("bounty_temp_email poll for unknown email returns error", async () => {
-  const result = await executeTool("bounty_temp_email", {
+test("bob_temp_email poll for unknown email returns error", async () => {
+  const result = await executeTool("bob_temp_email", {
     operation: "poll",
     email_address: "nonexistent@nowhere.com",
   });
@@ -14880,7 +14907,7 @@ test("auto-signup result normalization fails ambiguous states and preserves diag
   assert.deepEqual(successful.auth_evidence.cookie_keys, ["sessionid"]);
 });
 
-test("bounty_auto_signup returns ok true manual fallback when browser automation is unavailable", async () => {
+test("bob_auto_signup returns ok true manual fallback when browser automation is unavailable", async () => {
   await withTempHome(async () => {
     seedSessionState("example.com");
     const originalResolve = Module._resolveFilename;
@@ -14891,7 +14918,7 @@ test("bounty_auto_signup returns ok true manual fallback when browser automation
       return originalResolve.call(this, request, parent, isMain, options);
     };
     try {
-      const result = await executeTool("bounty_auto_signup", {
+      const result = await executeTool("bob_auto_signup", {
         target_domain: "example.com",
         signup_url: "https://example.com/signup",
         email: "a@example.test",
@@ -14910,12 +14937,12 @@ test("bounty_auto_signup returns ok true manual fallback when browser automation
   });
 });
 
-test("bounty_auto_signup rejects raw proxy arguments and uses egress profiles only", async () => {
+test("bob_auto_signup rejects raw proxy arguments and uses egress profiles only", async () => {
   await withTempHome(async () => {
     seedSessionState("example.com");
     const rawProxySecret = ["browser", "proxy", "secret"].join("-");
     const rawProxy = ["http://user:", rawProxySecret, "@proxy.example:8080"].join("");
-    const rejected = await executeTool("bounty_auto_signup", {
+    const rejected = await executeTool("bob_auto_signup", {
       target_domain: "example.com",
       signup_url: "https://example.com/signup",
       email: "a@example.test",
@@ -14951,7 +14978,7 @@ test("bounty_auto_signup rejects raw proxy arguments and uses egress profiles on
           return originalResolve.call(this, request, parent, isMain, options);
         };
         try {
-          const result = await executeTool("bounty_auto_signup", {
+          const result = await executeTool("bob_auto_signup", {
             target_domain: "example.com",
             signup_url: "https://example.com/signup",
             email: "a@example.test",
@@ -14974,7 +15001,7 @@ test("bounty_auto_signup rejects raw proxy arguments and uses egress profiles on
   });
 });
 
-test("bounty_signup_detect uses egress profiles and rejects proxy-backed strict mode", async () => {
+test("bob_signup_detect uses egress profiles and rejects proxy-backed strict mode", async () => {
   await withTempHome(async () => {
     seedSessionState("example.com");
     const rawProxySecret = ["signup", "detect", "proxy", "secret"].join("-");
@@ -15000,7 +15027,7 @@ test("bounty_signup_detect uses egress profiles and rejects proxy-backed strict 
           sawAgent = sawAgent || !!requestOptions.agent;
           return { status: 404, statusText: "Not Found", body: "missing" };
         }, async () => {
-          const result = await executeTool("bounty_signup_detect", {
+          const result = await executeTool("bob_signup_detect", {
             target_domain: "example.com",
             target_url: "https://example.com",
             egress_profile: "detect-eu",
@@ -15015,7 +15042,7 @@ test("bounty_signup_detect uses egress profiles and rejects proxy-backed strict 
           assert.doesNotMatch(JSON.stringify(result), new RegExp(rawProxySecret));
         });
 
-        const strict = await executeTool("bounty_signup_detect", {
+        const strict = await executeTool("bob_signup_detect", {
           target_domain: "example.com",
           target_url: "https://example.com",
           egress_profile: "detect-eu",
@@ -15031,12 +15058,12 @@ test("bounty_signup_detect uses egress profiles and rejects proxy-backed strict 
   });
 });
 
-test("bounty_auto_signup blocks internal and off-target signup URLs before browser launch", async () => {
+test("bob_auto_signup blocks internal and off-target signup URLs before browser launch", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
     seedSessionState(domain);
 
-    const internalBlocked = await executeTool("bounty_auto_signup", {
+    const internalBlocked = await executeTool("bob_auto_signup", {
       target_domain: domain,
       signup_url: "http://127.0.0.1/signup",
       email: "a@example.test",
@@ -15049,7 +15076,7 @@ test("bounty_auto_signup blocks internal and off-target signup URLs before brows
     assert.equal(internalBlocked.error.details.host, "127.0.0.1");
     assert.match(internalBlocked.error.message, /outside target_domain example\.com/);
 
-    const offTarget = await executeTool("bounty_auto_signup", {
+    const offTarget = await executeTool("bob_auto_signup", {
       target_domain: domain,
       signup_url: "https://third-party.example.net/signup",
       email: "a@example.test",
@@ -15063,7 +15090,7 @@ test("bounty_auto_signup blocks internal and off-target signup URLs before brows
   });
 });
 
-test("bounty_auto_signup refuses strict internal-host mode before browser availability checks", async () => {
+test("bob_auto_signup refuses strict internal-host mode before browser availability checks", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
     seedSessionState(domain);
@@ -15080,7 +15107,7 @@ test("bounty_auto_signup refuses strict internal-host mode before browser availa
 
     try {
       await withMockSafeFetch({}, async (requestedUrls) => {
-        const result = await executeTool("bounty_auto_signup", {
+        const result = await executeTool("bob_auto_signup", {
           target_domain: domain,
           signup_url: "https://signup.example.com/register",
           email: "a@example.test",
@@ -15103,10 +15130,10 @@ test("bounty_auto_signup refuses strict internal-host mode before browser availa
   });
 });
 
-test("bounty_auto_signup uses persisted paranoid policy for manual fallback before browser availability checks", async () => {
+test("bob_auto_signup uses persisted paranoid policy for manual fallback before browser availability checks", async () => {
   await withTempHome(async () => {
     const domain = "paranoid-signup.example.com";
-    const init = await executeTool("bounty_init_session", {
+    const init = await executeTool("bob_init_session", {
       target_domain: domain,
       target_url: `https://${domain}`,
       checkpoint_mode: "paranoid",
@@ -15125,7 +15152,7 @@ test("bounty_auto_signup uses persisted paranoid policy for manual fallback befo
 
     try {
       await withMockSafeFetch({}, async (requestedUrls) => {
-        const result = await executeTool("bounty_auto_signup", {
+        const result = await executeTool("bob_auto_signup", {
           target_domain: domain,
           signup_url: `https://signup.${domain}/register`,
           email: "a@example.test",
@@ -15147,10 +15174,10 @@ test("bounty_auto_signup uses persisted paranoid policy for manual fallback befo
   });
 });
 
-test("bounty_auto_signup treats non-policy egress profile failures as manual fallback", async () => {
+test("bob_auto_signup treats non-policy egress profile failures as manual fallback", async () => {
   await withTempHome(async () => {
     seedSessionState("example.com");
-    const result = await executeTool("bounty_auto_signup", {
+    const result = await executeTool("bob_auto_signup", {
       target_domain: "example.com",
       signup_url: "https://signup.example.com/register",
       email: "a@example.test",
@@ -15189,7 +15216,7 @@ test("migrateAuthJson handles null/undefined", () => {
 
 // ── HTTP audit, imported traffic, public intel, and ranking tests ──
 
-test("bounty_http_scan writes audit entries for success, HTTP error, timeout, and scope-blocked requests", async () => {
+test("bob_http_scan writes audit entries for success, HTTP error, timeout, and scope-blocked requests", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
     seedSessionState(domain);
@@ -15201,7 +15228,7 @@ test("bounty_http_scan writes audit entries for success, HTTP error, timeout, an
       "https://example.com/forbidden": { status: 403, statusText: "Forbidden", body: "no" },
       "https://example.com/timeout": { error: timeoutError },
     }, async () => {
-      const okResult = await executeTool("bounty_http_scan", {
+      const okResult = await executeTool("bob_http_scan", {
         target_domain: domain,
         wave: "w1",
         agent: "a1",
@@ -15213,7 +15240,7 @@ test("bounty_http_scan writes audit entries for success, HTTP error, timeout, an
       assert.equal(okResult.ok, true);
       assert.equal(okResult.data.status, 200);
 
-      const forbiddenResult = await executeTool("bounty_http_scan", {
+      const forbiddenResult = await executeTool("bob_http_scan", {
         target_domain: domain,
         method: "GET",
         url: "https://example.com/forbidden",
@@ -15222,7 +15249,7 @@ test("bounty_http_scan writes audit entries for success, HTTP error, timeout, an
       assert.equal(forbiddenResult.ok, true);
       assert.equal(forbiddenResult.data.status, 403);
 
-      const timeoutResult = await executeTool("bounty_http_scan", {
+      const timeoutResult = await executeTool("bob_http_scan", {
         target_domain: domain,
         method: "GET",
         url: "https://example.com/timeout",
@@ -15231,7 +15258,7 @@ test("bounty_http_scan writes audit entries for success, HTTP error, timeout, an
       assert.equal(timeoutResult.error.code, "INTERNAL_ERROR");
       assert.match(timeoutResult.error.message, /timeout/i);
 
-      const privateHostResult = await executeTool("bounty_http_scan", {
+      const privateHostResult = await executeTool("bob_http_scan", {
         target_domain: domain,
         method: "GET",
         url: "http://127.0.0.1/admin",
@@ -15260,7 +15287,7 @@ test("bounty_http_scan writes audit entries for success, HTTP error, timeout, an
       const clampedAudit = JSON.parse(readHttpAudit({ target_domain: domain, limit: 9999 }));
       assert.equal(clampedAudit.summary.cap, 40);
       assert.equal(clampedAudit.summary.shown, 4);
-      const clampedEnvelope = await executeTool("bounty_read_http_audit", { target_domain: domain, limit: 9999 });
+      const clampedEnvelope = await executeTool("bob_read_http_audit", { target_domain: domain, limit: 9999 });
       assert.equal(clampedEnvelope.ok, true);
       assert.equal(clampedEnvelope.data.summary.cap, 40);
       assert.ok(fs.existsSync(httpAuditJsonlPath(domain)));
@@ -15268,7 +15295,7 @@ test("bounty_http_scan writes audit entries for success, HTTP error, timeout, an
   });
 });
 
-test("bounty_http_scan records selected egress profile and passes a proxy agent without storing proxy URLs", async () => {
+test("bob_http_scan records selected egress profile and passes a proxy agent without storing proxy URLs", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
     seedSessionState(domain);
@@ -15295,7 +15322,7 @@ test("bounty_http_scan records selected egress profile and passes a proxy agent 
           sawAgent = !!requestOptions.agent;
           return { status: 200, statusText: "OK", body: "ok" };
         }, async () => {
-          const result = await executeTool("bounty_http_scan", {
+          const result = await executeTool("bob_http_scan", {
             target_domain: domain,
             method: "GET",
             url: "https://example.com/ok",
@@ -15324,7 +15351,7 @@ test("bounty_http_scan records selected egress profile and passes a proxy agent 
   });
 });
 
-test("bounty_init_session binds egress profile identity without storing proxy secrets", async () => {
+test("bob_init_session binds egress profile identity without storing proxy secrets", async () => {
   await withTempHome(async () => {
     const domain = "egress-init.example.com";
     const rawProxySecret = ["init", "proxy", "secret"].join("-");
@@ -15345,7 +15372,7 @@ test("bounty_init_session binds egress profile identity without storing proxy se
 
     await withRepoEgressConfig(document, async () => {
       await withEnv({ BOB_EGRESS_OPERATOR_PROXY: ["http://", proxyAuthority, "@proxy.example:8080"].join("") }, async () => {
-        const result = await executeTool("bounty_init_session", {
+        const result = await executeTool("bob_init_session", {
           target_domain: domain,
           target_url: `https://${domain}`,
           egress_profile: "operator-eu",
@@ -15388,7 +15415,7 @@ test("egress-bound HTTP scans require initialized session state", async () => {
     await withMockSafeFetch(() => {
       throw new Error("network should not be reached without egress binding");
     }, async (requestedUrls) => {
-      const result = await executeTool("bounty_http_scan", {
+      const result = await executeTool("bob_http_scan", {
         target_domain: domain,
         method: "GET",
         url: `https://${domain}/ok`,
@@ -15404,7 +15431,7 @@ test("egress-bound HTTP scans require initialized session state", async () => {
 test("scope-blocked HTTP scans keep the bound egress identity in audit and telemetry", async () => {
   await withTempHome(async () => {
     const domain = "egress-scope-block.example.com";
-    const init = await executeTool("bounty_init_session", {
+    const init = await executeTool("bob_init_session", {
       target_domain: domain,
       target_url: `https://${domain}`,
     });
@@ -15414,7 +15441,7 @@ test("scope-blocked HTTP scans keep the bound egress identity in audit and telem
     await withMockSafeFetch(() => {
       throw new Error("network should not be reached for scope-blocked requests");
     }, async (requestedUrls) => {
-      const result = await executeTool("bounty_http_scan", {
+      const result = await executeTool("bob_http_scan", {
         target_domain: domain,
         method: "GET",
         url: "http://127.0.0.1/admin",
@@ -15432,7 +15459,7 @@ test("scope-blocked HTTP scans keep the bound egress identity in audit and telem
     assert.equal(records[0].egress_profile_identity_hash, boundHash);
 
     const telemetryRows = readJsonl(toolTelemetryPath())
-      .filter((row) => row.tool === "bounty_http_scan");
+      .filter((row) => row.tool === "bob_http_scan");
     assert.equal(telemetryRows.length, 1);
     assert.equal(telemetryRows[0].egress_profile_identity_hash, boundHash);
   });
@@ -15456,7 +15483,7 @@ test("scope-blocked HTTP scans still reject initialized-session egress drift", a
     };
 
     await withRepoEgressConfig(document, async () => {
-      const init = await executeTool("bounty_init_session", {
+      const init = await executeTool("bob_init_session", {
         target_domain: domain,
         target_url: `https://${domain}`,
       });
@@ -15465,7 +15492,7 @@ test("scope-blocked HTTP scans still reject initialized-session egress drift", a
       await withMockSafeFetch(() => {
         throw new Error("network should not be reached for scope-blocked drift");
       }, async (requestedUrls) => {
-        const result = await executeTool("bounty_http_scan", {
+        const result = await executeTool("bob_http_scan", {
           target_domain: domain,
           method: "GET",
           url: "http://127.0.0.1/admin",
@@ -15494,7 +15521,7 @@ test("scope-blocked HTTP scans migrate legacy egress identity before audit", asy
     await withMockSafeFetch(() => {
       throw new Error("network should not be reached for legacy scope block");
     }, async (requestedUrls) => {
-      const result = await executeTool("bounty_http_scan", {
+      const result = await executeTool("bob_http_scan", {
         target_domain: domain,
         method: "GET",
         url: "http://127.0.0.1/admin",
@@ -15509,7 +15536,7 @@ test("scope-blocked HTTP scans migrate legacy egress identity before audit", asy
     const state = JSON.parse(fs.readFileSync(statePath(domain), "utf8"));
     assert.match(state.egress_profile_identity_hash, /^[a-f0-9]{64}$/);
     assert.equal(state.egress_profile_identity_bind_source, "legacy_migration");
-    assert.equal(state.egress_profile_legacy_migration.source, "bounty_http_scan_scope_blocked");
+    assert.equal(state.egress_profile_legacy_migration.source, "bob_http_scan_scope_blocked");
     const records = readHttpAuditRecordsFromJsonl(domain);
     assert.equal(records.length, 1);
     assert.equal(records[0].scope_decision, "blocked");
@@ -15538,7 +15565,7 @@ test("session egress identity permits credential rotation but rejects route drif
 
     await withRepoEgressConfig(document, async () => {
       await withEnv({ BOB_EGRESS_OPERATOR_PROXY: `http://user:${firstSecret}@proxy.example:8080` }, async () => {
-        const init = await executeTool("bounty_init_session", {
+        const init = await executeTool("bob_init_session", {
           target_domain: domain,
           target_url: `https://${domain}`,
           egress_profile: "operator-eu",
@@ -15552,7 +15579,7 @@ test("session egress identity permits credential rotation but rejects route drif
         await withMockSafeFetch({
           [`https://${domain}/ok`]: { status: 200, statusText: "OK", body: "ok" },
         }, async () => {
-          const rotated = await executeTool("bounty_http_scan", {
+          const rotated = await executeTool("bob_http_scan", {
             target_domain: domain,
             method: "GET",
             url: `https://${domain}/ok`,
@@ -15578,7 +15605,7 @@ test("session egress identity permits credential rotation but rejects route drif
         await withMockSafeFetch(() => {
           throw new Error("network should not be reached after egress drift");
         }, async (requestedUrls) => {
-          const drifted = await executeTool("bounty_http_scan", {
+          const drifted = await executeTool("bob_http_scan", {
             target_domain: domain,
             method: "GET",
             url: `https://${domain}/ok`,
@@ -15594,7 +15621,7 @@ test("session egress identity permits credential rotation but rejects route drif
       });
 
       const telemetryRows = readJsonl(toolTelemetryPath())
-        .filter((row) => row.tool === "bounty_http_scan");
+        .filter((row) => row.tool === "bob_http_scan");
       assert.ok(telemetryRows.some((row) => row.egress_profile_identity_hash === boundHash));
       const driftTelemetry = telemetryRows.find((row) => row.error_code === "STATE_CONFLICT");
       assert.ok(driftTelemetry);
@@ -15621,7 +15648,7 @@ test("legacy sessions snapshot egress identity on first egress-bound request", a
     await withMockSafeFetch({
       [`https://${domain}/ok`]: { status: 200, statusText: "OK", body: "ok" },
     }, async () => {
-      const result = await executeTool("bounty_http_scan", {
+      const result = await executeTool("bob_http_scan", {
         target_domain: domain,
         method: "GET",
         url: `https://${domain}/ok`,
@@ -15667,7 +15694,7 @@ test("legacy sessions snapshot egress identity on first egress-bound request", a
   });
 });
 
-test("bounty_http_scan rejects env-resolved proxy query secrets", async () => {
+test("bob_http_scan rejects env-resolved proxy query secrets", async () => {
   await withTempHome(async () => {
     seedSessionState("example.com");
     const rawProxySecret = ["env", "query", "proxy", "secret"].join("-");
@@ -15690,7 +15717,7 @@ test("bounty_http_scan rejects env-resolved proxy query secrets", async () => {
         await withMockSafeFetch(() => {
           throw new Error("network should not be reached");
         }, async (requestedUrls) => {
-          const result = await executeTool("bounty_http_scan", {
+          const result = await executeTool("bob_http_scan", {
             target_domain: "example.com",
             method: "GET",
             url: "https://example.com/ok",
@@ -15707,7 +15734,7 @@ test("bounty_http_scan rejects env-resolved proxy query secrets", async () => {
   });
 });
 
-test("bounty_http_scan rejects invalid egress profiles before sending network requests and redacts proxy credentials", async () => {
+test("bob_http_scan rejects invalid egress profiles before sending network requests and redacts proxy credentials", async () => {
   await withTempHome(async () => {
     seedSessionState("example.com");
     const rawProxySecret = ["do", "not", "leak", "proxy", "secret"].join("-");
@@ -15734,7 +15761,7 @@ test("bounty_http_scan rejects invalid egress profiles before sending network re
           ["unsupported", /unsupported egress proxy protocol: ftp:/],
           ["malformed", /malformed/],
         ]) {
-          const result = await executeTool("bounty_http_scan", {
+          const result = await executeTool("bob_http_scan", {
             target_domain: "example.com",
             method: "GET",
             url: "https://example.com/ok",
@@ -15751,7 +15778,7 @@ test("bounty_http_scan rejects invalid egress profiles before sending network re
   });
 });
 
-test("bounty_http_scan rejects inline proxy credentials in egress profile config", async () => {
+test("bob_http_scan rejects inline proxy credentials in egress profile config", async () => {
   await withTempHome(async () => {
     seedSessionState("example.com");
     const rawProxySecret = ["inline", "proxy", "secret"].join("-");
@@ -15774,7 +15801,7 @@ test("bounty_http_scan rejects inline proxy credentials in egress profile config
       await withMockSafeFetch(() => {
         throw new Error("network should not be reached");
       }, async (requestedUrls) => {
-        const result = await executeTool("bounty_http_scan", {
+        const result = await executeTool("bob_http_scan", {
           target_domain: "example.com",
           method: "GET",
           url: "https://example.com/ok",
@@ -15790,7 +15817,7 @@ test("bounty_http_scan rejects inline proxy credentials in egress profile config
   });
 });
 
-test("bounty_http_scan rejects inline proxy query secrets in egress profile config", async () => {
+test("bob_http_scan rejects inline proxy query secrets in egress profile config", async () => {
   await withTempHome(async () => {
     seedSessionState("example.com");
     const rawProxySecret = ["query", "proxy", "secret"].join("-");
@@ -15812,7 +15839,7 @@ test("bounty_http_scan rejects inline proxy query secrets in egress profile conf
       await withMockSafeFetch(() => {
         throw new Error("network should not be reached");
       }, async (requestedUrls) => {
-        const result = await executeTool("bounty_http_scan", {
+        const result = await executeTool("bob_http_scan", {
           target_domain: "example.com",
           method: "GET",
           url: "https://example.com/ok",
@@ -15828,7 +15855,7 @@ test("bounty_http_scan rejects inline proxy query secrets in egress profile conf
   });
 });
 
-test("bounty_http_scan rejects proxy egress when strict internal-host blocking is requested", async () => {
+test("bob_http_scan rejects proxy egress when strict internal-host blocking is requested", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
     seedSessionState(domain);
@@ -15853,7 +15880,7 @@ test("bounty_http_scan rejects proxy egress when strict internal-host blocking i
         await withMockSafeFetch(() => {
           throw new Error("network should not be reached");
         }, async (requestedUrls) => {
-          const result = await executeTool("bounty_http_scan", {
+          const result = await executeTool("bob_http_scan", {
             target_domain: domain,
             method: "GET",
             url: "https://example.com/ok",
@@ -15882,7 +15909,7 @@ test("bounty_http_scan rejects proxy egress when strict internal-host blocking i
   });
 });
 
-test("bounty_http_scan redacts persisted audit URLs while sending the original request", async () => {
+test("bob_http_scan redacts persisted audit URLs while sending the original request", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
     seedSessionState(domain);
@@ -15893,7 +15920,7 @@ test("bounty_http_scan redacts persisted audit URLs while sending the original r
         body: "ok",
       },
     }, async (requestedUrls) => {
-      await executeTool("bounty_http_scan", {
+      await executeTool("bob_http_scan", {
         target_domain: domain,
         method: "GET",
         url: "https://example.com/callback?token=secret-token&code=oauth-code&id=123#client-fragment",
@@ -15913,7 +15940,7 @@ test("bounty_http_scan redacts persisted audit URLs while sending the original r
   });
 });
 
-test("bounty_http_scan permits first-party hosts and blocks off-target hosts before network requests", async () => {
+test("bob_http_scan permits first-party hosts and blocks off-target hosts before network requests", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
     seedSessionState(domain);
@@ -15932,7 +15959,7 @@ test("bounty_http_scan permits first-party hosts and blocks off-target hosts bef
         "https://blocked.example.com/admin",
       ];
       for (const url of allowedTargets) {
-        const result = await executeTool("bounty_http_scan", {
+        const result = await executeTool("bob_http_scan", {
           target_domain: domain,
           method: "GET",
           url,
@@ -15952,7 +15979,7 @@ test("bounty_http_scan permits first-party hosts and blocks off-target hosts bef
         "http://service.internal/debug",
       ];
       for (const url of blockedTargets) {
-        const result = await executeTool("bounty_http_scan", {
+        const result = await executeTool("bob_http_scan", {
           target_domain: domain,
           method: "GET",
           url,
@@ -15975,12 +16002,12 @@ test("bounty_http_scan permits first-party hosts and blocks off-target hosts bef
   });
 });
 
-test("bounty_http_scan requires target_domain instead of inferring scope from other sessions", async () => {
+test("bob_http_scan requires target_domain instead of inferring scope from other sessions", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
     seedSessionState(domain);
 
-    const blocked = await executeTool("bounty_http_scan", {
+    const blocked = await executeTool("bob_http_scan", {
       method: "GET",
       url: "https://app.example.com/ok",
       response_mode: "status_only",
@@ -15991,7 +16018,7 @@ test("bounty_http_scan requires target_domain instead of inferring scope from ot
   });
 });
 
-test("bounty_http_scan optionally blocks internal redirect targets before fetching them", async () => {
+test("bob_http_scan optionally blocks internal redirect targets before fetching them", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
     seedSessionState(domain);
@@ -16002,7 +16029,7 @@ test("bounty_http_scan optionally blocks internal redirect targets before fetchi
         headers: { location: "http://127.0.0.1/admin" },
       },
     }, async (requestedUrls) => {
-      const result = await executeTool("bounty_http_scan", {
+      const result = await executeTool("bob_http_scan", {
         target_domain: domain,
         method: "GET",
         url: "https://example.com/redirect",
@@ -16024,7 +16051,7 @@ test("bounty_http_scan optionally blocks internal redirect targets before fetchi
   });
 });
 
-test("bounty_http_scan blocks off-target redirects even when internal-host blocking is disabled", async () => {
+test("bob_http_scan blocks off-target redirects even when internal-host blocking is disabled", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
     seedSessionState(domain);
@@ -16036,7 +16063,7 @@ test("bounty_http_scan blocks off-target redirects even when internal-host block
       },
       "http://127.0.0.1/admin": { status: 200, statusText: "OK", body: "local ok" },
     }, async (requestedUrls) => {
-      const result = await executeTool("bounty_http_scan", {
+      const result = await executeTool("bob_http_scan", {
         target_domain: domain,
         method: "GET",
         url: "https://example.com/redirect",
@@ -16052,14 +16079,14 @@ test("bounty_http_scan blocks off-target redirects even when internal-host block
   });
 });
 
-test("bounty_http_scan optionally blocks public hostnames that resolve to private IPs before connecting", async () => {
+test("bob_http_scan optionally blocks public hostnames that resolve to private IPs before connecting", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
     seedSessionState(domain);
     await withMockSafeFetch({
       "https://example.com/private-dns": { status: 200, body: "should not connect" },
     }, async (requestedUrls) => {
-      const result = await executeTool("bounty_http_scan", {
+      const result = await executeTool("bob_http_scan", {
         target_domain: domain,
         method: "GET",
         url: "https://example.com/private-dns",
@@ -16074,10 +16101,10 @@ test("bounty_http_scan optionally blocks public hostnames that resolve to privat
   });
 });
 
-test("bounty_http_scan applies persisted paranoid internal-host blocking when call omits the flag", async () => {
+test("bob_http_scan applies persisted paranoid internal-host blocking when call omits the flag", async () => {
   await withTempHome(async () => {
     const domain = "paranoid-http.example.com";
-    const init = await executeTool("bounty_init_session", {
+    const init = await executeTool("bob_init_session", {
       target_domain: domain,
       target_url: `https://${domain}`,
       checkpoint_mode: "paranoid",
@@ -16091,7 +16118,7 @@ test("bounty_http_scan applies persisted paranoid internal-host blocking when ca
         {},
         { block_internal_hosts: false },
       ]) {
-        const result = await executeTool("bounty_http_scan", {
+        const result = await executeTool("bob_http_scan", {
           target_domain: domain,
           method: "GET",
           url: `https://${domain}/private-dns`,
@@ -16122,7 +16149,7 @@ test("bounty_http_scan applies persisted paranoid internal-host blocking when ca
   });
 });
 
-test("bounty_http_scan blocks IPv4-embedded IPv6 DNS answers in dotted notation", async () => {
+test("bob_http_scan blocks IPv4-embedded IPv6 DNS answers in dotted notation", async () => {
   await withTempHome(async () => {
     const dnsCases = [
       "::ffff:127.0.0.1",
@@ -16135,7 +16162,7 @@ test("bounty_http_scan blocks IPv4-embedded IPv6 DNS answers in dotted notation"
         "https://example.com/private-dns": { status: 200, body: "should not connect" },
       }, async (requestedUrls) => {
         seedSessionState("example.com");
-        const result = await executeTool("bounty_http_scan", {
+        const result = await executeTool("bob_http_scan", {
           target_domain: "example.com",
           method: "GET",
           url: "https://example.com/private-dns",
@@ -16150,14 +16177,14 @@ test("bounty_http_scan blocks IPv4-embedded IPv6 DNS answers in dotted notation"
   });
 });
 
-test("bounty_http_scan allows public hostnames that resolve to private IPs by default", async () => {
+test("bob_http_scan allows public hostnames that resolve to private IPs by default", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
     seedSessionState(domain);
     await withMockSafeFetch({
       "https://example.com/private-dns": { status: 200, statusText: "OK", body: "connected" },
     }, async (requestedUrls) => {
-      const result = await executeTool("bounty_http_scan", {
+      const result = await executeTool("bob_http_scan", {
         target_domain: domain,
         method: "GET",
         url: "https://example.com/private-dns",
@@ -16210,7 +16237,7 @@ test("safeFetch enforces response byte caps without buffering the full body", as
   });
 });
 
-test("bounty_import_http_traffic validates, dedupes, stores session-local traffic, and briefs only relevant surface traffic", () => {
+test("bob_import_http_traffic validates, dedupes, stores session-local traffic, and briefs only relevant surface traffic", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
@@ -16289,7 +16316,7 @@ test("bounty_import_http_traffic validates, dedupes, stores session-local traffi
   });
 });
 
-test("bounty_import_http_traffic redacts persisted URLs and rejected reasons", () => {
+test("bob_import_http_traffic redacts persisted URLs and rejected reasons", () => {
   withTempHome(() => {
     const domain = "example.com";
     const result = JSON.parse(importHttpTraffic({
@@ -16372,7 +16399,7 @@ test("legacy raw audit and traffic records are redacted on read", () => {
   });
 });
 
-test("bounty_import_static_artifact stores redacted session-owned content and rejects unsafe imports", () => {
+test("bob_import_static_artifact stores redacted session-owned content and rejects unsafe imports", () => {
   withTempHome(() => {
     const domain = "example.com";
     const source = `
@@ -16437,7 +16464,7 @@ test("bounty_import_static_artifact stores redacted session-owned content and re
   });
 });
 
-test("bounty_static_scan reports deduped findings separately from capped returned findings", () => {
+test("bob_static_scan reports deduped findings separately from capped returned findings", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
@@ -16471,7 +16498,7 @@ test("bounty_static_scan reports deduped findings separately from capped returne
   });
 });
 
-test("bounty_static_scan scans only imported artifacts and feeds bounded evaluator brief hints", () => {
+test("bob_static_scan scans only imported artifacts and feeds bounded evaluator brief hints", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
@@ -16726,7 +16753,7 @@ test("pipeline analytics surfaces egress and geofence warnings from HTTP audit",
   });
 });
 
-test("bounty_public_intel caps output, persists optional intel, handles API failures, and feeds evaluator brief hints", async () => {
+test("bob_public_intel caps output, persists optional intel, handles API failures, and feeds evaluator brief hints", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
     const previousFetch = global.fetch;
@@ -16880,9 +16907,9 @@ function priorityRankForTest(priority) {
   return { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 }[String(priority || "").toUpperCase()] || 0;
 }
 
-// ── bounty_read_assignment_brief tests ──
+// ── bob_read_assignment_brief tests ──
 
-test("bounty_read_assignment_brief returns surface, exclusions, and valid IDs", () => {
+test("bob_read_assignment_brief returns surface, exclusions, and valid IDs", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, {
@@ -16954,7 +16981,7 @@ test("bounty_read_assignment_brief returns surface, exclusions, and valid IDs", 
     assert.equal(brief.exclusions_summary.dead_ends_total, 1);
     assert.equal(brief.exclusions_summary.waf_blocked_total, 1);
     assert.equal(brief.auth_hint, undefined);
-    assert.match(brief.auth_profiles_hint, /bounty_list_auth_profiles/);
+    assert.match(brief.auth_profiles_hint, /bob_list_auth_profiles/);
     assert.doesNotMatch(JSON.stringify(brief), /auth\.json/i);
     // Web brief shape: include the HTTP-flavored intel fields, omit SC-only fields.
     assert.ok(Object.prototype.hasOwnProperty.call(brief, "bypass_table"), "web brief must expose bypass_table");
@@ -16977,7 +17004,7 @@ test("bounty_read_assignment_brief returns surface, exclusions, and valid IDs", 
   });
 });
 
-test("bounty_read_assignment_brief reports persisted internal-host policy when omitted", () => {
+test("bob_read_assignment_brief reports persisted internal-host policy when omitted", () => {
   withTempHome(() => {
     const domain = "paranoid-brief.example.com";
     seedSessionState(domain, {
@@ -17004,7 +17031,7 @@ test("bounty_read_assignment_brief reports persisted internal-host policy when o
   });
 });
 
-test("bounty_read_assignment_brief uses smart_contract_evm shape when the assignment routes to that pack", () => {
+test("bob_read_assignment_brief uses smart_contract_evm shape when the assignment routes to that pack", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, {
@@ -17095,7 +17122,7 @@ test("bounty_read_assignment_brief uses smart_contract_evm shape when the assign
   });
 });
 
-test("bounty_read_assignment_brief preserves per-chain harness paths for every smart-contract pack", () => {
+test("bob_read_assignment_brief preserves per-chain harness paths for every smart-contract pack", () => {
   // slimSurfaceForBrief whitelists each chain's harness_path scalar.
   // SVM/Move/Substrate/CosmWasm evaluator prompts read anchor_harness_path /
   // move_harness_path / ink_harness_path / cargo_harness_path /
@@ -17134,7 +17161,7 @@ test("bounty_read_assignment_brief preserves per-chain harness paths for every s
   }
 });
 
-test("bounty_read_assignment_brief throws on an unsupported brief_profile rather than fail-open to smart-contract", () => {
+test("bob_read_assignment_brief throws on an unsupported brief_profile rather than fail-open to smart-contract", () => {
   // Regression guard for fail-open: the dispatch must reject profiles the
   // capability-pack registry never declared, even if route metadata is
   // forged on disk.
@@ -17179,7 +17206,7 @@ test("bounty_read_assignment_brief throws on an unsupported brief_profile rather
   });
 });
 
-test("bounty_read_assignment_brief caps assigned surface arrays and reports surface_limits", () => {
+test("bob_read_assignment_brief caps assigned surface arrays and reports surface_limits", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
@@ -17217,7 +17244,7 @@ test("bounty_read_assignment_brief caps assigned surface arrays and reports surf
   });
 });
 
-test("bounty_read_assignment_brief caps scalar strings and omits unknown scalar fields", () => {
+test("bob_read_assignment_brief caps scalar strings and omits unknown scalar fields", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
@@ -17256,7 +17283,7 @@ test("bounty_read_assignment_brief caps scalar strings and omits unknown scalar 
   });
 });
 
-test("bounty_read_assignment_brief includes assigned-surface coverage summary with latest-per-key dedupe", () => {
+test("bob_read_assignment_brief includes assigned-surface coverage summary with latest-per-key dedupe", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
@@ -17328,7 +17355,7 @@ test("bounty_read_assignment_brief includes assigned-surface coverage summary wi
   });
 });
 
-test("bounty_read_assignment_brief caps coverage summary output", () => {
+test("bob_read_assignment_brief caps coverage summary output", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
@@ -17362,7 +17389,7 @@ test("bounty_read_assignment_brief caps coverage summary output", () => {
   });
 });
 
-test("bounty_read_assignment_brief rejects unassigned agent", () => {
+test("bob_read_assignment_brief rejects unassigned agent", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
@@ -17420,7 +17447,7 @@ test("runtime resource resolution prefers neutral env paths and preserves Claude
   }
 });
 
-test("bounty_read_assignment_brief loads knowledge and bypass tables from BOB_RESOURCE_DIR", () => {
+test("bob_read_assignment_brief loads knowledge and bypass tables from BOB_RESOURCE_DIR", () => {
   const resources = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-resource-dir-"));
   try {
     fs.mkdirSync(path.join(resources, "knowledge"), { recursive: true });
@@ -17463,7 +17490,7 @@ test("bounty_read_assignment_brief loads knowledge and bypass tables from BOB_RE
   }
 });
 
-test("bounty_read_assignment_brief includes WordPress-specific curated guidance", () => {
+test("bob_read_assignment_brief includes WordPress-specific curated guidance", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
@@ -17483,7 +17510,7 @@ test("bounty_read_assignment_brief includes WordPress-specific curated guidance"
   });
 });
 
-test("bounty_read_assignment_brief includes GraphQL-specific curated guidance", () => {
+test("bob_read_assignment_brief includes GraphQL-specific curated guidance", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
@@ -17502,7 +17529,7 @@ test("bounty_read_assignment_brief includes GraphQL-specific curated guidance", 
   });
 });
 
-test("bounty_read_assignment_brief includes generic REST/API guidance for API surfaces", () => {
+test("bob_read_assignment_brief includes generic REST/API guidance for API surfaces", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
@@ -17521,7 +17548,7 @@ test("bounty_read_assignment_brief includes generic REST/API guidance for API su
   });
 });
 
-test("bounty_read_assignment_brief matches IDOR and authz bug_class_hints to REST/API authorization guidance", () => {
+test("bob_read_assignment_brief matches IDOR and authz bug_class_hints to REST/API authorization guidance", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
@@ -17544,7 +17571,7 @@ test("bounty_read_assignment_brief matches IDOR and authz bug_class_hints to RES
   });
 });
 
-test("bounty_read_assignment_brief matches billing metadata and high-value flows to business-logic guidance", () => {
+test("bob_read_assignment_brief matches billing metadata and high-value flows to business-logic guidance", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
@@ -17567,7 +17594,7 @@ test("bounty_read_assignment_brief matches billing metadata and high-value flows
   });
 });
 
-test("bounty_read_assignment_brief matches upload surface_type to upload guidance", () => {
+test("bob_read_assignment_brief matches upload surface_type to upload guidance", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
@@ -17590,7 +17617,7 @@ test("bounty_read_assignment_brief matches upload surface_type to upload guidanc
   });
 });
 
-test("bounty_read_assignment_brief falls back to generic guidance for unknown tech", () => {
+test("bob_read_assignment_brief falls back to generic guidance for unknown tech", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
@@ -17609,7 +17636,7 @@ test("bounty_read_assignment_brief falls back to generic guidance for unknown te
   });
 });
 
-test("bounty_read_assignment_brief knowledge remains bounded and excludes full source docs", () => {
+test("bob_read_assignment_brief knowledge remains bounded and excludes full source docs", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
@@ -17641,7 +17668,7 @@ test("bounty_read_assignment_brief knowledge remains bounded and excludes full s
   });
 });
 
-test("bounty_read_assignment_brief includes bounded candidate technique packs and context budget", () => {
+test("bob_read_assignment_brief includes bounded candidate technique packs and context budget", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
@@ -17702,7 +17729,7 @@ test("technique pack summary and full reads truncate oversized content with limi
   });
 });
 
-test("bounty_select_technique_packs keeps oversized selected summaries within the selection limit", () => {
+test("bob_select_technique_packs keeps oversized selected summaries within the selection limit", () => {
   withTempHome(() => {
     withTempTechniqueKnowledge(oversizedTechniqueKnowledge(), () => {
       const domain = "example.com";
@@ -17736,7 +17763,7 @@ test("bounty_select_technique_packs keeps oversized selected summaries within th
   });
 });
 
-test("bounty_read_assignment_brief returns bounded oversized selected technique packs and selection limits", () => {
+test("bob_read_assignment_brief returns bounded oversized selected technique packs and selection limits", () => {
   withTempHome(() => {
     withTempTechniqueKnowledge(oversizedTechniqueKnowledge(), () => {
       const domain = "example.com";
@@ -17946,7 +17973,7 @@ test("context budget and technique-pack MCP tools are deterministic and bounded"
       () => getContextBudget({ capability_pack: "web", surface_id: "surface-graphql" }),
       /target_domain is required when surface_id is provided/,
     );
-    const missingTargetDomain = await executeTool("bounty_get_context_budget", {
+    const missingTargetDomain = await executeTool("bob_get_context_budget", {
       capability_pack: "web",
       surface_id: "surface-graphql",
     });
@@ -18081,13 +18108,13 @@ test("context budget and technique-pack MCP tools are deterministic and bounded"
       /Unknown technique pack id/,
     );
 
-    const envelope = await executeTool("bounty_read_technique_pack", { pack_id: "unknown-pack", mode: "summary" });
+    const envelope = await executeTool("bob_read_technique_pack", { pack_id: "unknown-pack", mode: "summary" });
     assert.equal(envelope.ok, false);
     assert.equal(envelope.error.code, "NOT_FOUND");
   });
 });
 
-test("bounty_read_technique_pack full mode enforces per-assignment read budget", async () => {
+test("bob_read_technique_pack full mode enforces per-assignment read budget", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
@@ -18101,11 +18128,11 @@ test("bounty_read_technique_pack full mode enforces per-assignment read budget",
     }]);
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-graphql" }]);
 
-    const summary = await executeTool("bounty_read_technique_pack", { pack_id: "graphql", mode: "summary" });
+    const summary = await executeTool("bob_read_technique_pack", { pack_id: "graphql", mode: "summary" });
     assert.equal(summary.ok, true);
     assert.equal(fs.existsSync(techniquePackReadsJsonlPath(domain)), false);
 
-    const missingContext = await executeTool("bounty_read_technique_pack", { pack_id: "graphql", mode: "full" });
+    const missingContext = await executeTool("bob_read_technique_pack", { pack_id: "graphql", mode: "full" });
     assert.equal(missingContext.ok, false);
     assert.equal(missingContext.error.code, "INVALID_ARGUMENTS");
     assert.match(missingContext.error.message, /target_domain is required for session authority/);
@@ -18118,7 +18145,7 @@ test("bounty_read_technique_pack full mode enforces per-assignment read budget",
       mode: "full",
     };
 
-    const first = await executeTool("bounty_read_technique_pack", { ...context, pack_id: "graphql" });
+    const first = await executeTool("bob_read_technique_pack", { ...context, pack_id: "graphql" });
     assert.equal(first.ok, true);
     assert.equal(first.data.registry_version, 1);
     assert.equal(first.data.full_read_budget.full_pack_read_limit, 2);
@@ -18127,12 +18154,12 @@ test("bounty_read_technique_pack full mode enforces per-assignment read budget",
     assert.equal(first.data.full_read_budget.already_read, false);
     assert.equal(first.data.full_read_budget.log_path, techniquePackReadsJsonlPath(domain));
 
-    const second = await executeTool("bounty_read_technique_pack", { ...context, pack_id: "generic-rest-api" });
+    const second = await executeTool("bob_read_technique_pack", { ...context, pack_id: "generic-rest-api" });
     assert.equal(second.ok, true);
     assert.equal(second.data.full_read_budget.full_packs_read, 2);
     assert.equal(second.data.full_read_budget.remaining_full_pack_reads, 0);
 
-    const reread = await executeTool("bounty_read_technique_pack", { ...context, pack_id: "graphql" });
+    const reread = await executeTool("bob_read_technique_pack", { ...context, pack_id: "graphql" });
     assert.equal(reread.ok, true);
     assert.equal(reread.data.full_read_budget.already_read, true);
     assert.equal(reread.data.full_read_budget.full_packs_read, 2);
@@ -18162,7 +18189,7 @@ test("bounty_read_technique_pack full mode enforces per-assignment read budget",
       },
     ]);
 
-    const third = await executeTool("bounty_read_technique_pack", { ...context, pack_id: "wordpress" });
+    const third = await executeTool("bob_read_technique_pack", { ...context, pack_id: "wordpress" });
     assert.equal(third.ok, false);
     assert.equal(third.error.code, "INVALID_ARGUMENTS");
     assert.match(third.error.message, /full_pack_read_limit/);
@@ -18170,7 +18197,7 @@ test("bounty_read_technique_pack full mode enforces per-assignment read budget",
   });
 });
 
-test("bounty_log_technique_attempt appends valid JSONL and rejects invalid inputs", async () => {
+test("bob_log_technique_attempt appends valid JSONL and rejects invalid inputs", async () => {
   await withTempHome(async () => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 1, pending_wave: 1 });
@@ -18217,7 +18244,7 @@ test("bounty_log_technique_attempt appends valid JSONL and rejects invalid input
     assert.equal(attemptEvent.agent, "a1");
     assert.equal(attemptEvent.surface_id, "surface-graphql");
     assert.equal(attemptEvent.status, "attempted");
-    assert.equal(attemptEvent.source, "bounty_log_technique_attempt");
+    assert.equal(attemptEvent.source, "bob_log_technique_attempt");
     assert.deepEqual(attemptEvent.counts, { records: 1 });
     for (const field of ["evidence", "outcome", "pack_id", "technique_pack", "payload_hints"]) {
       assert.equal(Object.prototype.hasOwnProperty.call(attemptEvent, field), false);
@@ -18241,7 +18268,7 @@ test("bounty_log_technique_attempt appends valid JSONL and rejects invalid input
       }),
       /Unknown surface_id/,
     );
-    const invalidStatus = await executeTool("bounty_log_technique_attempt", {
+    const invalidStatus = await executeTool("bob_log_technique_attempt", {
       target_domain: domain,
       surface_id: "surface-graphql",
       pack_id: "graphql",
@@ -18253,7 +18280,7 @@ test("bounty_log_technique_attempt appends valid JSONL and rejects invalid input
   });
 });
 
-test("bounty_log_technique_attempt rejects packs incompatible with assigned capability pack", async () => {
+test("bob_log_technique_attempt rejects packs incompatible with assigned capability pack", async () => {
   await withTempHome(async () => {
     await withTempTechniqueKnowledge({
       version: 1,
@@ -18286,7 +18313,7 @@ test("bounty_log_technique_attempt rejects packs incompatible with assigned capa
       }]);
       seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-api" }]);
 
-      const rejected = await executeTool("bounty_log_technique_attempt", {
+      const rejected = await executeTool("bob_log_technique_attempt", {
         target_domain: domain,
         wave: "w1",
         agent: "a1",
@@ -18300,7 +18327,7 @@ test("bounty_log_technique_attempt rejects packs incompatible with assigned capa
       assert.match(rejected.error.message, /not compatible with capability_pack web/);
       assert.equal(readTechniqueAttemptRecordsFromJsonl(domain).length, 0);
 
-      const accepted = await executeTool("bounty_log_technique_attempt", {
+      const accepted = await executeTool("bob_log_technique_attempt", {
         target_domain: domain,
         wave: "w1",
         agent: "a1",
@@ -18594,7 +18621,7 @@ test("Claude settings register only artifact guards; scoped HTTP policy is enfor
           ],
         },
         {
-          matcher: "mcp__bountyagent__bounty_http_scan",
+          matcher: "mcp__bountyagent__bob_http_scan",
           hooks: [
             { type: "command", command: "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/scope-guard-mcp.sh\"", timeout: 5 },
           ],
@@ -18819,7 +18846,7 @@ test("SESSION_LOCK_STALE_MS is 300 seconds", () => {
 
 // ── Fix 6: waveStatus returns coverage data ──
 
-test("bounty_wave_status returns coverage_pct when attack surface and state exist", () => {
+test("bob_wave_status returns coverage_pct when attack surface and state exist", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, {
@@ -18850,7 +18877,7 @@ test("bounty_wave_status returns coverage_pct when attack surface and state exis
   });
 });
 
-test("bounty_wave_status coverage_pct is 100 when all surfaces are LOW", () => {
+test("bob_wave_status coverage_pct is 100 when all surfaces are LOW", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "EVALUATE", evaluation_wave: 0, pending_wave: null });
@@ -18867,7 +18894,7 @@ test("bounty_wave_status coverage_pct is 100 when all surfaces are LOW", () => {
   });
 });
 
-test("bounty_wave_status returns open requeue coverage surface ids and transition blockers", () => {
+test("bob_wave_status returns open requeue coverage surface ids and transition blockers", () => {
   withTempHome(() => {
     const domain = "example.com";
     // surface-a has unfinished coverage and is NOT in `explored`, so the
@@ -18903,7 +18930,7 @@ test("bounty_wave_status returns open requeue coverage surface ids and transitio
   });
 });
 
-test("bounty_wave_status excludes explored surfaces from open_requeue_surface_ids", () => {
+test("bob_wave_status excludes explored surfaces from open_requeue_surface_ids", () => {
   // The veda.tech regression: a surface had a `requeue` coverage row from
   // an earlier wave, then was closed by a `surface_status: complete`
   // handoff in a later wave (which populated state.explored). wave_status
@@ -18955,7 +18982,7 @@ test("httpScan returns error when auth_profile is requested but not found", asyn
   process.env.HOME = tempHome;
   try {
     seedSessionState("example.com");
-    const result = await executeTool("bounty_http_scan", {
+    const result = await executeTool("bob_http_scan", {
       target_domain: "example.com",
       method: "GET",
       url: "https://example.com/",

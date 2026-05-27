@@ -370,7 +370,7 @@ function writeVerificationRound(args) {
   safeAppendPipelineEventDirect(domain, "verification_written", {
     phase: "VERIFY",
     status: round,
-    source: "bounty_write_verification_round",
+    source: "bob_write_verification_round",
     verification_attempt_id: schemaVersion === 2 ? v2State.verification_attempt_id : undefined,
     verification_snapshot_hash: schemaVersion === 2 ? v2State.verification_snapshot_hash : undefined,
     adjudication_plan_hash: schemaVersion === 2 && round === "final" ? document.adjudication_plan_hash : undefined,

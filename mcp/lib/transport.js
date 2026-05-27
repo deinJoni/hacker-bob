@@ -10,13 +10,17 @@ function createMcpMessageHandler({ tools, executeTool, send }) {
   return async function handleMessage(rpc) {
     switch (rpc.method) {
       case "initialize":
+        // Cycle P.1: the canonical MCP server name is `hacker-bob`. The
+        // `.mcp.json` install layer keeps the `bountyagent` server key as a
+        // backwards-compatible alias so existing sessions still resolve until
+        // the v2.1.0 cleanup release per hypergraph Part IX.
         send({
           jsonrpc: "2.0",
           id: rpc.id,
           result: {
             protocolVersion: rpc.params?.protocolVersion || "2025-11-25",
             capabilities: { tools: {} },
-            serverInfo: { name: "bountyagent", version: "1.0.0" },
+            serverInfo: { name: "hacker-bob", version: "1.0.0" },
           },
         });
         break;
@@ -249,7 +253,7 @@ function createStdioServer({
 
   function start() {
     stdin.on("data", handleChunk);
-    stderr.write("bountyagent MCP server running (stdio)\n");
+    stderr.write("hacker-bob MCP server running (stdio)\n");
   }
 
   return {

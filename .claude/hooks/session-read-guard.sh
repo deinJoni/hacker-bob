@@ -143,9 +143,9 @@ def check_file(raw_path, *, block_session_dirs=False):
 def block(blocked):
     print(
         f"BLOCKED: Direct read of '{blocked}' in a Bob session directory. "
-        "Use MCP readers such as bounty_read_session_summary, "
-        "bounty_read_state_summary, bounty_read_findings, and "
-        "bounty_read_http_audit instead.",
+        "Use MCP readers such as bob_read_session_summary, "
+        "bob_read_state_summary, bob_read_findings, and "
+        "bob_read_http_audit instead.",
         file=sys.stderr,
     )
     raise SystemExit(2)

@@ -3,7 +3,8 @@
 const { writeGradeVerdict } = require("../grade-verdict-store.js");
 
 module.exports = Object.freeze({
-  name: "bounty_write_grade_verdict",
+  name: "bob_write_grade_verdict",
+  aliases: ["bounty_write_grade_verdict"],
   description:
     "Write the authoritative grading verdict JSON plus a markdown mirror.",
   inputSchema: {

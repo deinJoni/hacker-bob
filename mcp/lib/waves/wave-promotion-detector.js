@@ -29,7 +29,7 @@ const BLOCKED_PREREQ_KINDS_WITH_REGISTRY_DELTA = Object.freeze({
 // egress_unreachable) skip promotion when the named handle is newly registered
 // since the latest prior occurrence; null identifier_hint skips when the handle
 // set grew at all. Other kinds promote on any 2-wave recurrence and require an
-// operator clear via bounty_clear_terminal_block.
+// operator clear via bob_clear_terminal_block.
 function detectTerminalPromotions({
   currentWaveBlockersBySurface,
   historyBySurface,
@@ -138,7 +138,7 @@ function buildNextActionForPlan(domain, decision, waveNumber) {
   if (decision === "pending_wave_settle") {
     return {
       kind: "call_tool",
-      tool: "bounty_apply_wave_merge",
+      tool: "bob_apply_wave_merge",
       arguments: { target_domain: domain, wave_number: waveNumber, force_merge: false },
     };
   }
@@ -160,7 +160,7 @@ function buildStartNextWaveResponse({ domain, dryRun, state, plan, promotion, st
   const nextAction = dryRun && decision === "start_wave"
     ? {
         kind: "stop",
-        reason: "dry_run is true; call bounty_start_next_wave with dry_run false to start this planned wave.",
+        reason: "dry_run is true; call bob_start_next_wave with dry_run false to start this planned wave.",
       }
     : buildNextActionForPlan(domain, decision, decision === "pending_wave_settle" ? plan.pending_wave : plan.wave_number);
   const response = {
@@ -280,7 +280,7 @@ function appendBlockerPromotionFrontierEvents(domain, promotions, waveNumber) {
             reason: blocker.reason || null,
             promotion: "terminally_blocked",
           },
-          source: { artifact: "state.terminally_blocked", tool: "bounty_apply_wave_merge" },
+          source: { artifact: "state.terminally_blocked", tool: "bob_apply_wave_merge" },
         });
       } catch {
         // Frontier ledger is dual-write best-effort.
@@ -300,7 +300,7 @@ function appendClosureFrontierEvents(domain, completedSurfaceIds, waveNumber) {
         kind: "closure.recorded",
         surface_id: surfaceId,
         payload: { wave: waveNumber, closure: "surface_completed" },
-        source: { artifact: "state.explored", tool: "bounty_apply_wave_merge" },
+        source: { artifact: "state.explored", tool: "bob_apply_wave_merge" },
       });
     } catch {
       // Frontier ledger is dual-write best-effort.

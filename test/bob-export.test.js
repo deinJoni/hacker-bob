@@ -129,7 +129,7 @@ test("Bob export creates a version-scoped deterministic improvement bundle", () 
         version: 1,
         bob_version: "9.9.9",
         ts: "2026-05-08T10:02:00.000Z",
-        tool: "bounty_http_scan",
+        tool: "bob_http_scan",
         ok: false,
         elapsed_ms: 12,
         error_code: "NETWORK_ERROR",
@@ -139,7 +139,7 @@ test("Bob export creates a version-scoped deterministic improvement bundle", () 
         version: 1,
         bob_version: "9.9.9",
         ts: "2026-05-08T10:03:00.000Z",
-        tool: "bounty_read_session_summary",
+        tool: "bob_read_session_summary",
         ok: true,
         elapsed_ms: 4,
         target_domain: "current.example",
@@ -148,7 +148,7 @@ test("Bob export creates a version-scoped deterministic improvement bundle", () 
         version: 1,
         bob_version: "9.9.8",
         ts: "2026-05-08T10:04:00.000Z",
-        tool: "bounty_http_scan",
+        tool: "bob_http_scan",
         ok: false,
         elapsed_ms: 7,
         error_code: "OLD_ERROR",
@@ -157,7 +157,7 @@ test("Bob export creates a version-scoped deterministic improvement bundle", () 
       {
         version: 1,
         ts: "2026-05-08T10:05:00.000Z",
-        tool: "bounty_http_scan",
+        tool: "bob_http_scan",
         ok: false,
         elapsed_ms: 7,
         error_code: "UNKNOWN_VERSION",
@@ -252,7 +252,7 @@ test("Bob export creates a version-scoped deterministic improvement bundle", () 
 
     const clusters = readJson(path.join(first.bundle_dir, "problem-clusters.json"));
     assert.ok(clusters.clusters.mcp_tool_errors.some((cluster) => (
-      cluster.tool === "bounty_http_scan" && cluster.error_code === "NETWORK_ERROR"
+      cluster.tool === "bob_http_scan" && cluster.error_code === "NETWORK_ERROR"
     )));
     assert.ok(clusters.clusters.evaluator_blocks.some((cluster) => cluster.block_code === "MISSING_HANDOFF"));
     assert.ok(clusters.clusters.version_exclusions.length >= 3);

@@ -27,7 +27,7 @@ const AGENT_TOOL_SPECS = Object.freeze({
   },
   "surface-router-agent.md": {
     roleBundles: [],
-    extras: ["Read", "mcp__bountyagent__bounty_route_surfaces"],
+    extras: ["Read", "mcp__bountyagent__bob_route_surfaces"],
   },
   "evaluator-agent.md": {
     roleBundles: ["evaluator-shared", "evaluator-web"],

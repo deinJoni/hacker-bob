@@ -1073,7 +1073,7 @@ function logTechniqueAttempt(args) {
       agent: parsedAgent,
       surface_id: surfaceId,
       status,
-      source: "bounty_log_technique_attempt",
+      source: "bob_log_technique_attempt",
       counts: {
         records: 1,
       },

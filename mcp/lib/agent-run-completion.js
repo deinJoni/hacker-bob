@@ -246,7 +246,7 @@ function evaluateTechniqueAttemptRequirement(marker, assignment) {
     ok: false,
     status: "blocked",
     block_code: "missing_technique_attempt_log",
-    reason: `Evaluator ${marker.wave}/${marker.agent} must call bounty_log_technique_attempt with a real attempt outcome before finalizing this surface.`,
+    reason: `Evaluator ${marker.wave}/${marker.agent} must call bob_log_technique_attempt with a real attempt outcome before finalizing this surface.`,
     marker,
     handoff: null,
   };
@@ -302,7 +302,7 @@ function evaluateAgentCompletion(args) {
       ok: false,
       status: "blocked",
       block_code: "missing_handoff",
-      reason: `Evaluator ${marker.wave}/${marker.agent} must call bounty_write_wave_handoff before finalizing.`,
+      reason: `Evaluator ${marker.wave}/${marker.agent} must call bob_write_wave_handoff before finalizing.`,
       marker,
       handoff: handoffTelemetry(null, { present: false, valid: false }),
     };
@@ -364,7 +364,7 @@ function evaluateAgentCompletion(args) {
 
 function telemetryInput(evaluation, {
   transcript_path: transcriptPath = null,
-  telemetry_source: telemetrySource = "bounty_finalize_agent_run",
+  telemetry_source: telemetrySource = "bob_finalize_agent_run",
   now = new Date(),
 } = {}) {
   const marker = evaluation && evaluation.marker ? evaluation.marker : null;
@@ -415,7 +415,7 @@ function finalizeAgentCompletion(args, options = {}) {
 
 function finalizeAgentRun(args) {
   const evaluation = finalizeAgentCompletion(args, {
-    telemetry_source: "bounty_finalize_agent_run",
+    telemetry_source: "bob_finalize_agent_run",
   });
   if (!evaluation.ok) {
     throw new ToolError(ERROR_CODES.STATE_CONFLICT, evaluation.reason, {

@@ -76,10 +76,10 @@ function deriveBlockers(state, artifacts) {
 
 function nextAction(state, artifacts, blockers) {
   if (state.pending_wave != null) {
-    return `Resume and settle pending wave ${state.pending_wave} with bounty_apply_wave_merge.`;
+    return `Resume and settle pending wave ${state.pending_wave} with bob_apply_wave_merge.`;
   }
   if (blockers.includes("report_missing")) {
-    return "Run the report writer, then call bounty_read_session_summary again.";
+    return "Run the report writer, then call bob_read_session_summary again.";
   }
   if (artifacts.grade.verdict === "HOLD") {
     return "Return to EVALUATE with grader feedback, then re-run CHAIN through REPORT.";

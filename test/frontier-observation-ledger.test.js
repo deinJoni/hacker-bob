@@ -56,7 +56,7 @@ test("observationsForSurface returns normalized events in timestamp order", () =
       ts: "2026-05-27T10:02:00.000Z",
       surface_id: "surface:gamma",
       payload: { observation_kind: "http_route", method: "GET", path: "/x" },
-      source: { artifact: "route-extraction", tool: "bounty_extract_routes" },
+      source: { artifact: "route-extraction", tool: "bob_extract_routes" },
     });
     appendFrontierEvent({
       target_domain: domain,
@@ -64,7 +64,7 @@ test("observationsForSurface returns normalized events in timestamp order", () =
       ts: "2026-05-27T10:01:00.000Z",
       surface_id: "surface:gamma",
       payload: { observation_kind: "schema_field", endpoint: "/x" },
-      source: { artifact: "schema-contracts.jsonl", tool: "bounty_ingest_schema_doc" },
+      source: { artifact: "schema-contracts.jsonl", tool: "bob_ingest_schema_doc" },
     });
     appendFrontierEvent({
       target_domain: domain,
@@ -72,7 +72,7 @@ test("observationsForSurface returns normalized events in timestamp order", () =
       ts: "2026-05-27T10:03:00.000Z",
       surface_id: "surface:other",
       payload: { observation_kind: "auth_redirect" },
-      source: { artifact: "auth-differential-results.json", tool: "bounty_run_auth_differential" },
+      source: { artifact: "auth-differential-results.json", tool: "bob_run_auth_differential" },
     });
 
     const ordered = observationsForSurface(domain, "surface:gamma");
@@ -111,7 +111,7 @@ test("materialized surface-index.json carries observations[] per surface", () =>
       ts: "2026-05-27T00:00:01.000Z",
       surface_id: "surface:billing",
       payload: { observation_kind: "http_route", method: "POST", path: "/billing/charge" },
-      source: { artifact: "route-extraction", tool: "bounty_extract_routes" },
+      source: { artifact: "route-extraction", tool: "bob_extract_routes" },
     });
     appendFrontierEvent({
       target_domain: domain,
@@ -119,7 +119,7 @@ test("materialized surface-index.json carries observations[] per surface", () =>
       ts: "2026-05-27T00:00:02.000Z",
       surface_id: "surface:billing",
       payload: { observation_kind: "auth_redirect", endpoint: "/billing/charge" },
-      source: { artifact: "auth-differential-results.json", tool: "bounty_run_auth_differential" },
+      source: { artifact: "auth-differential-results.json", tool: "bob_run_auth_differential" },
     });
     // A non-observation event for the same surface — must NOT appear in observations[].
     appendFrontierEvent({
@@ -175,7 +175,7 @@ test("materializer hash stays deterministic across re-materializations with obse
       ts: "2026-05-27T00:00:01.000Z",
       surface_id: "surface:account",
       payload: { observation_kind: "schema_field", endpoint: "/account" },
-      source: { artifact: "schema-contracts.jsonl", tool: "bounty_ingest_schema_doc" },
+      source: { artifact: "schema-contracts.jsonl", tool: "bob_ingest_schema_doc" },
     });
 
     const first = materializeFrontier(domain, {
@@ -240,7 +240,7 @@ test("ingestSchemaDoc dual-writes legacy corpus AND observation.recorded events"
     const firstObs = observationEvents[0];
     assert.equal(firstObs.payload.observation_kind, "schema_field");
     assert.equal(firstObs.source.artifact, "schema-contracts.jsonl");
-    assert.equal(firstObs.source.tool, "bounty_ingest_schema_doc");
+    assert.equal(firstObs.source.tool, "bob_ingest_schema_doc");
   });
 });
 
@@ -286,7 +286,7 @@ test("runAuthDifferential dual-writes legacy results AND observation.recorded ev
         assert.equal(firstObs.payload.observation_kind, "auth_redirect");
         assert.equal(firstObs.payload.endpoint, "/billing");
         assert.equal(firstObs.source.artifact, "auth-differential-results.json");
-        assert.equal(firstObs.source.tool, "bounty_run_auth_differential");
+        assert.equal(firstObs.source.tool, "bob_run_auth_differential");
         resolve();
       });
     } catch (err) {
@@ -327,7 +327,7 @@ test("legacy attack_surface.json write path is preserved (dual-write check)", ()
       ts: "2026-05-27T00:00:01.000Z",
       surface_id: "surface:legacy",
       payload: { observation_kind: "http_route", path: "/legacy" },
-      source: { artifact: "route-extraction", tool: "bounty_extract_routes" },
+      source: { artifact: "route-extraction", tool: "bob_extract_routes" },
     });
 
     // Materialize and confirm both legacy & ledger sources populate.

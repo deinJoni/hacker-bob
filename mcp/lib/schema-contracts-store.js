@@ -129,7 +129,7 @@ function ingestSchemaDoc({ target_domain, raw_doc, source_uri }) {
           },
           source: {
             artifact: "schema-contracts.jsonl",
-            tool: "bounty_ingest_schema_doc",
+            tool: "bob_ingest_schema_doc",
             ref: typeof contract.contract_hash === "string" ? contract.contract_hash : null,
           },
         });

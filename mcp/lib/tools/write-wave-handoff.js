@@ -10,7 +10,8 @@ const {
 } = require("../wave-handoff-contracts.js");
 
 module.exports = Object.freeze({
-  name: "bounty_write_wave_handoff",
+  name: "bob_write_wave_handoff",
+  aliases: ["bounty_write_wave_handoff"],
   description:
     "Evaluator-final writer for one structured wave handoff as markdown plus authoritative JSON.",
   inputSchema: {

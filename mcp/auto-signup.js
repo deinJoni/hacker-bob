@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Auto-signup script — Patchright (stealth Playwright fork) + CapSolver CAPTCHA integration
-// Called by bounty_auto_signup MCP tool via child_process.execFile
+// Called by bob_auto_signup MCP tool via child_process.execFile
 //
 // Input:  JSON config on stdin
 // Output: JSON result on stdout

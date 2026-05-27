@@ -238,7 +238,7 @@ async function runAuthDifferential({
         },
         source: {
           artifact: "auth-differential-results.json",
-          tool: "bounty_run_auth_differential",
+          tool: "bob_run_auth_differential",
           ref: payload.results_hash,
         },
       });

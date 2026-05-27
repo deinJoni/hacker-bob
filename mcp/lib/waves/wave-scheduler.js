@@ -70,7 +70,7 @@ function startWaveLocked(domain, {
   waveNumber,
   assignments,
   attackSurfaceInfo = null,
-  source = "bounty_start_wave",
+  source = "bob_start_wave",
   startedBy = source,
   statePatch = null,
   schedulerDecisionId = null,
@@ -79,7 +79,7 @@ function startWaveLocked(domain, {
   assertWaveStartState(state, waveNumber);
 
   // Terminally-blocked surfaces cannot be assigned to a wave until an operator
-  // clears the block via bounty_clear_terminal_block.
+  // clears the block via bob_clear_terminal_block.
   const terminallyBlockedSet = new Set(terminallyBlockedSurfaceIds(state));
   const blockedAssignments = assignments
     .filter((assignment) => terminallyBlockedSet.has(assignment.surface_id))
@@ -87,7 +87,7 @@ function startWaveLocked(domain, {
   if (blockedAssignments.length > 0) {
     throw new ToolError(
       ERROR_CODES.INVALID_ARGUMENTS,
-      `Cannot assign terminally-blocked surfaces to a wave; clear the block via bounty_clear_terminal_block first: ${blockedAssignments.join(", ")}`,
+      `Cannot assign terminally-blocked surfaces to a wave; clear the block via bob_clear_terminal_block first: ${blockedAssignments.join(", ")}`,
     );
   }
 
@@ -186,8 +186,8 @@ function startWave(args) {
       state,
       waveNumber,
       assignments,
-      source: "bounty_start_wave",
-      startedBy: "bounty_start_wave",
+      source: "bob_start_wave",
+      startedBy: "bob_start_wave",
     });
     return JSON.stringify({
       version: 1,
@@ -293,8 +293,8 @@ function startNextWave(args) {
         waveNumber: plan.wave_number,
         assignments,
         attackSurfaceInfo: readAttackSurfaceStrict(domain),
-        source: "bounty_start_next_wave",
-        startedBy: "bounty_start_next_wave",
+        source: "bob_start_next_wave",
+        startedBy: "bob_start_next_wave",
         statePatch: promotedForThisStart ? { lead_surface_ids: planningState.lead_surface_ids } : null,
         schedulerDecisionId: schedulerDecision ? schedulerDecision.scheduler_decision_id : null,
         assignmentBatchId: schedulerDecision ? schedulerDecision.assignment_batch_id : null,

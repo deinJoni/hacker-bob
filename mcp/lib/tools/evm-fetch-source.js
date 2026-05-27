@@ -38,7 +38,8 @@ async function handler(args) {
 }
 
 module.exports = Object.freeze({
-  name: "bounty_evm_fetch_source",
+  name: "bob_evm_fetch_source",
+  aliases: ["bounty_evm_fetch_source"],
   description: "Fetch verified source code for an EVM contract through DNS-pinned direct public HTTPS source endpoints. Tries Sourcify (no API key) first, then Etherscan V2 multi-chain when BOB_ETHERSCAN_API_KEY is set; DNS-private/private endpoints and egress_profile proxy routing are unsupported by default. Caches under [SESSION]/contracts/<chain_id>/<address>/sources/. Returns a file-summary envelope (names, sizes, truncation flags) so callers can request specific files via Read after the cache is populated.",
   inputSchema: {
     "type": "object",

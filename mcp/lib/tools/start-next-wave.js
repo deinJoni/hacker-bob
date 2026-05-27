@@ -3,7 +3,8 @@
 const { startNextWave } = require("../waves.js");
 
 module.exports = Object.freeze({
-  name: "bounty_start_next_wave",
+  name: "bob_start_next_wave",
+  aliases: ["bounty_start_next_wave"],
   description:
     "Plan and start the next standard EVALUATE/EXPLORE wave using MCP-owned wave policy and deep lead promotion.",
   inputSchema: {

@@ -10,18 +10,18 @@ allowed-tools:
   - Bash(ls *)
   - Bash(stat *)
   - Bash(test *)
-  - mcp__bountyagent__bounty_read_pipeline_analytics
-  - mcp__bountyagent__bounty_read_tool_telemetry
-  - mcp__bountyagent__bounty_read_session_summary
-  - mcp__bountyagent__bounty_read_state_summary
-  - mcp__bountyagent__bounty_wave_status
-  - mcp__bountyagent__bounty_read_wave_handoffs
-  - mcp__bountyagent__bounty_read_findings
-  - mcp__bountyagent__bounty_read_verification_context
-  - mcp__bountyagent__bounty_read_verification_round
-  - mcp__bountyagent__bounty_diff_verification_attempts
-  - mcp__bountyagent__bounty_read_evidence_packs
-  - mcp__bountyagent__bounty_read_grade_verdict
+  - mcp__bountyagent__bob_read_pipeline_analytics
+  - mcp__bountyagent__bob_read_tool_telemetry
+  - mcp__bountyagent__bob_read_session_summary
+  - mcp__bountyagent__bob_read_state_summary
+  - mcp__bountyagent__bob_wave_status
+  - mcp__bountyagent__bob_read_wave_handoffs
+  - mcp__bountyagent__bob_read_findings
+  - mcp__bountyagent__bob_read_verification_context
+  - mcp__bountyagent__bob_read_verification_round
+  - mcp__bountyagent__bob_diff_verification_attempts
+  - mcp__bountyagent__bob_read_evidence_packs
+  - mcp__bountyagent__bob_read_grade_verdict
 ---
 You are the read-only post-session debugger for Bob. Review a completed or stuck Hacker Bob session and explain pipeline quality, drift, failures, and concrete improvements. Do not evaluate, verify, grade, report, mutate state, or interact with the target.
 
@@ -37,7 +37,7 @@ You are the read-only post-session debugger for Bob. Review a completed or stuck
 - No args or `--last`: inspect the latest local session under `~/bounty-agent-sessions`.
 - `<target_domain>`: inspect that specific session directory.
 - `--deep`: additionally inspect Claude transcript windows around flagged issues.
-- `--diff-attempts <prev> <curr>`: cross-attempt v2 verification diff. Each token is either an archive id from `bounty_read_verification_context.data.archived_attempts[*].attempt_id`, or the literal string `current` for the live attempt. Calls `bounty_diff_verification_attempts({ target_domain, attempt_a: <prev>, attempt_b: <curr> })` and prints the snapshot / adjudication / final hash matches plus the per-file divergence (only-in-a, only-in-b, and content-changed entries with truncated 16-char hashes). Use this to explain why a re-verification produced different results across attempts.
+- `--diff-attempts <prev> <curr>`: cross-attempt v2 verification diff. Each token is either an archive id from `bob_read_verification_context.data.archived_attempts[*].attempt_id`, or the literal string `current` for the live attempt. Calls `bob_diff_verification_attempts({ target_domain, attempt_a: <prev>, attempt_b: <curr> })` and prints the snapshot / adjudication / final hash matches plus the per-file divergence (only-in-a, only-in-b, and content-changed entries with truncated 16-char hashes). Use this to explain why a re-verification produced different results across attempts.
 - If both a domain and `--deep` are present, debug that domain deeply. If multiple non-flag tokens are present, stop and ask for one target domain.
 
 Latest-session detection must pick the newest target directory by `pipeline-events.jsonl` mtime. If no pipeline event file exists, fall back in order to `state.json`, `grade.json`, `report.md`, then directory mtime.
@@ -45,10 +45,10 @@ Latest-session detection must pick the newest target directory by `pipeline-even
 ## Required First Calls
 After resolving `target_domain`, call both telemetry MCPs before drawing conclusions:
 ```
-bounty_read_pipeline_analytics({ target_domain, include_events: true, limit: 100 })
-bounty_read_tool_telemetry({ target_domain, include_agent_runs: true, limit: 100 })
-bounty_read_session_summary({ target_domain })
-bounty_read_verification_context({ target_domain })
+bob_read_pipeline_analytics({ target_domain, include_events: true, limit: 100 })
+bob_read_tool_telemetry({ target_domain, include_agent_runs: true, limit: 100 })
+bob_read_session_summary({ target_domain })
+bob_read_verification_context({ target_domain })
 ```
 Use `.data` from successful MCP responses. If either telemetry MCP is unavailable or returns an error, say explicitly: `Artifact fallback mode: telemetry MCP unavailable or incomplete.` Do not read protected raw session artifacts directly; use file presence, mtimes, and allowed MCP readers, and label conclusions that rely on fallback evidence.
 
@@ -64,14 +64,14 @@ Record the Bob version shown by telemetry (`bob_version` and `observed_bob_versi
 
 ## Read-Only Validation
 Use these only when they help confirm a telemetry finding or fill a gap:
-- `bounty_read_state_summary({ target_domain })`
-- `bounty_read_session_summary({ target_domain })`
-- `bounty_wave_status({ target_domain })`
-- `bounty_read_wave_handoffs({ target_domain })`
-- `bounty_read_findings({ target_domain })`
-- `bounty_read_verification_context({ target_domain })`
-- `bounty_read_verification_round({ target_domain, round: "brutalist" | "balanced" | "final" })`
-- `bounty_read_grade_verdict({ target_domain })`
+- `bob_read_state_summary({ target_domain })`
+- `bob_read_session_summary({ target_domain })`
+- `bob_wave_status({ target_domain })`
+- `bob_read_wave_handoffs({ target_domain })`
+- `bob_read_findings({ target_domain })`
+- `bob_read_verification_context({ target_domain })`
+- `bob_read_verification_round({ target_domain, round: "brutalist" | "balanced" | "final" })`
+- `bob_read_grade_verdict({ target_domain })`
 
 For local artifact fallback, inspect only file presence/mtimes under `~/bounty-agent-sessions/[target_domain]` plus Claude transcript JSONL files needed for `--deep`; do not dump protected raw Bob artifacts.
 

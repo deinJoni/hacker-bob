@@ -69,7 +69,7 @@ function scopeBlockedEgressContext(targetDomain, requestedEgressProfile, fallbac
   if (!sessionStateExistsForEgressContext(targetDomain)) return fallback;
   try {
     return resolveAndAssertSessionEgressIdentity(targetDomain, requestedEgressProfile, {
-      source: "bounty_http_scan_scope_blocked",
+      source: "bob_http_scan_scope_blocked",
     }).identity;
   } catch (error) {
     if (isMissingSessionStateError(error)) return fallback;
@@ -158,7 +158,7 @@ async function httpScan(args) {
 
   try {
     const { profile, identity } = resolveAndAssertSessionEgressIdentity(targetDomain, requestedEgressProfile, {
-      source: "bounty_http_scan",
+      source: "bob_http_scan",
     });
     egressContext = identity;
     assertBlockInternalHostsCompatibleWithEgress(internalHostPolicy, profile);
@@ -204,7 +204,7 @@ async function httpScan(args) {
         ...scopeAuditFields(initialScopeDecision),
       });
       return JSON.stringify({
-        error: `auth_profile "${authProfile}" requested but not found — request was NOT sent. Store auth first via bounty_auth_store.`,
+        error: `auth_profile "${authProfile}" requested but not found — request was NOT sent. Store auth first via bob_auth_store.`,
         ...egressContext,
       });
     }

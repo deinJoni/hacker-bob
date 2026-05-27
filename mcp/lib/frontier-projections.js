@@ -29,10 +29,10 @@ const {
 // blocker events, but the existing F.1 producers are coarser-grained than the
 // legacy state.json arrays. The state.explored array is populated only by
 // applyWaveMerge when a `surface_status: complete` handoff lands; F.1's
-// closure.recorded events from `bounty_log_coverage` capture endpoint-batch
+// closure.recorded events from `bob_log_coverage` capture endpoint-batch
 // closures (not surface-fully-explored closures). state.terminally_blocked is
 // populated by the merge-promotion path; F.1's blocker.asserted events from
-// `bounty_log_dead_ends` capture per-batch dead-end signals (not the
+// `bob_log_dead_ends` capture per-batch dead-end signals (not the
 // merge-promotion's terminally-blocked promotion).
 //
 // To preserve functional equivalence with the legacy reads during the
@@ -51,7 +51,7 @@ const {
 // emits authoritative frontier events and the legacy state arrays are
 // themselves deleted.
 
-const SURFACE_STATE_MERGE_SOURCE = "bounty_apply_wave_merge";
+const SURFACE_STATE_MERGE_SOURCE = "bob_apply_wave_merge";
 
 function readStateRaw(domain) {
   const filePath = statePath(domain);

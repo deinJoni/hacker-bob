@@ -731,7 +731,7 @@ function importHttpTraffic(args, { rankAttackSurfaces = null } = {}) {
             hosts,
             methods,
           },
-          source: { artifact: "traffic.jsonl", tool: "bounty_import_http_traffic" },
+          source: { artifact: "traffic.jsonl", tool: "bob_import_http_traffic" },
         });
         scheduleMaterialization(domain);
       } catch {

@@ -25,7 +25,7 @@ function uniqueStrings(values) {
 }
 
 const STALE_GLOBAL_MCP_PERMISSIONS = Object.freeze([
-  "mcp__bountyagent__bounty_merge_wave_handoffs",
+  "mcp__bountyagent__bob_merge_wave_handoffs",
 ]);
 function hookKey(hook) {
   return JSON.stringify({

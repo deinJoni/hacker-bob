@@ -134,7 +134,7 @@ function applyPromotionToLegacySurface(domain, candidates) {
           labels: ["promoted_surface_lead", lead.confidence ? `confidence:${lead.confidence}` : null].filter(Boolean),
           lead_id: lead.id,
         },
-        source: { artifact: "attack_surface.json", tool: "bounty_promote_surface_leads" },
+        source: { artifact: "attack_surface.json", tool: "bob_promote_surface_leads" },
       });
       scheduleMaterialization(domain);
     } catch {

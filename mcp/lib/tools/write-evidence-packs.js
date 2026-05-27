@@ -3,7 +3,8 @@
 const { writeEvidencePacks } = require("../evidence.js");
 
 module.exports = Object.freeze({
-  name: "bounty_write_evidence_packs",
+  name: "bob_write_evidence_packs",
+  aliases: ["bounty_write_evidence_packs"],
   description:
     "Write bounded evidence packs for every final reportable finding to authoritative JSON plus a markdown mirror.",
   inputSchema: {

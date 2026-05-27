@@ -781,7 +781,7 @@ test("CLI uninstall --yes removes Bob-managed files and preserves unrelated conf
     assert.equal(settings.customSetting, true);
     assert.ok(settings.permissions.allow.includes("custom-tool"));
     assert.ok(settings.permissions.allow.includes("mcp__bountyagent__custom_user_tool"));
-    assert.ok(!settings.permissions.allow.includes("mcp__bountyagent__bounty_http_scan"));
+    assert.ok(!settings.permissions.allow.includes("mcp__bountyagent__bob_http_scan"));
     assert.ok(!settings.statusLine);
     assert.ok(settings.hooks.PreToolUse.some((entry) => (
       entry.matcher === "Bash" &&

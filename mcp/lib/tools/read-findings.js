@@ -3,7 +3,8 @@
 const { readFindings } = require("../finding-store.js");
 
 module.exports = Object.freeze({
-  name: "bounty_read_findings",
+  name: "bob_read_findings",
+  aliases: ["bounty_read_findings"],
   description:
     "Read all recorded findings for a target from authoritative structured storage.",
   inputSchema: {

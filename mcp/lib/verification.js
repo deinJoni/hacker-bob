@@ -706,7 +706,7 @@ function buildVerificationAdjudication(args) {
   safeAppendPipelineEvent(domain, "verification_adjudication_built", {
     phase: "VERIFY",
     status: "built",
-    source: "bounty_build_verification_adjudication",
+    source: "bob_build_verification_adjudication",
     verification_attempt_id: state.verification_attempt_id,
     verification_snapshot_hash: state.verification_snapshot_hash,
     adjudication_plan_hash: adjudicationPlanHash,
@@ -1249,7 +1249,7 @@ function nextVerificationAction({ schemaVersion, state, rounds, adjudication, ev
   if (!state || !state.verification_attempt_id) return "transition CHAIN -> VERIFY to create v2 verification attempt";
   if (staleBlockers.length > 0) return "restart VERIFY/adjudication";
   if (!rounds.brutalist.current || !rounds.balanced.current) return "run independent brutalist and balanced verifier rounds";
-  if (!adjudication.current) return "call bounty_build_verification_adjudication";
+  if (!adjudication.current) return "call bob_build_verification_adjudication";
   if (!rounds.final.current) return "run final verifier with the current adjudication_plan_hash";
   if (!evidence.valid) return "write or repair evidence packs for current final verification";
   return "transition VERIFY -> GRADE";

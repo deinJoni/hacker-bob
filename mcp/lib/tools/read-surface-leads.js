@@ -3,7 +3,8 @@
 const { readSurfaceLeads } = require("../surface-leads.js");
 
 module.exports = Object.freeze({
-  name: "bounty_read_surface_leads",
+  name: "bob_read_surface_leads",
+  aliases: ["bounty_read_surface_leads"],
   description:
     "Read compact ranked surface leads from session-owned surface-leads.json, including high-confidence unpromoted lead debt.",
   inputSchema: {

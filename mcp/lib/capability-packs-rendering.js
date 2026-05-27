@@ -167,13 +167,13 @@ function renderClaudeSmartContractCanonicalSpawn() {
     "Agent: a[agent]",
     "Handoff token: [only this agent's handoff_token from wave-start result.data.assignments]",
     "Capability pack: [assignment.capability_pack]. Brief profile: [assignment.brief_profile]. Evaluator agent: [assignment.evaluator_agent]. Context budget: [assignment.context_budget].",
-    "First action: call bounty_read_assignment_brief({ target_domain: '[domain]', wave: 'w[wave]', agent: 'a[agent]', egress_profile: '[egress_profile]', block_internal_hosts: [block_internal_hosts] }) and use .data, including run_context.context_budget.",
+    "First action: call bob_read_assignment_brief({ target_domain: '[domain]', wave: 'w[wave]', agent: 'a[agent]', egress_profile: '[egress_profile]', block_internal_hosts: [block_internal_hosts] }) and use .data, including run_context.context_budget.",
     "Confirm surface_type is smart_contract AND surface.chain_family matches the catalogue line's chain_family for [assignment.capability_pack]; surface.chain_id matches the catalogue line's chain_id description.",
     "Use bob_spec_status for trust_assumptions, invariants, known_issues, and severity_system metadata. Use rpc_pool.endpoints for non-MCP reads.",
     "Workflow: <copy verbatim from the catalogue line for [assignment.capability_pack]>.",
     "If <copy CLI dependency from the catalogue line> is not in PATH or all fork_attempts fail, set surface_status: partial and record blocked_harness_runs[] with kind: <copy from the catalogue line>.",
     "Checkpoint mode: [normal|paranoid|yolo].",
-    "Final: call bounty_write_wave_handoff exactly once with target_domain, wave, agent, surface_id, surface_status, handoff_token, summary, content, optional bypass_attempts, blocked_harness_runs, chain_notes, dead_ends, lead_surface_ids. Then call bounty_finalize_agent_run. If finalization fails, fix the handoff and retry. After finalization succeeds, emit `BOB_AGENT_RUN_DONE {\"target_domain\":\"[domain]\",\"wave\":\"w[wave]\",\"agent\":\"a[agent]\",\"surface_id\":\"[surface_id]\"}` for Claude compatibility.",
+    "Final: call bob_write_wave_handoff exactly once with target_domain, wave, agent, surface_id, surface_status, handoff_token, summary, content, optional bypass_attempts, blocked_harness_runs, chain_notes, dead_ends, lead_surface_ids. Then call bob_finalize_agent_run. If finalization fails, fix the handoff and retry. After finalization succeeds, emit `BOB_AGENT_RUN_DONE {\"target_domain\":\"[domain]\",\"wave\":\"w[wave]\",\"agent\":\"a[agent]\",\"surface_id\":\"[surface_id]\"}` for Claude compatibility.",
     "\")",
     "```",
   ].join("\n");
@@ -202,7 +202,7 @@ function renderCodexEvaluatorPackCatalogue(codexWorkerLabelFor) {
   return [
     renderEvaluatorPackCataloguePreamble(),
     "```text",
-    "For each smart-contract assignment, use Codex spawn_agent with `agent_type: \"worker\"` and a message that: (1) includes the run header (Domain, Wave, Agent, Surface, Capability pack, Brief profile, Evaluator agent, Context budget, Egress profile, Block internal hosts, Handoff token, Checkpoint mode), (2) instructs the first action to call bounty_read_assignment_brief({ target_domain: '[domain]', wave: 'w[wave]', agent: 'a[agent]', egress_profile: '[egress_profile]', block_internal_hosts: [block_internal_hosts] }), (3) inlines the workflow summary, CLI dependency, and blocked_harness_runs[] kind copied verbatim from the catalogue line for [assignment.capability_pack], and (4) includes the worker contract for [assignment.evaluator_agent] from Codex Worker Role Contracts.",
+    "For each smart-contract assignment, use Codex spawn_agent with `agent_type: \"worker\"` and a message that: (1) includes the run header (Domain, Wave, Agent, Surface, Capability pack, Brief profile, Evaluator agent, Context budget, Egress profile, Block internal hosts, Handoff token, Checkpoint mode), (2) instructs the first action to call bob_read_assignment_brief({ target_domain: '[domain]', wave: 'w[wave]', agent: 'a[agent]', egress_profile: '[egress_profile]', block_internal_hosts: [block_internal_hosts] }), (3) inlines the workflow summary, CLI dependency, and blocked_harness_runs[] kind copied verbatim from the catalogue line for [assignment.capability_pack], and (4) includes the worker contract for [assignment.evaluator_agent] from Codex Worker Role Contracts.",
     "```",
     "",
     "Pack catalogue (lookup by `assignment.capability_pack`):",
@@ -221,7 +221,7 @@ function substituteCodexEvaluatorPackCatalogue(document, codexWorkerLabelFor) {
 }
 
 // ----------------------------------------------------------------------
-// bounty_write_wave_handoff field-limit rendering
+// bob_write_wave_handoff field-limit rendering
 // ----------------------------------------------------------------------
 //
 // Evaluator prompts learn handoff field limits before submission, not from
@@ -246,7 +246,7 @@ function renderHandoffFieldLimits() {
   const blockedPrereqProps = props.blocked_prereqs.items.properties;
   const bypassAttemptProps = props.bypass_attempts.items.properties;
   const lines = [
-    "Handoff field limits (enforced by `bounty_write_wave_handoff`; oversize values are rejected):",
+    "Handoff field limits (enforced by `bob_write_wave_handoff`; oversize values are rejected):",
     `- \`summary\`: ${describeStringLimits(props.summary)}`,
     `- \`chain_notes[]\`: each entry ${describeStringLimits(props.chain_notes.items)} (max ${props.chain_notes.maxItems} entries)`,
     `- \`blocked_harness_runs[].harness\`: ${describeStringLimits(blockedHarnessProps.harness)}`,

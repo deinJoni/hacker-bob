@@ -53,7 +53,7 @@ function emitFrontierEnqueued(domain, lead) {
           source_surface_id: lead.source_surface_id,
         },
       },
-      source: { artifact: "surface-leads.json", tool: "bounty_record_surface_leads" },
+      source: { artifact: "surface-leads.json", tool: "bob_record_surface_leads" },
     });
     scheduleMaterialization(domain);
   } catch {

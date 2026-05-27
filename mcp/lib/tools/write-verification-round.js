@@ -3,7 +3,8 @@
 const { writeVerificationRound } = require("../verification-round-store.js");
 
 module.exports = Object.freeze({
-  name: "bounty_write_verification_round",
+  name: "bob_write_verification_round",
+  aliases: ["bounty_write_verification_round"],
   description:
     "Write one verifier round to authoritative JSON plus a markdown mirror.",
   inputSchema: {

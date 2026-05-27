@@ -37,7 +37,7 @@ function transcript() {
           {
             type: "tool_use",
             id: "toolu_test",
-            name: "bounty_read_assignment_brief",
+            name: "bob_read_assignment_brief",
             input: { target_domain: "redacted.example" },
           },
         ],

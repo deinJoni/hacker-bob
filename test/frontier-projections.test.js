@@ -49,7 +49,7 @@ test("currentBlockers reflects a blocker.asserted event without touching state.t
         terminally_blocked: true,
         kind: "auth_missing",
       },
-      source: { artifact: "wave-merge", tool: "bounty_apply_wave_merge" },
+      source: { artifact: "wave-merge", tool: "bob_apply_wave_merge" },
     });
     const projected = currentBlockers(domain);
     assert.equal(projected.length, 1);
@@ -103,7 +103,7 @@ test("currentClosures projects merge-sourced closures and ignores logCoverage ba
       ts: "2026-05-27T10:00:00.000Z",
       surface_id: "surface:coverage-batch",
       payload: { records: 1, statuses: { requeue: 1 } },
-      source: { artifact: "coverage.jsonl", tool: "bounty_log_coverage" },
+      source: { artifact: "coverage.jsonl", tool: "bob_log_coverage" },
     });
     // A merge-sourced closure event is a surface-state event and projects.
     appendFrontierEvent({
@@ -112,7 +112,7 @@ test("currentClosures projects merge-sourced closures and ignores logCoverage ba
       ts: "2026-05-27T10:01:00.000Z",
       surface_id: "surface:explored",
       payload: { surface_fully_explored: true, reason: "complete handoff" },
-      source: { artifact: "wave-merge", tool: "bounty_apply_wave_merge" },
+      source: { artifact: "wave-merge", tool: "bob_apply_wave_merge" },
     });
     const projected = currentClosures(domain);
     assert.equal(projected.length, 1);
@@ -137,7 +137,7 @@ test("currentClosures falls back to state.explored when no qualifying surface-cl
       ts: "2026-05-27T10:00:00.000Z",
       surface_id: "surface:coverage-batch",
       payload: { records: 1, statuses: { requeue: 1 } },
-      source: { artifact: "coverage.jsonl", tool: "bounty_log_coverage" },
+      source: { artifact: "coverage.jsonl", tool: "bob_log_coverage" },
     });
     const projected = currentClosures(domain);
     assert.equal(projected.length, 2);
@@ -176,7 +176,7 @@ test("currentBlockers falls back to state.terminally_blocked when no qualifying 
         dead_end_count: 1,
         waf_blocked_count: 0,
       },
-      source: { artifact: "live-dead-ends.jsonl", tool: "bounty_log_dead_ends" },
+      source: { artifact: "live-dead-ends.jsonl", tool: "bob_log_dead_ends" },
     });
     const projected = currentBlockers(domain);
     assert.equal(projected.length, 1);

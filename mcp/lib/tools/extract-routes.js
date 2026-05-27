@@ -21,7 +21,7 @@ function extractRoutesHandler(args) {
           frameworks: Array.from(new Set(routes.map((route) => route.framework))).sort(),
           methods: Array.from(new Set(routes.map((route) => route.method))).sort(),
         },
-        source: { artifact: "route-extraction", tool: "bounty_extract_routes" },
+        source: { artifact: "route-extraction", tool: "bob_extract_routes" },
       });
       scheduleMaterialization(args.target_domain);
     } catch {
@@ -38,9 +38,10 @@ function extractRoutesHandler(args) {
 }
 
 module.exports = Object.freeze({
-  name: "bounty_extract_routes",
+  name: "bob_extract_routes",
+  aliases: ["bounty_extract_routes"],
   description:
-    "Run regex-based HTTP route extraction across one or more source files. Supports Express, Koa, Fastify, NestJS (JS/TS), Flask, Django (Python), and Spring (Java/Kotlin). Each emitted route carries (framework, method, path, file, line, handler_hint, edge_kind). Output sorted deterministically; tuple-deduped. Pass to bounty_build_symbol_surface_index to derive the file:line -> surface index.",
+    "Run regex-based HTTP route extraction across one or more source files. Supports Express, Koa, Fastify, NestJS (JS/TS), Flask, Django (Python), and Spring (Java/Kotlin). Each emitted route carries (framework, method, path, file, line, handler_hint, edge_kind). Output sorted deterministically; tuple-deduped. Pass to bob_build_symbol_surface_index to derive the file:line -> surface index.",
   inputSchema: {
     type: "object",
     properties: {

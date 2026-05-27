@@ -156,7 +156,7 @@ const WEB_BRIEF_SLICE_REGISTRY = Object.freeze([
   briefSliceEntry("schema_slice", 8192, (context) => context.schemaSlice),
   briefSliceEntry("priors_slice", 8192, (context) => context.priorsSlice),
   briefSliceEntry("surface_graph_slice", 8192, (context) => context.surfaceGraphSlice),
-  briefSliceEntry("auth_profiles_hint", 512, () => "Call `bounty_list_auth_profiles`; pass the chosen profile name as `auth_profile` to `bounty_http_scan`."),
+  briefSliceEntry("auth_profiles_hint", 512, () => "Call `bob_list_auth_profiles`; pass the chosen profile name as `auth_profile` to `bob_http_scan`."),
 ]);
 
 const SMART_CONTRACT_BRIEF_SLICE_REGISTRY = Object.freeze([
@@ -303,7 +303,7 @@ function readAssignmentBrief(args) {
   const internalHostPolicy = blockInternalHostsRequestPolicy(domain, args);
   const internalHostContext = blockInternalHostsPolicyFields(internalHostPolicy);
   const { identity: egressIdentity } = resolveAndAssertSessionEgressIdentity(domain, egressProfile, {
-    source: "bounty_read_assignment_brief",
+    source: "bob_read_assignment_brief",
   });
   const waveNumber = Number(wave.slice(1));
 
@@ -346,7 +346,7 @@ function readAssignmentBrief(args) {
   const deadEndResult = filterExclusionsByHosts(state.dead_ends, surfaceObj.hosts);
   const wafResult = filterExclusionsByHosts(state.waf_blocked_endpoints, surfaceObj.hosts);
   const slimSurface = slimSurfaceForBrief(surfaceObj);
-  // coverage_summary stays in both profiles: SC evaluators call bounty_log_coverage
+  // coverage_summary stays in both profiles: SC evaluators call bob_log_coverage
   // for chain-flavored bug-class taxonomies, and resumed waves want to know
   // what was already tested regardless of profile.
   const coverageSummary = buildCoverageSummaryForSurface(
@@ -420,7 +420,7 @@ function buildBriefExtrasForProfile(profile, { domain, surface, assignment, rout
 // Web profile carries HTTP-flavored intel: bypass tables for the surface's
 // tech stack, web technique/payload knowledge, traffic + audit + circuit
 // breaker summaries from real HTTP probes, public bounty intel, static scan
-// hints, and an auth-profile hint pointing the evaluator at bounty_list_auth_profiles.
+// hints, and an auth-profile hint pointing the evaluator at bob_list_auth_profiles.
 const LEGACY_TECHNIQUE_SUMMARY_LIMIT = 2;
 
 function basenameForSummary(filePath) {

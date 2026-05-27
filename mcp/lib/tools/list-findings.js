@@ -3,7 +3,8 @@
 const { listFindings } = require("../finding-store.js");
 
 module.exports = Object.freeze({
-  name: "bounty_list_findings",
+  name: "bob_list_findings",
+  aliases: ["bounty_list_findings"],
   description:
     "List all recorded findings for a target.",
   inputSchema: {

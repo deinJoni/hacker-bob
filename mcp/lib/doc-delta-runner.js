@@ -196,7 +196,7 @@ async function runDocDelta({
         },
         source: {
           artifact: "doc-delta-results.json",
-          tool: "bounty_run_doc_delta",
+          tool: "bob_run_doc_delta",
           ref: entry.contract_hash,
         },
       });

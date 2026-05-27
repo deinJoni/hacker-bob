@@ -10,7 +10,8 @@ function buildSurfaceGraphHandler(args) {
 }
 
 module.exports = Object.freeze({
-  name: "bounty_build_surface_graph",
+  name: "bob_build_surface_graph",
+  aliases: ["bounty_build_surface_graph"],
   capability_id: "I1_surface_graph",
   description:
     "Build (or refresh) the surface graph for a target by reading attack_surface.json and the schema-contract corpus and emitting canonical edges. Idempotent via edge_hash; later builds upsert in place. Pass sources to limit which artifact paths feed the graph (default: ['attack_surface', 'schema_corpus']).",

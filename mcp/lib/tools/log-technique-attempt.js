@@ -6,7 +6,8 @@ const {
 } = require("../constants.js");
 
 module.exports = Object.freeze({
-  name: "bounty_log_technique_attempt",
+  name: "bob_log_technique_attempt",
+  aliases: ["bounty_log_technique_attempt"],
   description:
     "Append one validated technique-pack selection, attempt, skip, or outcome record to MCP-owned technique-attempts.jsonl.",
   inputSchema: {

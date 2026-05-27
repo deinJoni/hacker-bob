@@ -51,7 +51,7 @@ const {
 function rejectPathImport(args) {
   for (const key of ["path", "file_path", "filename", "contract_path", "source_path"]) {
     if (Object.prototype.hasOwnProperty.call(args, key)) {
-      throw new Error("Path imports are not supported. Pass artifact content to bounty_import_static_artifact.");
+      throw new Error("Path imports are not supported. Pass artifact content to bob_import_static_artifact.");
     }
   }
 }
@@ -262,7 +262,7 @@ function importStaticArtifact(args) {
           stored_chars: record.stored_chars,
           redactions: record.redactions,
         },
-        source: { artifact: "static-artifacts.jsonl", tool: "bounty_import_static_artifact" },
+        source: { artifact: "static-artifacts.jsonl", tool: "bob_import_static_artifact" },
       });
       scheduleMaterialization(domain);
     } catch {

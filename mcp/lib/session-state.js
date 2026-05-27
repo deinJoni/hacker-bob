@@ -173,7 +173,7 @@ function assertSessionEgressIdentity(domain, profile, { source = "egress_request
     if (!sessionStateMissing(error)) throw error;
     throw new ToolError(
       ERROR_CODES.STATE_CONFLICT,
-      `egress profile identity requires an initialized session for ${domain}; call bounty_init_session before egress-bound requests`,
+      `egress profile identity requires an initialized session for ${domain}; call bob_init_session before egress-bound requests`,
       {
         target_domain: domain,
         requested: {
@@ -285,7 +285,7 @@ function initSession(args) {
     writeFileAtomic(filePath, `${JSON.stringify(state, null, 2)}\n`);
     safeAppendPipelineEventDirect(domain, "session_started", {
       phase: state.phase,
-      source: "bounty_init_session",
+      source: "bob_init_session",
       deep_mode: state.deep_mode,
       checkpoint_mode: state.checkpoint_mode,
       block_internal_hosts: state.block_internal_hosts,
@@ -315,7 +315,7 @@ function initSession(args) {
           },
           nucleus_hash: sessionNucleus.nucleus_hash,
         },
-        source: { artifact: "session-nucleus.json", tool: "bounty_init_session" },
+        source: { artifact: "session-nucleus.json", tool: "bob_init_session" },
       });
       scheduleMaterialization(domain);
     } catch {
@@ -382,7 +382,7 @@ function applyOperatorConstraintUpdate(domain, transform) {
   if (!priorNucleus || typeof priorNucleus !== "object") {
     throw new ToolError(
       ERROR_CODES.STATE_CONFLICT,
-      `session nucleus missing for ${domain}; call bounty_init_session first`,
+      `session nucleus missing for ${domain}; call bob_init_session first`,
     );
   }
   const priorConstraint = (priorNucleus.operator_constraint && typeof priorNucleus.operator_constraint === "object")
@@ -544,7 +544,7 @@ function advanceSession(args) {
     if (!priorNucleus || typeof priorNucleus !== "object") {
       throw new ToolError(
         ERROR_CODES.STATE_CONFLICT,
-        `session nucleus missing for ${domain}; call bounty_init_session first`,
+        `session nucleus missing for ${domain}; call bob_init_session first`,
       );
     }
     const fromState = normalizeLifecycleState(priorNucleus.lifecycle_state, "lifecycle_state");
@@ -805,7 +805,7 @@ function clearTerminalBlock(args) {
   // The clear reason lands in state.terminal_block_clear_history (durable
   // public state). Screen for credentials so an operator pasting "added
   // attacker auth profile with cookie SESS=eyJabc..." cannot leak the
-  // cookie into bounty_read_session_state output.
+  // cookie into bob_read_session_state output.
   try {
     require("./sensitive-material.js").validateNoSensitiveMaterial(reason, "reason");
   } catch (error) {
@@ -854,7 +854,7 @@ function clearTerminalBlock(args) {
     safeAppendPipelineEventDirect(domain, "terminal_block_cleared", {
       phase: state.phase,
       status: "cleared",
-      source: "bounty_clear_terminal_block",
+      source: "bob_clear_terminal_block",
       surface_id: surfaceId,
       counts: {
         terminally_blocked_total: remainingTerminallyBlocked.length,

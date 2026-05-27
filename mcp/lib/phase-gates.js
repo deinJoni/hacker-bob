@@ -253,7 +253,7 @@ function computeEvaluationToChainGate(domain, state) {
     if (coverage.blocked_high_surface_ids.length > 0) {
       blockers.push(blocker(
         "blocked_high_surfaces",
-        "HIGH or CRITICAL surfaces are terminally blocked by missing prerequisites; add the registered material and clear via bounty_clear_terminal_block, or accept the gap with override_reason",
+        "HIGH or CRITICAL surfaces are terminally blocked by missing prerequisites; add the registered material and clear via bob_clear_terminal_block, or accept the gap with override_reason",
         { surface_ids: coverage.blocked_high_surface_ids },
       ));
     }
@@ -277,7 +277,7 @@ function computeEvaluationToChainGate(domain, state) {
       if (preview.would_promote_lead_ids.length > 0) {
         blockers.push(blocker(
           "promotable_surface_leads",
-          "deep mode has assignable unpromoted surface leads; call bounty_start_next_wave to promote and assign the next runtime-owned wave",
+          "deep mode has assignable unpromoted surface leads; call bob_start_next_wave to promote and assign the next runtime-owned wave",
           { lead_ids: preview.would_promote_lead_ids },
         ));
       }

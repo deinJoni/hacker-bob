@@ -557,7 +557,7 @@ function writeEvidencePacks(args) {
     pipelineEventsLib().safeAppendPipelineEventDirect(domain, "evidence_written", {
       phase: "VERIFY",
       status: document.packs.length === 0 ? "empty" : "written",
-      source: "bounty_write_evidence_packs",
+      source: "bob_write_evidence_packs",
       verification_attempt_id: verificationBinding ? verificationBinding.verification_attempt_id : undefined,
       verification_snapshot_hash: verificationBinding ? verificationBinding.verification_snapshot_hash : undefined,
       final_verification_hash: verificationBinding ? verificationBinding.final_verification_hash : undefined,

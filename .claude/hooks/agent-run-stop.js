@@ -289,7 +289,7 @@ function main() {
     // gets nothing here. The merge gate's file-presence fallback (Pact P2)
     // keeps the gate closed until a real handoff lands.
     block(
-      `Evaluator stop blocked: write the wave handoff with bounty_write_wave_handoff, then emit ${MARKER} {"target_domain":"...","wave":"wN","agent":"aN","surface_id":"..."}.`,
+      `Evaluator stop blocked: write the wave handoff with bob_write_wave_handoff, then emit ${MARKER} {"target_domain":"...","wave":"wN","agent":"aN","surface_id":"..."}.`,
       markerTelemetryInput({
         payload,
         now,

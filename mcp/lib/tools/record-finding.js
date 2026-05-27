@@ -111,7 +111,7 @@ function dualWriteClaimForFinding(args, recordResponseJson) {
       },
       surface_id: finding.surface_id || null,
       claim_id: claim.claim_id,
-      source: { artifact: "claims.jsonl", tool: "bounty_record_finding" },
+      source: { artifact: "claims.jsonl", tool: "bob_record_finding" },
     });
     scheduleMaterialization(domain);
   } catch {
@@ -127,7 +127,8 @@ function recordFindingHandler(args) {
 }
 
 module.exports = Object.freeze({
-  name: "bounty_record_finding",
+  name: "bob_record_finding",
+  aliases: ["bounty_record_finding"],
   description:
     "Record a validated security finding to structured disk artifacts. Survives context rotation.",
   inputSchema: {
@@ -190,7 +191,7 @@ module.exports = Object.freeze({
       },
       "sc_evidence": {
         "type": "object",
-        "description": "Structured re-run handle for smart-contract findings. Required when the assigned surface is a smart contract; rejected otherwise so the verifier can re-run via bounty_foundry_run (EVM) or bounty_anchor_run (SVM) with no string-parsing of the prose PoC.",
+        "description": "Structured re-run handle for smart-contract findings. Required when the assigned surface is a smart contract; rejected otherwise so the verifier can re-run via bob_foundry_run (EVM) or bob_anchor_run (SVM) with no string-parsing of the prose PoC.",
         "properties": {
           "chain_family": {
             "type": "string",

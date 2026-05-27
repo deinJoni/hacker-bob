@@ -253,14 +253,14 @@ test("Codex plugin manifest and direct skills expose portable Bob contracts", ()
   assert.equal(parseFrontmatter(debug, "adapters/codex/skills/bob-debug/SKILL.md").name, "bob-debug");
   assert.equal(parseFrontmatter(exportSkill, "adapters/codex/skills/bob-export/SKILL.md").name, "bob-export");
   assert.equal(parseFrontmatter(egressSkill, "adapters/codex/skills/bob-egress/SKILL.md").name, "bob-egress");
-  assert.match(evaluate, /bounty_finalize_agent_run/);
+  assert.match(evaluate, /bob_finalize_agent_run/);
   assert.match(evaluate, /Codex Agent Mapping/);
   assert.match(evaluate, /Codex Worker Role Contracts/);
   assert.match(evaluate, /BEGIN surface-discovery CONTRACT/);
   assert.match(evaluate, /BEGIN evaluator CONTRACT/);
   assert.match(evaluate, /spawn_agent/);
   assert.match(evaluate, /agent_type: "worker"/);
-  assert.match(evaluate, /bounty_read_assignment_brief\(\{ target_domain:[\s\S]*egress_profile:[\s\S]*block_internal_hosts: \[block_internal_hosts\]/);
+  assert.match(evaluate, /bob_read_assignment_brief\(\{ target_domain:[\s\S]*egress_profile:[\s\S]*block_internal_hosts: \[block_internal_hosts\]/);
   assert.match(evaluate, /wait_agent/);
   assert.match(evaluate, /close_agent/);
   assert.match(evaluate, /host_agent_id -> w\[wave\]\/a\[agent\]\/surface_id/);
@@ -287,7 +287,7 @@ test("Codex plugin manifest and direct skills expose portable Bob contracts", ()
 
 test("Generic MCP prompt docs describe manual host mode without host-native files", () => {
   const doc = readFile("adapters/generic-mcp/prompts/hacker-bob.md");
-  assert.match(doc, /bounty_finalize_agent_run/);
+  assert.match(doc, /bob_finalize_agent_run/);
   assert.match(doc, /Generic MCP mode does not provide host-native background agents/);
   assert.doesNotMatch(doc, /CLAUDE_PROJECT_DIR|mcp__bountyagent__|\.claude|\.codex/);
 });
@@ -368,27 +368,27 @@ test("orchestrator playbook guidance lives in external playbooks and rendered sk
   const body = readFile("prompts/roles/orchestrator.md");
   assert.doesNotMatch(body, /Doc-vs-Behavior Differential/);
   assert.doesNotMatch(body, /Multi-Account Differential/);
-  assert.doesNotMatch(body, /bounty_ingest_schema_doc/);
-  assert.doesNotMatch(body, /bounty_query_schema_contracts/);
-  assert.doesNotMatch(body, /bounty_run_doc_delta/);
-  assert.doesNotMatch(body, /bounty_list_auth_profiles/);
-  assert.doesNotMatch(body, /bounty_run_auth_differential/);
-  assert.doesNotMatch(body, /bounty_read_auth_differential_results/);
-  assert.match(body, /bounty_read_capability_playbook/);
+  assert.doesNotMatch(body, /bob_ingest_schema_doc/);
+  assert.doesNotMatch(body, /bob_query_schema_contracts/);
+  assert.doesNotMatch(body, /bob_run_doc_delta/);
+  assert.doesNotMatch(body, /bob_list_auth_profiles/);
+  assert.doesNotMatch(body, /bob_run_auth_differential/);
+  assert.doesNotMatch(body, /bob_read_auth_differential_results/);
+  assert.match(body, /bob_read_capability_playbook/);
 
   const docPlaybook = readFile("prompts/playbooks/C2_doc_vs_behavior.md");
   assert.match(docPlaybook, /Doc-vs-Behavior Differential/);
-  assert.match(docPlaybook, /bounty_ingest_schema_doc/);
-  assert.match(docPlaybook, /bounty_query_schema_contracts/);
-  assert.match(docPlaybook, /bounty_run_doc_delta/);
+  assert.match(docPlaybook, /bob_ingest_schema_doc/);
+  assert.match(docPlaybook, /bob_query_schema_contracts/);
+  assert.match(docPlaybook, /bob_run_doc_delta/);
   assert.match(docPlaybook, /OpenAPI 3.*GraphQL SDL.*Postman v2\.1|GraphQL SDL.*Postman v2\.1/);
   assert.match(docPlaybook, /schema_slice/);
 
   const accountPlaybook = readFile("prompts/playbooks/C4_multi_account_differential.md");
   assert.match(accountPlaybook, /Multi-Account Differential/);
-  assert.match(accountPlaybook, /bounty_list_auth_profiles/);
-  assert.match(accountPlaybook, /bounty_run_auth_differential/);
-  assert.match(accountPlaybook, /bounty_read_auth_differential_results/);
+  assert.match(accountPlaybook, /bob_list_auth_profiles/);
+  assert.match(accountPlaybook, /bob_run_auth_differential/);
+  assert.match(accountPlaybook, /bob_read_auth_differential_results/);
   assert.match(accountPlaybook, /unauth_succeeds_where_auth_blocked/);
 
   const claudeSkill = readFile(".claude/skills/bob-evaluate/SKILL.md");
@@ -408,24 +408,24 @@ test("evaluator frontmatter excludes Write and still exposes wave handoff MCP to
 
   assert.ok(!tools.includes("Write"));
   assert.ok(tools.includes("Bash"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_write_wave_handoff"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_finalize_agent_run"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_record_finding"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_list_auth_profiles"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_log_coverage"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_read_http_audit"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_import_static_artifact"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_static_scan"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_record_surface_leads"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_read_surface_leads"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_get_context_budget"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_select_technique_packs"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_read_technique_pack"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_log_technique_attempt"));
-  assert.ok(!tools.includes("mcp__bountyagent__bounty_import_http_traffic"));
-  assert.ok(!tools.includes("mcp__bountyagent__bounty_public_intel"));
-  assert.ok(!tools.includes("mcp__bountyagent__bounty_auth_manual"));
-  assert.ok(!tools.includes("mcp__bountyagent__bounty_read_handoff"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_write_wave_handoff"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_finalize_agent_run"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_record_finding"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_list_auth_profiles"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_log_coverage"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_read_http_audit"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_import_static_artifact"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_static_scan"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_record_surface_leads"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_read_surface_leads"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_get_context_budget"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_select_technique_packs"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_read_technique_pack"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_log_technique_attempt"));
+  assert.ok(!tools.includes("mcp__bountyagent__bob_import_http_traffic"));
+  assert.ok(!tools.includes("mcp__bountyagent__bob_public_intel"));
+  assert.ok(!tools.includes("mcp__bountyagent__bob_auth_manual"));
+  assert.ok(!tools.includes("mcp__bountyagent__bob_read_handoff"));
 });
 
 test("surface-router-agent is thin and cannot evaluate or write directly", () => {
@@ -435,12 +435,12 @@ test("surface-router-agent is thin and cannot evaluate or write directly", () =>
 
   assert.deepEqual(tools, [
     "Read",
-    "mcp__bountyagent__bounty_route_surfaces",
+    "mcp__bountyagent__bob_route_surfaces",
   ]);
   assert.match(document, /mcpServers:\s*\n\s*-\s*bountyagent/);
-  assert.match(document, /bounty_route_surfaces/);
+  assert.match(document, /bob_route_surfaces/);
   assert.match(document, /surface-routes\.json/);
-  assert.doesNotMatch(frontmatter.tools, /Bash|Write|bounty_http_scan|curl|browser/i);
+  assert.doesNotMatch(frontmatter.tools, /Bash|Write|bob_http_scan|curl|browser/i);
   assert.match(document, /Do not do surface-discovery, evaluating, auth, HTTP requests, browser work, Bash, or direct file writes/);
 });
 
@@ -482,66 +482,66 @@ test("manifest, settings, and generated Claude config keep global MCP permission
       assert.ok(!sourceAllowed.has(toolName), `${toolName} should not be globally pre-approved`);
     }
   }
-  assert.equal(TOOL_MANIFEST.bounty_merge_wave_handoffs.global_preapproval, false);
-  assert.equal(TOOL_MANIFEST.bounty_merge_wave_handoffs.mutating, false);
-  assert.deepEqual(TOOL_MANIFEST.bounty_read_tool_telemetry.role_bundles, ["orchestrator"]);
-  assert.equal(TOOL_MANIFEST.bounty_read_tool_telemetry.global_preapproval, false);
-  assert.equal(TOOL_MANIFEST.bounty_read_tool_telemetry.mutating, false);
-  assert.deepEqual(TOOL_MANIFEST.bounty_read_pipeline_analytics.role_bundles, ["orchestrator"]);
-  assert.equal(TOOL_MANIFEST.bounty_read_pipeline_analytics.global_preapproval, false);
-  assert.equal(TOOL_MANIFEST.bounty_read_pipeline_analytics.mutating, false);
-  assert.deepEqual(TOOL_MANIFEST.bounty_route_surfaces.role_bundles, ["orchestrator", "router"]);
-  assert.equal(TOOL_MANIFEST.bounty_route_surfaces.global_preapproval, false);
-  assert.equal(TOOL_MANIFEST.bounty_route_surfaces.mutating, true);
-  assert.deepEqual(TOOL_MANIFEST.bounty_record_surface_leads.role_bundles, ["evaluator-web", "orchestrator"]);
-  assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.global_preapproval, true);
-  assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.global_preapproval, true);
-  assert.equal(TOOL_MANIFEST.bounty_start_next_wave.global_preapproval, false);
-  assert.equal(TOOL_MANIFEST.bounty_start_next_wave.mutating, true);
-  assert.deepEqual(TOOL_MANIFEST.bounty_start_next_wave.session_artifacts_written, ["surface-routes.json", "wave-N-assignments.json", "state.json", "surface-leads.json", "attack_surface.json"]);
-  assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.global_preapproval, false);
-  assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.mutating, true);
-  assert.deepEqual(TOOL_MANIFEST.bounty_get_context_budget.role_bundles, ["evaluator-shared", "orchestrator"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_select_technique_packs.role_bundles, ["evaluator-web", "orchestrator"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_read_technique_pack.role_bundles, ["evaluator-web", "orchestrator"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_log_technique_attempt.role_bundles, ["evaluator-web", "orchestrator"]);
-  assert.equal(TOOL_MANIFEST.bounty_get_context_budget.mutating, false);
-  assert.equal(TOOL_MANIFEST.bounty_select_technique_packs.mutating, false);
-  assert.equal(TOOL_MANIFEST.bounty_read_technique_pack.mutating, true);
-  assert.equal(TOOL_MANIFEST.bounty_log_technique_attempt.mutating, true);
-  assert.deepEqual(TOOL_MANIFEST.bounty_read_technique_pack.session_artifacts_written, ["technique-pack-reads.jsonl"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_log_technique_attempt.session_artifacts_written, ["technique-attempts.jsonl"]);
+  assert.equal(TOOL_MANIFEST.bob_merge_wave_handoffs.global_preapproval, false);
+  assert.equal(TOOL_MANIFEST.bob_merge_wave_handoffs.mutating, false);
+  assert.deepEqual(TOOL_MANIFEST.bob_read_tool_telemetry.role_bundles, ["orchestrator"]);
+  assert.equal(TOOL_MANIFEST.bob_read_tool_telemetry.global_preapproval, false);
+  assert.equal(TOOL_MANIFEST.bob_read_tool_telemetry.mutating, false);
+  assert.deepEqual(TOOL_MANIFEST.bob_read_pipeline_analytics.role_bundles, ["orchestrator"]);
+  assert.equal(TOOL_MANIFEST.bob_read_pipeline_analytics.global_preapproval, false);
+  assert.equal(TOOL_MANIFEST.bob_read_pipeline_analytics.mutating, false);
+  assert.deepEqual(TOOL_MANIFEST.bob_route_surfaces.role_bundles, ["orchestrator", "router"]);
+  assert.equal(TOOL_MANIFEST.bob_route_surfaces.global_preapproval, false);
+  assert.equal(TOOL_MANIFEST.bob_route_surfaces.mutating, true);
+  assert.deepEqual(TOOL_MANIFEST.bob_record_surface_leads.role_bundles, ["evaluator-web", "orchestrator"]);
+  assert.equal(TOOL_MANIFEST.bob_record_surface_leads.global_preapproval, true);
+  assert.equal(TOOL_MANIFEST.bob_read_surface_leads.global_preapproval, true);
+  assert.equal(TOOL_MANIFEST.bob_start_next_wave.global_preapproval, false);
+  assert.equal(TOOL_MANIFEST.bob_start_next_wave.mutating, true);
+  assert.deepEqual(TOOL_MANIFEST.bob_start_next_wave.session_artifacts_written, ["surface-routes.json", "wave-N-assignments.json", "state.json", "surface-leads.json", "attack_surface.json"]);
+  assert.equal(TOOL_MANIFEST.bob_promote_surface_leads.global_preapproval, false);
+  assert.equal(TOOL_MANIFEST.bob_promote_surface_leads.mutating, true);
+  assert.deepEqual(TOOL_MANIFEST.bob_get_context_budget.role_bundles, ["evaluator-shared", "orchestrator"]);
+  assert.deepEqual(TOOL_MANIFEST.bob_select_technique_packs.role_bundles, ["evaluator-web", "orchestrator"]);
+  assert.deepEqual(TOOL_MANIFEST.bob_read_technique_pack.role_bundles, ["evaluator-web", "orchestrator"]);
+  assert.deepEqual(TOOL_MANIFEST.bob_log_technique_attempt.role_bundles, ["evaluator-web", "orchestrator"]);
+  assert.equal(TOOL_MANIFEST.bob_get_context_budget.mutating, false);
+  assert.equal(TOOL_MANIFEST.bob_select_technique_packs.mutating, false);
+  assert.equal(TOOL_MANIFEST.bob_read_technique_pack.mutating, true);
+  assert.equal(TOOL_MANIFEST.bob_log_technique_attempt.mutating, true);
+  assert.deepEqual(TOOL_MANIFEST.bob_read_technique_pack.session_artifacts_written, ["technique-pack-reads.jsonl"]);
+  assert.deepEqual(TOOL_MANIFEST.bob_log_technique_attempt.session_artifacts_written, ["technique-attempts.jsonl"]);
   assert.deepEqual(TOOL_MANIFEST.bounty_transition_phase.session_artifacts_written, [
     "state.json",
     "verification-input-snapshot.json",
     "verification-manifest.json",
     "verification-attempts/attempt-*/",
   ]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_write_verification_round.session_artifacts_written, ["brutalist.json", "balanced.json", "verified-final.json", "verification-manifest.json"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_build_verification_adjudication.session_artifacts_written, ["verification-adjudication.json", "verification-manifest.json"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_write_evidence_packs.session_artifacts_written, ["evidence-packs.json", "evidence-packs.md", "verification-manifest.json"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_write_evidence_packs.role_bundles, ["evidence"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_read_evidence_packs.role_bundles, ["evidence", "grader", "reporter", "orchestrator"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_read_verification_context.role_bundles, ["orchestrator", "verifier", "evidence", "grader", "reporter"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_build_verification_adjudication.role_bundles, ["orchestrator"]);
-  assert.equal(TOOL_MANIFEST.bounty_build_verification_adjudication.global_preapproval, false);
-  assert.ok(!sourceAllowed.has("bounty_merge_wave_handoffs"));
-  assert.ok(!sourceAllowed.has("bounty_read_tool_telemetry"));
-  assert.ok(!sourceAllowed.has("bounty_read_pipeline_analytics"));
-  assert.ok(!sourceAllowed.has("bounty_route_surfaces"));
-  assert.ok(!generatedAllowed.has("bounty_merge_wave_handoffs"));
-  assert.ok(!generatedAllowed.has("bounty_read_tool_telemetry"));
-  assert.ok(!generatedAllowed.has("bounty_read_pipeline_analytics"));
-  assert.ok(!generatedAllowed.has("bounty_route_surfaces"));
-  assert.ok(!sourceAllowed.has("bounty_start_next_wave"));
-  assert.ok(!sourceAllowed.has("bounty_promote_surface_leads"));
-  assert.ok(sourceAllowed.has("bounty_record_surface_leads"));
-  assert.ok(sourceAllowed.has("bounty_read_surface_leads"));
-  assert.ok(sourceAllowed.has("bounty_get_context_budget"));
-  assert.ok(sourceAllowed.has("bounty_select_technique_packs"));
-  assert.ok(sourceAllowed.has("bounty_read_technique_pack"));
-  assert.ok(sourceAllowed.has("bounty_log_technique_attempt"));
-  assert.ok(sourceAllowed.has("bounty_wave_handoff_status"));
+  assert.deepEqual(TOOL_MANIFEST.bob_write_verification_round.session_artifacts_written, ["brutalist.json", "balanced.json", "verified-final.json", "verification-manifest.json"]);
+  assert.deepEqual(TOOL_MANIFEST.bob_build_verification_adjudication.session_artifacts_written, ["verification-adjudication.json", "verification-manifest.json"]);
+  assert.deepEqual(TOOL_MANIFEST.bob_write_evidence_packs.session_artifacts_written, ["evidence-packs.json", "evidence-packs.md", "verification-manifest.json"]);
+  assert.deepEqual(TOOL_MANIFEST.bob_write_evidence_packs.role_bundles, ["evidence"]);
+  assert.deepEqual(TOOL_MANIFEST.bob_read_evidence_packs.role_bundles, ["evidence", "grader", "reporter", "orchestrator"]);
+  assert.deepEqual(TOOL_MANIFEST.bob_read_verification_context.role_bundles, ["orchestrator", "verifier", "evidence", "grader", "reporter"]);
+  assert.deepEqual(TOOL_MANIFEST.bob_build_verification_adjudication.role_bundles, ["orchestrator"]);
+  assert.equal(TOOL_MANIFEST.bob_build_verification_adjudication.global_preapproval, false);
+  assert.ok(!sourceAllowed.has("bob_merge_wave_handoffs"));
+  assert.ok(!sourceAllowed.has("bob_read_tool_telemetry"));
+  assert.ok(!sourceAllowed.has("bob_read_pipeline_analytics"));
+  assert.ok(!sourceAllowed.has("bob_route_surfaces"));
+  assert.ok(!generatedAllowed.has("bob_merge_wave_handoffs"));
+  assert.ok(!generatedAllowed.has("bob_read_tool_telemetry"));
+  assert.ok(!generatedAllowed.has("bob_read_pipeline_analytics"));
+  assert.ok(!generatedAllowed.has("bob_route_surfaces"));
+  assert.ok(!sourceAllowed.has("bob_start_next_wave"));
+  assert.ok(!sourceAllowed.has("bob_promote_surface_leads"));
+  assert.ok(sourceAllowed.has("bob_record_surface_leads"));
+  assert.ok(sourceAllowed.has("bob_read_surface_leads"));
+  assert.ok(sourceAllowed.has("bob_get_context_budget"));
+  assert.ok(sourceAllowed.has("bob_select_technique_packs"));
+  assert.ok(sourceAllowed.has("bob_read_technique_pack"));
+  assert.ok(sourceAllowed.has("bob_log_technique_attempt"));
+  assert.ok(sourceAllowed.has("bob_wave_handoff_status"));
 
   const hookMatchers = settingsHookMatchers();
   for (const [toolName, metadata] of Object.entries(TOOL_MANIFEST)) {
@@ -634,18 +634,18 @@ test("evaluator-evm-agent ships with the EVM tool surface and SC anti-stop rule"
   assert.ok(tools.includes("Bash"));
   assert.ok(tools.includes("Read"));
   assert.ok(tools.includes("Write"), "evaluator-evm needs Write to scaffold Foundry tests");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_evm_call"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_evm_storage_read"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_evm_fetch_source"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_evm_role_table"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_foundry_run"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_write_wave_handoff"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_finalize_agent_run"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_record_finding"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_evm_call"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_evm_storage_read"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_evm_fetch_source"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_evm_role_table"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_foundry_run"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_write_wave_handoff"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_finalize_agent_run"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_record_finding"));
 
   assert.match(document, /surface_type[^\n]*smart_contract/i);
-  assert.match(document, /bounty_evm_fetch_source/);
-  assert.match(document, /bounty_foundry_run/);
+  assert.match(document, /bob_evm_fetch_source/);
+  assert.match(document, /bob_foundry_run/);
   assert.match(document, /bypass_attempts/);
   assert.match(document, /blocked_harness_runs/);
   assert.match(document, /BOB_AGENT_RUN_DONE/);
@@ -672,11 +672,11 @@ test("evaluator prompt teaches the blocked_prereqs[] policy and orchestrator han
   assert.match(evaluatorPrompt, /blocked_prereqs/, "evaluator prompt missing blocked_prereqs policy");
   assert.match(evaluatorPrompt, /auth_missing/, "evaluator prompt missing auth_missing kind reference");
   assert.match(evaluatorPrompt, /egress_unreachable/, "evaluator prompt missing egress_unreachable kind reference");
-  assert.match(evaluatorPrompt, /bounty_clear_terminal_block/, "evaluator prompt missing bounty_clear_terminal_block reference");
+  assert.match(evaluatorPrompt, /bob_clear_terminal_block/, "evaluator prompt missing bob_clear_terminal_block reference");
 
   const orchestratorPrompt = readFile("prompts/roles/orchestrator.md");
   assert.match(orchestratorPrompt, /terminally_blocked/, "orchestrator prompt missing terminally_blocked exclusion guidance");
-  assert.match(orchestratorPrompt, /bounty_clear_terminal_block/, "orchestrator prompt missing clear-block tool reference");
+  assert.match(orchestratorPrompt, /bob_clear_terminal_block/, "orchestrator prompt missing clear-block tool reference");
   assert.match(
     orchestratorPrompt,
     /override_reason` is rejected outside/,
@@ -738,7 +738,7 @@ test("bob-evaluate skill stays orchestration-sized and preserves lifecycle shape
   for (const state of ["SETUP", "OPEN_FRONTIER", "CLAIM_FREEZE", "VERIFY", "GRADE", "REPORT"]) {
     assert.match(orchestrator, new RegExp(`## STATE: ${state}`), `missing lifecycle state ${state}`);
   }
-  assert.match(orchestrator, /must never call `bounty_write_wave_handoff`/);
+  assert.match(orchestrator, /must never call `bob_write_wave_handoff`/);
   assert.match(orchestrator, /must never write handoff JSON directly/);
 });
 
@@ -751,7 +751,7 @@ test("orchestrator validates brutalist and balanced rounds before proceeding", (
   );
   assert.match(
     orchestrator,
-    /bounty_read_verification_round.*round.*brutalist/,
+    /bob_read_verification_round.*round.*brutalist/,
     "Missing brutalist read-back validation call"
   );
   assert.match(
@@ -761,7 +761,7 @@ test("orchestrator validates brutalist and balanced rounds before proceeding", (
   );
   assert.match(
     orchestrator,
-    /bounty_read_verification_round.*round.*balanced/,
+    /bob_read_verification_round.*round.*balanced/,
     "Missing balanced read-back validation call"
   );
 });
@@ -773,9 +773,9 @@ test("v2 verification prompt contracts use context, independent rounds, adjudica
   const final = readFile(".claude/agents/final-verifier.md");
   const evidence = readFile(".claude/agents/evidence-agent.md");
 
-  assert.match(orchestrator, /bounty_read_verification_context/);
+  assert.match(orchestrator, /bob_read_verification_context/);
   assert.match(orchestrator, /schema_version === 2/);
-  assert.match(orchestrator, /bounty_build_verification_adjudication/);
+  assert.match(orchestrator, /bob_build_verification_adjudication/);
   assert.match(orchestrator, /adjudication_context/);
   assert.match(orchestrator, /adjudication_plan_hash/);
   assert.doesNotMatch(orchestrator.replaceAll("adjudication_plan_hash", ""), /\bplan_hash\b/);
@@ -798,7 +798,7 @@ test("v2 verification prompt contracts use context, independent rounds, adjudica
   assert.match(final, /adjudication_plan_hash/);
   assert.match(final, /adjudication_context/);
   assert.doesNotMatch(final.replaceAll("adjudication_plan_hash", ""), /\bplan_hash\b/);
-  assert.match(final, /bounty_read_verification_round\(\{ target_domain, round: "balanced" \}\)/);
+  assert.match(final, /bob_read_verification_round\(\{ target_domain, round: "balanced" \}\)/);
   assert.match(final, /source-of-truth result set for both v1 and v2 finalization/);
   assert.match(final, /do not compute diffs/i);
   assert.match(final, /inherited_confidence_reasons/);
@@ -816,20 +816,20 @@ test("evidence-agent exists, is MCP-only, and cannot mutate unrelated artifacts"
   const document = readFile(".claude/agents/evidence-agent.md");
   const frontmatter = parseFrontmatter(document, "evidence-agent.md");
   const tools = frontmatter.tools.split(/\s*,\s*/).filter(Boolean);
-  // The evidence role bundle includes HTTP tools (bounty_http_scan, audit, etc.)
+  // The evidence role bundle includes HTTP tools (bob_http_scan, audit, etc.)
   // plus the smart-contract family runners (since v1.2.0) so evidence-agent can
   // collect representative samples for SC findings via bounty_*_run dispatch.
   // We assert the required-core tools are present rather than locking the full
   // list, since SC tools are added through role_bundles in each tool module.
   const requiredCore = [
-    "mcp__bountyagent__bounty_http_scan",
-    "mcp__bountyagent__bounty_read_http_audit",
-    "mcp__bountyagent__bounty_read_findings",
-    "mcp__bountyagent__bounty_read_verification_context",
-    "mcp__bountyagent__bounty_read_verification_round",
-    "mcp__bountyagent__bounty_write_evidence_packs",
-    "mcp__bountyagent__bounty_read_evidence_packs",
-    "mcp__bountyagent__bounty_list_auth_profiles",
+    "mcp__bountyagent__bob_http_scan",
+    "mcp__bountyagent__bob_read_http_audit",
+    "mcp__bountyagent__bob_read_findings",
+    "mcp__bountyagent__bob_read_verification_context",
+    "mcp__bountyagent__bob_read_verification_round",
+    "mcp__bountyagent__bob_write_evidence_packs",
+    "mcp__bountyagent__bob_read_evidence_packs",
+    "mcp__bountyagent__bob_list_auth_profiles",
   ];
 
   assert.deepEqual(AGENT_TOOL_SPECS["evidence-agent.md"], {
@@ -840,9 +840,9 @@ test("evidence-agent exists, is MCP-only, and cannot mutate unrelated artifacts"
     assert.ok(tools.includes(tool), `evidence-agent.md tools must include ${tool}`);
   }
   assert.match(document, /final reportable findings only/);
-  assert.match(document, /bounty_write_evidence_packs/);
-  assert.doesNotMatch(frontmatter.tools, /Bash|Write|bounty_record_finding|bounty_write_wave_handoff|bounty_write_grade_verdict/);
-  assert.doesNotMatch(frontmatter.tools, /bounty_write_chain_attempt|bounty_transition_phase/);
+  assert.match(document, /bob_write_evidence_packs/);
+  assert.doesNotMatch(frontmatter.tools, /Bash|Write|bob_record_finding|bob_write_wave_handoff|bob_write_grade_verdict/);
+  assert.doesNotMatch(frontmatter.tools, /bob_write_chain_attempt|bounty_transition_phase/);
 });
 
 test("bob-evaluate spawns evidence before grade and validates evidence packs", () => {
@@ -858,8 +858,8 @@ test("bob-evaluate spawns evidence before grade and validates evidence packs", (
   assert.ok(evidenceIndex > 0, "missing evidence-agent spawn");
   assert.ok(evidencePresentGrade > evidenceIndex, "GRADE transition must happen after evidence-agent in the evidence-present branch");
   assert.ok(graderIndex > evidencePresentGrade, "grader must spawn after GRADE transition");
-  assert.match(orchestrator, /bounty_read_evidence_packs\(\{ target_domain: "\[domain\]" \}\)/);
-  assert.match(orchestrator, /write only through bounty_write_evidence_packs/);
+  assert.match(orchestrator, /bob_read_evidence_packs\(\{ target_domain: "\[domain\]" \}\)/);
+  assert.match(orchestrator, /write only through bob_write_evidence_packs/);
 });
 
 test("bob-evaluate closes no-finding verification through SKIP grade and report", () => {
@@ -923,8 +923,8 @@ test("chain-builder uses structured handoffs without Bash or markdown dependency
   const tools = frontmatter.tools.split(/\s*,\s*/).filter(Boolean);
 
   assert.ok(!tools.includes("Bash"));
-  assert.ok(tools.includes("mcp__bountyagent__bounty_read_wave_handoffs"));
-  assert.match(document, /bounty_read_wave_handoffs/);
+  assert.ok(tools.includes("mcp__bountyagent__bob_read_wave_handoffs"));
+  assert.match(document, /bob_read_wave_handoffs/);
   assert.doesNotMatch(document, /handoff-w\*\.md/);
 });
 
@@ -945,14 +945,14 @@ test("bountyagent skill allowed-tools match orchestrator and auth bundles", () =
   );
   assert.ok(allowedTools.includes("Task"));
   assert.ok(allowedTools.includes("Read"));
-  assert.ok(allowedTools.includes("mcp__bountyagent__bounty_merge_wave_handoffs"));
-  assert.ok(allowedTools.includes("mcp__bountyagent__bounty_read_tool_telemetry"));
-  assert.ok(allowedTools.includes("mcp__bountyagent__bounty_read_pipeline_analytics"));
-  assert.ok(allowedTools.includes("mcp__bountyagent__bounty_route_surfaces"));
-  assert.ok(allowedTools.includes("mcp__bountyagent__bounty_read_session_summary"));
-  assert.ok(allowedTools.includes("mcp__bountyagent__bounty_set_operator_note"));
-  assert.ok(allowedTools.includes("mcp__bountyagent__bounty_clear_operator_note"));
-  assert.ok(!allowedTools.includes("mcp__bountyagent__bounty_write_wave_handoff"));
+  assert.ok(allowedTools.includes("mcp__bountyagent__bob_merge_wave_handoffs"));
+  assert.ok(allowedTools.includes("mcp__bountyagent__bob_read_tool_telemetry"));
+  assert.ok(allowedTools.includes("mcp__bountyagent__bob_read_pipeline_analytics"));
+  assert.ok(allowedTools.includes("mcp__bountyagent__bob_route_surfaces"));
+  assert.ok(allowedTools.includes("mcp__bountyagent__bob_read_session_summary"));
+  assert.ok(allowedTools.includes("mcp__bountyagent__bob_set_operator_note"));
+  assert.ok(allowedTools.includes("mcp__bountyagent__bob_clear_operator_note"));
+  assert.ok(!allowedTools.includes("mcp__bountyagent__bob_write_wave_handoff"));
 });
 
 test("Claude ships generated command shims for update and export", () => {
@@ -986,49 +986,49 @@ test("bountyagentstatus skill is compact, read-only, and points to next commands
   const skill = readFile(".claude/skills/bob-status/SKILL.md");
   const codexSkill = readFile("adapters/codex/skills/bob-status/SKILL.md");
   const allowedTools = parseYamlListFrontmatter(skill, "allowed-tools", "bob-status/SKILL.md");
-  const verificationPanelContract = /When `bounty_read_verification_context` reports `schema_version: 2`[\s\S]*Current attempt:[\s\S]*current_attempt_id[\s\S]*first 8 chars of `snapshot_hash`[\s\S]*replay_execution_policy[\s\S]*archived_attempts\.length[\s\S]*snapshot <snapshot_hash:0\.\.8>[\s\S]*Older v1 sessions print `verification: schema v1` and skip the panel\./;
+  const verificationPanelContract = /When `bob_read_verification_context` reports `schema_version: 2`[\s\S]*Current attempt:[\s\S]*current_attempt_id[\s\S]*first 8 chars of `snapshot_hash`[\s\S]*replay_execution_policy[\s\S]*archived_attempts\.length[\s\S]*snapshot <snapshot_hash:0\.\.8>[\s\S]*Older v1 sessions print `verification: schema v1` and skip the panel\./;
   const forbiddenTools = [
     "Task",
     "Write",
     "Grep",
-    "mcp__bountyagent__bounty_start_next_wave",
-    "mcp__bountyagent__bounty_start_wave",
-    "mcp__bountyagent__bounty_apply_wave_merge",
-    "mcp__bountyagent__bounty_merge_wave_handoffs",
+    "mcp__bountyagent__bob_start_next_wave",
+    "mcp__bountyagent__bob_start_wave",
+    "mcp__bountyagent__bob_apply_wave_merge",
+    "mcp__bountyagent__bob_merge_wave_handoffs",
     "mcp__bountyagent__bounty_transition_phase",
-    "mcp__bountyagent__bounty_auth_store",
-    "mcp__bountyagent__bounty_write_handoff",
-    "mcp__bountyagent__bounty_write_wave_handoff",
-    "mcp__bountyagent__bounty_finalize_agent_run",
-    "mcp__bountyagent__bounty_write_verification_round",
-    "mcp__bountyagent__bounty_write_grade_verdict",
-    "mcp__bountyagent__bounty_record_finding",
-    "mcp__bountyagent__bounty_http_scan",
-    "mcp__bountyagent__bounty_import_http_traffic",
-    "mcp__bountyagent__bounty_public_intel",
-    "mcp__bountyagent__bounty_import_static_artifact",
-    "mcp__bountyagent__bounty_static_scan",
-    "mcp__bountyagent__bounty_auto_signup",
-    "mcp__bountyagent__bounty_temp_email",
-    "mcp__bountyagent__bounty_signup_detect",
-    "mcp__bountyagent__bounty_log_coverage",
-    "mcp__bountyagent__bounty_log_dead_ends",
-    "mcp__bountyagent__bounty_read_tool_telemetry",
+    "mcp__bountyagent__bob_auth_store",
+    "mcp__bountyagent__bob_write_handoff",
+    "mcp__bountyagent__bob_write_wave_handoff",
+    "mcp__bountyagent__bob_finalize_agent_run",
+    "mcp__bountyagent__bob_write_verification_round",
+    "mcp__bountyagent__bob_write_grade_verdict",
+    "mcp__bountyagent__bob_record_finding",
+    "mcp__bountyagent__bob_http_scan",
+    "mcp__bountyagent__bob_import_http_traffic",
+    "mcp__bountyagent__bob_public_intel",
+    "mcp__bountyagent__bob_import_static_artifact",
+    "mcp__bountyagent__bob_static_scan",
+    "mcp__bountyagent__bob_auto_signup",
+    "mcp__bountyagent__bob_temp_email",
+    "mcp__bountyagent__bob_signup_detect",
+    "mcp__bountyagent__bob_log_coverage",
+    "mcp__bountyagent__bob_log_dead_ends",
+    "mcp__bountyagent__bob_read_tool_telemetry",
   ];
 
   assert.match(skill, /not a debug review/i);
   assert.match(skill, /No args or `--last`/);
   assert.match(skill, /\$\{CLAUDE_PROJECT_DIR:-\$PWD\}\/\.claude\/hooks\/bob-update\.js/);
   assert.doesNotMatch(skill, /"\$CLAUDE_PROJECT_DIR\/\.claude\/hooks\/bob-update\.js"/);
-  assert.match(skill, /bounty_read_pipeline_analytics\(\{ target_domain, include_events: false, limit: 20 \}\)/);
-  assert.match(skill, /bounty_read_session_summary\(\{ target_domain \}\)/);
-  assert.match(skill, /bounty_read_state_summary\(\{ target_domain \}\)/);
-  assert.match(skill, /bounty_wave_status\(\{ target_domain \}\)/);
-  assert.ok(allowedTools.includes("mcp__bountyagent__bounty_read_evidence_packs"));
-  assert.ok(allowedTools.includes("mcp__bountyagent__bounty_read_session_summary"));
+  assert.match(skill, /bob_read_pipeline_analytics\(\{ target_domain, include_events: false, limit: 20 \}\)/);
+  assert.match(skill, /bob_read_session_summary\(\{ target_domain \}\)/);
+  assert.match(skill, /bob_read_state_summary\(\{ target_domain \}\)/);
+  assert.match(skill, /bob_wave_status\(\{ target_domain \}\)/);
+  assert.ok(allowedTools.includes("mcp__bountyagent__bob_read_evidence_packs"));
+  assert.ok(allowedTools.includes("mcp__bountyagent__bob_read_session_summary"));
   assert.match(skill, /evidence status/);
-  assert.match(skill, /bounty_read_pipeline_analytics\.data\.sessions\[0\]\.evidence/);
-  assert.match(skill, /bounty_read_evidence_packs\(\{ target_domain \}\)/);
+  assert.match(skill, /bob_read_pipeline_analytics\.data\.sessions\[0\]\.evidence/);
+  assert.match(skill, /bob_read_evidence_packs\(\{ target_domain \}\)/);
   assert.match(skill, /\/bob-evaluate resume <target_domain>/);
   assert.match(skill, /\/bob-debug --deep <target_domain>/);
   assert.match(skill, /V2 Verification Panel/);
@@ -1052,9 +1052,9 @@ test("bountyagentstatus skill is compact, read-only, and points to next commands
 test("bountyagentdebug skill is telemetry-first and supports latest, explicit, and deep modes", () => {
   const skill = readFile(".claude/skills/bob-debug/SKILL.md");
 
-  assert.match(skill, /bounty_read_pipeline_analytics\(\{ target_domain, include_events: true, limit: 100 \}\)/);
-  assert.match(skill, /bounty_read_tool_telemetry\(\{ target_domain, include_agent_runs: true, limit: 100 \}\)/);
-  assert.match(skill, /bounty_read_session_summary\(\{ target_domain \}\)/);
+  assert.match(skill, /bob_read_pipeline_analytics\(\{ target_domain, include_events: true, limit: 100 \}\)/);
+  assert.match(skill, /bob_read_tool_telemetry\(\{ target_domain, include_agent_runs: true, limit: 100 \}\)/);
+  assert.match(skill, /bob_read_session_summary\(\{ target_domain \}\)/);
   assert.match(skill, /No args or `--last`/);
   assert.match(skill, /`<target_domain>`/);
   assert.match(skill, /`--deep`/);
@@ -1066,41 +1066,41 @@ test("bountyagentdebug skill allowed-tools are read-only and exclude mutators", 
   const skill = readFile(".claude/skills/bob-debug/SKILL.md");
   const allowedTools = parseYamlListFrontmatter(skill, "allowed-tools", "bob-debug/SKILL.md");
   const expectedReadOnlyMcpTools = [
-    "mcp__bountyagent__bounty_read_pipeline_analytics",
-    "mcp__bountyagent__bounty_read_tool_telemetry",
-    "mcp__bountyagent__bounty_read_session_summary",
-    "mcp__bountyagent__bounty_read_state_summary",
-    "mcp__bountyagent__bounty_wave_status",
-    "mcp__bountyagent__bounty_read_wave_handoffs",
-    "mcp__bountyagent__bounty_read_findings",
-    "mcp__bountyagent__bounty_read_verification_round",
-    "mcp__bountyagent__bounty_read_grade_verdict",
+    "mcp__bountyagent__bob_read_pipeline_analytics",
+    "mcp__bountyagent__bob_read_tool_telemetry",
+    "mcp__bountyagent__bob_read_session_summary",
+    "mcp__bountyagent__bob_read_state_summary",
+    "mcp__bountyagent__bob_wave_status",
+    "mcp__bountyagent__bob_read_wave_handoffs",
+    "mcp__bountyagent__bob_read_findings",
+    "mcp__bountyagent__bob_read_verification_round",
+    "mcp__bountyagent__bob_read_grade_verdict",
   ];
   const forbiddenTools = [
     "Task",
     "Write",
-    "mcp__bountyagent__bounty_start_next_wave",
-    "mcp__bountyagent__bounty_start_wave",
-    "mcp__bountyagent__bounty_apply_wave_merge",
-    "mcp__bountyagent__bounty_merge_wave_handoffs",
+    "mcp__bountyagent__bob_start_next_wave",
+    "mcp__bountyagent__bob_start_wave",
+    "mcp__bountyagent__bob_apply_wave_merge",
+    "mcp__bountyagent__bob_merge_wave_handoffs",
     "mcp__bountyagent__bounty_transition_phase",
-    "mcp__bountyagent__bounty_auth_store",
-    "mcp__bountyagent__bounty_write_handoff",
-    "mcp__bountyagent__bounty_write_wave_handoff",
-    "mcp__bountyagent__bounty_finalize_agent_run",
-    "mcp__bountyagent__bounty_write_verification_round",
-    "mcp__bountyagent__bounty_write_grade_verdict",
-    "mcp__bountyagent__bounty_record_finding",
-    "mcp__bountyagent__bounty_http_scan",
-    "mcp__bountyagent__bounty_import_http_traffic",
-    "mcp__bountyagent__bounty_public_intel",
-    "mcp__bountyagent__bounty_import_static_artifact",
-    "mcp__bountyagent__bounty_static_scan",
-    "mcp__bountyagent__bounty_auto_signup",
-    "mcp__bountyagent__bounty_temp_email",
-    "mcp__bountyagent__bounty_signup_detect",
-    "mcp__bountyagent__bounty_log_coverage",
-    "mcp__bountyagent__bounty_log_dead_ends",
+    "mcp__bountyagent__bob_auth_store",
+    "mcp__bountyagent__bob_write_handoff",
+    "mcp__bountyagent__bob_write_wave_handoff",
+    "mcp__bountyagent__bob_finalize_agent_run",
+    "mcp__bountyagent__bob_write_verification_round",
+    "mcp__bountyagent__bob_write_grade_verdict",
+    "mcp__bountyagent__bob_record_finding",
+    "mcp__bountyagent__bob_http_scan",
+    "mcp__bountyagent__bob_import_http_traffic",
+    "mcp__bountyagent__bob_public_intel",
+    "mcp__bountyagent__bob_import_static_artifact",
+    "mcp__bountyagent__bob_static_scan",
+    "mcp__bountyagent__bob_auto_signup",
+    "mcp__bountyagent__bob_temp_email",
+    "mcp__bountyagent__bob_signup_detect",
+    "mcp__bountyagent__bob_log_coverage",
+    "mcp__bountyagent__bob_log_dead_ends",
   ];
 
   assert.ok(allowedTools.includes("Read"));
@@ -1435,12 +1435,12 @@ test("no rendered prompt artifact leaks an unsubstituted {{...}} placeholder (re
 });
 
 test("evaluator prompt sources do not hand-code handoff field limits", () => {
-  // Limits for fields written by bounty_write_wave_handoff are owned by its
+  // Limits for fields written by bob_write_wave_handoff are owned by its
   // JSON schema and rendered into evaluator prompts via {{HANDOFF_FIELD_LIMITS}}.
   // Hand-coded character counts on these specific fields would drift
   // independently of schema bumps. Other character bounds (e.g. on
   // match_test or chain-specific contract_address shapes) are owned by
-  // their respective tools, not by bounty_write_wave_handoff, so they stay
+  // their respective tools, not by bob_write_wave_handoff, so they stay
   // hand-coded here.
   // Derive the prompt-source list from EVALUATOR_ROLES (per-chain evaluators)
   // plus the generic web evaluator, so adding a 7th chain pack auto-extends
@@ -1488,7 +1488,7 @@ test("rendered evaluator prompts include the schema-derived handoff field limits
     const body = readFile(relativePath);
     assert.match(
       body,
-      /Handoff field limits \(enforced by `bounty_write_wave_handoff`/,
+      /Handoff field limits \(enforced by `bob_write_wave_handoff`/,
       `${relativePath} is missing the rendered handoff field limits block`,
     );
     assert.match(body, /`summary`:/);
@@ -1556,13 +1556,13 @@ test("every SC pack ships a complete spawn block consumed by the catalogue rende
         );
       }
       // Every kind in blocked_harness_kind_options must be in the
-      // bounty_write_wave_handoff schema enum, otherwise evaluators that
+      // bob_write_wave_handoff schema enum, otherwise evaluators that
       // follow the catalogue will fail finalization.
       const kinds = pack.spawn.blocked_harness_kind_options.split(/\s+or\s+/).map((t) => t.trim()).filter(Boolean);
       for (const kind of kinds) {
         assert.ok(
           BLOCKED_HARNESS_RUN_KINDS.includes(kind),
-          `SC pack ${pack.id} blocked_harness_kind_options token "${kind}" must be in the bounty_write_wave_handoff schema enum`,
+          `SC pack ${pack.id} blocked_harness_kind_options token "${kind}" must be in the bob_write_wave_handoff schema enum`,
         );
       }
     }
@@ -1751,19 +1751,19 @@ test("EVALUATOR_ROLES is the single source of truth for evaluator role specs acr
 
 test("renderer source files contain no per-chain workflow strings (pack.spawn is the only source)", () => {
   // Anti-cruft: per-chain workflow strings must live in pack.spawn, not in
-  // the renderer source. Catching `bounty_evm_fetch_source -> read sources`
+  // the renderer source. Catching `bob_evm_fetch_source -> read sources`
   // (workflow head) or chain-family-specific cli dependencies in the
   // renderer source means duplication is creeping back in. This test pins
   // that the renderers stay registry-driven.
   const claudeRenderer = readFile("scripts/lib/claude-role-renderer.js");
   const codexRenderer = readFile("scripts/lib/codex-role-renderer.js");
   const forbiddenWorkflowFragments = [
-    "bounty_evm_fetch_source -> read sources",
-    "bounty_svm_fetch_program (confirm",
-    "bounty_aptos_fetch_module (enumerate",
-    "bounty_sui_fetch_package (enumerate",
-    "bounty_substrate_fetch_runtime (confirm",
-    "bounty_cosmwasm_fetch_contract (confirm",
+    "bob_evm_fetch_source -> read sources",
+    "bob_svm_fetch_program (confirm",
+    "bob_aptos_fetch_module (enumerate",
+    "bob_sui_fetch_package (enumerate",
+    "bob_substrate_fetch_runtime (confirm",
+    "bob_cosmwasm_fetch_contract (confirm",
   ];
   for (const fragment of forbiddenWorkflowFragments) {
     assert.ok(
@@ -1817,15 +1817,15 @@ test("verifiers can read request audit summaries without direct file access", ()
   for (const agent of ["brutalist-verifier", "balanced-verifier", "final-verifier"]) {
     const document = readFile(`.claude/agents/${agent}.md`);
     const frontmatter = parseFrontmatter(document, `${agent}.md`);
-    assert.match(frontmatter.tools, /mcp__bountyagent__bounty_read_http_audit/);
-    assert.match(document, /bounty_read_http_audit/);
+    assert.match(frontmatter.tools, /mcp__bountyagent__bob_read_http_audit/);
+    assert.match(document, /bob_read_http_audit/);
     assert.doesNotMatch(document, /http-audit\.jsonl/);
   }
 });
 
 test("verifier role bundle has only documented mutating tools and no orchestration mutators", () => {
   // The role-bundle expansion that gave verifiers SC re-run primitives also
-  // included bounty_evm_fetch_source, which writes to the per-session
+  // included bob_evm_fetch_source, which writes to the per-session
   // contracts cache (mutating:true). That one is an intentional, documented
   // exception. NO mutator that advances orchestration (recordFinding,
   // write_wave_handoff, finalize_evaluator_run, log_coverage, log_dead_ends,
@@ -1838,23 +1838,23 @@ test("verifier role bundle has only documented mutating tools and no orchestrati
   assert.deepEqual(
     mutatingInVerifier.map((tool) => tool.name).sort(),
     [
-      "bounty_evm_fetch_source",       // SC source-cache populate during re-run
-      "bounty_http_scan",              // web PoC replay (existing baseline)
-      "bounty_write_verification_round" // the verifier's own write path
+      "bob_evm_fetch_source",       // SC source-cache populate during re-run
+      "bob_http_scan",              // web PoC replay (existing baseline)
+      "bob_write_verification_round" // the verifier's own write path
     ].sort(),
     "Only evm-fetch-source, http_scan, and write-verification-round may be mutating in the verifier bundle. New mutating tools must be reviewed before joining verifier role.",
   );
   const forbidden = [
-    "bounty_record_finding",
-    "bounty_write_wave_handoff",
-    "bounty_finalize_agent_run",
-    "bounty_log_coverage",
-    "bounty_log_dead_ends",
-    "bounty_write_grade_verdict",
-    "bounty_apply_wave_merge",
+    "bob_record_finding",
+    "bob_write_wave_handoff",
+    "bob_finalize_agent_run",
+    "bob_log_coverage",
+    "bob_log_dead_ends",
+    "bob_write_grade_verdict",
+    "bob_apply_wave_merge",
     // Adjudication is built by the orchestrator; verifiers consume the
-    // adjudication_plan_hash from bounty_read_verification_context only.
-    "bounty_build_verification_adjudication",
+    // adjudication_plan_hash from bob_read_verification_context only.
+    "bob_build_verification_adjudication",
   ];
   for (const tool of forbidden) {
     const meta = TOOL_MANIFEST[tool];
@@ -1867,16 +1867,16 @@ test("verifier role bundle has only documented mutating tools and no orchestrati
 });
 
 test("verifier agents expose EVM read-side and PoC-replay tools for SC findings", () => {
-  // SC findings need bounty_foundry_run for re-run plus the read-side
+  // SC findings need bob_foundry_run for re-run plus the read-side
   // primitives (evm_call/storage/source/role_table/halmos) for trust-map
   // checks. All six tools must appear in the rendered tools list.
   const requiredTools = [
-    "bounty_foundry_run",
-    "bounty_halmos_run",
-    "bounty_evm_call",
-    "bounty_evm_storage_read",
-    "bounty_evm_fetch_source",
-    "bounty_evm_role_table",
+    "bob_foundry_run",
+    "bob_halmos_run",
+    "bob_evm_call",
+    "bob_evm_storage_read",
+    "bob_evm_fetch_source",
+    "bob_evm_role_table",
   ];
   for (const agent of ["brutalist-verifier", "balanced-verifier", "final-verifier"]) {
     const document = readFile(`.claude/agents/${agent}.md`);
@@ -1989,13 +1989,13 @@ test("rendered verifier agents carry every capability pack runner via the render
     const rendered = readFile(`.claude/agents/${role}.md`);
     assert.match(rendered, /Capability pack verifier table/, `${role}.md must render the capability pack table`);
     for (const runner of [
-      "bounty_http_scan",
-      "bounty_foundry_run",
-      "bounty_anchor_run",
-      "bounty_aptos_run",
-      "bounty_sui_run",
-      "bounty_substrate_run",
-      "bounty_cosmwasm_run",
+      "bob_http_scan",
+      "bob_foundry_run",
+      "bob_anchor_run",
+      "bob_aptos_run",
+      "bob_sui_run",
+      "bob_substrate_run",
+      "bob_cosmwasm_run",
     ]) {
       assert.match(rendered, new RegExp(runner), `${role}.md rendered table must list ${runner}`);
     }
@@ -2061,10 +2061,10 @@ test("evaluator-svm-agent ships with the SVM tool surface", () => {
   const document = readFile(".claude/agents/evaluator-svm-agent.md");
   const frontmatter = parseFrontmatter(document, "evaluator-svm-agent.md");
   const tools = frontmatter.tools.split(",").map((tool) => tool.trim());
-  assert.ok(tools.includes("mcp__bountyagent__bounty_svm_fetch_account"), "evaluator-svm needs svm_fetch_account");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_svm_fetch_program"), "evaluator-svm needs svm_fetch_program for upgrade authority");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_anchor_run"), "evaluator-svm needs anchor_run for PoCs");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_record_finding"), "evaluator-svm needs record_finding");
+  assert.ok(tools.includes("mcp__bountyagent__bob_svm_fetch_account"), "evaluator-svm needs svm_fetch_account");
+  assert.ok(tools.includes("mcp__bountyagent__bob_svm_fetch_program"), "evaluator-svm needs svm_fetch_program for upgrade authority");
+  assert.ok(tools.includes("mcp__bountyagent__bob_anchor_run"), "evaluator-svm needs anchor_run for PoCs");
+  assert.ok(tools.includes("mcp__bountyagent__bob_record_finding"), "evaluator-svm needs record_finding");
   assert.ok(tools.includes("Write"), "evaluator-svm needs Write to scaffold Anchor tests");
 });
 
@@ -2077,7 +2077,7 @@ test("evaluator-svm prompt encodes the chain_family=svm anti-stop rule and sc_ev
   assert.match(prompt, /base58/i, "evaluator-svm must teach base58 program_id encoding");
   assert.match(prompt, /cluster/i, "evaluator-svm must teach cluster as chain_id");
   // Anchor harness primitive
-  assert.match(prompt, /bounty_anchor_run/, "evaluator-svm must document bounty_anchor_run");
+  assert.match(prompt, /bob_anchor_run/, "evaluator-svm must document bob_anchor_run");
 });
 
 test("orchestrator dispatches by chain_family to evaluator-evm or evaluator-svm via pack catalogue", () => {
@@ -2154,9 +2154,9 @@ test("Aptos and Sui packs route to the correct Move runners", () => {
   // verifier dispatch is one runner per pack. Both still use
   // evaluator-move-agent (the agent's tool list covers both).
   const { CAPABILITY_PACKS } = require("../mcp/lib/capability-packs.js");
-  assert.equal(CAPABILITY_PACKS.smart_contract_aptos.verifier.replay_tool, "bounty_aptos_run");
+  assert.equal(CAPABILITY_PACKS.smart_contract_aptos.verifier.replay_tool, "bob_aptos_run");
   assert.equal(CAPABILITY_PACKS.smart_contract_aptos.evaluator_agent, "evaluator-move-agent");
-  assert.equal(CAPABILITY_PACKS.smart_contract_sui.verifier.replay_tool, "bounty_sui_run");
+  assert.equal(CAPABILITY_PACKS.smart_contract_sui.verifier.replay_tool, "bob_sui_run");
   assert.equal(CAPABILITY_PACKS.smart_contract_sui.evaluator_agent, "evaluator-move-agent");
   // Move compile fail-mode must be documented in at least one verifier source
   // (it's shared by aptos+sui and applies in the rendered table footer).
@@ -2170,13 +2170,13 @@ test("evaluator-move-agent ships with the Move tool surface", () => {
   const document = readFile(".claude/agents/evaluator-move-agent.md");
   const frontmatter = parseFrontmatter(document, "evaluator-move-agent.md");
   const tools = frontmatter.tools.split(",").map((tool) => tool.trim());
-  assert.ok(tools.includes("mcp__bountyagent__bounty_aptos_fetch_resource"), "evaluator-move needs aptos_fetch_resource");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_aptos_fetch_module"), "evaluator-move needs aptos_fetch_module");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_aptos_run"), "evaluator-move needs aptos_run for PoCs");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_sui_fetch_object"), "evaluator-move needs sui_fetch_object");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_sui_fetch_package"), "evaluator-move needs sui_fetch_package");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_sui_run"), "evaluator-move needs sui_run for PoCs");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_record_finding"), "evaluator-move needs record_finding");
+  assert.ok(tools.includes("mcp__bountyagent__bob_aptos_fetch_resource"), "evaluator-move needs aptos_fetch_resource");
+  assert.ok(tools.includes("mcp__bountyagent__bob_aptos_fetch_module"), "evaluator-move needs aptos_fetch_module");
+  assert.ok(tools.includes("mcp__bountyagent__bob_aptos_run"), "evaluator-move needs aptos_run for PoCs");
+  assert.ok(tools.includes("mcp__bountyagent__bob_sui_fetch_object"), "evaluator-move needs sui_fetch_object");
+  assert.ok(tools.includes("mcp__bountyagent__bob_sui_fetch_package"), "evaluator-move needs sui_fetch_package");
+  assert.ok(tools.includes("mcp__bountyagent__bob_sui_run"), "evaluator-move needs sui_run for PoCs");
+  assert.ok(tools.includes("mcp__bountyagent__bob_record_finding"), "evaluator-move needs record_finding");
   assert.ok(tools.includes("Write"), "evaluator-move needs Write to scaffold Move tests");
 });
 
@@ -2189,8 +2189,8 @@ test("evaluator-move prompt encodes the chain_family={aptos,sui} branching and s
   assert.match(prompt, /chain_family.*"aptos"/i, "evaluator-move must instruct chain_family: aptos in sc_evidence");
   assert.match(prompt, /chain_family.*"sui"/i, "evaluator-move must instruct chain_family: sui in sc_evidence");
   // Move test primitives
-  assert.match(prompt, /bounty_aptos_run/, "evaluator-move must document bounty_aptos_run");
-  assert.match(prompt, /bounty_sui_run/, "evaluator-move must document bounty_sui_run");
+  assert.match(prompt, /bob_aptos_run/, "evaluator-move must document bob_aptos_run");
+  assert.match(prompt, /bob_sui_run/, "evaluator-move must document bob_sui_run");
   // Bug class catalog
   assert.match(prompt, /capability_leakage/, "evaluator-move must list capability_leakage bug class");
   assert.match(prompt, /object_ownership_violation/, "evaluator-move must list Sui object_ownership_violation bug class");
@@ -2229,11 +2229,11 @@ test("Aptos and Sui packs declare the address-disambiguation read tool", () => {
   const { CAPABILITY_PACKS } = require("../mcp/lib/capability-packs.js");
   const aptos = CAPABILITY_PACKS.smart_contract_aptos.verifier.disambiguation;
   assert.ok(aptos, "smart_contract_aptos must declare a disambiguation read");
-  assert.equal(aptos.tool, "bounty_aptos_fetch_module");
+  assert.equal(aptos.tool, "bob_aptos_fetch_module");
   assert.match(aptos.fail_reason, /Aptos|chain_family\/chain_id mismatch/i);
   const sui = CAPABILITY_PACKS.smart_contract_sui.verifier.disambiguation;
   assert.ok(sui, "smart_contract_sui must declare a disambiguation read");
-  assert.equal(sui.tool, "bounty_sui_fetch_package");
+  assert.equal(sui.tool, "bob_sui_fetch_package");
   assert.match(sui.fail_reason, /Sui|chain_family\/chain_id mismatch/i);
   // Brutalist prompt source must require running the disambiguation when
   // the pack declares one — keeps the contract honest at the call site.
@@ -2288,10 +2288,10 @@ test("evaluator-substrate-agent ships with the Substrate / ink! tool surface", (
   const document = readFile(".claude/agents/evaluator-substrate-agent.md");
   const frontmatter = parseFrontmatter(document, "evaluator-substrate-agent.md");
   const tools = frontmatter.tools.split(",").map((tool) => tool.trim());
-  assert.ok(tools.includes("mcp__bountyagent__bounty_substrate_run"), "evaluator-substrate needs substrate_run for PoCs");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_substrate_fetch_storage"), "evaluator-substrate needs substrate_fetch_storage");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_substrate_fetch_runtime"), "evaluator-substrate needs substrate_fetch_runtime");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_record_finding"), "evaluator-substrate needs record_finding");
+  assert.ok(tools.includes("mcp__bountyagent__bob_substrate_run"), "evaluator-substrate needs substrate_run for PoCs");
+  assert.ok(tools.includes("mcp__bountyagent__bob_substrate_fetch_storage"), "evaluator-substrate needs substrate_fetch_storage");
+  assert.ok(tools.includes("mcp__bountyagent__bob_substrate_fetch_runtime"), "evaluator-substrate needs substrate_fetch_runtime");
+  assert.ok(tools.includes("mcp__bountyagent__bob_record_finding"), "evaluator-substrate needs record_finding");
   assert.ok(tools.includes("Write"), "evaluator-substrate needs Write to scaffold ink! tests");
 });
 
@@ -2299,10 +2299,10 @@ test("evaluator-cosmwasm-agent ships with the CosmWasm tool surface", () => {
   const document = readFile(".claude/agents/evaluator-cosmwasm-agent.md");
   const frontmatter = parseFrontmatter(document, "evaluator-cosmwasm-agent.md");
   const tools = frontmatter.tools.split(",").map((tool) => tool.trim());
-  assert.ok(tools.includes("mcp__bountyagent__bounty_cosmwasm_run"), "evaluator-cosmwasm needs cosmwasm_run for PoCs");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_cosmwasm_fetch_contract"), "evaluator-cosmwasm needs cosmwasm_fetch_contract");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_cosmwasm_smart_query"), "evaluator-cosmwasm needs cosmwasm_smart_query");
-  assert.ok(tools.includes("mcp__bountyagent__bounty_record_finding"), "evaluator-cosmwasm needs record_finding");
+  assert.ok(tools.includes("mcp__bountyagent__bob_cosmwasm_run"), "evaluator-cosmwasm needs cosmwasm_run for PoCs");
+  assert.ok(tools.includes("mcp__bountyagent__bob_cosmwasm_fetch_contract"), "evaluator-cosmwasm needs cosmwasm_fetch_contract");
+  assert.ok(tools.includes("mcp__bountyagent__bob_cosmwasm_smart_query"), "evaluator-cosmwasm needs cosmwasm_smart_query");
+  assert.ok(tools.includes("mcp__bountyagent__bob_record_finding"), "evaluator-cosmwasm needs record_finding");
   assert.ok(tools.includes("Write"), "evaluator-cosmwasm needs Write to scaffold cw-multi-test integration tests");
 });
 
@@ -2310,8 +2310,8 @@ test("evaluator-substrate prompt encodes chain_family=substrate branching, sc_ev
   const prompt = readFile("prompts/roles/evaluator-substrate.md");
   assert.match(prompt, /chain_family.*"substrate"|chain_family.*: substrate|substrate.*chain_family/i, "evaluator-substrate must reference chain_family substrate");
   assert.match(prompt, /chain_family: "substrate"/, "evaluator-substrate must instruct chain_family: \"substrate\" in sc_evidence");
-  assert.match(prompt, /bounty_substrate_run/, "evaluator-substrate must document bounty_substrate_run");
-  assert.match(prompt, /bounty_substrate_fetch_storage/, "evaluator-substrate must document bounty_substrate_fetch_storage");
+  assert.match(prompt, /bob_substrate_run/, "evaluator-substrate must document bob_substrate_run");
+  assert.match(prompt, /bob_substrate_fetch_storage/, "evaluator-substrate must document bob_substrate_fetch_storage");
   // Bug class catalog
   assert.match(prompt, /set_code_hash_unauthorized/, "evaluator-substrate must list set_code_hash_unauthorized");
   assert.match(prompt, /caller_spoof/, "evaluator-substrate must list caller_spoof");
@@ -2323,9 +2323,9 @@ test("evaluator-cosmwasm prompt encodes chain_family=cosmwasm branching, sc_evid
   const prompt = readFile("prompts/roles/evaluator-cosmwasm.md");
   assert.match(prompt, /chain_family.*"cosmwasm"|chain_family.*: cosmwasm|cosmwasm.*chain_family/i, "evaluator-cosmwasm must reference chain_family cosmwasm");
   assert.match(prompt, /chain_family: "cosmwasm"/, "evaluator-cosmwasm must instruct chain_family: \"cosmwasm\" in sc_evidence");
-  assert.match(prompt, /bounty_cosmwasm_run/, "evaluator-cosmwasm must document bounty_cosmwasm_run");
-  assert.match(prompt, /bounty_cosmwasm_fetch_contract/, "evaluator-cosmwasm must document bounty_cosmwasm_fetch_contract");
-  assert.match(prompt, /bounty_cosmwasm_smart_query/, "evaluator-cosmwasm must document bounty_cosmwasm_smart_query");
+  assert.match(prompt, /bob_cosmwasm_run/, "evaluator-cosmwasm must document bob_cosmwasm_run");
+  assert.match(prompt, /bob_cosmwasm_fetch_contract/, "evaluator-cosmwasm must document bob_cosmwasm_fetch_contract");
+  assert.match(prompt, /bob_cosmwasm_smart_query/, "evaluator-cosmwasm must document bob_cosmwasm_smart_query");
   // Bug class catalog
   assert.match(prompt, /migrate_msg_open|migrate.*open/i, "evaluator-cosmwasm must list migrate_msg_open");
   assert.match(prompt, /submessage_reply_misuse/, "evaluator-cosmwasm must list submessage_reply_misuse");
@@ -2351,19 +2351,19 @@ test("Substrate and CosmWasm packs declare disambiguation reads", () => {
   // network-resolving call to detect a wrong-network record.
   const { CAPABILITY_PACKS } = require("../mcp/lib/capability-packs.js");
   const sub = CAPABILITY_PACKS.smart_contract_substrate.verifier;
-  assert.equal(sub.replay_tool, "bounty_substrate_run");
+  assert.equal(sub.replay_tool, "bob_substrate_run");
   assert.ok(sub.disambiguation, "substrate pack must declare disambiguation read");
-  assert.equal(sub.disambiguation.tool, "bounty_substrate_fetch_storage");
+  assert.equal(sub.disambiguation.tool, "bob_substrate_fetch_storage");
   assert.match(sub.disambiguation.fail_reason, /Substrate/);
   const cw = CAPABILITY_PACKS.smart_contract_cosmwasm.verifier;
-  assert.equal(cw.replay_tool, "bounty_cosmwasm_run");
+  assert.equal(cw.replay_tool, "bob_cosmwasm_run");
   assert.ok(cw.disambiguation, "cosmwasm pack must declare disambiguation read");
-  assert.equal(cw.disambiguation.tool, "bounty_cosmwasm_fetch_contract");
+  assert.equal(cw.disambiguation.tool, "bob_cosmwasm_fetch_contract");
   assert.match(cw.disambiguation.fail_reason, /CosmWasm/);
   // Rendered brutalist must list these tools via the rendered pack table.
   const brutalistRendered = readFile(".claude/agents/brutalist-verifier.md");
-  assert.match(brutalistRendered, /bounty_substrate_fetch_storage/);
-  assert.match(brutalistRendered, /bounty_cosmwasm_fetch_contract/);
+  assert.match(brutalistRendered, /bob_substrate_fetch_storage/);
+  assert.match(brutalistRendered, /bob_cosmwasm_fetch_contract/);
 });
 
 test("balanced-verifier carries Substrate + CosmWasm severity heuristics", () => {
@@ -2377,8 +2377,8 @@ test("balanced-verifier carries Substrate + CosmWasm severity heuristics", () =>
 
 test("rendered final-verifier carries Substrate + CosmWasm runners and block-reference fields via the pack table", () => {
   const final = readFile(".claude/agents/final-verifier.md");
-  assert.match(final, /bounty_substrate_run/, "rendered final must mention bounty_substrate_run via the pack table");
-  assert.match(final, /bounty_cosmwasm_run/, "rendered final must mention bounty_cosmwasm_run via the pack table");
+  assert.match(final, /bob_substrate_run/, "rendered final must mention bob_substrate_run via the pack table");
+  assert.match(final, /bob_cosmwasm_run/, "rendered final must mention bob_cosmwasm_run via the pack table");
   // Both packs use fork_block_used for the resolved block reference.
   assert.match(final, /fork_block_used/);
   // Source prompt instructs pack-driven dispatch; the per-chain branches are
@@ -2419,13 +2419,13 @@ test("report-writer renders Substrate + CosmWasm address shape, CWE map, and ver
   assert.match(prompt, /never render a gas line for.*Substrate.*CosmWasm|never render a gas line for.*CosmWasm/i, "reporter.md must restrict gas rendering away from Substrate / CosmWasm");
 });
 
-test("bounty_record_finding inputSchema requires sc_evidence sub-fields for SC findings", () => {
+test("bob_record_finding inputSchema requires sc_evidence sub-fields for SC findings", () => {
   // The schema is the contract verifiers depend on. Missing or optional
   // required sub-fields would force verifiers to free-text-parse the PoC,
   // which is exactly the failure mode the structured field exists to
   // prevent.
-  const tool = TOOLS.find((entry) => entry.name === "bounty_record_finding");
-  assert.ok(tool, "bounty_record_finding tool not registered");
+  const tool = TOOLS.find((entry) => entry.name === "bob_record_finding");
+  assert.ok(tool, "bob_record_finding tool not registered");
   const sc = tool.inputSchema.properties.sc_evidence;
   assert.equal(sc.type, "object", "sc_evidence must be an object schema");
   assert.deepEqual(
@@ -2456,7 +2456,7 @@ test("bounty_record_finding inputSchema requires sc_evidence sub-fields for SC f
 test("REPORT phase uses compact session summary instead of root reading report markdown", () => {
   const orchestrator = readFile(".claude/skills/bob-evaluate/SKILL.md");
 
-  assert.match(orchestrator, /After the report writer finishes[\s\S]*bounty_read_session_summary/);
+  assert.match(orchestrator, /After the report writer finishes[\s\S]*bob_read_session_summary/);
   assert.match(orchestrator, /result\.data\.summary\.report\.path/);
   assert.match(orchestrator, /Do not read `report\.md` in the root orchestrator/);
 });
@@ -2464,7 +2464,7 @@ test("REPORT phase uses compact session summary instead of root reading report m
 test("resume instructions continue from MCP summaries and do not rebuild from markdown", () => {
   const orchestrator = readFile(".claude/skills/bob-evaluate/SKILL.md");
 
-  assert.match(orchestrator, /First call `bounty_read_state_summary\(\{ target_domain \}\)`/);
+  assert.match(orchestrator, /First call `bob_read_state_summary\(\{ target_domain \}\)`/);
   assert.match(orchestrator, /do not rebuild resume state from markdown/i);
   assert.match(orchestrator, /handoff markdown/);
 });
@@ -2514,19 +2514,19 @@ test("orchestrator documents deep mode persistence, surface-discovery mode, and 
   assert.match(orchestrator, /argument-hint: .*--normal\|--paranoid\|--yolo/);
   assert.match(orchestrator, /argument-hint: .*--deep/);
   assert.match(orchestrator, /`--deep` enables broader script-heavy seed mapping/);
-  assert.match(orchestrator, /bounty_init_session\(\{ target_domain, target_url, deep_mode, checkpoint_mode, egress_profile, block_internal_hosts, allow_internal_hosts \}\)/);
+  assert.match(orchestrator, /bob_init_session\(\{ target_domain, target_url, deep_mode, checkpoint_mode, egress_profile, block_internal_hosts, allow_internal_hosts \}\)/);
   assert.match(orchestrator, /egress_profile_identity_hash/);
   assert.match(orchestrator, /route\/profile\/source drift fails closed/);
   assert.match(orchestrator, /persisted `state\.deep_mode` keeps deep behavior/);
   assert.match(orchestrator, /deep_mode false: Agent\(subagent_type: "surface-discovery-agent"/);
   assert.match(orchestrator, /deep_mode true: Agent\(subagent_type: "deep-surface-discovery-agent"/);
   assert.doesNotMatch(orchestrator, /MODE=\[normal\|deep\]/);
-  assert.doesNotMatch(orchestrator, /After surface-discovery, in deep mode call `bounty_promote_surface_leads/);
-  assert.match(orchestrator, /bounty_start_next_wave\(\{ target_domain \}\)/);
-  assert.match(orchestrator, /bounty_read_surface_leads\(\{ target_domain, limit: 20 \}\)/);
+  assert.doesNotMatch(orchestrator, /After surface-discovery, in deep mode call `bob_promote_surface_leads/);
+  assert.match(orchestrator, /bob_start_next_wave\(\{ target_domain \}\)/);
+  assert.match(orchestrator, /bob_read_surface_leads\(\{ target_domain, limit: 20 \}\)/);
   assert.match(orchestrator, /Standard wave assignment policy is MCP-owned/);
   assert.match(orchestrator, /normal-path deep lead promotion/);
-  assert.match(orchestrator, /call `bounty_start_next_wave`/);
+  assert.match(orchestrator, /call `bob_start_next_wave`/);
   assert.doesNotMatch(orchestrator, /maximum 8/);
   assert.match(orchestrator, /surface_leads/);
 });
@@ -2541,18 +2541,18 @@ test("orchestrator documents checkpoint modes and MCP-owned traffic/audit/intel/
   assert.match(orchestrator, /If no checkpoint flag is supplied, use `--normal`/);
   assert.match(orchestrator, /persisted `state\.checkpoint_mode` plus `state\.block_internal_hosts`/);
   assert.match(orchestrator, /returned `state\.block_internal_hosts` as the canonical effective value/);
-  assert.match(orchestrator, /bounty_import_http_traffic[\s\S]*traffic\.jsonl/);
-  assert.match(orchestrator, /bounty_http_scan[\s\S]*http-audit\.jsonl/);
+  assert.match(orchestrator, /bob_import_http_traffic[\s\S]*traffic\.jsonl/);
+  assert.match(orchestrator, /bob_http_scan[\s\S]*http-audit\.jsonl/);
   assert.match(orchestrator, /effective `block_internal_hosts`/);
-  assert.match(orchestrator, /bounty_public_intel[\s\S]*public-intel\.json/);
-  assert.match(orchestrator, /bounty_import_static_artifact[\s\S]*static-imports/);
-  assert.match(orchestrator, /bounty_static_scan[\s\S]*static-scan-results\.jsonl/);
+  assert.match(orchestrator, /bob_public_intel[\s\S]*public-intel\.json/);
+  assert.match(orchestrator, /bob_import_static_artifact[\s\S]*static-imports/);
+  assert.match(orchestrator, /bob_static_scan[\s\S]*static-scan-results\.jsonl/);
 });
 
 test("orchestrator handles auto-signup manual fallback through data fallback fields", () => {
   const orchestrator = readFile(".claude/skills/bob-evaluate/SKILL.md");
 
-  assert.match(orchestrator, /bounty_auto_signup/);
+  assert.match(orchestrator, /bob_auto_signup/);
   assert.match(orchestrator, /result\.data\.fallback === "manual"/);
   assert.match(orchestrator, /result\.data\.reason[\s\S]*result\.data\.message/);
 });
@@ -2576,7 +2576,7 @@ test("production CI runs npm test on supported Node versions without browser ins
   assert.doesNotMatch(workflow, /patchright install|install-browser/);
 });
 
-test("bounty_http_scan prompt contracts require target_domain on every call", () => {
+test("bob_http_scan prompt contracts require target_domain on every call", () => {
   const evaluatorPrompt = readFile(".claude/agents/evaluator-agent.md");
   const orchestratorPrompt = readFile(".claude/skills/bob-evaluate/SKILL.md");
   const verifierPrompts = [
@@ -2585,21 +2585,21 @@ test("bounty_http_scan prompt contracts require target_domain on every call", ()
     readFile(".claude/agents/final-verifier.md"),
   ];
 
-  assert.match(evaluatorPrompt, /Every `bounty_http_scan` call must include `target_domain`/);
-  assert.match(evaluatorPrompt, /`bounty_http_scan` with `target_domain`/);
+  assert.match(evaluatorPrompt, /Every `bob_http_scan` call must include `target_domain`/);
+  assert.match(evaluatorPrompt, /`bob_http_scan` with `target_domain`/);
   assert.doesNotMatch(evaluatorPrompt, /different domain than the target[\s\S]{0,160}target_domain/i);
   assert.doesNotMatch(evaluatorPrompt, /cross-domain[\s\S]{0,160}target_domain/i);
 
-  assert.match(orchestratorPrompt, /bounty_http_scan\(\{ target_domain/);
-  assert.match(orchestratorPrompt, /`bounty_http_scan` with `target_domain`/);
-  assert.match(orchestratorPrompt, /bounty_http_scan with target_domain/);
+  assert.match(orchestratorPrompt, /bob_http_scan\(\{ target_domain/);
+  assert.match(orchestratorPrompt, /`bob_http_scan` with `target_domain`/);
+  assert.match(orchestratorPrompt, /bob_http_scan with target_domain/);
   assert.doesNotMatch(orchestratorPrompt, /cross-domain[\s\S]{0,160}target_domain/i);
 
   for (const verifierPrompt of verifierPrompts) {
-    // The contract is that every bounty_http_scan call from a verifier
+    // The contract is that every bob_http_scan call from a verifier
     // carries target_domain and the captured auth_profile — the exact
     // wording can vary.
-    assert.match(verifierPrompt, /`bounty_http_scan`[^\n]*`target_domain`[^\n]*`auth_profile`/);
+    assert.match(verifierPrompt, /`bob_http_scan`[^\n]*`target_domain`[^\n]*`auth_profile`/);
     assert.doesNotMatch(verifierPrompt, /cross-domain[\s\S]{0,160}target_domain/i);
   }
 });
@@ -2616,46 +2616,46 @@ test("evaluator and orchestrator prompts keep the structured handoff contract ex
   assert.match(evaluatorPrompt, /technique_packs\.selected/);
   assert.match(evaluatorPrompt, /technique_packs\.selected` as the primary technique context/);
   assert.match(evaluatorPrompt, /top-level `techniques` and `payload_hints` fields are smaller legacy compatibility summaries/);
-  assert.match(evaluatorPrompt, /bounty_read_technique_pack/);
+  assert.match(evaluatorPrompt, /bob_read_technique_pack/);
   assert.match(evaluatorPrompt, /full_pack_read_limit/);
-  assert.match(evaluatorPrompt, /bounty_log_technique_attempt/);
+  assert.match(evaluatorPrompt, /bob_log_technique_attempt/);
   assert.match(evaluatorPrompt, /Every call requires a valid `status` and non-empty `evidence`; include `outcome` when the attempt has a concrete result/);
-  assert.match(evaluatorPrompt, /completion-status `bounty_log_technique_attempt`/);
+  assert.match(evaluatorPrompt, /completion-status `bob_log_technique_attempt`/);
   assert.match(evaluatorPrompt, /If finalization says the technique-attempt log is missing/);
   assert.match(evaluatorPrompt, /technique-pack-reads\.jsonl/);
   assert.match(evaluatorPrompt, /never write `technique-attempts\.jsonl` or `technique-pack-reads\.jsonl` through Bash/);
-  assert.match(orchestratorPrompt, /bounty_read_assignment_brief\(\{ target_domain:[\s\S]*egress_profile:[\s\S]*block_internal_hosts/);
+  assert.match(orchestratorPrompt, /bob_read_assignment_brief\(\{ target_domain:[\s\S]*egress_profile:[\s\S]*block_internal_hosts/);
   assert.match(orchestratorPrompt, /block_internal_hosts: \[block_internal_hosts\]/);
   assert.doesNotMatch(orchestratorPrompt, /block_internal_hosts: false/);
   assert.match(orchestratorPrompt, /Egress profile: \[egress_profile\]\. Block internal hosts: \[block_internal_hosts\]/);
   assert.match(orchestratorPrompt, /Context budget: \[assignment\.context_budget\]/);
   assert.match(orchestratorPrompt, /technique_packs\.selected/);
   assert.match(orchestratorPrompt, /registry warnings, and small legacy technique summaries/);
-  assert.match(orchestratorPrompt, /bounty_read_technique_pack[\s\S]*bounty_log_technique_attempt/);
+  assert.match(orchestratorPrompt, /bob_read_technique_pack[\s\S]*bob_log_technique_attempt/);
   assert.match(evaluatorPrompt, /Prefer real observed authenticated endpoints from `traffic_summary`/);
   assert.match(evaluatorPrompt, /Log coverage before switching away from a promising traffic-derived endpoint|log coverage before switching away from promising traffic-derived endpoints/i);
   assert.match(orchestratorPrompt, /traffic_summary[\s\S]*audit_summary[\s\S]*circuit_breaker_summary[\s\S]*ranking_summary[\s\S]*intel_hints[\s\S]*static_scan_hints/);
-  assert.match(evaluatorPrompt, /bounty_import_static_artifact[\s\S]*bounty_static_scan/);
+  assert.match(evaluatorPrompt, /bob_import_static_artifact[\s\S]*bob_static_scan/);
   assert.match(evaluatorPrompt, /never pass or scan arbitrary filesystem paths/i);
   assert.match(evaluatorPrompt, /Do not manually create orchestrator-consumed handoff files\./);
-  assert.match(evaluatorPrompt, /bounty_finalize_agent_run/);
+  assert.match(evaluatorPrompt, /bob_finalize_agent_run/);
   assert.match(evaluatorPrompt, /BOB_AGENT_RUN_DONE/);
-  assert.match(orchestratorPrompt, /bounty_finalize_agent_run/);
+  assert.match(orchestratorPrompt, /bob_finalize_agent_run/);
   assert.match(orchestratorPrompt, /Claude `SubagentStop` is only an adapter guardrail/);
   assert.match(orchestratorPrompt, /BOB_AGENT_RUN_DONE/);
   assert.match(evaluatorPrompt, /Durable evaluate state must flow only through MCP tools\./);
-  assert.match(evaluatorPrompt, /bounty_record_surface_leads/);
+  assert.match(evaluatorPrompt, /bob_record_surface_leads/);
   assert.match(evaluatorPrompt, /surface_leads/);
   assert.match(evaluatorPrompt, /surface-leads\.json/);
-  assert.match(evaluatorPrompt, /bounty_log_coverage/);
+  assert.match(evaluatorPrompt, /bob_log_coverage/);
   assert.match(evaluatorPrompt, /never write `coverage\.jsonl` through Bash/);
   assert.match(evaluatorPrompt, /Never create or backfill[\s\S]*technique-attempts\.jsonl[\s\S]*technique-pack-reads\.jsonl[\s\S]*http-audit\.jsonl[\s\S]*traffic\.jsonl[\s\S]*public-intel\.json[\s\S]*static-artifacts\.jsonl[\s\S]*static-scan-results\.jsonl/);
   assert.match(evaluatorPrompt, /status` \(`tested`, `blocked`, `promising`, `needs_auth`, or `requeue`\)/);
   assert.match(orchestratorPrompt, /MCP-owned JSON artifacts are authoritative for orchestration\./);
-  assert.match(orchestratorPrompt, /must never call `bounty_write_wave_handoff`/);
+  assert.match(orchestratorPrompt, /must never call `bob_write_wave_handoff`/);
   assert.match(orchestratorPrompt, /must never synthesize or repair authoritative handoff JSON from markdown or `SESSION_HANDOFF\.md`/);
   assert.match(orchestratorPrompt, /Missing structured handoffs resolve only through `pending` or explicit `force-merge`\./);
-  assert.match(orchestratorPrompt, /bounty_log_coverage/);
+  assert.match(orchestratorPrompt, /bob_log_coverage/);
   assert.match(orchestratorPrompt, /never write `coverage\.jsonl` through Bash/);
   assert.match(orchestratorPrompt, /technique-pack-reads\.jsonl/);
 });
@@ -2709,7 +2709,7 @@ test("public and generated surfaces describe central session authority", () => {
   assert.match(genericPrompt, /`target_domain` as a session selector, not proof\s*of authorization/);
   assert.match(genericPrompt, /Legacy sessions may default presentation or progress\s*fields, but missing or drifted authority fields fail closed/);
   assert.match(
-    TOOLS.find((tool) => tool.name === "bounty_read_tool_telemetry").description,
+    TOOLS.find((tool) => tool.name === "bob_read_tool_telemetry").description,
     /authority decision aggregates/,
   );
   assert.match(generatedSurfaces, /`target_domain` selects the session record; it is not by itself authority/);
@@ -2752,7 +2752,7 @@ test("bob-evaluate routes surfaces during SETUP and spawns returned evaluator ag
     /Agent\(subagent_type: "surface-router-agent", name: "surface-router", prompt: "/,
   );
   assert.match(setupSection, /Domain: \[domain\]\. Session: ~\/bounty-agent-sessions\/\[domain\]\./);
-  assert.match(setupSection, /bounty_route_surfaces\(\{ target_domain: '\[domain\]' \}\) and use \.data/);
+  assert.match(setupSection, /bob_route_surfaces\(\{ target_domain: '\[domain\]' \}\) and use \.data/);
   assert.match(setupSection, /If routing fails or returns zero surfaces, report the error and stop/);
   assert.match(
     setupSection,
@@ -2774,14 +2774,14 @@ test("post-report evidence evaluators are explicit and do not masquerade as wave
   assert.match(orchestratorPrompt, /post-report evidence mode without re-entering `OPEN_FRONTIER`/);
   assert.match(orchestratorPrompt, /BOB_AGENT_RUN_DONE \{"target_domain":"\[domain\]","mode":"evidence"/);
   assert.match(evaluatorPrompt, /Post-report evidence mode is different/);
-  assert.match(evaluatorPrompt, /Do not call `bounty_read_assignment_brief`/);
-  assert.match(evaluatorPrompt, /Do not call `bounty_record_finding`, `bounty_write_wave_handoff`/);
+  assert.match(evaluatorPrompt, /Do not call `bob_read_assignment_brief`/);
+  assert.match(evaluatorPrompt, /Do not call `bob_record_finding`, `bob_write_wave_handoff`/);
   assert.match(evaluatorPrompt, /"mode":"evidence"/);
 });
 
-test("chain.md instructs bounty_write_chain_attempt for every SC pivot with terminal outcomes", () => {
+test("chain.md instructs bob_write_chain_attempt for every SC pivot with terminal outcomes", () => {
   const prompt = readFile("prompts/roles/chain.md");
-  assert.match(prompt, /bounty_write_chain_attempt/, "chain.md must reference bounty_write_chain_attempt");
+  assert.match(prompt, /bob_write_chain_attempt/, "chain.md must reference bob_write_chain_attempt");
   assert.match(prompt, /Terminal chain attempts/i, "chain.md must explain terminal-attempt convention");
   for (const outcome of ["confirmed", "denied", "blocked", "inconclusive", "not_applicable"]) {
     assert.match(prompt, new RegExp(`\`${outcome}\``), `chain.md must enumerate ${outcome} outcome`);
@@ -2801,16 +2801,16 @@ test("evidence-agent dispatches by capability_pack with pack-driven runner workf
   const frontmatter = parseFrontmatter(document, "evidence-agent.md");
   const tools = frontmatter.tools.split(",").map((tool) => tool.trim());
   for (const required of [
-    "mcp__bountyagent__bounty_foundry_run",
-    "mcp__bountyagent__bounty_anchor_run",
-    "mcp__bountyagent__bounty_aptos_run",
-    "mcp__bountyagent__bounty_sui_run",
-    "mcp__bountyagent__bounty_substrate_run",
-    "mcp__bountyagent__bounty_cosmwasm_run",
+    "mcp__bountyagent__bob_foundry_run",
+    "mcp__bountyagent__bob_anchor_run",
+    "mcp__bountyagent__bob_aptos_run",
+    "mcp__bountyagent__bob_sui_run",
+    "mcp__bountyagent__bob_substrate_run",
+    "mcp__bountyagent__bob_cosmwasm_run",
   ]) {
     assert.ok(tools.includes(required), `evidence-agent must include ${required}`);
   }
-  assert.ok(tools.includes("mcp__bountyagent__bounty_http_scan"), "evidence-agent must keep bounty_http_scan for web findings");
+  assert.ok(tools.includes("mcp__bountyagent__bob_http_scan"), "evidence-agent must keep bob_http_scan for web findings");
 
   // Source body instructs pack-driven dispatch and embeds the placeholder.
   const source = readFile("prompts/roles/evidence.md");
@@ -2819,12 +2819,12 @@ test("evidence-agent dispatches by capability_pack with pack-driven runner workf
   // The capability pack registry is the runtime source of truth.
   const { CAPABILITY_PACKS } = require("../mcp/lib/capability-packs.js");
   const familyRunners = {
-    smart_contract_evm: "bounty_foundry_run",
-    smart_contract_svm: "bounty_anchor_run",
-    smart_contract_aptos: "bounty_aptos_run",
-    smart_contract_sui: "bounty_sui_run",
-    smart_contract_substrate: "bounty_substrate_run",
-    smart_contract_cosmwasm: "bounty_cosmwasm_run",
+    smart_contract_evm: "bob_foundry_run",
+    smart_contract_svm: "bob_anchor_run",
+    smart_contract_aptos: "bob_aptos_run",
+    smart_contract_sui: "bob_sui_run",
+    smart_contract_substrate: "bob_substrate_run",
+    smart_contract_cosmwasm: "bob_cosmwasm_run",
   };
   for (const [packId, runner] of Object.entries(familyRunners)) {
     assert.equal(CAPABILITY_PACKS[packId].evidence.runner, runner, `pack ${packId} must route to ${runner}`);
@@ -2850,27 +2850,27 @@ test("agent-run-completion.js exports evidence-mode helpers (post-merge refactor
 
 test("SC tools register evidence role bundle so evidence-agent can re-run family runners", () => {
   const expected = [
-    "bounty_foundry_run",
-    "bounty_halmos_run",
-    "bounty_anchor_run",
-    "bounty_aptos_run",
-    "bounty_sui_run",
-    "bounty_substrate_run",
-    "bounty_cosmwasm_run",
-    "bounty_evm_call",
-    "bounty_evm_storage_read",
-    "bounty_evm_fetch_source",
-    "bounty_evm_role_table",
-    "bounty_svm_fetch_account",
-    "bounty_svm_fetch_program",
-    "bounty_aptos_fetch_resource",
-    "bounty_aptos_fetch_module",
-    "bounty_sui_fetch_object",
-    "bounty_sui_fetch_package",
-    "bounty_substrate_fetch_storage",
-    "bounty_substrate_fetch_runtime",
-    "bounty_cosmwasm_fetch_contract",
-    "bounty_cosmwasm_smart_query",
+    "bob_foundry_run",
+    "bob_halmos_run",
+    "bob_anchor_run",
+    "bob_aptos_run",
+    "bob_sui_run",
+    "bob_substrate_run",
+    "bob_cosmwasm_run",
+    "bob_evm_call",
+    "bob_evm_storage_read",
+    "bob_evm_fetch_source",
+    "bob_evm_role_table",
+    "bob_svm_fetch_account",
+    "bob_svm_fetch_program",
+    "bob_aptos_fetch_resource",
+    "bob_aptos_fetch_module",
+    "bob_sui_fetch_object",
+    "bob_sui_fetch_package",
+    "bob_substrate_fetch_storage",
+    "bob_substrate_fetch_runtime",
+    "bob_cosmwasm_fetch_contract",
+    "bob_cosmwasm_smart_query",
   ];
   for (const name of expected) {
     const meta = TOOL_MANIFEST[name];

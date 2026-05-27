@@ -316,7 +316,7 @@ function logDeadEnds(args) {
           dead_end_count: deadEnds.length,
           waf_blocked_count: wafBlocked.length,
         },
-        source: { artifact: "live-dead-ends.jsonl", tool: "bounty_log_dead_ends" },
+        source: { artifact: "live-dead-ends.jsonl", tool: "bob_log_dead_ends" },
       });
       scheduleMaterialization(domain);
     } catch {

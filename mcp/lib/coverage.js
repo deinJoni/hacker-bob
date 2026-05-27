@@ -281,7 +281,7 @@ function logCoverage(args) {
       agent,
       surface_id: surfaceId,
       status: "logged",
-      source: "bounty_log_coverage",
+      source: "bob_log_coverage",
       counts: {
         records: records.length,
         ...statuses,
@@ -308,7 +308,7 @@ function logCoverage(args) {
           requeue: records.filter((record) => record.status === "requeue").length,
           needs_auth: records.filter((record) => record.status === "needs_auth").length,
         },
-        source: { artifact: "coverage.jsonl", tool: "bounty_log_coverage" },
+        source: { artifact: "coverage.jsonl", tool: "bob_log_coverage" },
       });
       scheduleMaterialization(domain);
     } catch {

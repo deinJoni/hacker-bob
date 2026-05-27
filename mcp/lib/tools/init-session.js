@@ -3,7 +3,8 @@
 const { initSession } = require("../session-state.js");
 
 module.exports = Object.freeze({
-  name: "bounty_init_session",
+  name: "bob_init_session",
+  aliases: ["bounty_init_session"],
   description:
     "Initialize a new session state.json for a target domain.",
   inputSchema: {

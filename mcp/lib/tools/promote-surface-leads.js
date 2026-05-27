@@ -3,7 +3,8 @@
 const { promoteSurfaceLeads } = require("../surface-leads.js");
 
 module.exports = Object.freeze({
-  name: "bounty_promote_surface_leads",
+  name: "bob_promote_surface_leads",
+  aliases: ["bounty_promote_surface_leads"],
   description:
     "Promote top-ranked entries from surface-leads.json into attack_surface.json and session lead_surface_ids so later waves can assign them.",
   inputSchema: {

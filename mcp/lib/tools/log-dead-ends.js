@@ -3,7 +3,8 @@
 const { logDeadEnds } = require("../waves.js");
 
 module.exports = Object.freeze({
-  name: "bounty_log_dead_ends",
+  name: "bob_log_dead_ends",
+  aliases: ["bounty_log_dead_ends"],
   description:
     "Append dead ends and WAF-blocked endpoints discovered so far. Call periodically (~every 30 turns) so terrain survives if the evaluator hits maxTurns. Validated against wave assignments.",
   inputSchema: {

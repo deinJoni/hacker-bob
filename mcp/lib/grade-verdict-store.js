@@ -374,7 +374,7 @@ function writeGradeVerdict(args) {
   safeAppendPipelineEventDirect(domain, "grade_written", {
     phase: "GRADE",
     status: verdict,
-    source: "bounty_write_grade_verdict",
+    source: "bob_write_grade_verdict",
     claim_freeze_id: claimFreezeId,
     counts: {
       findings: findings.length,

@@ -28,7 +28,8 @@ const LEAD_SCHEMA = {
 };
 
 module.exports = Object.freeze({
-  name: "bounty_record_surface_leads",
+  name: "bob_record_surface_leads",
+  aliases: ["bounty_record_surface_leads"],
   description:
     "Append compact discovered attack-surface leads to session-owned surface-leads.json for later promotion into wave-assignable surfaces.",
   inputSchema: {
