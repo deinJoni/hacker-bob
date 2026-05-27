@@ -718,16 +718,17 @@ test("bob-spec loader is wired into the evaluator brief", () => {
 
 test("bountyagent skill stays orchestration-sized and preserves FSM shape", () => {
   const orchestrator = readFile(".claude/skills/bob-evaluate/SKILL.md");
-  // Line cap is 361: web orchestration plus the EVM/SVM/Move/Substrate/
+  // Line cap is 362: web orchestration plus the EVM/SVM/Move/Substrate/
   // CosmWasm spawn templates fit, plus the post-v2 capability tool surface
   // (C2 doc-vs-behavior, C4 multi-account, I1 surface graph, I6 findings index,
   // I7 chain state tree, IP4 audit reports + I5 invariant templates, X3 + X5
-  // observability/eval) plus bob_advance_session for the G.2 lifecycle tool.
+  // observability/eval) plus bob_advance_session for the G.2 lifecycle tool
+  // and bob_append_frontier_event for the F.1 frontier ledger producer.
   // No future chain pack may bump this cap; instead, extract per-family
   // spawn details to separate skill files (e.g., bob-spawn-substrate.md,
   // bob-spawn-cosmwasm.md) and reference them from this orchestrator skill
   // via @-includes or short cross-links.
-  assert.ok(lineCount(".claude/skills/bob-evaluate/SKILL.md") <= 361, "bountyagent skill is too large");
+  assert.ok(lineCount(".claude/skills/bob-evaluate/SKILL.md") <= 362, "bountyagent skill is too large");
   assert.match(orchestrator, /SURFACE_DISCOVERY\s*→\s*AUTH\s*→\s*EVALUATE\s*→\s*CHAIN\s*→\s*VERIFY\s*→\s*GRADE\s*→\s*REPORT/);
   for (const phase of ["SURFACE_DISCOVERY", "AUTH", "EVALUATE", "CHAIN", "VERIFY", "GRADE", "REPORT", "EXPLORE"]) {
     assert.match(orchestrator, new RegExp(`PHASE [0-9]+: ${phase}|${phase}`), `missing ${phase}`);

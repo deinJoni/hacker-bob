@@ -73,6 +73,9 @@ const {
   summarizeTrafficRecords,
 } = require("./http-records.js");
 const {
+  appendFrontierEvent,
+} = require("./frontier-events.js");
+const {
   ERROR_CODES,
   ToolError,
 } = require("./envelope.js");
@@ -1036,6 +1039,9 @@ function logDeadEnds(args) {
   return withSessionLock(domain, () => {
     validateAssignedWaveAgentSurface(domain, wave, agent, surfaceId);
 
+    // LEGACY: removed in Plane D — live-dead-ends-w*-a*.jsonl plus
+    // state.terminally_blocked remain during dual-write; F.3 makes the frontier
+    // ledger projection the authoritative blocker truth.
     const logPath = liveDeadEndsJsonlPath(domain, wave, agent);
     const record = {
       ts: new Date().toISOString(),
@@ -1044,6 +1050,27 @@ function logDeadEnds(args) {
       waf_blocked_endpoints: wafBlocked,
     };
     appendJsonlLine(logPath, record);
+
+    // Dual-write per Pact P2: dead ends and WAF blocks are blocker signals.
+    // Emit one blocker.asserted event per batch so F.3 can fold the projection.
+    try {
+      appendFrontierEvent({
+        target_domain: domain,
+        kind: "blocker.asserted",
+        surface_id: surfaceId,
+        payload: {
+          wave,
+          agent,
+          dead_ends: deadEnds,
+          waf_blocked_endpoints: wafBlocked,
+          dead_end_count: deadEnds.length,
+          waf_blocked_count: wafBlocked.length,
+        },
+        source: { artifact: "live-dead-ends.jsonl", tool: "bounty_log_dead_ends" },
+      });
+    } catch {
+      // Frontier ledger is dual-write best-effort during the deprecation window.
+    }
 
     return JSON.stringify({
       appended: deadEnds.length + wafBlocked.length,

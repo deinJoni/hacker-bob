@@ -37,6 +37,9 @@ const {
   appendSessionEvent,
 } = require("./session-events.js");
 const {
+  appendFrontierEvent,
+} = require("./frontier-events.js");
+const {
   evaluateLifecycleTransition,
 } = require("./lifecycle-gates.js");
 const {
@@ -270,6 +273,9 @@ function initSession(args) {
       egressProfile,
       blockInternalHostsPolicy: sessionNucleus.scope_policy,
     });
+    // LEGACY: removed in Plane D — state.json keeps the SURFACE_DISCOVERY phase
+    // shape so the legacy phase machine and waves planner still function during
+    // the dual-write window.
     writeFileAtomic(filePath, `${JSON.stringify(state, null, 2)}\n`);
     safeAppendPipelineEventDirect(domain, "session_started", {
       phase: state.phase,
@@ -280,6 +286,34 @@ function initSession(args) {
       block_internal_hosts_source: state.block_internal_hosts_source,
       ...egressFields,
     }, buildGovernanceContextFromNucleus(sessionNucleus));
+
+    // Frontier ledger: capture the same seeds that flow into attack_surface.json
+    // (target_domain, target_url, scope-policy notes) as a session.seeded event
+    // so the frontier projection can replay the bootstrap.
+    try {
+      appendFrontierEvent({
+        target_domain: domain,
+        kind: "session.seeded",
+        payload: {
+          seed_surface_map: {
+            target_domain: domain,
+            target_url: targetUrl,
+            in_scope: [{ target_domain: domain, target_url: targetUrl }],
+            out_of_scope: [],
+            notes: {
+              deep_mode: state.deep_mode,
+              checkpoint_mode: state.checkpoint_mode,
+              block_internal_hosts: state.block_internal_hosts,
+              block_internal_hosts_source: state.block_internal_hosts_source,
+            },
+          },
+          nucleus_hash: sessionNucleus.nucleus_hash,
+        },
+        source: { artifact: "session-nucleus.json", tool: "bounty_init_session" },
+      });
+    } catch {
+      // Frontier ledger is dual-write best-effort during the deprecation window.
+    }
 
     return JSON.stringify({
       version: 1,

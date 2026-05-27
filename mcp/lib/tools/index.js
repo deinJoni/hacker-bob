@@ -107,6 +107,7 @@ const TOOL_MODULES = Object.freeze([
   require("./promote-surface-leads.js"),
   require("./build-surface-graph.js"),
   require("./query-surface-graph.js"),
+  require("./append-frontier-event.js"),
 ]);
 
 module.exports = {

@@ -27,6 +27,9 @@ const {
   priorityFromScore,
   priorityRank,
 } = require("./ranking.js");
+const {
+  appendFrontierEvent,
+} = require("./frontier-events.js");
 
 const LEAD_CONFIDENCE_VALUES = ["high", "medium", "low"];
 const LEAD_STATUS_VALUES = ["new", "promoted", "dismissed"];
@@ -222,6 +225,7 @@ function recordSurfaceLeadsInternal(domain, leads, context = {}) {
   const document = readSurfaceLeadsDocument(domain);
   const byKey = new Map(document.leads.map((lead) => [lead.key, lead]));
   const leadIds = [];
+  const ledgerEntries = [];
   let recorded = 0;
   for (const leadInput of leads) {
     const incoming = normalizeSurfaceLead(leadInput, context);
@@ -232,6 +236,7 @@ function recordSurfaceLeadsInternal(domain, leads, context = {}) {
       document.leads[index] = merged;
       byKey.set(merged.key, merged);
       leadIds.push(merged.id);
+      ledgerEntries.push(merged);
       continue;
     }
     const lead = {
@@ -242,9 +247,39 @@ function recordSurfaceLeadsInternal(domain, leads, context = {}) {
     document.leads.push(lead);
     byKey.set(lead.key, lead);
     leadIds.push(lead.id);
+    ledgerEntries.push(lead);
     recorded += 1;
   }
+  // LEGACY: removed in Plane D — surface-leads.json is the legacy projection;
+  // frontier-events.jsonl is the append-only authority after F.2 materializes it.
   const filePath = writeSurfaceLeadsDocument(domain, document);
+  // Dual-write per Pact P2: every recorded/merged lead also appends a
+  // frontier.enqueued event so the frontier projection sees the same surface
+  // intake the legacy store does.
+  for (const lead of ledgerEntries) {
+    try {
+      appendFrontierEvent({
+        target_domain: domain,
+        kind: "frontier.enqueued",
+        payload: {
+          lead_id: lead.id,
+          surface_ref: lead.source_surface_id || lead.promoted_surface_id || null,
+          score: lead.score,
+          priority: lead.priority,
+          confidence: lead.confidence,
+          provenance: {
+            source: lead.source,
+            source_wave: lead.source_wave,
+            source_agent: lead.source_agent,
+            source_surface_id: lead.source_surface_id,
+          },
+        },
+        source: { artifact: "surface-leads.json", tool: "bounty_record_surface_leads" },
+      });
+    } catch {
+      // Frontier ledger is dual-write best-effort during the deprecation window.
+    }
+  }
   return {
     recorded,
     total: document.leads.length,
@@ -391,8 +426,39 @@ function promoteSurfaceLeadsInternal(domain, options = {}) {
     }
   }
 
+  // LEGACY: removed in Plane D — attack_surface.json is the legacy projection.
+  // surface-index.json (F.2) becomes authoritative; surface.observed events here
+  // populate the frontier projection that the materializer folds.
   writeFileAtomic(attackSurfacePath(domain), `${JSON.stringify(attackSurface, null, 2)}\n`);
   writeSurfaceLeadsDocument(domain, document);
+
+  // Dual-write per Pact P2: each promoted lead becomes a surface in the legacy
+  // projection AND a surface.observed event in the frontier ledger.
+  for (let i = 0; i < candidates.length; i += 1) {
+    const lead = candidates[i];
+    const surfaceId = promotedSurfaceIds[i];
+    try {
+      appendFrontierEvent({
+        target_domain: domain,
+        kind: "surface.observed",
+        surface_id: surfaceId,
+        payload: {
+          surface_type: lead.surface_type || "unknown",
+          title: lead.title,
+          hosts: lead.hosts,
+          endpoints: lead.endpoints,
+          priority: lead.priority,
+          score: lead.score,
+          confidence: lead.confidence,
+          labels: ["promoted_surface_lead", lead.confidence ? `confidence:${lead.confidence}` : null].filter(Boolean),
+          lead_id: lead.id,
+        },
+        source: { artifact: "attack_surface.json", tool: "bounty_promote_surface_leads" },
+      });
+    } catch {
+      // Frontier ledger is dual-write best-effort during the deprecation window.
+    }
+  }
 
   if (updateState) {
     try {

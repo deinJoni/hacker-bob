@@ -33,6 +33,9 @@ const {
 const {
   safeGovernanceContextForDomain,
 } = require("./governance-context.js");
+const {
+  appendFrontierEvent,
+} = require("./frontier-events.js");
 
 function normalizeCoverageRecord(record, { expectedDomain = null, lineNumber = null } = {}) {
   if (record == null || typeof record !== "object" || Array.isArray(record)) {
@@ -262,6 +265,9 @@ function logCoverage(args) {
   }, { expectedDomain: domain }));
 
   return withSessionLock(domain, () => {
+    // LEGACY: removed in Plane D — coverage.jsonl plus the state.explored array
+    // remain during dual-write; the frontier projection (F.3 closures/blockers)
+    // takes over once Plane D ships.
     appendJsonlLines(logPath, records, { maxRecords: COVERAGE_LOG_MAX_RECORDS });
     const statuses = COVERAGE_STATUS_VALUES.reduce((result, status) => {
       result[status] = records.filter((record) => record.status === status).length;
@@ -278,6 +284,32 @@ function logCoverage(args) {
         ...statuses,
       },
     }, safeGovernanceContextForDomain(domain));
+
+    // Dual-write per Pact P2: a coverage log entry is a closure signal for the
+    // surface (the agent declares a probe path was exercised). Emit one
+    // closure.recorded event capturing the batch; F.3 will fold these into
+    // currentClosures(domain).
+    try {
+      appendFrontierEvent({
+        target_domain: domain,
+        kind: "closure.recorded",
+        surface_id: surfaceId,
+        payload: {
+          wave,
+          agent,
+          records: records.length,
+          statuses,
+          tested: records.filter((record) => record.status === "tested").length,
+          blocked: records.filter((record) => record.status === "blocked").length,
+          promising: records.filter((record) => record.status === "promising").length,
+          requeue: records.filter((record) => record.status === "requeue").length,
+          needs_auth: records.filter((record) => record.status === "needs_auth").length,
+        },
+        source: { artifact: "coverage.jsonl", tool: "bounty_log_coverage" },
+      });
+    } catch {
+      // Frontier ledger is dual-write best-effort during the deprecation window.
+    }
 
     return JSON.stringify({
       appended: records.length,

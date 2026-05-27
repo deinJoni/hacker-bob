@@ -45,6 +45,9 @@ const {
 const {
   blockInternalHostsRequestPolicy,
 } = require("./session-state-store.js");
+const {
+  appendFrontierEvent,
+} = require("./frontier-events.js");
 
 function normalizeHttpAuditRecord(record, { expectedDomain = null, lineNumber = null } = {}) {
   if (record == null || typeof record !== "object" || Array.isArray(record)) {
@@ -694,12 +697,42 @@ function importHttpTraffic(args, { rankAttackSurfaces = null } = {}) {
       records.push(record);
     }
 
+    // LEGACY: removed in Plane D — traffic.jsonl remains during dual-write;
+    // surface-index.json (F.2) and frontier-events.jsonl carry the authoritative
+    // observation truth after Plane D ships.
     const logPath = trafficJsonlPath(domain);
     appendJsonlLines(logPath, records, { maxRecords: TRAFFIC_LOG_MAX_RECORDS });
     if (rankAttackSurfaces) {
       try {
         rankAttackSurfaces(domain);
       } catch {}
+    }
+
+    // Dual-write per Pact P2: imported traffic is a surface-shaping observation
+    // event; emit one observation.recorded per batch import (not per row, to
+    // keep the ledger bounded).
+    if (records.length > 0) {
+      try {
+        const hosts = Array.from(new Set(records.map((record) => record.host).filter(Boolean))).slice(0, 20);
+        const methods = Array.from(new Set(records.map((record) => record.method).filter(Boolean))).sort();
+        appendFrontierEvent({
+          target_domain: domain,
+          kind: "observation.recorded",
+          payload: {
+            observation_kind: "http_traffic_imported",
+            source,
+            records: records.length,
+            duplicates: duplicateCount,
+            rejected: rejected.length,
+            authenticated_records: records.filter((record) => record.has_auth).length,
+            hosts,
+            methods,
+          },
+          source: { artifact: "traffic.jsonl", tool: "bounty_import_http_traffic" },
+        });
+      } catch {
+        // Frontier ledger is dual-write best-effort during the deprecation window.
+      }
     }
 
     return JSON.stringify({
