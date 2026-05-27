@@ -285,7 +285,7 @@ function recordFinding(args) {
       agent,
       surface_id: surfaceId,
       status: finding.severity,
-      source: "bob_record_finding",
+      source: "bob_record_candidate_claim",
       counts: {
         findings: scan.total + 1,
         validated: finding.validated ? 1 : 0,
@@ -316,7 +316,7 @@ function recordFinding(args) {
         agent,
         surface_id: surfaceId,
         status: finding.severity,
-        source: "bob_record_finding",
+        source: "bob_record_candidate_claim",
         counts: {
           findings: scan.total + 1,
           validated: finding.validated ? 1 : 0,

@@ -15,7 +15,7 @@ allowed-tools:
   - mcp__bountyagent__bob_read_state_summary
   - mcp__bountyagent__bob_wave_status
   - mcp__bountyagent__bob_read_wave_handoffs
-  - mcp__bountyagent__bob_read_findings
+  - mcp__bountyagent__bob_read_candidate_claims
   - mcp__bountyagent__bob_read_verification_context
   - mcp__bountyagent__bob_read_verification_round
   - mcp__bountyagent__bob_read_evidence_packs
@@ -63,7 +63,7 @@ closed for tools that rely on them.
 
 Then use the following only if needed for concise status fields:
 - `bob_read_wave_handoffs({ target_domain })` when a wave is pending or wave health is unclear.
-- `bob_read_findings({ target_domain })` for finding IDs/severity counts when analytics is incomplete.
+- `bob_read_candidate_claims({ target_domain })` for finding IDs/severity counts when analytics is incomplete.
 - `bob_read_verification_round({ target_domain, round: "final" })` for reportable survivor count when `bob_read_verification_context` does not already provide enough status.
 - `bob_read_grade_verdict({ target_domain })` for grade verdict and report readiness.
 

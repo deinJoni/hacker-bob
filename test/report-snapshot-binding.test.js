@@ -26,7 +26,7 @@ const path = require("path");
 
 const finalizeReportTool = require("../mcp/lib/tools/finalize-report.js");
 const reportWrittenTool = require("../mcp/lib/tools/report-written.js");
-const recordFindingTool = require("../mcp/lib/tools/record-finding.js");
+const recordFindingTool = require("../mcp/lib/tools/record-candidate-claim.js");
 const {
   buildClaimFreeze,
   readCurrentClaimFreeze,

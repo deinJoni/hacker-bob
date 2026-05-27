@@ -410,7 +410,7 @@ test("evaluator frontmatter excludes Write and still exposes wave handoff MCP to
   assert.ok(tools.includes("Bash"));
   assert.ok(tools.includes("mcp__bountyagent__bob_write_wave_handoff"));
   assert.ok(tools.includes("mcp__bountyagent__bob_finalize_agent_run"));
-  assert.ok(tools.includes("mcp__bountyagent__bob_record_finding"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_record_candidate_claim"));
   assert.ok(tools.includes("mcp__bountyagent__bob_list_auth_profiles"));
   assert.ok(tools.includes("mcp__bountyagent__bob_log_coverage"));
   assert.ok(tools.includes("mcp__bountyagent__bob_read_http_audit"));
@@ -641,7 +641,7 @@ test("evaluator-evm-agent ships with the EVM tool surface and SC anti-stop rule"
   assert.ok(tools.includes("mcp__bountyagent__bob_foundry_run"));
   assert.ok(tools.includes("mcp__bountyagent__bob_write_wave_handoff"));
   assert.ok(tools.includes("mcp__bountyagent__bob_finalize_agent_run"));
-  assert.ok(tools.includes("mcp__bountyagent__bob_record_finding"));
+  assert.ok(tools.includes("mcp__bountyagent__bob_record_candidate_claim"));
 
   assert.match(document, /surface_type[^\n]*smart_contract/i);
   assert.match(document, /bob_evm_fetch_source/);
@@ -824,7 +824,7 @@ test("evidence-agent exists, is MCP-only, and cannot mutate unrelated artifacts"
   const requiredCore = [
     "mcp__bountyagent__bob_http_scan",
     "mcp__bountyagent__bob_read_http_audit",
-    "mcp__bountyagent__bob_read_findings",
+    "mcp__bountyagent__bob_read_candidate_claims",
     "mcp__bountyagent__bob_read_verification_context",
     "mcp__bountyagent__bob_read_verification_round",
     "mcp__bountyagent__bob_write_evidence_packs",
@@ -841,7 +841,7 @@ test("evidence-agent exists, is MCP-only, and cannot mutate unrelated artifacts"
   }
   assert.match(document, /final reportable findings only/);
   assert.match(document, /bob_write_evidence_packs/);
-  assert.doesNotMatch(frontmatter.tools, /Bash|Write|bob_record_finding|bob_write_wave_handoff|bob_write_grade_verdict/);
+  assert.doesNotMatch(frontmatter.tools, /Bash|Write|bob_record_candidate_claim|bob_record_finding|bob_write_wave_handoff|bob_write_grade_verdict/);
   assert.doesNotMatch(frontmatter.tools, /bob_write_chain_attempt|bounty_transition_phase/);
 });
 
@@ -1002,7 +1002,7 @@ test("bountyagentstatus skill is compact, read-only, and points to next commands
     "mcp__bountyagent__bob_finalize_agent_run",
     "mcp__bountyagent__bob_write_verification_round",
     "mcp__bountyagent__bob_write_grade_verdict",
-    "mcp__bountyagent__bob_record_finding",
+    "mcp__bountyagent__bob_record_candidate_claim",
     "mcp__bountyagent__bob_http_scan",
     "mcp__bountyagent__bob_import_http_traffic",
     "mcp__bountyagent__bob_public_intel",
@@ -1072,7 +1072,7 @@ test("bountyagentdebug skill allowed-tools are read-only and exclude mutators", 
     "mcp__bountyagent__bob_read_state_summary",
     "mcp__bountyagent__bob_wave_status",
     "mcp__bountyagent__bob_read_wave_handoffs",
-    "mcp__bountyagent__bob_read_findings",
+    "mcp__bountyagent__bob_read_candidate_claims",
     "mcp__bountyagent__bob_read_verification_round",
     "mcp__bountyagent__bob_read_grade_verdict",
   ];
@@ -1090,7 +1090,7 @@ test("bountyagentdebug skill allowed-tools are read-only and exclude mutators", 
     "mcp__bountyagent__bob_finalize_agent_run",
     "mcp__bountyagent__bob_write_verification_round",
     "mcp__bountyagent__bob_write_grade_verdict",
-    "mcp__bountyagent__bob_record_finding",
+    "mcp__bountyagent__bob_record_candidate_claim",
     "mcp__bountyagent__bob_http_scan",
     "mcp__bountyagent__bob_import_http_traffic",
     "mcp__bountyagent__bob_public_intel",
@@ -1845,7 +1845,7 @@ test("verifier role bundle has only documented mutating tools and no orchestrati
     "Only evm-fetch-source, http_scan, and write-verification-round may be mutating in the verifier bundle. New mutating tools must be reviewed before joining verifier role.",
   );
   const forbidden = [
-    "bob_record_finding",
+    "bob_record_candidate_claim",
     "bob_write_wave_handoff",
     "bob_finalize_agent_run",
     "bob_log_coverage",
@@ -2064,7 +2064,7 @@ test("evaluator-svm-agent ships with the SVM tool surface", () => {
   assert.ok(tools.includes("mcp__bountyagent__bob_svm_fetch_account"), "evaluator-svm needs svm_fetch_account");
   assert.ok(tools.includes("mcp__bountyagent__bob_svm_fetch_program"), "evaluator-svm needs svm_fetch_program for upgrade authority");
   assert.ok(tools.includes("mcp__bountyagent__bob_anchor_run"), "evaluator-svm needs anchor_run for PoCs");
-  assert.ok(tools.includes("mcp__bountyagent__bob_record_finding"), "evaluator-svm needs record_finding");
+  assert.ok(tools.includes("mcp__bountyagent__bob_record_candidate_claim"), "evaluator-svm needs record_candidate_claim");
   assert.ok(tools.includes("Write"), "evaluator-svm needs Write to scaffold Anchor tests");
 });
 
@@ -2176,7 +2176,7 @@ test("evaluator-move-agent ships with the Move tool surface", () => {
   assert.ok(tools.includes("mcp__bountyagent__bob_sui_fetch_object"), "evaluator-move needs sui_fetch_object");
   assert.ok(tools.includes("mcp__bountyagent__bob_sui_fetch_package"), "evaluator-move needs sui_fetch_package");
   assert.ok(tools.includes("mcp__bountyagent__bob_sui_run"), "evaluator-move needs sui_run for PoCs");
-  assert.ok(tools.includes("mcp__bountyagent__bob_record_finding"), "evaluator-move needs record_finding");
+  assert.ok(tools.includes("mcp__bountyagent__bob_record_candidate_claim"), "evaluator-move needs record_candidate_claim");
   assert.ok(tools.includes("Write"), "evaluator-move needs Write to scaffold Move tests");
 });
 
@@ -2291,7 +2291,7 @@ test("evaluator-substrate-agent ships with the Substrate / ink! tool surface", (
   assert.ok(tools.includes("mcp__bountyagent__bob_substrate_run"), "evaluator-substrate needs substrate_run for PoCs");
   assert.ok(tools.includes("mcp__bountyagent__bob_substrate_fetch_storage"), "evaluator-substrate needs substrate_fetch_storage");
   assert.ok(tools.includes("mcp__bountyagent__bob_substrate_fetch_runtime"), "evaluator-substrate needs substrate_fetch_runtime");
-  assert.ok(tools.includes("mcp__bountyagent__bob_record_finding"), "evaluator-substrate needs record_finding");
+  assert.ok(tools.includes("mcp__bountyagent__bob_record_candidate_claim"), "evaluator-substrate needs record_candidate_claim");
   assert.ok(tools.includes("Write"), "evaluator-substrate needs Write to scaffold ink! tests");
 });
 
@@ -2302,7 +2302,7 @@ test("evaluator-cosmwasm-agent ships with the CosmWasm tool surface", () => {
   assert.ok(tools.includes("mcp__bountyagent__bob_cosmwasm_run"), "evaluator-cosmwasm needs cosmwasm_run for PoCs");
   assert.ok(tools.includes("mcp__bountyagent__bob_cosmwasm_fetch_contract"), "evaluator-cosmwasm needs cosmwasm_fetch_contract");
   assert.ok(tools.includes("mcp__bountyagent__bob_cosmwasm_smart_query"), "evaluator-cosmwasm needs cosmwasm_smart_query");
-  assert.ok(tools.includes("mcp__bountyagent__bob_record_finding"), "evaluator-cosmwasm needs record_finding");
+  assert.ok(tools.includes("mcp__bountyagent__bob_record_candidate_claim"), "evaluator-cosmwasm needs record_candidate_claim");
   assert.ok(tools.includes("Write"), "evaluator-cosmwasm needs Write to scaffold cw-multi-test integration tests");
 });
 
@@ -2419,13 +2419,13 @@ test("report-writer renders Substrate + CosmWasm address shape, CWE map, and ver
   assert.match(prompt, /never render a gas line for.*Substrate.*CosmWasm|never render a gas line for.*CosmWasm/i, "reporter.md must restrict gas rendering away from Substrate / CosmWasm");
 });
 
-test("bob_record_finding inputSchema requires sc_evidence sub-fields for SC findings", () => {
+test("bob_record_candidate_claim inputSchema requires sc_evidence sub-fields for SC findings", () => {
   // The schema is the contract verifiers depend on. Missing or optional
   // required sub-fields would force verifiers to free-text-parse the PoC,
   // which is exactly the failure mode the structured field exists to
   // prevent.
-  const tool = TOOLS.find((entry) => entry.name === "bob_record_finding");
-  assert.ok(tool, "bob_record_finding tool not registered");
+  const tool = TOOLS.find((entry) => entry.name === "bob_record_candidate_claim");
+  assert.ok(tool, "bob_record_candidate_claim tool not registered");
   const sc = tool.inputSchema.properties.sc_evidence;
   assert.equal(sc.type, "object", "sc_evidence must be an object schema");
   assert.deepEqual(
@@ -2775,7 +2775,7 @@ test("post-report evidence evaluators are explicit and do not masquerade as wave
   assert.match(orchestratorPrompt, /BOB_AGENT_RUN_DONE \{"target_domain":"\[domain\]","mode":"evidence"/);
   assert.match(evaluatorPrompt, /Post-report evidence mode is different/);
   assert.match(evaluatorPrompt, /Do not call `bob_read_assignment_brief`/);
-  assert.match(evaluatorPrompt, /Do not call `bob_record_finding`, `bob_write_wave_handoff`/);
+  assert.match(evaluatorPrompt, /Do not call `bob_record_candidate_claim`, `bob_write_wave_handoff`/);
   assert.match(evaluatorPrompt, /"mode":"evidence"/);
 });
 

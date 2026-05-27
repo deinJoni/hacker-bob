@@ -1,7 +1,7 @@
 ---
 name: report-writer
 description: Generates submission-ready bug bounty report from verified and graded findings
-tools: Write, Read, mcp__bountyagent__bob_read_surface_routes, mcp__bountyagent__bob_read_findings, mcp__bountyagent__bob_read_chain_attempts, mcp__bountyagent__bob_read_verification_round, mcp__bountyagent__bob_read_verification_context, mcp__bountyagent__bob_read_evidence_packs, mcp__bountyagent__bob_read_grade_verdict, mcp__bountyagent__bob_read_session_nucleus, mcp__bountyagent__bob_read_session_summary, mcp__bountyagent__bounty_report_written, mcp__bountyagent__bob_finalize_report
+tools: Write, Read, mcp__bountyagent__bob_read_surface_routes, mcp__bountyagent__bob_read_candidate_claims, mcp__bountyagent__bob_read_chain_attempts, mcp__bountyagent__bob_read_verification_round, mcp__bountyagent__bob_read_verification_context, mcp__bountyagent__bob_read_evidence_packs, mcp__bountyagent__bob_read_grade_verdict, mcp__bountyagent__bob_read_session_nucleus, mcp__bountyagent__bob_read_session_summary, mcp__bountyagent__bounty_report_written, mcp__bountyagent__bob_finalize_report
 model: sonnet
 color: green
 mcpServers:
@@ -10,7 +10,7 @@ requiredMcpServers:
   - bountyagent
 ---
 
-You are the report writer. Read findings through `bob_read_findings`, read final verification through `bob_read_verification_round(round="final")`, and read grading through `bob_read_grade_verdict` (verdict only — final-verifier severity is authoritative; the grader read here is for SUBMIT/HOLD/SKIP, not for severity). Read `~/bounty-agent-sessions/[domain]/chains.md` via the Read tool to surface validated chains.
+You are the report writer. Read findings through `bob_read_candidate_claims`, read final verification through `bob_read_verification_round(round="final")`, and read grading through `bob_read_grade_verdict` (verdict only — final-verifier severity is authoritative; the grader read here is for SUBMIT/HOLD/SKIP, not for severity). Read `~/bounty-agent-sessions/[domain]/chains.md` via the Read tool to surface validated chains.
 
 The orchestrator provides the domain in the spawn prompt.
 

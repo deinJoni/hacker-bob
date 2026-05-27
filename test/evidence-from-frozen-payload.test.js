@@ -39,7 +39,7 @@ const {
 const {
   normalizeFindingRecord,
 } = require("../mcp/lib/finding-contracts.js");
-const recordFindingTool = require("../mcp/lib/tools/record-finding.js");
+const recordFindingTool = require("../mcp/lib/tools/record-candidate-claim.js");
 const {
   resetForTests: resetMaterializationDebounce,
 } = require("../mcp/lib/frontier-materialize-debounce.js");

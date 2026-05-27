@@ -1,12 +1,12 @@
 "use strict";
 
-const { listFindings } = require("../finding-store.js");
+const { readFindings } = require("../finding-store.js");
 
 module.exports = Object.freeze({
-  name: "bob_list_findings",
-  aliases: ["bounty_list_findings"],
+  name: "bob_read_candidate_claims",
+  aliases: ["bob_read_findings", "bounty_read_findings"],
   description:
-    "List all recorded findings for a target.",
+    "Read all recorded candidate claims (legacy findings) for a target from authoritative structured storage.",
   inputSchema: {
     "type": "object",
     "properties": {
@@ -18,8 +18,8 @@ module.exports = Object.freeze({
       "target_domain"
     ]
   },
-  handler: listFindings,
-  role_bundles: ["evaluator-shared","orchestrator"],
+  handler: readFindings,
+  role_bundles: ["chain","verifier","grader","reporter","evidence"],
   mutating: false,
   global_preapproval: true,
   network_access: false,

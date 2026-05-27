@@ -69,12 +69,12 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_http_scan: "scoped_http_network",
   bob_import_http_traffic: "scoped_http_network",
   bob_import_static_artifact: "initialized_session_mutation",
-  bob_index_finding: "initialized_session_mutation",
+  bob_index_candidate_claim: "initialized_session_mutation",
   bob_ingest_audit_report: "initialized_session_mutation",
   bob_ingest_schema_doc: "initialized_session_mutation",
   bob_init_session: "bootstrap_session",
   bob_list_auth_profiles: "initialized_session_read",
-  bob_list_findings: "initialized_session_read",
+  bob_list_candidate_claims: "initialized_session_read",
   bob_log_coverage: "initialized_session_mutation",
   bob_log_dead_ends: "initialized_session_mutation",
   bob_log_technique_attempt: "initialized_session_mutation",
@@ -83,7 +83,7 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_public_intel: "scoped_http_network",
   bob_query_audit_reports: "initialized_session_read",
   bob_query_chain_tree: "initialized_session_read",
-  bob_query_findings_index: "mode_dependent_session",
+  bob_query_candidate_claims_index: "mode_dependent_session",
   bob_query_schema_contracts: "initialized_session_read",
   bob_query_surface_graph: "initialized_session_read",
   bob_read_auth_differential_results: "initialized_session_read",
@@ -92,7 +92,7 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_read_chain_attempts: "initialized_session_read",
   bob_read_doc_delta_results: "initialized_session_read",
   bob_read_evidence_packs: "initialized_session_read",
-  bob_read_findings: "initialized_session_read",
+  bob_read_candidate_claims: "initialized_session_read",
   bob_read_grade_verdict: "initialized_session_read",
   bob_read_http_audit: "initialized_session_read",
   bob_read_assignment_brief: "initialized_session_read",
@@ -116,7 +116,7 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_read_verification_context: "initialized_session_read",
   bob_read_verification_round: "initialized_session_read",
   bob_read_wave_handoffs: "initialized_session_read",
-  bob_record_finding: "initialized_session_mutation",
+  bob_record_candidate_claim: "initialized_session_mutation",
   bob_record_surface_leads: "initialized_session_mutation",
   bounty_report_written: "initialized_session_mutation",
   bob_route_surfaces: "initialized_session_mutation",
@@ -242,7 +242,7 @@ function classForTool(toolName) {
 }
 
 function modeRule(toolName, args = {}) {
-  if (toolName === "bob_query_findings_index") {
+  if (toolName === "bob_query_candidate_claims_index") {
     if (args.scope === "cross_target") {
       return {
         authority_class: "cross_session_read",

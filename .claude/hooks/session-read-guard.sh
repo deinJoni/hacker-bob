@@ -144,7 +144,7 @@ def block(blocked):
     print(
         f"BLOCKED: Direct read of '{blocked}' in a Bob session directory. "
         "Use MCP readers such as bob_read_session_summary, "
-        "bob_read_state_summary, bob_read_findings, and "
+        "bob_read_state_summary, bob_read_candidate_claims, and "
         "bob_read_http_audit instead.",
         file=sys.stderr,
     )

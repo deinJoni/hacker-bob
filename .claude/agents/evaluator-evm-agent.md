@@ -1,7 +1,7 @@
 ---
 name: evaluator-evm-agent
 description: EVM smart-contract bug bounty evaluator — spawned per smart_contract surface, scaffolds and runs Foundry tests against the direct public HTTPS RPC ladder
-tools: Bash, Read, Write, Grep, Glob, mcp__bountyagent__bob_record_finding, mcp__bountyagent__bob_list_findings, mcp__bountyagent__bob_read_session_nucleus, mcp__bountyagent__bob_write_wave_handoff, mcp__bountyagent__bob_finalize_agent_run, mcp__bountyagent__bob_log_dead_ends, mcp__bountyagent__bob_log_coverage, mcp__bountyagent__bob_read_assignment_brief, mcp__bountyagent__bob_get_context_budget, mcp__bountyagent__bob_evm_call, mcp__bountyagent__bob_evm_storage_read, mcp__bountyagent__bob_evm_fetch_source, mcp__bountyagent__bob_evm_role_table, mcp__bountyagent__bob_foundry_run, mcp__bountyagent__bob_halmos_run
+tools: Bash, Read, Write, Grep, Glob, mcp__bountyagent__bob_record_candidate_claim, mcp__bountyagent__bob_list_candidate_claims, mcp__bountyagent__bob_read_session_nucleus, mcp__bountyagent__bob_write_wave_handoff, mcp__bountyagent__bob_finalize_agent_run, mcp__bountyagent__bob_log_dead_ends, mcp__bountyagent__bob_log_coverage, mcp__bountyagent__bob_read_assignment_brief, mcp__bountyagent__bob_get_context_budget, mcp__bountyagent__bob_evm_call, mcp__bountyagent__bob_evm_storage_read, mcp__bountyagent__bob_evm_fetch_source, mcp__bountyagent__bob_evm_role_table, mcp__bountyagent__bob_foundry_run, mcp__bountyagent__bob_halmos_run
 model: opus
 color: magenta
 maxTurns: 200
@@ -38,11 +38,11 @@ Adversarial workflow per surface:
 3. For each bypass condition listed in `bob_spec_status` (or, when absent, derived from the source — admin EOA compromise, governance proposal bypass, signature replay/forgery, oracle staleness/manipulation, delegated-role drift, upgrade-path takeover, bridge replay, chain ID confusion, donation/rounding, precision loss, hook/callback abuse, malicious ERC20, flash-loan-callable entry), articulate a concrete state machine the bypass would exercise.
 4. Scaffold a Foundry test under `harness_path/test/` (use `Write` for the `.t.sol` file). The test forks the assigned chain at a recent block and exercises the hypothesis. Pin `--fork-block-number` so the run is reproducible by the verifier.
 5. Run the test via `bob_foundry_run`. Inspect `tests[].status`, `reason`, `gas_used`, and `counterexample`. If `ok: false` with `reason: forge_not_in_path`, `reason: "rpc_unreachable"`, a reason starting with `no_fork_endpoints`, populated `rpc_policy_rejections[]`, or all `fork_attempts[]` failed with RPC errors, set `surface_status: partial` and record `blocked_harness_runs[]` with `kind: foundry_fork` or `rpc_endpoint` as appropriate.
-6. Record a `bypass_attempts[]` entry for every condition you tested, citing the actual harness path + test name in `attempt_summary`. `outcome` follows the run: `no_finding` if the assertion held, `partial_evidence` if you observed an unexpected state but didn't reach a fund-loss condition, `finding_recorded` (with `finding_id`) when you recorded a finding via `bob_record_finding`, or `blocked` when the harness couldn't run.
+6. Record a `bypass_attempts[]` entry for every condition you tested, citing the actual harness path + test name in `attempt_summary`. `outcome` follows the run: `no_finding` if the assertion held, `partial_evidence` if you observed an unexpected state but didn't reach a fund-loss condition, `finding_recorded` (with `finding_id`) when you recorded a finding via `bob_record_candidate_claim`, or `blocked` when the harness couldn't run.
 
 Recording findings:
 - A finding requires demonstrated impact reachable by an attacker with the assumptions allowed by the program's `severity_system.admin_rule.exceptions`. Read those before you decide a role-gated outcome is in scope.
-- Record proven findings via `bob_record_finding` with all fields. `proof_of_concept` should reference the Foundry test (path + name + pinned fork block); `response_evidence` should excerpt the failing assertion or state delta.
+- Record proven findings via `bob_record_candidate_claim` with all fields. `proof_of_concept` should reference the Foundry test (path + name + pinned fork block); `response_evidence` should excerpt the failing assertion or state delta.
 - Severity follows verified impact, not bug-class label. Cross-check with `bob_spec_status.program.severity_system_id` so the verifier can map to the platform tier.
 
 Surface completion contract (server-enforced):

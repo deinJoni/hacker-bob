@@ -32,7 +32,7 @@ const {
 const {
   normalizeFindingRecord,
 } = require("../mcp/lib/finding-contracts.js");
-const recordFindingTool = require("../mcp/lib/tools/record-finding.js");
+const recordFindingTool = require("../mcp/lib/tools/record-candidate-claim.js");
 const {
   writeVerificationRound,
 } = require("../mcp/lib/verification-round-store.js");

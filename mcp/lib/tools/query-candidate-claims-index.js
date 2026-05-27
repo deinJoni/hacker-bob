@@ -22,11 +22,11 @@ function queryFindingsIndexHandler(args) {
 }
 
 module.exports = Object.freeze({
-  name: "bob_query_findings_index",
-  aliases: ["bounty_query_findings_index"],
+  name: "bob_query_candidate_claims_index",
+  aliases: ["bob_query_findings_index", "bounty_query_findings_index"],
   capability_id: "I6_findings_index",
   description:
-    "Query the hashed-feature-vector findings index for top-K similar past findings. Defaults to per-target scope; pass scope: 'cross_target' to scan a bounded recent window of per-target indexes. Use this to inject prior-art into a new evaluate's brief or to look up similar findings while triaging a candidate.",
+    "Query the hashed-feature-vector candidate-claims index (legacy findings index) for top-K similar past claims. Defaults to per-target scope; pass scope: 'cross_target' to scan a bounded recent window of per-target indexes. Use this to inject prior-art into a new evaluate's brief or to look up similar claims while triaging a candidate.",
   inputSchema: {
     type: "object",
     properties: {

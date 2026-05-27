@@ -111,7 +111,7 @@ function dualWriteClaimForFinding(args, recordResponseJson) {
       },
       surface_id: finding.surface_id || null,
       claim_id: claim.claim_id,
-      source: { artifact: "claims.jsonl", tool: "bob_record_finding" },
+      source: { artifact: "claims.jsonl", tool: "bob_record_candidate_claim" },
     });
     scheduleMaterialization(domain);
   } catch {
@@ -127,10 +127,10 @@ function recordFindingHandler(args) {
 }
 
 module.exports = Object.freeze({
-  name: "bob_record_finding",
-  aliases: ["bounty_record_finding"],
+  name: "bob_record_candidate_claim",
+  aliases: ["bob_record_finding", "bounty_record_finding"],
   description:
-    "Record a validated security finding to structured disk artifacts. Survives context rotation.",
+    "Record a validated candidate claim (legacy finding) to structured disk artifacts. Survives context rotation.",
   inputSchema: {
     "type": "object",
     "properties": {

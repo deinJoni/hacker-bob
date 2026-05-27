@@ -96,17 +96,17 @@ const CLAUDE_LAUNCH_TEMPLATES = Object.freeze({
   ].join("\n"),
   "{{SPAWN_EVIDENCE_AGENT}}": [
     "```",
-    "Agent(subagent_type: \"evidence-agent\", name: \"evidence\", prompt: \"Domain: [domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. Session: ~/bounty-agent-sessions/[domain]. Call bob_read_verification_context, bob_read_findings, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), bob_read_http_audit, and bob_list_auth_profiles; for v2 pass evidence_replay context plus egress_profile and block_internal_hosts on replay HTTP tools and rely on MCP to bind evidence to final_verification_hash; write only through bob_write_evidence_packs.\")",
+    "Agent(subagent_type: \"evidence-agent\", name: \"evidence\", prompt: \"Domain: [domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. Session: ~/bounty-agent-sessions/[domain]. Call bob_read_verification_context, bob_read_candidate_claims, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), bob_read_http_audit, and bob_list_auth_profiles; for v2 pass evidence_replay context plus egress_profile and block_internal_hosts on replay HTTP tools and rely on MCP to bind evidence to final_verification_hash; write only through bob_write_evidence_packs.\")",
     "```",
   ].join("\n"),
   "{{SPAWN_GRADER_AGENT}}": [
     "```",
-    "Agent(subagent_type: \"grader\", name: \"grader\", prompt: \"Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Call bob_read_findings, bob_read_chain_attempts, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), and bob_read_evidence_packs, score survivors, then write only through bob_write_grade_verdict.\")",
+    "Agent(subagent_type: \"grader\", name: \"grader\", prompt: \"Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Call bob_read_candidate_claims, bob_read_chain_attempts, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), and bob_read_evidence_packs, score survivors, then write only through bob_write_grade_verdict.\")",
     "```",
   ].join("\n"),
   "{{SPAWN_REPORTER_AGENT}}": [
     "```",
-    "Agent(subagent_type: \"report-writer\", name: \"reporter\", prompt: \"Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Call bob_read_findings, bob_read_chain_attempts, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), bob_read_evidence_packs, and bob_read_grade_verdict, then write the canonical ~/bounty-agent-sessions/[domain]/report.md. For SUBMIT, include only confirmed chain evidence. For SKIP/no reportables, write a concise no-findings closeout with verification, chain-attempt, and blocker summary.\")",
+    "Agent(subagent_type: \"report-writer\", name: \"reporter\", prompt: \"Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Call bob_read_candidate_claims, bob_read_chain_attempts, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), bob_read_evidence_packs, and bob_read_grade_verdict, then write the canonical ~/bounty-agent-sessions/[domain]/report.md. For SUBMIT, include only confirmed chain evidence. For SKIP/no reportables, write a concise no-findings closeout with verification, chain-attempt, and blocker summary.\")",
     "```",
   ].join("\n"),
 });

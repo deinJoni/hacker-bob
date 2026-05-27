@@ -6,9 +6,9 @@
       "mcp__bountyagent__bob_read_surface_routes",
       "mcp__bountyagent__bob_import_static_artifact",
       "mcp__bountyagent__bob_static_scan",
-      "mcp__bountyagent__bob_record_finding",
-      "mcp__bountyagent__bob_read_findings",
-      "mcp__bountyagent__bob_list_findings",
+      "mcp__bountyagent__bob_record_candidate_claim",
+      "mcp__bountyagent__bob_read_candidate_claims",
+      "mcp__bountyagent__bob_list_candidate_claims",
       "mcp__bountyagent__bob_write_chain_attempt",
       "mcp__bountyagent__bob_read_chain_attempts",
       "mcp__bountyagent__bob_write_verification_round",
@@ -19,6 +19,7 @@
       "mcp__bountyagent__bob_write_grade_verdict",
       "mcp__bountyagent__bob_read_grade_verdict",
       "mcp__bountyagent__bob_read_session_state",
+      "mcp__bountyagent__bob_read_session_nucleus",
       "mcp__bountyagent__bob_write_wave_handoff",
       "mcp__bountyagent__bob_finalize_agent_run",
       "mcp__bountyagent__bob_wave_handoff_status",
@@ -68,8 +69,7 @@
       "Bash(echo *)",
       "Read",
       "Glob",
-      "Grep",
-      "mcp__bountyagent__bob_read_session_nucleus"
+      "Grep"
     ]
   },
   "hooks": {

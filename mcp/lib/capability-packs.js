@@ -637,7 +637,7 @@ function normalizeAssignmentRouteMetadata(assignment) {
 }
 
 // Read-side backfill for legacy findings.jsonl rows written before
-// bob_record_finding persisted the route triple. Legacy rows carry
+// bob_record_candidate_claim persisted the route triple. Legacy rows carry
 // surface_type and (for SC findings) sc_evidence.chain_family but no
 // capability_pack/evaluator_agent/brief_profile. Rebuilding the triple
 // at read time keeps verifier/evidence/grader/reporter consumers from

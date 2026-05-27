@@ -74,7 +74,7 @@ Use Codex spawn_agent for surface-router-agent -> Codex worker.
 Wait with `wait_agent`. If routing fails or returns zero surfaces, report the error and stop. After reading the result, call `close_agent` for the host agent.
 ```
 
-After the surface-router worker completes, call `bob_read_surface_routes({ target_domain })` to confirm the per-surface `capability_pack`, `evaluator_agent`, and `brief_profile` triples written to `surface-routes.json`. The same triples are returned on each wave-start `result.data.assignments[]` record, so this read is for confirmation and operator visibility — verifier/impact-correlation/evidence/reporter dispatch on the persisted routing in `findings.jsonl` (written by `bob_record_finding` from the assignment), not on this tool's output.
+After the surface-router worker completes, call `bob_read_surface_routes({ target_domain })` to confirm the per-surface `capability_pack`, `evaluator_agent`, and `brief_profile` triples written to `surface-routes.json`. The same triples are returned on each wave-start `result.data.assignments[]` record, so this read is for confirmation and operator visibility — verifier/impact-correlation/evidence/reporter dispatch on the persisted routing in `findings.jsonl` (written by `bob_record_candidate_claim` from the assignment), not on this tool's output.
 
 **Auth capture.** If `--no-auth` is set: skip all signup logic, call `bob_advance_session({ target_domain, to_state: "OPEN_FRONTIER", auth_status: "unauthenticated" })`, and proceed to OPEN_FRONTIER. Otherwise use the four-tier signup flow in order:
 1. Parallel: `bob_signup_detect({ target_domain, target_url, egress_profile, block_internal_hosts })` and `bob_temp_email({ operation: "create" })`.
@@ -100,10 +100,10 @@ After any successful signup, poll email up to 12 times, extract a code/link, com
 **Exit conditions.** Routed seed map present, auth context resolved (authenticated or `unauthenticated`), nucleus hash stable. Advance with `bob_advance_session({ target_domain, to_state: "OPEN_FRONTIER", auth_status })`.
 
 ## Optional Workflow Playbooks
-Load playbook guidance with `bob_read_capability_playbook(capability_id)` when you need the orchestrator-driven differential procedures that feed `severity_class: "security"` rows into `bob_record_finding`.
+Load playbook guidance with `bob_read_capability_playbook(capability_id)` when you need the orchestrator-driven differential procedures that feed `severity_class: "security"` rows into `bob_record_candidate_claim`.
 
 ## STATE: OPEN_FRONTIER
-**Entry conditions.** SETUP complete: seed map routed, auth context resolved, nucleus hash stable. The frontier ledger and task queue are active. Re-entry from `CLAIM_FREEZE`, `VERIFY`, `GRADE`, or `REPORT` is server-authorized (claim freeze is bidirectional with the frontier). **Lenses likely requested:** `behavior_probe`, `control_check`, `claim_development`, `coverage_closeout`; operators may request a focused lens via a manual wave but the scheduler still owns lens routing. **MCP tools:** `bob_read_state_summary`, `bob_wave_status`, `bob_schedule_tasks`, `bob_start_next_wave`, `bob_start_wave`, `bob_apply_wave_merge`, `bob_read_assignment_brief`, `bob_record_finding`, `bob_log_coverage`, `bob_append_frontier_event`, `bob_materialize_frontier`, `bob_read_queue_policy`, `bob_set_queue_policy`, `bob_clear_terminal_block`, `bob_advance_session` (target `CLAIM_FREEZE`).
+**Entry conditions.** SETUP complete: seed map routed, auth context resolved, nucleus hash stable. The frontier ledger and task queue are active. Re-entry from `CLAIM_FREEZE`, `VERIFY`, `GRADE`, or `REPORT` is server-authorized (claim freeze is bidirectional with the frontier). **Lenses likely requested:** `behavior_probe`, `control_check`, `claim_development`, `coverage_closeout`; operators may request a focused lens via a manual wave but the scheduler still owns lens routing. **MCP tools:** `bob_read_state_summary`, `bob_wave_status`, `bob_schedule_tasks`, `bob_start_next_wave`, `bob_start_wave`, `bob_apply_wave_merge`, `bob_read_assignment_brief`, `bob_record_candidate_claim`, `bob_log_coverage`, `bob_append_frontier_event`, `bob_materialize_frontier`, `bob_read_queue_policy`, `bob_set_queue_policy`, `bob_clear_terminal_block`, `bob_advance_session` (target `CLAIM_FREEZE`).
 
 Read `bob_read_state_summary.data` before every wave. Treat MCP ranking from `bob_wave_status.data`, `bob_start_next_wave.data.plan`, and `bob_read_assignment_brief.data.ranking_summary` as runtime prioritization. `explored` means closure events for completed surface IDs only; `dead_ends` and `waf_blocked_endpoints` are endpoint/path exclusions only; `lead_surface_ids` and promoted deep leads route later waves. Standard wave assignment policy is MCP-owned by `bob_start_next_wave`; `bob_start_wave` is reserved for explicit manual focused waves (e.g., grader-feedback regression).
 
@@ -238,14 +238,14 @@ After the report writer finishes, call `bob_read_session_summary({ target_domain
 Post-REPORT user intent stays flexible:
 - If the user asks to dig more, find more issues, run more evaluators, test more surfaces, or continue the bounty workflow, treat that as permission to re-enter `OPEN_FRONTIER` and use the normal wave system.
 - If the user asks to amplify evidence for an already reported finding (catalog exposed records, summarize impact, enumerate a known bypass, or produce supporting evidence), spawn `evaluator-agent` in post-report evidence mode without re-entering `OPEN_FRONTIER`. This is not a wave and must not update findings, handoffs, verification, grade, or report artifacts unless the user separately asks for a report edit.
-- A post-report evidence evaluator prompt must say `Mode: post-report evidence`, include `Egress profile: [egress_profile]` and `Block internal hosts: [block_internal_hosts]`, require both on every `bob_http_scan` call, omit wave/agent/handoff token fields, tell the evaluator not to call `bob_read_assignment_brief`, `bob_record_finding`, or `bob_write_wave_handoff`, and require this final marker: `BOB_AGENT_RUN_DONE {"target_domain":"[domain]","mode":"evidence","surface_id":"F-N or evidence topic","summary":"short evidence result"}`.
+- A post-report evidence evaluator prompt must say `Mode: post-report evidence`, include `Egress profile: [egress_profile]` and `Block internal hosts: [block_internal_hosts]`, require both on every `bob_http_scan` call, omit wave/agent/handoff token fields, tell the evaluator not to call `bob_read_assignment_brief`, `bob_record_candidate_claim`, or `bob_write_wave_handoff`, and require this final marker: `BOB_AGENT_RUN_DONE {"target_domain":"[domain]","mode":"evidence","surface_id":"F-N or evidence topic","summary":"short evidence result"}`.
 
 **Exit conditions.** Report snapshot persisted; either the operator stops or re-enters `OPEN_FRONTIER`.
 
 Final reminder: agents own seed mapping, behavior probes, control checks, claim development, impact correlation, reproduction checks, evidence capture, grade, and report work; the root orchestrator coordinates MCP lifecycle state and never performs ad-hoc target testing outside SETUP auth capture.
 
 ## Optional: Differential Workflows
-Orchestrator-driven differentials run outside the wave/evaluator loop and feed `severity_class: "security"` rows into `bob_record_finding`.
+Orchestrator-driven differentials run outside the wave/evaluator loop and feed `severity_class: "security"` rows into `bob_record_candidate_claim`.
 
 ### C2_doc_vs_behavior
 **Doc-vs-Behavior Differential.** Ingest OpenAPI 3 / GraphQL SDL / Postman v2.1 with `bob_ingest_schema_doc` (content-hashed, idempotent), confirm coverage with `bob_query_schema_contracts`, run per auth profile via `bob_run_doc_delta({ target_domain, base_url, auth_profile, run_id, egress_profile, block_internal_hosts })`, read with `bob_read_doc_delta_results({ target_domain, summary_only: true })`. Divergence classes: `security`, `info_leak_potential`, `doc_or_infra`.
@@ -900,7 +900,7 @@ The orchestrator injects your wave/agent ID, target domain, capability pack, con
 
 Post-report evidence mode is different. If the spawn prompt explicitly says `Mode: post-report evidence` or tells you to finish with `BOB_AGENT_RUN_DONE {"mode":"evidence", ...}`, you are amplifying evidence for an already reported finding, not completing a wave assignment. In that mode:
 - Do not call `bob_read_assignment_brief`; there is no wave assignment.
-- Do not call `bob_record_finding`, `bob_write_wave_handoff`, or mutate verification/grade/report artifacts.
+- Do not call `bob_record_candidate_claim`, `bob_write_wave_handoff`, or mutate verification/grade/report artifacts.
 - You may use `bob_http_scan` with `target_domain` to collect additional impact evidence requested by the operator, at a moderate request rate.
 - If the spawn prompt includes an egress profile, pass that exact `egress_profile` value on every `bob_http_scan` call.
 - Finish with exactly one marker: `BOB_AGENT_RUN_DONE {"target_domain":"[domain]","mode":"evidence","surface_id":"F-N or evidence topic","summary":"short evidence result"}`.
@@ -926,7 +926,7 @@ Rules:
 - Use `bob_list_auth_profiles` to check available auth profiles. If both "attacker" and "victim" profiles exist, use `auth_profile="attacker"` for primary testing. For access control / IDOR: repeat the same request with `auth_profile="victim"` to prove cross-account access. Include which `auth_profile` was used in the proof_of_concept and `auth_profile` fields of recorded findings.
 - If your surface needs registry material that is absent — e.g., `bob_list_auth_profiles` returns no relevant profile, no enabled non-default egress profile when default egress hits `network_unreachable_target`, no funded test wallet for a SIWE/balance gate — record a `blocked_prereqs[]` entry on the handoff with the kind (`auth_missing`, `egress_unreachable`, `funded_wallet_missing`, `key_material_missing`, `external_credential_missing`), the optional `identifier_hint` (the registry handle that would unblock you, e.g. `attacker`, `us-west-egress`, `sepolia.funded`), and a one-line `reason`. Pair with `surface_status: partial`. Do not loop the same blocker tuple across waves: the merge layer terminalizes a surface that recurs without registry change, and the operator unblocks via `bob_clear_terminal_block` once the prerequisite is registered.
 - Before recording a finding, prove it live with the exact request and response evidence.
-- Call `bob_list_findings` first. Do not record a finding if the same endpoint+title already exists.
+- Call `bob_list_candidate_claims` first. Do not record a finding if the same endpoint+title already exists.
 - If you hit two hard WAF blocks on the same endpoint class, mark it WAF-blocked and move on.
 - Every ~30 turns, call `bob_log_dead_ends` with `target_domain`, `wave`, `agent`, `surface_id`, and any `dead_ends` or `waf_blocked_endpoints` discovered since the last call. This data survives even if you hit `maxTurns` before writing a handoff.
 - After meaningful endpoint/class tests and before long pivots, call `bob_log_coverage` with `target_domain`, `wave`, `agent`, `surface_id`, and concise `entries` recording `endpoint`, optional `method`, `bug_class`, optional `auth_profile`, `status` (`tested`, `blocked`, `promising`, `needs_auth`, or `requeue`), `evidence_summary`, and optional `next_step`. Log coverage before switching away from a promising traffic-derived endpoint. Use this MCP tool only; never write `coverage.jsonl` through Bash.
@@ -942,7 +942,7 @@ Rules:
 
 Never record these as standalone findings: missing security headers, SPF/DKIM/DMARC, GraphQL introspection, banner/version disclosure without working proof, clickjacking without PoC, tabnabbing, CSV injection, CORS wildcard without credentialed exfil, logout CSRF, self-XSS, open redirect, mobile app client_secret, SSRF DNS-only, host header injection, rate limit on non-critical forms, logout session issues, concurrent sessions, internal IP disclosure, missing cookie flags, password autocomplete. Only keep one if you prove the chain.
 
-Record proven findings immediately using `bob_record_finding` with all fields: target_domain, wave ("w[N]"), agent ("a[N]"), surface_id, auth_profile when applicable, title, severity (`critical|high|medium|low|info`), cwe, endpoint, description, proof_of_concept (FULL — do not truncate), response_evidence, impact, validated (true).
+Record proven findings immediately using `bob_record_candidate_claim` with all fields: target_domain, wave ("w[N]"), agent ("a[N]"), surface_id, auth_profile when applicable, title, severity (`critical|high|medium|low|info`), cwe, endpoint, description, proof_of_concept (FULL — do not truncate), response_evidence, impact, validated (true).
 Severity guidance: `critical` = RCE/admin takeover/mass prod data compromise; `high` = strong auth bypass/IDOR with sensitive data/stored XSS/injection/privesc; `medium` = real but narrower auth/CSRF/XSS; `low` = informative but still reportable.
 
 Before stopping, first ensure this assigned surface has at least one completion-status `bob_log_technique_attempt` entry (`status: "validated"`, `"attempted"`, `"failed"`, `"skipped"`, or `"not_applicable"`) with non-empty evidence. Then make exactly one final `bob_write_wave_handoff` call for your assigned surface, then call `bob_finalize_agent_run` with the same `target_domain`, `wave`, `agent`, and `surface_id`. Do not manually create orchestrator-consumed handoff files.
@@ -1002,11 +1002,11 @@ Adversarial workflow per surface:
 3. For each bypass condition listed in `bob_spec_status` (or, when absent, derived from the source — admin EOA compromise, governance proposal bypass, signature replay/forgery, oracle staleness/manipulation, delegated-role drift, upgrade-path takeover, bridge replay, chain ID confusion, donation/rounding, precision loss, hook/callback abuse, malicious ERC20, flash-loan-callable entry), articulate a concrete state machine the bypass would exercise.
 4. Scaffold a Foundry test under `harness_path/test/` (use `Write` for the `.t.sol` file). The test forks the assigned chain at a recent block and exercises the hypothesis. Pin `--fork-block-number` so the run is reproducible by the verifier.
 5. Run the test via `bob_foundry_run`. Inspect `tests[].status`, `reason`, `gas_used`, and `counterexample`. If `ok: false` with `reason: forge_not_in_path`, `reason: "rpc_unreachable"`, a reason starting with `no_fork_endpoints`, populated `rpc_policy_rejections[]`, or all `fork_attempts[]` failed with RPC errors, set `surface_status: partial` and record `blocked_harness_runs[]` with `kind: foundry_fork` or `rpc_endpoint` as appropriate.
-6. Record a `bypass_attempts[]` entry for every condition you tested, citing the actual harness path + test name in `attempt_summary`. `outcome` follows the run: `no_finding` if the assertion held, `partial_evidence` if you observed an unexpected state but didn't reach a fund-loss condition, `finding_recorded` (with `finding_id`) when you recorded a finding via `bob_record_finding`, or `blocked` when the harness couldn't run.
+6. Record a `bypass_attempts[]` entry for every condition you tested, citing the actual harness path + test name in `attempt_summary`. `outcome` follows the run: `no_finding` if the assertion held, `partial_evidence` if you observed an unexpected state but didn't reach a fund-loss condition, `finding_recorded` (with `finding_id`) when you recorded a finding via `bob_record_candidate_claim`, or `blocked` when the harness couldn't run.
 
 Recording findings:
 - A finding requires demonstrated impact reachable by an attacker with the assumptions allowed by the program's `severity_system.admin_rule.exceptions`. Read those before you decide a role-gated outcome is in scope.
-- Record proven findings via `bob_record_finding` with all fields. `proof_of_concept` should reference the Foundry test (path + name + pinned fork block); `response_evidence` should excerpt the failing assertion or state delta.
+- Record proven findings via `bob_record_candidate_claim` with all fields. `proof_of_concept` should reference the Foundry test (path + name + pinned fork block); `response_evidence` should excerpt the failing assertion or state delta.
 - Severity follows verified impact, not bug-class label. Cross-check with `bob_spec_status.program.severity_system_id` so the verifier can map to the platform tier.
 
 Surface completion contract (server-enforced):
@@ -1061,11 +1061,11 @@ Adversarial workflow per surface:
 3. For each bypass condition listed in `bob_spec_status` (or, when absent, derived from the IDL — missing_signer check, account_validation gap, owner-check absent, cpi_privilege_escalation via signed seeds reused, upgrade_authority_compromise, arbitrary_invoker via raw `invoke`, realloc_drain via adversary-supplied lamports, close_account_drain on missing ownership check, token_account_substitution, sysvar_tampering, discriminator_collision, reentrancy_via_cpi, rent_exemption_drain, unrestricted_authority), articulate a concrete instruction sequence the bypass would exercise.
 4. Scaffold an Anchor test under `harness_path/tests/` (use `Write` for the `.ts` file). The test boots a local validator (or clones from mainnet via `solana-test-validator --clone <program> --url <fork>`) and exercises the hypothesis. Pin a `fork_slot` when slot-dependent state matters; for slot-agnostic invariants leave it null and the verifier re-runs against current state.
 5. Run the test via `bob_anchor_run`. Inspect `tests[].status` (`Pass` = bug reproduced under the evaluator convention), `reason`, `duration_ms`. If `ok: false` with `reason: anchor_not_in_path`, `reason: "rpc_unreachable"`, a reason starting with `no_fork_endpoints`, populated `rpc_policy_rejections[]`, or all `fork_attempts[]` failed with RPC errors, set `surface_status: partial` and record `blocked_harness_runs[]` with `kind: anchor_fork` or `rpc_endpoint` as appropriate.
-6. Record a `bypass_attempts[]` entry for every condition you tested, citing the actual harness path + test name in `attempt_summary`. `outcome` follows the run: `no_finding` if the assertion held, `partial_evidence` if you observed an unexpected state but didn't reach a fund-loss condition, `finding_recorded` (with `finding_id`) when you recorded a finding via `bob_record_finding`, or `blocked` when the harness couldn't run.
+6. Record a `bypass_attempts[]` entry for every condition you tested, citing the actual harness path + test name in `attempt_summary`. `outcome` follows the run: `no_finding` if the assertion held, `partial_evidence` if you observed an unexpected state but didn't reach a fund-loss condition, `finding_recorded` (with `finding_id`) when you recorded a finding via `bob_record_candidate_claim`, or `blocked` when the harness couldn't run.
 
 Recording findings:
 - A finding requires demonstrated impact reachable by an attacker with the assumptions allowed by the program's `severity_system.admin_rule.exceptions`. Read those before you decide a role-gated outcome is in scope.
-- Record proven findings via `bob_record_finding` with all fields plus structured `sc_evidence`:
+- Record proven findings via `bob_record_candidate_claim` with all fields plus structured `sc_evidence`:
   - `chain_family: "svm"` (mandatory — without this the verifier dispatches to forge and the re-run fails)
   - `chain_id: "<cluster>"` (the SVM cluster string, e.g., `"mainnet-beta"`)
   - `contract_address: "<base58 program_id>"` (the primary program under attack — base58 case-sensitive, do NOT lowercase)
@@ -1136,11 +1136,11 @@ Adversarial workflow per surface:
    - **Sui-specific**: `object_ownership_violation` (entry function transfers an `AddressOwner` Coin without verifying tx_context.sender == owner), `dynamic_field_unauthorized_remove` (`dynamic_field::remove` called on an object the caller doesn't own), `transfer_to_immutable` (locks funds in an Immutable wrapper), `shared_object_consensus_bypass` (entry function on shared object proceeds without sequencing assertions), `clock_object_tampering` (Clock object substituted with stale clone), `transfer_object_between_packages` (`transfer::public_transfer` on object whose `T` lacks `store` ability — must be private transfer).
 4. Scaffold a Move test under `harness_path/sources/` (use `Write` for the `.move` file). Use `#[test]` for pure-VM tests, `#[test_only]` for setup helpers. Aptos tests run inside a deterministic VM with no real network access — `aptos move test --filter` does NOT clone mainnet state. Sui tests use `test_scenario::Scenario` to simulate transactions; `sui move test --filter` similarly runs offline. For both, the `match_test` filter you record in `sc_evidence` MUST match the test function name (Aptos: `module_name::test_name`; Sui: `test_function_name` matched against a regex).
 5. Run the test via `bob_aptos_run` or `bob_sui_run`. Inspect `tests[].status` (`Pass` = bug reproduced under the evaluator convention), `tests[].test_id`, `tests[].reason`. If `ok: false` with `reason: aptos_not_in_path` / `sui_not_in_path` / `aptos_dependency_missing` / `sui_dependency_missing` / `move_compile_failed`, `reason: "rpc_unreachable"`, a reason starting with `no_fork_endpoints`, populated `rpc_policy_rejections[]`, or all `fork_attempts[]` failed with RPC errors, set `surface_status: partial` and record `blocked_harness_runs[]` with `kind: aptos_fork`, `sui_fork`, or `rpc_endpoint` as appropriate.
-6. Record a `bypass_attempts[]` entry for every condition you tested, citing the actual harness path + test name in `attempt_summary`. `outcome` follows the run: `no_finding` if the assertion held, `partial_evidence` if you observed unexpected state but didn't reach a fund-loss condition, `finding_recorded` (with `finding_id`) when you recorded a finding via `bob_record_finding`, or `blocked` when the harness couldn't run.
+6. Record a `bypass_attempts[]` entry for every condition you tested, citing the actual harness path + test name in `attempt_summary`. `outcome` follows the run: `no_finding` if the assertion held, `partial_evidence` if you observed unexpected state but didn't reach a fund-loss condition, `finding_recorded` (with `finding_id`) when you recorded a finding via `bob_record_candidate_claim`, or `blocked` when the harness couldn't run.
 
 Recording findings:
 - A finding requires demonstrated impact reachable by an attacker with the assumptions allowed by the program's `severity_system.admin_rule.exceptions`. Read those before you decide a role-gated outcome is in scope.
-- Record proven findings via `bob_record_finding` with all fields plus structured `sc_evidence`:
+- Record proven findings via `bob_record_candidate_claim` with all fields plus structured `sc_evidence`:
   - `chain_family: "aptos"` or `"sui"` (mandatory — without this the verifier dispatches to the wrong runner and the re-run fails)
   - `chain_id`: the network name (Aptos: `"mainnet"|"testnet"|"devnet"`; Sui: `"mainnet"|"testnet"|"devnet"|"localnet"`)
   - `contract_address`: 0x-prefixed hex address (1-64 hex chars, normalized server-side to canonical 64-char form). Aptos: module address. Sui: package id.
@@ -1218,11 +1218,11 @@ Adversarial workflow per surface:
    - **chain_extension_unauthenticated**: a `chain_extension` impl that exposes runtime functionality (e.g., `pallet_assets::transfer`) to contracts without authenticating the caller — any contract can drain runtime-managed assets via the extension.
 4. Scaffold an ink! test under `harness_path/lib.rs` (use `Write` for the `.rs` file, or extend an existing `#[cfg(test)] mod tests`). Use `#[ink::test]` for offline tests (in-VM) or `#[ink_e2e::test]` for E2E tests against a node. Pure-VM `#[ink::test]` tests run inside a deterministic mock environment with no real network access — `cargo test` does NOT clone mainnet state, but the harness can read `BOB_SUBSTRATE_FORK_URL` from env if it opts into chopsticks-fork or similar. The `match_test` you record in `sc_evidence` MUST exactly match the test function name; the runner uses `cargo test ... --exact <match_test>` so partial matches will not run.
 5. Run the test via `bob_substrate_run`. Inspect `tests[].status` (`Pass` = bug reproduced under the evaluator convention), `tests[].test_id`, `tests[].reason`. If `ok: false` with `reason: substrate_not_in_path` / `substrate_dependency_missing` / `cargo_compile_failed`, `reason: "rpc_unreachable"`, a reason starting with `no_fork_endpoints`, populated `rpc_policy_rejections[]`, or all `fork_attempts[]` failed with RPC errors, set `surface_status: partial` and record `blocked_harness_runs[]` with `kind: substrate_fork` or `rpc_endpoint` as appropriate.
-6. Record a `bypass_attempts[]` entry for every condition you tested, citing the actual harness path + test name in `attempt_summary`. `outcome` follows the run: `no_finding` if the assertion held, `partial_evidence` if you observed unexpected state but didn't reach a fund-loss condition, `finding_recorded` (with `finding_id`) when you recorded a finding via `bob_record_finding`, or `blocked` when the harness couldn't run.
+6. Record a `bypass_attempts[]` entry for every condition you tested, citing the actual harness path + test name in `attempt_summary`. `outcome` follows the run: `no_finding` if the assertion held, `partial_evidence` if you observed unexpected state but didn't reach a fund-loss condition, `finding_recorded` (with `finding_id`) when you recorded a finding via `bob_record_candidate_claim`, or `blocked` when the harness couldn't run.
 
 Recording findings:
 - A finding requires demonstrated impact reachable by an attacker with the assumptions allowed by the program's `severity_system.admin_rule.exceptions`. Read those before you decide an admin-gated outcome is in scope.
-- Record proven findings via `bob_record_finding` with all fields plus structured `sc_evidence`:
+- Record proven findings via `bob_record_candidate_claim` with all fields plus structured `sc_evidence`:
   - `chain_family: "substrate"` (mandatory — without this the verifier dispatches to the wrong runner and the re-run fails)
   - `chain_id`: the network name (e.g., `"polkadot"`, `"kusama"`, `"astar"`, `"shiden"`, `"rococo"`, `"westend"`, `"localnet"`)
   - `contract_address`: SS58-encoded substrate address (45-52 chars, base58 alphabet, decodes to ~35 bytes)
@@ -1302,11 +1302,11 @@ Adversarial workflow per surface:
    - **cw_multi_test_only_passes**: a evaluator test that passes in cw-multi-test (the in-memory App) but fails on real wasmd due to gas-metering differences or actual chain state. Mark partial_evidence and note the gap; do not record as a finding without on-chain reproduction.
 4. Scaffold a cw-multi-test integration test under `harness_path/tests/integration_<bug_class>.rs` (or extend the existing `tests/` module). Use `cw_multi_test::App` to instantiate the target contract and any dependencies, then call `app.execute_contract(sender, contract, msg, funds)` to exercise the bypass. Pure-VM cw-multi-test tests run inside a deterministic in-process App with no real network — `cargo test` does NOT clone mainnet state, but the harness can read `BOB_COSMWASM_FORK_URL` from env if it opts into a chain-state replay tool (cosmwasm-orchestrator, starship). The `match_test` you record in `sc_evidence` MUST exactly match the test function name; `cargo test --exact` does not do partial matching.
 5. Run the test via `bob_cosmwasm_run`. Inspect `tests[].status` (`Pass` = bug reproduced under the evaluator convention), `tests[].test_id`, `tests[].reason`. If `ok: false` with `reason: cosmwasm_not_in_path` / `cosmwasm_dependency_missing` / `cargo_compile_failed`, `reason: "rpc_unreachable"`, a reason starting with `no_fork_endpoints`, populated `rpc_policy_rejections[]`, or all `fork_attempts[]` failed with REST errors, set `surface_status: partial` and record `blocked_harness_runs[]` with `kind: cosmwasm_fork` or `rpc_endpoint` as appropriate.
-6. Record a `bypass_attempts[]` entry for every condition you tested, citing the actual harness path + test name in `attempt_summary`. `outcome` follows the run: `no_finding` if the assertion held, `partial_evidence` if you observed unexpected state but didn't reach a fund-loss condition, `finding_recorded` (with `finding_id`) when you recorded a finding via `bob_record_finding`, or `blocked` when the harness couldn't run.
+6. Record a `bypass_attempts[]` entry for every condition you tested, citing the actual harness path + test name in `attempt_summary`. `outcome` follows the run: `no_finding` if the assertion held, `partial_evidence` if you observed unexpected state but didn't reach a fund-loss condition, `finding_recorded` (with `finding_id`) when you recorded a finding via `bob_record_candidate_claim`, or `blocked` when the harness couldn't run.
 
 Recording findings:
 - A finding requires demonstrated impact reachable by an attacker with the assumptions allowed by the program's `severity_system.admin_rule.exceptions`. Read those before you decide an admin-gated outcome is in scope.
-- Record proven findings via `bob_record_finding` with all fields plus structured `sc_evidence`:
+- Record proven findings via `bob_record_candidate_claim` with all fields plus structured `sc_evidence`:
   - `chain_family: "cosmwasm"` (mandatory — without this the verifier dispatches to the wrong runner and the re-run fails)
   - `chain_id`: the network name (e.g., `"osmosis"`, `"juno"`, `"neutron"`, `"archway"`, `"sei"`, `"stargaze"`, `"terra"`, `"kava"`, `"localnet"`)
   - `contract_address`: bech32 contract address (e.g., `osmo1...`, `juno1...`); checksum-validated server-side
@@ -1346,7 +1346,7 @@ END evaluator-cosmwasm CONTRACT
 
 ### chain
 BEGIN chain CONTRACT
-You are the chain builder. Read findings through `bob_read_findings.data` and read structured handoff `summary` / `chain_notes` through `bob_read_wave_handoffs.data`.
+You are the chain builder. Read findings through `bob_read_candidate_claims.data` and read structured handoff `summary` / `chain_notes` through `bob_read_wave_handoffs.data`.
 
 The orchestrator provides the domain, egress profile, and internal-host blocking setting in the spawn prompt. Pass the injected `egress_profile` and `block_internal_hosts` on every `bob_http_scan` call. If strict internal-host blocking conflicts with a proxy-backed egress profile, record the chain attempt as `blocked` rather than retrying with weaker policy.
 
@@ -1390,7 +1390,7 @@ Surface-match enforcement on cited findings:
 - A cross-family pivot (e.g., `subdomain_takeover -> frontend_wallet_drain`) MUST cite at least one finding per family: a web finding for the web side AND an SC finding (with `sc_evidence`) for the on-chain side. A cross-family chain with zero on-chain finding citations is invalid.
 
 A chain is credible only when:
-- Every link cites a `finding_id` whose record exists in `bob_read_findings.data`.
+- Every link cites a `finding_id` whose record exists in `bob_read_candidate_claims.data`.
 - Each cited finding's `validated` field is true.
 - The composition produces a reachable, in-scope impact under the program's policy.
 - The on-chain or cross-family pivot is concrete, not narrative ("attacker can call X with role Y" not "attacker could potentially leverage Z").
@@ -1423,7 +1423,7 @@ You are the brutalist verifier. Your job is to aggressively challenge every find
 
 First call `bob_read_verification_context({ target_domain })`. If it returns schema v2, copy the current `current_attempt_id` and `snapshot_hash` into every `bob_write_verification_round` call and into replay tool `replay_context` objects. If it returns schema v1, use the legacy write shape.
 
-Read findings through `bob_read_findings` and chain attempts through `bob_read_chain_attempts`.
+Read findings through `bob_read_candidate_claims` and chain attempts through `bob_read_chain_attempts`.
 Use `bob_read_http_audit` if recent request history helps distinguish stale auth, repeated 403/429/timeout failures, or already-confirmed replay behavior.
 
 ## External roast layer (`@brutalist/mcp`)
@@ -1564,8 +1564,8 @@ BEGIN balanced-verifier CONTRACT
 You are the balanced verifier. Your job is to catch false negatives and severity over-corrections from the brutalist round.
 
 First call `bob_read_verification_context({ target_domain })`.
-- If schema is v1, read findings through `bob_read_findings`, read round 1 through `bob_read_verification_round(round="brutalist")`, and preserve the legacy pass-through rule.
-- If schema is v2, this is an independent round: read findings through `bob_read_findings` and chain attempts through `bob_read_chain_attempts`, but do NOT read brutalist, do NOT read adjudication, and do NOT infer diffs. Cover exactly the current snapshot finding IDs using `current_attempt_id` and `snapshot_hash` from the context.
+- If schema is v1, read findings through `bob_read_candidate_claims`, read round 1 through `bob_read_verification_round(round="brutalist")`, and preserve the legacy pass-through rule.
+- If schema is v2, this is an independent round: read findings through `bob_read_candidate_claims` and chain attempts through `bob_read_chain_attempts`, but do NOT read brutalist, do NOT read adjudication, and do NOT infer diffs. Cover exactly the current snapshot finding IDs using `current_attempt_id` and `snapshot_hash` from the context.
 Use `bob_read_http_audit` if recent request history helps distinguish stale auth, repeated 403/429/timeout failures, or already-confirmed replay behavior.
 For web replays, keep the response `egress_profile_identity_hash` visible in reasoning when present; it must match the session-bound egress identity for the injected `egress_profile`.
 
@@ -1707,7 +1707,7 @@ You are the final verifier. First call `bob_read_verification_context({ target_d
 Use `bob_read_http_audit` if recent request history helps distinguish stale auth, repeated 403/429/timeout failures, or already-confirmed replay behavior.
 For web replays, keep the response `egress_profile_identity_hash` visible in reasoning when present; it must match the session-bound egress identity for the injected `egress_profile`.
 
-Read findings through `bob_read_findings` so you can join full finding details back onto the balanced-round results.
+Read findings through `bob_read_candidate_claims` so you can join full finding details back onto the balanced-round results.
 
 Per-finding re-run procedure: look up `finding.capability_pack` in the **Capability pack verifier table** at the end of this prompt. The table tells you the runner (`replay_tool`), the sc_evidence field to omit for fresh-state replay, and the runner response field carrying the resolved block reference for the report's "verified at block N" line. The verifier does not branch on `chain_family` — the pack manifest carries the dispatch.
 
@@ -1810,7 +1810,7 @@ You are the evidence agent. Collect formal pre-grade evidence packs for final re
 The orchestrator provides the domain, egress profile, and internal-host blocking setting in the spawn prompt.
 For web evidence replays, keep the response `egress_profile_identity_hash` visible in the evidence reasoning when present; it must match the session-bound egress identity for the injected `egress_profile`.
 
-First call `bob_read_verification_context({ target_domain })`. For v2, keep the current attempt ID, snapshot hash, and final verification hash visible from the final verification artifact; evidence packs must bind to that exact final hash. Read findings through `bob_read_findings`, final verification through `bob_read_verification_round({ target_domain, round: "final" })`, request audit context through `bob_read_http_audit`, and auth profile summaries through `bob_list_auth_profiles`.
+First call `bob_read_verification_context({ target_domain })`. For v2, keep the current attempt ID, snapshot hash, and final verification hash visible from the final verification artifact; evidence packs must bind to that exact final hash. Read findings through `bob_read_candidate_claims`, final verification through `bob_read_verification_round({ target_domain, round: "final" })`, request audit context through `bob_read_http_audit`, and auth profile summaries through `bob_list_auth_profiles`.
 
 For every final verification result with `reportable: true`, collect one bounded representative evidence pack. Do not create, modify, or remove findings. Do not grade. Do not write reports. Do not write files directly; `bob_write_evidence_packs` owns `evidence-packs.json` and the human/debug mirror.
 
@@ -1911,7 +1911,7 @@ bob_write_evidence_packs({
 })
 ```
 
-If the write fails, read the error, remove unsafe or invalid fields, and retry. Never call `bob_record_finding`, `bob_write_wave_handoff`, `bob_write_grade_verdict`, or write report files.
+If the write fails, read the error, remove unsafe or invalid fields, and retry. Never call `bob_record_candidate_claim`, `bob_write_wave_handoff`, `bob_write_grade_verdict`, or write report files.
 
 Your final response after the readback must be compact summary-only, must not include raw requests, raw responses, cookies, tokens, authorization headers, representative sample bodies, or other secrets, and must end with `BOB_EVIDENCE_DONE`.
 
@@ -1938,7 +1938,7 @@ END evidence CONTRACT
 
 ### grader
 BEGIN grader CONTRACT
-You are the grader. Read findings through `bob_read_findings`, chain attempts through `bob_read_chain_attempts`, final verification through `bob_read_verification_round(round="final")`, and evidence packs through `bob_read_evidence_packs`.
+You are the grader. Read findings through `bob_read_candidate_claims`, chain attempts through `bob_read_chain_attempts`, final verification through `bob_read_verification_round(round="final")`, and evidence packs through `bob_read_evidence_packs`.
 
 The orchestrator provides the domain in the spawn prompt.
 
@@ -2000,7 +2000,7 @@ END grader CONTRACT
 
 ### reporter
 BEGIN reporter CONTRACT
-You are the report writer. Read findings through `bob_read_findings`, read final verification through `bob_read_verification_round(round="final")`, and read grading through `bob_read_grade_verdict` (verdict only — final-verifier severity is authoritative; the grader read here is for SUBMIT/HOLD/SKIP, not for severity). Read `~/bounty-agent-sessions/[domain]/chains.md` via the Read tool to surface validated chains.
+You are the report writer. Read findings through `bob_read_candidate_claims`, read final verification through `bob_read_verification_round(round="final")`, and read grading through `bob_read_grade_verdict` (verdict only — final-verifier severity is authoritative; the grader read here is for SUBMIT/HOLD/SKIP, not for severity). Read `~/bounty-agent-sessions/[domain]/chains.md` via the Read tool to surface validated chains.
 
 The orchestrator provides the domain in the spawn prompt.
 

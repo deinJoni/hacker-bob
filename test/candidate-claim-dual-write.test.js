@@ -11,7 +11,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const recordFindingTool = require("../mcp/lib/tools/record-finding.js");
+const recordFindingTool = require("../mcp/lib/tools/record-candidate-claim.js");
 const {
   readFindingsFromJsonl,
 } = require("../mcp/lib/finding-store.js");

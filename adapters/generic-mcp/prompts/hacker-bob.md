@@ -31,12 +31,12 @@ session JSON or JSONL files.
    `bob_materialize_frontier`, and the scheduling verbs
    (`bob_start_next_wave` / `bob_start_wave` /
    `bob_apply_wave_merge`). Evaluator agents record claims with
-   `bob_record_finding` and finalize their runs with
+   `bob_record_candidate_claim` and finalize their runs with
    `bob_finalize_agent_run`.
 3. `CLAIM_FREEZE` — call
    `bob_advance_session(target_domain, to_state: "CLAIM_FREEZE")` to freeze the
    current claim batch into an immutable artifact. Read the freeze through
-   `bob_read_findings` and the state summary tools; do not append new claims
+   `bob_read_candidate_claims` and the state summary tools; do not append new claims
    to a frozen batch. Re-enter `OPEN_FRONTIER` from any later state if the
    frontier needs more work.
 4. `VERIFY` — call
@@ -75,7 +75,7 @@ For status, use read-only MCP tools first:
 - `bob_read_state_summary`
 - `bob_wave_status`
 - `bob_read_wave_handoffs`
-- `bob_read_findings`
+- `bob_read_candidate_claims`
 - `bob_read_verification_round`
 - `bob_read_grade_verdict`
 

@@ -44,8 +44,8 @@ test("call_count, success_count, success_rate, avg_latency aggregate per capabil
     event({ tool: "bob_ingest_schema_doc", latency_ms: 100 }),
     event({ tool: "bob_run_doc_delta", latency_ms: 200 }),
     event({ tool: "bob_run_doc_delta", latency_ms: 300, status: "error", ok: false }),
-    event({ tool: "bob_index_finding", latency_ms: 50 }),
-    event({ tool: "bob_index_finding", latency_ms: 50 }),
+    event({ tool: "bob_index_candidate_claim", latency_ms: 50 }),
+    event({ tool: "bob_index_candidate_claim", latency_ms: 50 }),
   ];
   const result = summarizeCapabilityMetrics(events);
   assert.equal(result.C2_doc_vs_behavior.call_count, 3);
@@ -103,8 +103,8 @@ test("per-tool breakdown reflects per-tool counts and rates", () => {
 test("events for unrelated tools are ignored", () => {
   const events = [
     event({ tool: "bob_http_scan" }),
-    event({ tool: "bob_record_finding" }),
-    event({ tool: "bob_index_finding" }),
+    event({ tool: "bob_record_candidate_claim" }),
+    event({ tool: "bob_index_candidate_claim" }),
   ];
   const result = summarizeCapabilityMetrics(events);
   assert.equal(result.I6_findings_index.call_count, 1);
@@ -118,7 +118,7 @@ test("malformed events are tolerated", () => {
     "not-an-event",
     {},
     { tool: 123 },
-    { tool: "bob_index_finding" },
+    { tool: "bob_index_candidate_claim" },
   ]);
   assert.equal(result.I6_findings_index.call_count, 1);
 });

@@ -4,7 +4,7 @@ You are the final verifier. First call `bob_read_verification_context({ target_d
 Use `bob_read_http_audit` if recent request history helps distinguish stale auth, repeated 403/429/timeout failures, or already-confirmed replay behavior.
 For web replays, keep the response `egress_profile_identity_hash` visible in reasoning when present; it must match the session-bound egress identity for the injected `egress_profile`.
 
-Read findings through `bob_read_findings` so you can join full finding details back onto the balanced-round results.
+Read findings through `bob_read_candidate_claims` so you can join full finding details back onto the balanced-round results.
 
 Per-finding re-run procedure: look up `finding.capability_pack` in the **Capability pack verifier table** at the end of this prompt. The table tells you the runner (`replay_tool`), the sc_evidence field to omit for fresh-state replay, and the runner response field carrying the resolved block reference for the report's "verified at block N" line. The verifier does not branch on `chain_family` — the pack manifest carries the dispatch.
 

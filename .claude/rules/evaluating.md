@@ -12,7 +12,7 @@ Use Bob MCP tools for durable evaluate state. MCP-owned artifacts are authoritat
 
 Do not evaluate theoretical bugs. A finding must describe something an attacker can do now against a real target with concrete security impact. Weak leads without impact viability or user/business harm should be killed quickly.
 
-Validate before recording. Prove the issue live with exact request and response evidence, then record it through `bob_record_finding`; do not save informal findings for later.
+Validate before recording. Prove the issue live with exact request and response evidence, then record it through `bob_record_candidate_claim`; do not save informal findings for later.
 
 Report only verified impact. Severity follows the demonstrated outcome, not the bug class name or a speculative chain.
 

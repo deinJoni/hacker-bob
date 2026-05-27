@@ -341,11 +341,11 @@ const EXPECTED_TOOL_NAMES = [
   "bob_run_auth_differential",
   "bob_read_auth_differential_results",
   "bob_static_scan",
-  "bob_record_finding",
-  "bob_read_findings",
-  "bob_list_findings",
-  "bob_index_finding",
-  "bob_query_findings_index",
+  "bob_record_candidate_claim",
+  "bob_read_candidate_claims",
+  "bob_list_candidate_claims",
+  "bob_index_candidate_claim",
+  "bob_query_candidate_claims_index",
   "bob_write_chain_attempt",
   "bob_read_chain_attempts",
   "bob_append_chain_node",
@@ -1497,8 +1497,8 @@ test("MCP tool registry exposes capability metadata for metric and eval tools", 
       "bob_read_auth_differential_results",
     ],
     I6_findings_index: [
-      "bob_index_finding",
-      "bob_query_findings_index",
+      "bob_index_candidate_claim",
+      "bob_query_candidate_claims_index",
     ],
     I7_chain_state_tree: [
       "bob_append_chain_node",
@@ -6827,7 +6827,7 @@ test("bob_record_finding emits finding_index_failed and keeps recording when ind
       const eventRead = readPipelineEvents(domain);
       const failureEvents = eventRead.events.filter((event) => event.type === "finding_index_failed");
       assert.equal(failureEvents.length, 1);
-      assert.equal(failureEvents[0].source, "bob_record_finding");
+      assert.equal(failureEvents[0].source, "bob_record_candidate_claim");
       assert.equal(failureEvents[0].surface_id, "surface-a");
       assert.equal(failureEvents[0].status, "medium");
 

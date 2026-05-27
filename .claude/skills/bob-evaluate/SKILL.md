@@ -17,10 +17,10 @@ allowed-tools:
   - mcp__bountyagent__bob_read_doc_delta_results
   - mcp__bountyagent__bob_run_auth_differential
   - mcp__bountyagent__bob_read_auth_differential_results
-  - mcp__bountyagent__bob_record_finding
-  - mcp__bountyagent__bob_list_findings
-  - mcp__bountyagent__bob_index_finding
-  - mcp__bountyagent__bob_query_findings_index
+  - mcp__bountyagent__bob_record_candidate_claim
+  - mcp__bountyagent__bob_list_candidate_claims
+  - mcp__bountyagent__bob_index_candidate_claim
+  - mcp__bountyagent__bob_query_candidate_claims_index
   - mcp__bountyagent__bob_read_chain_attempts
   - mcp__bountyagent__bob_append_chain_node
   - mcp__bountyagent__bob_query_chain_tree
@@ -140,7 +140,7 @@ After seed mapping, in deep mode call `bob_read_surface_leads({ target_domain, l
 Agent(subagent_type: "surface-router-agent", name: "surface-router", prompt: "Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Confirm attack_surface.json exists and has surfaces, then call bob_route_surfaces({ target_domain: '[domain]' }) and use .data. If routing fails or returns zero surfaces, report the error and stop. Otherwise return route count, capability-pack counts, and surface_routes_path.")
 ```
 
-After the surface-router worker completes, call `bob_read_surface_routes({ target_domain })` to confirm the per-surface `capability_pack`, `evaluator_agent`, and `brief_profile` triples written to `surface-routes.json`. The same triples are returned on each wave-start `result.data.assignments[]` record, so this read is for confirmation and operator visibility — verifier/impact-correlation/evidence/reporter dispatch on the persisted routing in `findings.jsonl` (written by `bob_record_finding` from the assignment), not on this tool's output.
+After the surface-router worker completes, call `bob_read_surface_routes({ target_domain })` to confirm the per-surface `capability_pack`, `evaluator_agent`, and `brief_profile` triples written to `surface-routes.json`. The same triples are returned on each wave-start `result.data.assignments[]` record, so this read is for confirmation and operator visibility — verifier/impact-correlation/evidence/reporter dispatch on the persisted routing in `findings.jsonl` (written by `bob_record_candidate_claim` from the assignment), not on this tool's output.
 
 **Auth capture.** If `--no-auth` is set: skip all signup logic, call `bob_advance_session({ target_domain, to_state: "OPEN_FRONTIER", auth_status: "unauthenticated" })`, and proceed to OPEN_FRONTIER. Otherwise use the four-tier signup flow in order:
 1. Parallel: `bob_signup_detect({ target_domain, target_url, egress_profile, block_internal_hosts })` and `bob_temp_email({ operation: "create" })`.
@@ -166,10 +166,10 @@ After any successful signup, poll email up to 12 times, extract a code/link, com
 **Exit conditions.** Routed seed map present, auth context resolved (authenticated or `unauthenticated`), nucleus hash stable. Advance with `bob_advance_session({ target_domain, to_state: "OPEN_FRONTIER", auth_status })`.
 
 ## Optional Workflow Playbooks
-Load playbook guidance with `bob_read_capability_playbook(capability_id)` when you need the orchestrator-driven differential procedures that feed `severity_class: "security"` rows into `bob_record_finding`.
+Load playbook guidance with `bob_read_capability_playbook(capability_id)` when you need the orchestrator-driven differential procedures that feed `severity_class: "security"` rows into `bob_record_candidate_claim`.
 
 ## STATE: OPEN_FRONTIER
-**Entry conditions.** SETUP complete: seed map routed, auth context resolved, nucleus hash stable. The frontier ledger and task queue are active. Re-entry from `CLAIM_FREEZE`, `VERIFY`, `GRADE`, or `REPORT` is server-authorized (claim freeze is bidirectional with the frontier). **Lenses likely requested:** `behavior_probe`, `control_check`, `claim_development`, `coverage_closeout`; operators may request a focused lens via a manual wave but the scheduler still owns lens routing. **MCP tools:** `bob_read_state_summary`, `bob_wave_status`, `bob_schedule_tasks`, `bob_start_next_wave`, `bob_start_wave`, `bob_apply_wave_merge`, `bob_read_assignment_brief`, `bob_record_finding`, `bob_log_coverage`, `bob_append_frontier_event`, `bob_materialize_frontier`, `bob_read_queue_policy`, `bob_set_queue_policy`, `bob_clear_terminal_block`, `bob_advance_session` (target `CLAIM_FREEZE`).
+**Entry conditions.** SETUP complete: seed map routed, auth context resolved, nucleus hash stable. The frontier ledger and task queue are active. Re-entry from `CLAIM_FREEZE`, `VERIFY`, `GRADE`, or `REPORT` is server-authorized (claim freeze is bidirectional with the frontier). **Lenses likely requested:** `behavior_probe`, `control_check`, `claim_development`, `coverage_closeout`; operators may request a focused lens via a manual wave but the scheduler still owns lens routing. **MCP tools:** `bob_read_state_summary`, `bob_wave_status`, `bob_schedule_tasks`, `bob_start_next_wave`, `bob_start_wave`, `bob_apply_wave_merge`, `bob_read_assignment_brief`, `bob_record_candidate_claim`, `bob_log_coverage`, `bob_append_frontier_event`, `bob_materialize_frontier`, `bob_read_queue_policy`, `bob_set_queue_policy`, `bob_clear_terminal_block`, `bob_advance_session` (target `CLAIM_FREEZE`).
 
 Read `bob_read_state_summary.data` before every wave. Treat MCP ranking from `bob_wave_status.data`, `bob_start_next_wave.data.plan`, and `bob_read_assignment_brief.data.ranking_summary` as runtime prioritization. `explored` means closure events for completed surface IDs only; `dead_ends` and `waf_blocked_endpoints` are endpoint/path exclusions only; `lead_surface_ids` and promoted deep leads route later waves. Standard wave assignment policy is MCP-owned by `bob_start_next_wave`; `bob_start_wave` is reserved for explicit manual focused waves (e.g., grader-feedback regression).
 
@@ -273,7 +273,7 @@ Agent(subagent_type: "final-verifier", name: "final-verify", prompt: "Session: ~
 
 After final verification, read `bob_read_verification_round({ target_domain: "[domain]", round: "final" }).data` and require `.data.current === true` with no `stale` flag — a stale final verification is a blocker, not a file-editing task. If no result has `reportable: true`, do not stop: call `bob_read_evidence_packs({ target_domain: "[domain]" })` to confirm `skipped: true`, then `bob_advance_session({ target_domain, to_state: "GRADE" })` and continue through GRADE and REPORT so the session gets a durable SKIP grade and no-findings report. If final reportables exist, spawn the evidence agent before GRADE:
 ```
-Agent(subagent_type: "evidence-agent", name: "evidence", prompt: "Domain: [domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. Session: ~/bounty-agent-sessions/[domain]. Call bob_read_verification_context, bob_read_findings, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), bob_read_http_audit, and bob_list_auth_profiles; for v2 pass evidence_replay context plus egress_profile and block_internal_hosts on replay HTTP tools and rely on MCP to bind evidence to final_verification_hash; write only through bob_write_evidence_packs.")
+Agent(subagent_type: "evidence-agent", name: "evidence", prompt: "Domain: [domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. Session: ~/bounty-agent-sessions/[domain]. Call bob_read_verification_context, bob_read_candidate_claims, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), bob_read_http_audit, and bob_list_auth_profiles; for v2 pass evidence_replay context plus egress_profile and block_internal_hosts on replay HTTP tools and rely on MCP to bind evidence to final_verification_hash; write only through bob_write_evidence_packs.")
 ```
 After the evidence agent completes, validate with `bob_read_verification_context({ target_domain })` and `bob_read_evidence_packs({ target_domain: "[domain]" })`. Require evidence to match current attempt ID, snapshot hash, and final verification hash. Retry once if missing/invalid.
 
@@ -284,7 +284,7 @@ After the evidence agent completes, validate with `bob_read_verification_context
 
 Spawn:
 ```
-Agent(subagent_type: "grader", name: "grader", prompt: "Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Call bob_read_findings, bob_read_chain_attempts, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), and bob_read_evidence_packs, score survivors, then write only through bob_write_grade_verdict.")
+Agent(subagent_type: "grader", name: "grader", prompt: "Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Call bob_read_candidate_claims, bob_read_chain_attempts, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), and bob_read_evidence_packs, score survivors, then write only through bob_write_grade_verdict.")
 ```
 Read `bob_read_grade_verdict.data`. On `SUBMIT` or `SKIP`, advance with `bob_advance_session({ target_domain, to_state: "REPORT" })`. On `HOLD`, re-enter the frontier via `bob_advance_session({ target_domain, to_state: "OPEN_FRONTIER" })`, include grader feedback in a targeted manual wave, drain impact-correlation, and re-freeze before re-entering `VERIFY`; escalate if `hold_count >= 2`.
 
@@ -295,21 +295,21 @@ Read `bob_read_grade_verdict.data`. On `SUBMIT` or `SKIP`, advance with `bob_adv
 
 Spawn:
 ```
-Agent(subagent_type: "report-writer", name: "reporter", prompt: "Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Call bob_read_findings, bob_read_chain_attempts, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), bob_read_evidence_packs, and bob_read_grade_verdict, then write the canonical ~/bounty-agent-sessions/[domain]/report.md. For SUBMIT, include only confirmed chain evidence. For SKIP/no reportables, write a concise no-findings closeout with verification, chain-attempt, and blocker summary.")
+Agent(subagent_type: "report-writer", name: "reporter", prompt: "Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Call bob_read_candidate_claims, bob_read_chain_attempts, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), bob_read_evidence_packs, and bob_read_grade_verdict, then write the canonical ~/bounty-agent-sessions/[domain]/report.md. For SUBMIT, include only confirmed chain evidence. For SKIP/no reportables, write a concise no-findings closeout with verification, chain-attempt, and blocker summary.")
 ```
 After the report writer finishes, call `bob_read_session_summary({ target_domain: "[domain]" })` and present `result.data.summary` plus the `result.data.summary.report.path`. If `result.data.summary.report.present` is false after a SUBMIT or SKIP grade, retry the report writer once with the canonical path error text; do not accept reports written only under a target workspace as session-complete. Do not read `report.md` in the root orchestrator. If the user wants more evaluating, re-enter the frontier with `bob_advance_session({ target_domain, to_state: "OPEN_FRONTIER" })`; otherwise stop.
 
 Post-REPORT user intent stays flexible:
 - If the user asks to dig more, find more issues, run more evaluators, test more surfaces, or continue the bounty workflow, treat that as permission to re-enter `OPEN_FRONTIER` and use the normal wave system.
 - If the user asks to amplify evidence for an already reported finding (catalog exposed records, summarize impact, enumerate a known bypass, or produce supporting evidence), spawn `evaluator-agent` in post-report evidence mode without re-entering `OPEN_FRONTIER`. This is not a wave and must not update findings, handoffs, verification, grade, or report artifacts unless the user separately asks for a report edit.
-- A post-report evidence evaluator prompt must say `Mode: post-report evidence`, include `Egress profile: [egress_profile]` and `Block internal hosts: [block_internal_hosts]`, require both on every `bob_http_scan` call, omit wave/agent/handoff token fields, tell the evaluator not to call `bob_read_assignment_brief`, `bob_record_finding`, or `bob_write_wave_handoff`, and require this final marker: `BOB_AGENT_RUN_DONE {"target_domain":"[domain]","mode":"evidence","surface_id":"F-N or evidence topic","summary":"short evidence result"}`.
+- A post-report evidence evaluator prompt must say `Mode: post-report evidence`, include `Egress profile: [egress_profile]` and `Block internal hosts: [block_internal_hosts]`, require both on every `bob_http_scan` call, omit wave/agent/handoff token fields, tell the evaluator not to call `bob_read_assignment_brief`, `bob_record_candidate_claim`, or `bob_write_wave_handoff`, and require this final marker: `BOB_AGENT_RUN_DONE {"target_domain":"[domain]","mode":"evidence","surface_id":"F-N or evidence topic","summary":"short evidence result"}`.
 
 **Exit conditions.** Report snapshot persisted; either the operator stops or re-enters `OPEN_FRONTIER`.
 
 Final reminder: agents own seed mapping, behavior probes, control checks, claim development, impact correlation, reproduction checks, evidence capture, grade, and report work; the root orchestrator coordinates MCP lifecycle state and never performs ad-hoc target testing outside SETUP auth capture.
 
 ## Optional: Differential Workflows
-Orchestrator-driven differentials run outside the wave/evaluator loop and feed `severity_class: "security"` rows into `bob_record_finding`.
+Orchestrator-driven differentials run outside the wave/evaluator loop and feed `severity_class: "security"` rows into `bob_record_candidate_claim`.
 
 ### C2_doc_vs_behavior
 **Doc-vs-Behavior Differential.** Ingest OpenAPI 3 / GraphQL SDL / Postman v2.1 with `bob_ingest_schema_doc` (content-hashed, idempotent), confirm coverage with `bob_query_schema_contracts`, run per auth profile via `bob_run_doc_delta({ target_domain, base_url, auth_profile, run_id, egress_profile, block_internal_hosts })`, read with `bob_read_doc_delta_results({ target_domain, summary_only: true })`. Divergence classes: `security`, `info_leak_potential`, `doc_or_infra`.

@@ -1,5 +1,5 @@
 
-You are the grader. Read findings through `bob_read_findings`, chain attempts through `bob_read_chain_attempts`, final verification through `bob_read_verification_round(round="final")`, and evidence packs through `bob_read_evidence_packs`.
+You are the grader. Read findings through `bob_read_candidate_claims`, chain attempts through `bob_read_chain_attempts`, final verification through `bob_read_verification_round(round="final")`, and evidence packs through `bob_read_evidence_packs`.
 
 The orchestrator provides the domain in the spawn prompt.
 

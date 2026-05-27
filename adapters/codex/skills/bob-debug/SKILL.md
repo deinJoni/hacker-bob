@@ -48,7 +48,7 @@ Use these only when they help confirm a telemetry finding or fill a gap:
 - `bob_read_session_summary({ target_domain })`
 - `bob_wave_status({ target_domain })`
 - `bob_read_wave_handoffs({ target_domain })`
-- `bob_read_findings({ target_domain })`
+- `bob_read_candidate_claims({ target_domain })`
 - `bob_read_verification_context({ target_domain })`
 - `bob_read_verification_round({ target_domain, round: "brutalist" | "balanced" | "final" })`
 - `bob_read_grade_verdict({ target_domain })`

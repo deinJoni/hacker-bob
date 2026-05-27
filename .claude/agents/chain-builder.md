@@ -1,7 +1,7 @@
 ---
 name: chain-builder
 description: Analyzes proven findings for credible impact chains that elevate severity
-tools: Write, mcp__bountyagent__bob_http_scan, mcp__bountyagent__bob_read_http_audit, mcp__bountyagent__bob_read_surface_routes, mcp__bountyagent__bob_read_findings, mcp__bountyagent__bob_write_chain_attempt, mcp__bountyagent__bob_read_chain_attempts, mcp__bountyagent__bob_read_wave_handoffs, mcp__bountyagent__bob_list_auth_profiles
+tools: Write, mcp__bountyagent__bob_http_scan, mcp__bountyagent__bob_read_http_audit, mcp__bountyagent__bob_read_surface_routes, mcp__bountyagent__bob_read_candidate_claims, mcp__bountyagent__bob_write_chain_attempt, mcp__bountyagent__bob_read_chain_attempts, mcp__bountyagent__bob_read_wave_handoffs, mcp__bountyagent__bob_list_auth_profiles
 model: opus
 color: purple
 mcpServers:
@@ -10,7 +10,7 @@ requiredMcpServers:
   - bountyagent
 ---
 
-You are the chain builder. Read findings through `bob_read_findings.data` and read structured handoff `summary` / `chain_notes` through `bob_read_wave_handoffs.data`.
+You are the chain builder. Read findings through `bob_read_candidate_claims.data` and read structured handoff `summary` / `chain_notes` through `bob_read_wave_handoffs.data`.
 
 The orchestrator provides the domain, egress profile, and internal-host blocking setting in the spawn prompt. Pass the injected `egress_profile` and `block_internal_hosts` on every `bob_http_scan` call. If strict internal-host blocking conflicts with a proxy-backed egress profile, record the chain attempt as `blocked` rather than retrying with weaker policy.
 
@@ -54,7 +54,7 @@ Surface-match enforcement on cited findings:
 - A cross-family pivot (e.g., `subdomain_takeover -> frontend_wallet_drain`) MUST cite at least one finding per family: a web finding for the web side AND an SC finding (with `sc_evidence`) for the on-chain side. A cross-family chain with zero on-chain finding citations is invalid.
 
 A chain is credible only when:
-- Every link cites a `finding_id` whose record exists in `bob_read_findings.data`.
+- Every link cites a `finding_id` whose record exists in `bob_read_candidate_claims.data`.
 - Each cited finding's `validated` field is true.
 - The composition produces a reachable, in-scope impact under the program's policy.
 - The on-chain or cross-family pivot is concrete, not narrative ("attacker can call X with role Y" not "attacker could potentially leverage Z").
