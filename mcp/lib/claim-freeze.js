@@ -18,8 +18,13 @@ const {
   readCandidateClaims,
 } = require("./claims.js");
 const {
+  appendClaimCluster,
+  normalizeClaimCluster,
   readClaimClusters,
 } = require("./claim-clusters.js");
+const {
+  correlateClaims,
+} = require("./claim-correlator.js");
 const {
   readFrontierEvents,
 } = require("./frontier-events.js");
@@ -34,10 +39,42 @@ function generatedClaimFreezeId(fields) {
   return `CF-${hashCanonicalJson(fields).slice(0, 24)}`;
 }
 
+// Materialize the ClaimCluster rows implied by the frozen claim batch. Each
+// candidate cluster from correlateClaims is normalized (which assigns the
+// deterministic cluster_id + cluster_hash); if a cluster with the same
+// cluster_hash is already on disk it is skipped so re-running the freeze on
+// an unchanged claim set never duplicates rows. The function returns the set
+// of normalized clusters (existing + newly appended) for inclusion in the
+// freeze payload.
+function materializeClusters(domain, claims) {
+  const candidates = correlateClaims(claims);
+  if (candidates.length === 0) return [];
+
+  const existing = readClaimClusters(domain);
+  const existingHashes = new Set(existing.map((cluster) => cluster.cluster_hash));
+
+  const materialized = [];
+  for (const candidate of candidates) {
+    const normalized = normalizeClaimCluster(candidate);
+    if (existingHashes.has(normalized.cluster_hash)) {
+      materialized.push(normalized);
+      continue;
+    }
+    const appended = appendClaimCluster(candidate);
+    existingHashes.add(appended.cluster_hash);
+    materialized.push(appended);
+  }
+  return materialized;
+}
+
 function buildClaimFreezeDocument(domain, { write = false, now = new Date(), freezeId = null } = {}) {
   const frozenAt = normalizeIsoTimestamp(now, "frozen_at", null);
   const claims = readCandidateClaims(domain).slice().sort((a, b) => a.claim_id.localeCompare(b.claim_id));
+  if (write) {
+    materializeClusters(domain, claims);
+  }
   const clusters = readClaimClusters(domain).slice().sort((a, b) => a.cluster_id.localeCompare(b.cluster_id));
+  const clusterIds = clusters.map((cluster) => cluster.cluster_id);
   const frontierEvents = readFrontierEvents(domain);
   const sourceHashes = {
     claims_hash: hashCanonicalJson(claims),
@@ -54,6 +91,7 @@ function buildClaimFreezeDocument(domain, { write = false, now = new Date(), fre
     source_hashes: sourceHashes,
     claims,
     clusters,
+    cluster_ids: clusterIds,
   };
   const normalizedFreezeId = normalizeOptionalId(freezeId, "freeze_id")
     || generatedClaimFreezeId({
