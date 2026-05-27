@@ -11,12 +11,49 @@ telemetry, and report inputs.
 
 ## Evaluation
 
-Start with `bounty_init_session`, progress through the phase machine, and keep
-all durable state in MCP-owned tools and artifacts. Lifecycle transitions use
-`bob_advance_session(to_state)` over the six-state machine (`SETUP`,
-`OPEN_FRONTIER`, `CLAIM_FREEZE`, `VERIFY`, `GRADE`, `REPORT`); the legacy
-`bounty_transition_phase` remains as a deprecation-window shim. Do not manually
-edit Bob session JSON or JSONL files.
+`bob_advance_session(to_state)` is the canonical lifecycle tool. The session
+moves through six explicit states: `SETUP`, `OPEN_FRONTIER`, `CLAIM_FREEZE`,
+`VERIFY`, `GRADE`, `REPORT`. Each state has hard entry conditions enforced by
+the MCP runtime; advance only when the prerequisite ledgers are populated. Keep
+all durable state in MCP-owned tools and artifacts and do not manually edit Bob
+session JSON or JSONL files.
+
+### Six-state operator runbook
+
+1. `SETUP` — call `bounty_init_session` with `target_domain`, `target_url`, and
+   the egress/policy parameters. The runtime writes the session nucleus and
+   binds scope. Stage authorization material with `bounty_list_auth_profiles`
+   and the auth-import tools before advancing.
+2. `OPEN_FRONTIER` — call
+   `bob_advance_session(target_domain, to_state: "OPEN_FRONTIER")`, then expand
+   the frontier through `bounty_record_surface_leads`,
+   `bounty_promote_surface_leads`, `bounty_build_surface_graph`,
+   `bob_materialize_frontier`, and the scheduling verbs
+   (`bounty_start_next_wave` / `bounty_start_wave` /
+   `bounty_apply_wave_merge`). Evaluator agents record claims with
+   `bounty_record_finding` and finalize their runs with
+   `bounty_finalize_agent_run`.
+3. `CLAIM_FREEZE` — call
+   `bob_advance_session(target_domain, to_state: "CLAIM_FREEZE")` to freeze the
+   current claim batch into an immutable artifact. Read the freeze through
+   `bounty_read_findings` and the state summary tools; do not append new claims
+   to a frozen batch. Re-enter `OPEN_FRONTIER` from any later state if the
+   frontier needs more work.
+4. `VERIFY` — call
+   `bob_advance_session(target_domain, to_state: "VERIFY")`, then drive
+   verification rounds with `bounty_write_verification_round` and read results
+   through `bounty_read_verification_round` and
+   `bounty_read_verification_context`. Verification operates on the frozen
+   claim batch only.
+5. `GRADE` — call `bob_advance_session(target_domain, to_state: "GRADE")` and
+   record the grade verdict with `bounty_write_grade_verdict`. Read the verdict
+   back through `bounty_read_grade_verdict`. Severity must match the verified
+   impact recorded in the verification rounds.
+6. `REPORT` — call `bob_advance_session(target_domain, to_state: "REPORT")`,
+   compose `report.md`, and finalize the report through the report tool
+   (`bounty_report_written` during the deprecation window). The runtime binds
+   the report to the frozen claim batch, the final verification, the evidence
+   pack hash, and the grade verdict.
 
 For session-bound tools, treat `target_domain` as a session selector, not proof
 of authorization. The MCP runtime binds calls to initialized session state and
