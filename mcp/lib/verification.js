@@ -37,9 +37,14 @@ const {
   hashCanonicalJson,
   isPlainObject,
 } = require("./verification-contracts.js");
+// LEGACY: removed in Plane D — finding-store reads remain available for
+// callers that have not migrated to the frozen claim payload.
 const {
   readFindingsFromJsonl,
 } = require("./finding-store.js");
+const {
+  findingIdSetForVerificationContext,
+} = require("./verification-finding-id-adapter.js");
 const {
   normalizeVerificationRoundDocument,
 } = require("./verification-round-store.js");
@@ -339,7 +344,7 @@ function prepareVerificationEntry(domain, state, { now = new Date() } = {}) {
 
   const enteredAt = now.toISOString();
   const attemptId = verificationAttemptId(now);
-  const snapshot = buildVerificationSnapshot(domain, { attemptId, createdAt: enteredAt });
+  const snapshot = buildVerificationSnapshot(domain, { attemptId, createdAt: enteredAt, now });
   writeFileAtomic(verificationSnapshotPath(domain), `${JSON.stringify(snapshot, null, 2)}\n`);
   safeAppendPipelineEvent(domain, "verification_snapshot_created", {
     phase: "VERIFY",
@@ -347,8 +352,11 @@ function prepareVerificationEntry(domain, state, { now = new Date() } = {}) {
     source: "bounty_transition_phase",
     verification_attempt_id: attemptId,
     verification_snapshot_hash: snapshot.snapshot_hash,
+    claim_freeze_id: snapshot.claim_freeze_id,
     counts: {
-      findings: snapshot.finding_ids.length,
+      claims: Array.isArray(snapshot.claim_ids) ? snapshot.claim_ids.length : 0,
+      // LEGACY: removed in Plane D
+      findings: Array.isArray(snapshot.finding_ids) ? snapshot.finding_ids.length : 0,
     },
   }, governanceContextForDomain(domain));
 
@@ -438,7 +446,13 @@ function assertCurrentV2RoundDocument(domain, document, { expectedRound = null, 
 
 function loadCurrentV2Round(domain, round, { state = null, snapshot = null } = {}) {
   const document = loadJsonDocumentStrict(verificationRoundPaths(domain, round).json, `${round} verification round JSON`);
-  const findingIdSet = new Set((snapshot ? snapshot.finding_ids : readFindingsFromJsonl(domain).map((finding) => finding.id)));
+  // The snapshot is authoritative for claim membership when an attempt is
+  // active. We address claims by finding_id during the legacy dual-write
+  // window via the findingIdSetFromSnapshot projection.
+  const findingIdSet = findingIdSetForVerificationContext({
+    domain,
+    snapshot,
+  });
   const normalized = normalizeVerificationRoundDocument(document, {
     expectedDomain: domain,
     expectedRound: round,

@@ -43,6 +43,7 @@
   "test/claim-fabric.test.js",
   "test/candidate-claim-dual-write.test.js",
   "test/claim-cluster-compute.test.js",
+  "test/verification-from-frozen-payload.test.js",
   "test/unified-diff-parser.test.js",
   "test/cve-feed-parser.test.js",
   "test/cve-scope-matcher.test.js",

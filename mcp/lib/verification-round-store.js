@@ -39,8 +39,8 @@ const {
   finalVerificationHash,
 } = require("./verification-contracts.js");
 const {
-  readFindingIdSet,
-} = require("./finding-store.js");
+  findingIdSetForVerificationContext,
+} = require("./verification-finding-id-adapter.js");
 
 function verificationLib() {
   return require("./verification.js");
@@ -286,7 +286,7 @@ function writeVerificationRound(args) {
 
   const findingIdSet = schemaVersion === 2
     ? new Set(v2Snapshot.finding_ids)
-    : readFindingIdSet(domain);
+    : findingIdSetForVerificationContext({ domain });
   const seenIds = new Set();
   let results = args.results.map((result) => {
     const normalizedResult = normalizeVerificationResult(result, findingIdSet, { schemaVersion });
@@ -392,7 +392,7 @@ function readVerificationRound(args) {
   const document = loadJsonDocumentStrict(paths.json, `${paths.round} verification round JSON`);
   const findingIdSet = document && document.version === 2
     ? null
-    : readFindingIdSet(domain);
+    : findingIdSetForVerificationContext({ domain });
   const normalized = normalizeVerificationRoundDocument(document, {
     expectedDomain: domain,
     expectedRound: paths.round,

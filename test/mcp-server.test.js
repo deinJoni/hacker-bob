@@ -12915,14 +12915,18 @@ test("verification v2 archives previous current attempts and stale old artifacts
   });
 });
 
-test("verification v2 rejects changed inputs after snapshot at write/adjudication consumption points", () => {
+test("verification v2 verifies the frozen claim batch even when findings.jsonl changes after snapshot", () => {
+  // Cycle C.4: the snapshot is sourced from the immutable claim-freeze.json
+  // payload, so mutating findings.jsonl after the snapshot is created must
+  // not change the verification target set. The freeze is the source of
+  // truth; the live findings ledger is no longer re-read on every write.
   withTempHome(() => {
     const domain = "example.com";
     enterVerifyV2(domain);
     const context = JSON.parse(readVerificationContext({ target_domain: domain }));
     seedFinding(domain, { title: "Second finding", endpoint: "/second" });
 
-    assert.throws(() => writeVerificationRound({
+    assert.doesNotThrow(() => writeVerificationRound({
       target_domain: domain,
       round: "brutalist",
       notes: null,
@@ -12930,11 +12934,7 @@ test("verification v2 rejects changed inputs after snapshot at write/adjudicatio
       verification_snapshot_hash: context.snapshot_hash,
       round_profile: "brutalist",
       results: [v2VerificationResult("F-1")],
-    }), /VERIFY input changed after snapshot; restart VERIFY\/adjudication\./);
-    assert.throws(
-      () => buildVerificationAdjudication({ target_domain: domain }),
-      /VERIFY input changed after snapshot; restart VERIFY\/adjudication\./,
-    );
+    }));
   });
 });
 
@@ -13281,28 +13281,30 @@ test("replayExecutionPolicy without a domain does not scan active lease director
   assert.equal(touchedLeaseDir, false);
 });
 
-test("verification replay safety rejects stale snapshots before acquiring leases", async () => {
+test("verification replay safety stays operational across findings.jsonl mutations because the snapshot is frozen", async () => {
+  // Cycle C.4: the verification snapshot is derived from the immutable
+  // claim-freeze artifact, so adding new findings to findings.jsonl after the
+  // snapshot was taken cannot drift the replay lease state. The replay safety
+  // path checks freeze integrity (claim_freeze_id + claim_freeze_hash), not a
+  // live re-scan of findings.
   await withTempHome(async () => {
     const domain = "stale-replay-snapshot.example.com";
     enterVerifyV2(domain);
     const context = JSON.parse(readVerificationContext({ target_domain: domain }));
     const replayContext = replayContextFromVerificationContext(context);
     seedFinding(domain, {
-      title: "Second finding changes VERIFY input",
+      title: "Second finding changes findings.jsonl after snapshot",
       endpoint: "/api/changed-after-snapshot",
       proof_of_concept: "curl https://example.com/api/changed-after-snapshot",
       response_evidence: "{\"changed\":true}",
     });
 
-    await assert.rejects(
-      () => runWithReplaySafety(
-        { name: "bounty_http_scan" },
-        { target_domain: domain, replay_context: replayContext },
-        () => "should not run",
-      ),
-      /VERIFY input changed after snapshot/,
+    const result = await runWithReplaySafety(
+      { name: "bounty_http_scan" },
+      { target_domain: domain, replay_context: replayContext },
+      () => "frozen-batch-still-valid",
     );
-    assert.equal(fs.existsSync(replayLeaseFileFor(domain, replayContext)), false);
+    assert.equal(result, "frozen-batch-still-valid");
   });
 });
 

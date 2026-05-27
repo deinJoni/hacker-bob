@@ -416,7 +416,13 @@ test("verification adjudication and grade writers use the session lock before mu
   });
 });
 
-test("verification status contract keeps v2 snapshot drift aligned between context and analytics", () => {
+test("verification status contract reports frozen-payload rounds as current even after findings.jsonl mutation", () => {
+  // Cycle C.4: the verification snapshot is sourced from the immutable
+  // claim-freeze.json, so a brutalist round that covers the frozen
+  // CandidateClaim set must continue to read as `current: true` even when a
+  // new finding is appended to findings.jsonl after the snapshot. The freeze
+  // hash is the integrity check; the live findings ledger is no longer
+  // re-scanned on every status read.
   withTempHome(() => {
     const domain = "verification-status-v2.example.com";
     seedFinding(domain);
@@ -431,7 +437,7 @@ test("verification status contract keeps v2 snapshot drift aligned between conte
     writeVerificationRound({
       target_domain: domain,
       round: "brutalist",
-      notes: "v2 current before drift",
+      notes: "v2 current before findings.jsonl mutation",
       verification_attempt_id: entry.state_fields.verification_attempt_id,
       verification_snapshot_hash: entry.state_fields.verification_snapshot_hash,
       round_profile: "brutalist",
@@ -448,15 +454,15 @@ test("verification status contract keeps v2 snapshot drift aligned between conte
 
     const context = JSON.parse(readVerificationContext({ target_domain: domain }));
     const analytics = readSessionArtifactSummary(domain);
-    assert.equal(context.round_status.brutalist.current, false);
-    assert.equal(analytics.verification.rounds.brutalist.current, false);
-    assert.equal(context.round_status.brutalist.stale, true);
-    assert.equal(analytics.verification.rounds.brutalist.stale, true);
+    assert.equal(context.round_status.brutalist.current, true);
+    assert.equal(analytics.verification.rounds.brutalist.current, true);
+    assert.equal(context.round_status.brutalist.stale, false);
+    assert.equal(analytics.verification.rounds.brutalist.stale, false);
     assert.equal(
       analytics.verification.rounds.brutalist.blocker_reason,
       context.round_status.brutalist.blocker_reason,
     );
-    assert.match(context.round_status.brutalist.blocker_reason, /VERIFY input changed after snapshot/);
+    assert.equal(context.round_status.brutalist.blocker_reason, null);
   });
 });
 
