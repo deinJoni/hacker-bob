@@ -716,9 +716,9 @@ test("bob-spec loader is wired into the evaluator brief", () => {
   );
 });
 
-test("bountyagent skill stays orchestration-sized and preserves FSM shape", () => {
+test("bob-evaluate skill stays orchestration-sized and preserves lifecycle shape", () => {
   const orchestrator = readFile(".claude/skills/bob-evaluate/SKILL.md");
-  // Line cap is 367: web orchestration plus the EVM/SVM/Move/Substrate/
+  // Line cap is 320: web orchestration plus the EVM/SVM/Move/Substrate/
   // CosmWasm spawn templates fit, plus the post-v2 capability tool surface
   // (C2 doc-vs-behavior, C4 multi-account, I1 surface graph, I6 findings index,
   // I7 chain state tree, IP4 audit reports + I5 invariant templates, X3 + X5
@@ -727,15 +727,16 @@ test("bountyagent skill stays orchestration-sized and preserves FSM shape", () =
   // bob_materialize_frontier for the F.2 frontier view materializer,
   // bob_read_queue_policy + bob_set_queue_policy for the S.1 wave-planner
   // queue-policy.json operator override, and bob_schedule_tasks for the S.2
-  // SchedulerDecision ledger.
+  // SchedulerDecision ledger. A.3 collapses the eight-phase choreography
+  // into the six lifecycle states and ratchets this cap down from 367.
   // No future chain pack may bump this cap; instead, extract per-family
   // spawn details to separate skill files (e.g., bob-spawn-substrate.md,
   // bob-spawn-cosmwasm.md) and reference them from this orchestrator skill
   // via @-includes or short cross-links.
-  assert.ok(lineCount(".claude/skills/bob-evaluate/SKILL.md") <= 367, "bountyagent skill is too large");
-  assert.match(orchestrator, /SURFACE_DISCOVERY\s*→\s*AUTH\s*→\s*EVALUATE\s*→\s*CHAIN\s*→\s*VERIFY\s*→\s*GRADE\s*→\s*REPORT/);
-  for (const phase of ["SURFACE_DISCOVERY", "AUTH", "EVALUATE", "CHAIN", "VERIFY", "GRADE", "REPORT", "EXPLORE"]) {
-    assert.match(orchestrator, new RegExp(`PHASE [0-9]+: ${phase}|${phase}`), `missing ${phase}`);
+  assert.ok(lineCount(".claude/skills/bob-evaluate/SKILL.md") <= 320, "bob-evaluate skill is too large");
+  assert.match(orchestrator, /SETUP\s*->\s*OPEN_FRONTIER\s*->\s*CLAIM_FREEZE\s*->\s*VERIFY\s*->\s*GRADE\s*->\s*REPORT/);
+  for (const state of ["SETUP", "OPEN_FRONTIER", "CLAIM_FREEZE", "VERIFY", "GRADE", "REPORT"]) {
+    assert.match(orchestrator, new RegExp(`## STATE: ${state}`), `missing lifecycle state ${state}`);
   }
   assert.match(orchestrator, /must never call `bounty_write_wave_handoff`/);
   assert.match(orchestrator, /must never write handoff JSON directly/);
@@ -847,10 +848,11 @@ test("evidence-agent exists, is MCP-only, and cannot mutate unrelated artifacts"
 test("bob-evaluate spawns evidence before grade and validates evidence packs", () => {
   const orchestrator = readFile(".claude/skills/bob-evaluate/SKILL.md");
   const evidenceIndex = orchestrator.indexOf('subagent_type: "evidence-agent"');
-  // The no-reportables branch transitions to GRADE without spawning the
-  // evidence agent. The evidence-present branch transitions only after
-  // the agent completes — that's the GRADE transition this test guards.
-  const evidencePresentGrade = orchestrator.indexOf('to_phase: "GRADE"', evidenceIndex);
+  // The no-reportables branch advances to GRADE without spawning the
+  // evidence agent. The evidence-present branch advances only after the
+  // agent completes — that's the bob_advance_session GRADE step this test
+  // guards.
+  const evidencePresentGrade = orchestrator.indexOf('to_state: "GRADE"', evidenceIndex);
   const graderIndex = orchestrator.indexOf('subagent_type: "grader"');
 
   assert.ok(evidenceIndex > 0, "missing evidence-agent spawn");
@@ -867,7 +869,7 @@ test("bob-evaluate closes no-finding verification through SKIP grade and report"
 
   assert.doesNotMatch(orchestrator, /If no result has `reportable: true`, report `No reportable vulnerabilities`[\s\S]{0,80}stop/);
   assert.match(orchestrator, /no result has `reportable: true`[\s\S]*continue through GRADE and REPORT/);
-  assert.match(orchestrator, /On `SUBMIT` or `SKIP`, transition to REPORT/);
+  assert.match(orchestrator, /On `SUBMIT` or `SKIP`,[\s\S]*?to_state: "REPORT"/);
   assert.match(grader, /terminal SKIP verdict with `total_score: 0`, `findings: \[\]`/);
   assert.match(reporter, /no-findings closeout/);
 });
@@ -2511,7 +2513,7 @@ test("orchestrator documents deep mode persistence, surface-discovery mode, and 
   assert.match(orchestrator, /argument-hint: .*--no-auth/);
   assert.match(orchestrator, /argument-hint: .*--normal\|--paranoid\|--yolo/);
   assert.match(orchestrator, /argument-hint: .*--deep/);
-  assert.match(orchestrator, /`--deep` enables broader script-heavy surface-discovery/);
+  assert.match(orchestrator, /`--deep` enables broader script-heavy seed mapping/);
   assert.match(orchestrator, /bounty_init_session\(\{ target_domain, target_url, deep_mode, checkpoint_mode, egress_profile, block_internal_hosts, allow_internal_hosts \}\)/);
   assert.match(orchestrator, /egress_profile_identity_hash/);
   assert.match(orchestrator, /route\/profile\/source drift fails closed/);
@@ -2522,7 +2524,7 @@ test("orchestrator documents deep mode persistence, surface-discovery mode, and 
   assert.doesNotMatch(orchestrator, /After surface-discovery, in deep mode call `bounty_promote_surface_leads/);
   assert.match(orchestrator, /bounty_start_next_wave\(\{ target_domain \}\)/);
   assert.match(orchestrator, /bounty_read_surface_leads\(\{ target_domain, limit: 20 \}\)/);
-  assert.match(orchestrator, /Standard EVALUATE\/EXPLORE wave assignment policy is MCP-owned/);
+  assert.match(orchestrator, /Standard wave assignment policy is MCP-owned/);
   assert.match(orchestrator, /normal-path deep lead promotion/);
   assert.match(orchestrator, /call `bounty_start_next_wave`/);
   assert.doesNotMatch(orchestrator, /maximum 8/);
@@ -2737,23 +2739,27 @@ test("context scaling architecture doc is durable and matches enforced budget co
 // Merge integration: SC × main mechanisms (chain attempts, evidence packs)
 // ----------------------------------------------------------------------
 
-test("bob-evaluate routes surfaces after surface-discovery and spawns returned evaluator agents", () => {
+test("bob-evaluate routes surfaces during SETUP and spawns returned evaluator agents", () => {
   const orchestratorPrompt = readFile(".claude/skills/bob-evaluate/SKILL.md");
-  const surfaceDiscoverySection = orchestratorPrompt.match(/## PHASE 1: SURFACE_DISCOVERY([\s\S]*?)## PHASE 2: AUTH/)[1];
+  // SETUP carries seed mapping, surface routing, and auth capture; the
+  // lifecycle leaves SETUP for OPEN_FRONTIER via bob_advance_session, not a
+  // legacy phase transition. The routed nucleus assertion lives entirely in
+  // the SETUP narrative.
+  const setupSection = orchestratorPrompt.match(/## STATE: SETUP([\s\S]*?)## STATE: OPEN_FRONTIER/)[1];
 
   assert.match(
-    surfaceDiscoverySection,
+    setupSection,
     /Agent\(subagent_type: "surface-router-agent", name: "surface-router", prompt: "/,
   );
-  assert.match(surfaceDiscoverySection, /Domain: \[domain\]\. Session: ~\/bounty-agent-sessions\/\[domain\]\./);
-  assert.match(surfaceDiscoverySection, /bounty_route_surfaces\(\{ target_domain: '\[domain\]' \}\) and use \.data/);
-  assert.match(surfaceDiscoverySection, /If routing fails or returns zero surfaces, report the error and stop/);
+  assert.match(setupSection, /Domain: \[domain\]\. Session: ~\/bounty-agent-sessions\/\[domain\]\./);
+  assert.match(setupSection, /bounty_route_surfaces\(\{ target_domain: '\[domain\]' \}\) and use \.data/);
+  assert.match(setupSection, /If routing fails or returns zero surfaces, report the error and stop/);
   assert.match(
-    surfaceDiscoverySection,
-    /only after successful routing call `bounty_transition_phase\(\{ target_domain, to_phase: "AUTH" \}\)`/,
+    setupSection,
+    /bob_advance_session\(\{ target_domain, to_state: "OPEN_FRONTIER"/,
   );
   assert.match(orchestratorPrompt, /result\.data\.assignments\[\]/);
-  assert.match(orchestratorPrompt, /returned assignment's `evaluator_agent`/);
+  assert.match(orchestratorPrompt, /assignment's `evaluator_agent`/);
   assert.match(orchestratorPrompt, /subagent_type: "\[assignment\.evaluator_agent\]"/);
   assert.match(orchestratorPrompt, /Capability pack: \[assignment\.capability_pack\]\. Brief profile: \[assignment\.brief_profile\]/);
   assert.match(orchestratorPrompt, /Context budget: \[assignment\.context_budget\]/);
@@ -2764,8 +2770,8 @@ test("post-report evidence evaluators are explicit and do not masquerade as wave
   const orchestratorPrompt = readFile(".claude/skills/bob-evaluate/SKILL.md");
 
   assert.match(orchestratorPrompt, /Post-REPORT user intent stays flexible/);
-  assert.match(orchestratorPrompt, /transition `REPORT -> EXPLORE`/);
-  assert.match(orchestratorPrompt, /post-report evidence mode without transitioning to EXPLORE/);
+  assert.match(orchestratorPrompt, /re-enter `OPEN_FRONTIER`/);
+  assert.match(orchestratorPrompt, /post-report evidence mode without re-entering `OPEN_FRONTIER`/);
   assert.match(orchestratorPrompt, /BOB_AGENT_RUN_DONE \{"target_domain":"\[domain\]","mode":"evidence"/);
   assert.match(evaluatorPrompt, /Post-report evidence mode is different/);
   assert.match(evaluatorPrompt, /Do not call `bounty_read_assignment_brief`/);
