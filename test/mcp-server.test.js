@@ -13886,13 +13886,21 @@ test("bounty_write_grade_verdict writes grade.json and grade.md and accepts empt
     assert.equal(result.findings_count, 0);
     assert.equal(result.written_json, paths.json);
     assert.equal(result.written_md, paths.markdown);
-    assert.deepEqual(JSON.parse(fs.readFileSync(paths.json, "utf8")), {
+    // Cycle C.6: grade verdicts carry claim_freeze_id when a freeze exists.
+    // The v2 seedVerificationPipeline path auto-freezes when entering VERIFY,
+    // so a non-null id is expected here.
+    const persisted = JSON.parse(fs.readFileSync(paths.json, "utf8"));
+    const expectedFreezeId = persisted.claim_freeze_id;
+    assert.equal(typeof expectedFreezeId, "string");
+    assert.match(expectedFreezeId, /^CF-/);
+    assert.deepEqual(persisted, {
       version: 1,
       target_domain: domain,
       verdict: "SKIP",
       total_score: 0,
       findings: [],
       feedback: null,
+      claim_freeze_id: expectedFreezeId,
     });
     assert.match(fs.readFileSync(paths.markdown, "utf8"), /No graded findings\./);
 
@@ -13903,6 +13911,7 @@ test("bounty_write_grade_verdict writes grade.json and grade.md and accepts empt
       total_score: 0,
       findings: [],
       feedback: null,
+      claim_freeze_id: expectedFreezeId,
     });
   });
 });

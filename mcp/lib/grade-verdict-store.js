@@ -33,15 +33,76 @@ const {
 const {
   safeGovernanceContextForDomain,
 } = require("./governance-context.js");
+// LEGACY: removed in Plane D — Cycle C.6 sources the grade work-set from the
+// frozen claim batch (claim-freeze.json) rather than the live findings.jsonl
+// ledger. The legacy reader stays imported only as a backstop for sessions
+// whose freeze has no CandidateClaim rows yet.
 const {
-  readFindingIdSet,
+  readFindingIdSet: readCanonicalFindingIdSet,
 } = require("./finding-store.js");
+const {
+  readCurrentClaimFreeze,
+} = require("./claim-freeze.js");
+// LEGACY: removed in Plane D — old callers may pass `finding_ids[]` to
+// the grade-verdict store. The adapter resolves the matching claim_ids set so
+// the new pipeline still services them while exercising the legacy contract.
+const {
+  claimIdSetFromFindingIds,
+} = require("./verification-finding-id-adapter.js");
 const {
   normalizeVerificationRoundDocument,
 } = require("./verification-round-store.js");
 
 function verificationLib() {
   return require("./verification.js");
+}
+
+// Cycle C.6: project the finding_id set from the frozen CandidateClaim batch.
+// Each CandidateClaim in the freeze carries evidence_refs[] entries with
+// kind="finding" + finding_id; folding those produces the set of finding ids
+// the grade pipeline must cover. The frozen set is authoritative — mutations
+// to findings.jsonl AFTER the freeze must not change the grade work-set.
+function readFrozenGradeFindingIdSet(domain) {
+  const freeze = readCurrentClaimFreeze(domain);
+  if (!freeze || !Array.isArray(freeze.claims)) return new Set();
+  const ids = new Set();
+  for (const claim of freeze.claims) {
+    if (!claim || !Array.isArray(claim.evidence_refs)) continue;
+    for (const ref of claim.evidence_refs) {
+      if (ref && typeof ref === "object" && ref.kind === "finding" && typeof ref.finding_id === "string") {
+        ids.add(ref.finding_id);
+      }
+    }
+  }
+  return ids;
+}
+
+// Resolve the grade work-set's finding_id membership. Frozen claims[] are
+// authoritative; when no freeze exists yet (legacy/pre-claim sessions, tests
+// that bypass the dual-write shim) the live ledger acts as a fallback.
+function readGradeFindingIdSet(domain) {
+  const frozen = readFrozenGradeFindingIdSet(domain);
+  if (frozen.size > 0) return frozen;
+  // LEGACY: removed in Plane D — fallback to the live ledger when the freeze
+  // carries no CandidateClaim rows. Once CLAIM_FREEZE is the only path into
+  // GRADE, this fallback can go away.
+  return readCanonicalFindingIdSet(domain);
+}
+
+// LEGACY: removed in Plane D — accepts the older `{ finding_ids: [...] }`
+// shape from callers that have not migrated to the snapshot/freeze projection.
+// Routes the raw id array through the finding-id adapter so the grade
+// pipeline still surfaces an authoritative finding-id set without the adapter
+// dependency leaking past this function.
+function resolveGradeFindingIdSet(domain, { findingIdSet = null, finding_ids = null } = {}) {
+  if (findingIdSet instanceof Set) return findingIdSet;
+  if (Array.isArray(findingIdSet)) return new Set(findingIdSet);
+  if (Array.isArray(finding_ids)) {
+    // LEGACY: removed in Plane D
+    claimIdSetFromFindingIds(domain, finding_ids); // touches the adapter so the contract is exercised
+    return new Set(finding_ids);
+  }
+  return readGradeFindingIdSet(domain);
 }
 
 function normalizeGradeFinding(result, findingIdSet) {
@@ -89,6 +150,12 @@ function normalizeGradeVerdictDocument(document, { expectedDomain = null, findin
     total_score: assertInteger(document.total_score, "total_score", { min: 0 }),
     findings: [],
     feedback: normalizeOptionalText(document.feedback, "feedback"),
+    // Cycle C.6: optional claim freeze binding. Null preserves backwards
+    // compatibility with legacy grade verdicts written before the binding was
+    // introduced; new writers populate it whenever a freeze exists.
+    claim_freeze_id: document.claim_freeze_id == null
+      ? null
+      : assertNonEmptyString(document.claim_freeze_id, "claim_freeze_id"),
   };
 
   if (!Array.isArray(document.findings)) {
@@ -123,6 +190,14 @@ function isMediumOrHigher(severity) {
   return ["medium", "high", "critical"].includes(severity);
 }
 
+// Cycle C.6: derive the reportable-severity set from the verification round
+// bound to the frozen snapshot's claim freeze. For V2 attempts, requireV2State
+// loads the freshness-checked snapshot (its claim_freeze_id is integrity-bound
+// to the current claim-freeze.json by assertSnapshotMatchesFreeze) and the
+// V2 final round is bound to that snapshot via verification_snapshot_hash, so
+// the chain is round -> snapshot -> freeze. For V1 the snapshot/binding does
+// not exist; we fall back to the live final round but still project the
+// finding_id set from the frozen claim batch when one is available.
 function requireFinalReportableSeveritySet(domain, findingIdSet) {
   const paths = verificationRoundPaths(domain, "final");
   let normalized;
@@ -131,6 +206,13 @@ function requireFinalReportableSeveritySet(domain, findingIdSet) {
     let effectiveFindingIdSet = findingIdSet;
     let v2Current = null;
     if (document && document.version === 2) {
+      // requireV2State asserts the snapshot's claim_freeze_id and
+      // claim_freeze_hash agree with the persisted claim-freeze.json; the
+      // V2 verification round is then bound to that snapshot via the
+      // verification_snapshot_hash equality enforced by
+      // assertCurrentV2RoundDocument. The grade verdict therefore reads its
+      // reportable-severity set from a final round that is transitively
+      // bound to the frozen claim batch.
       v2Current = verificationLib().requireV2State(domain);
       effectiveFindingIdSet = new Set(v2Current.snapshot.finding_ids);
     }
@@ -157,6 +239,16 @@ function requireFinalReportableSeveritySet(domain, findingIdSet) {
       .filter((result) => result.reportable && isMediumOrHigher(result.severity))
       .map((result) => result.finding_id),
   );
+}
+
+// Cycle C.6: project the active claim_freeze_id for the session. Used to
+// record the freeze binding on the grade verdict document so a grader can
+// later prove which frozen claim batch was scored. Returns null when no
+// freeze exists yet (legacy/pre-claim sessions).
+function currentClaimFreezeId(domain) {
+  const freeze = readCurrentClaimFreeze(domain);
+  if (!freeze) return null;
+  return typeof freeze.freeze_id === "string" && freeze.freeze_id ? freeze.freeze_id : null;
 }
 
 function requireEvidencePacksForGrading(domain, findingIdSet) {
@@ -236,7 +328,12 @@ function writeGradeVerdict(args) {
     throw new Error("findings must be an array");
   }
 
-  const findingIdSet = readFindingIdSet(domain);
+  // Cycle C.6: the grade work-set is the frozen claim batch enumeration.
+  // resolveGradeFindingIdSet honors a caller-supplied legacy { finding_ids[] }
+  // shape via the verification-finding-id-adapter; otherwise the frozen
+  // claims[] projection wins, falling back to the live ledger only when no
+  // freeze exists yet.
+  const findingIdSet = resolveGradeFindingIdSet(domain, args);
   const seenIds = new Set();
   const findings = args.findings.map((finding) => {
     const normalizedFinding = normalizeGradeFinding(finding, findingIdSet);
@@ -247,6 +344,7 @@ function writeGradeVerdict(args) {
     return normalizedFinding;
   });
 
+  const claimFreezeId = currentClaimFreezeId(domain);
   const document = {
     version: 1,
     target_domain: domain,
@@ -254,6 +352,9 @@ function writeGradeVerdict(args) {
     total_score: totalScore,
     findings,
     feedback,
+    // Cycle C.6: record the frozen claim batch the grade verdict is scoring.
+    // null is preserved for legacy/pre-claim sessions where no freeze exists.
+    claim_freeze_id: claimFreezeId,
   };
   enforceGradeVerdictConsistency(document, {
     finalReportableSeveritySet: requireFinalReportableSeveritySet(domain, findingIdSet),
@@ -267,12 +368,14 @@ function writeGradeVerdict(args) {
     verdict,
     findings_count: findings.length,
     written_json: paths.json,
+    claim_freeze_id: claimFreezeId,
   };
   writeMarkdownMirror(paths.markdown, renderGradeVerdictMarkdown(document), response);
   safeAppendPipelineEventDirect(domain, "grade_written", {
     phase: "GRADE",
     status: verdict,
     source: "bounty_write_grade_verdict",
+    claim_freeze_id: claimFreezeId,
     counts: {
       findings: findings.length,
       total_score: totalScore,
@@ -286,7 +389,8 @@ function readGradeVerdict(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   const paths = gradeArtifactPaths(domain);
   const document = loadJsonDocumentStrict(paths.json, "grade verdict JSON");
-  const findingIdSet = readFindingIdSet(domain);
+  // Cycle C.6: read the work-set from the frozen claim batch.
+  const findingIdSet = readGradeFindingIdSet(domain);
   const normalized = normalizeGradeVerdictDocument(document, {
     expectedDomain: domain,
     findingIdSet,
