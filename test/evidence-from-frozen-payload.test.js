@@ -1,0 +1,344 @@
+"use strict";
+
+// Cycle C.5 invariant: the evidence pipeline sources its work-set from the
+// frozen EvidenceReference set carried by every CandidateClaim in
+// claim-freeze.json, NOT from a live re-scan of findings.jsonl. Adding an
+// inline evidence artifact after the freeze must not change the evidence
+// pipeline's view; reading an evidence pack must agree on content_hash with
+// the frozen reference; and the completeness gate must fail when a required
+// EvidenceReference is missing and pass when every reference is present.
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+
+const {
+  appendCandidateClaim,
+  evidenceReferenceLookupKey,
+  normalizeEvidenceReferenceShape,
+} = require("../mcp/lib/claims.js");
+const {
+  assertCompletenessAgainstFreeze,
+  buildClaimFreeze,
+  iterateFrozenEvidenceRefs,
+  readCurrentClaimFreeze,
+} = require("../mcp/lib/claim-freeze.js");
+const {
+  assertEvidenceCompletenessForFreeze,
+  readFrozenEvidenceFindingIdSet,
+} = require("../mcp/lib/evidence.js");
+const {
+  appendJsonlLine,
+} = require("../mcp/lib/storage.js");
+const {
+  findingsJsonlPath,
+  sessionDir,
+} = require("../mcp/lib/paths.js");
+const {
+  normalizeFindingRecord,
+} = require("../mcp/lib/finding-contracts.js");
+const recordFindingTool = require("../mcp/lib/tools/record-finding.js");
+const {
+  resetForTests: resetMaterializationDebounce,
+} = require("../mcp/lib/frontier-materialize-debounce.js");
+
+function withTempHome(fn) {
+  const previousHome = process.env.HOME;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "bob-evidence-from-frozen-"));
+  process.env.HOME = home;
+  try {
+    return fn(home);
+  } finally {
+    process.env.HOME = previousHome;
+    resetMaterializationDebounce();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+function recordFindingViaTool(domain, overrides = {}) {
+  const args = {
+    target_domain: domain,
+    title: overrides.title || "IDOR on billing profile",
+    severity: overrides.severity || "high",
+    cwe: overrides.cwe || "CWE-639",
+    endpoint: overrides.endpoint || "https://victim.example/api/billing/1",
+    description: overrides.description || "Tenant boundary allows cross-account view",
+    proof_of_concept: overrides.poc || "GET /api/billing/1 returns another tenant payload",
+    response_evidence: overrides.response_evidence || "Cross-tenant billing payload",
+    impact: overrides.impact || "Cross-tenant billing disclosure",
+    validated: true,
+    auth_profile: overrides.auth_profile || "attacker",
+    surface_id: overrides.surface_id || "surface:billing-profile",
+  };
+  return JSON.parse(recordFindingTool.handler(args));
+}
+
+function appendFindingJsonlDirect(domain, id, overrides = {}) {
+  // Bypass the dual-write shim so the file mutation post-freeze does not
+  // recreate the claim plane.
+  fs.mkdirSync(sessionDir(domain), { recursive: true });
+  const record = normalizeFindingRecord({
+    id,
+    target_domain: domain,
+    title: overrides.title || `Post-freeze finding ${id}`,
+    severity: overrides.severity || "high",
+    cwe: overrides.cwe || "CWE-639",
+    endpoint: overrides.endpoint || `https://victim.example/api/post-freeze/${id}`,
+    description: overrides.description || "Mutated after the freeze",
+    proof_of_concept: overrides.poc || "POST /api/post-freeze inserted after freeze",
+    response_evidence: overrides.response_evidence || "Post-freeze evidence",
+    impact: overrides.impact || "Should not change evidence completeness",
+    validated: true,
+    surface_id: overrides.surface_id || "surface:post-freeze",
+    auth_profile: overrides.auth_profile || "attacker",
+  }, { expectedDomain: domain });
+  appendJsonlLine(findingsJsonlPath(domain), record);
+  return record;
+}
+
+test("evidence work-set derives from frozen EvidenceReference set, not live findings.jsonl", () => {
+  withTempHome(() => {
+    const domain = "evidence-frozen-source.example.com";
+    // N=3 findings via the dual-write tool. Each produces a CandidateClaim
+    // carrying a single evidence_ref of kind="finding".
+    const ids = [];
+    for (let i = 1; i <= 3; i += 1) {
+      const response = recordFindingViaTool(domain, {
+        title: `Pre-freeze finding ${i}`,
+        endpoint: `https://victim.example/api/billing/${i}`,
+        poc: `GET /api/billing/${i} returns another tenant payload`,
+      });
+      assert.equal(response.recorded, true);
+      ids.push(response.finding_id);
+    }
+
+    const freeze = buildClaimFreeze(domain, {
+      write: true,
+      now: new Date("2026-05-27T01:00:00.000Z"),
+    });
+    assert.equal(freeze.claim_count, 3);
+
+    // Pre-mutation: work-set has exactly the 3 ids encoded in the freeze.
+    const beforeIds = readFrozenEvidenceFindingIdSet(domain);
+    assert.equal(beforeIds.size, 3);
+    for (const id of ids) {
+      assert.ok(beforeIds.has(id), `frozen work-set must contain ${id}`);
+    }
+
+    // Add an inline finding directly to findings.jsonl AFTER the freeze. The
+    // dual-write shim is bypassed so claims.jsonl stays at 3 rows.
+    appendFindingJsonlDirect(domain, "F-99");
+
+    // Post-mutation: the work-set still derives from the freeze, which is
+    // unchanged. The new finding is IGNORED.
+    const afterIds = readFrozenEvidenceFindingIdSet(domain);
+    assert.equal(afterIds.size, 3, "frozen payload is authoritative; live ledger mutation is ignored");
+    for (const id of ids) {
+      assert.ok(afterIds.has(id));
+    }
+    assert.ok(!afterIds.has("F-99"), "post-freeze findings.jsonl row must not appear in the work-set");
+  });
+});
+
+test("iterating frozen evidence refs yields each CandidateClaim's content-hash-bound EvidenceReference", () => {
+  withTempHome(() => {
+    const domain = "evidence-frozen-refs.example.com";
+    // M=2 findings -> 2 claims, each with 1 evidence ref.
+    recordFindingViaTool(domain, { endpoint: "https://victim.example/api/billing/A" });
+    recordFindingViaTool(domain, { endpoint: "https://victim.example/api/billing/B" });
+    const freeze = buildClaimFreeze(domain, {
+      write: true,
+      now: new Date("2026-05-27T01:00:00.000Z"),
+    });
+    assert.equal(freeze.claim_count, 2);
+
+    const entries = [...iterateFrozenEvidenceRefs(freeze)];
+    assert.equal(entries.length, 2, "iteration must visit every evidence ref");
+    for (const entry of entries) {
+      assert.equal(entry.ref.kind, "finding");
+      assert.equal(typeof entry.ref.finding_id, "string");
+      assert.equal(typeof entry.ref.content_hash, "string");
+      assert.equal(entry.ref.content_hash.length, 64);
+      assert.equal(entry.ref.artifact_path, "findings.jsonl");
+      assert.equal(typeof entry.claim_id, "string");
+      assert.equal(entry.ref_key, evidenceReferenceLookupKey(entry.ref));
+    }
+  });
+});
+
+test("completeness gate fails when a required evidence_ref is missing, and passes when every ref is present", () => {
+  withTempHome(() => {
+    const domain = "evidence-completeness.example.com";
+    recordFindingViaTool(domain, { endpoint: "https://victim.example/api/billing/1" });
+    recordFindingViaTool(domain, { endpoint: "https://victim.example/api/billing/2" });
+    const freeze = buildClaimFreeze(domain, {
+      write: true,
+      now: new Date("2026-05-27T01:00:00.000Z"),
+    });
+    assert.equal(freeze.claim_count, 2);
+
+    const frozenRefs = [];
+    for (const entry of iterateFrozenEvidenceRefs(freeze)) {
+      frozenRefs.push(entry.ref);
+    }
+    assert.equal(frozenRefs.length, 2);
+
+    // Case 1: supply only one of the two refs -> completeness fails with a
+    // structured missing entry that names the affected claim_id.
+    const partial = assertCompletenessAgainstFreeze(freeze, [frozenRefs[0]]);
+    assert.equal(partial.complete, false, "missing one ref must fail completeness");
+    assert.equal(partial.required, 2);
+    assert.equal(partial.satisfied, 1);
+    assert.equal(partial.missing.length, 1);
+    assert.equal(partial.missing[0].kind, "finding");
+    assert.ok(typeof partial.missing[0].claim_id === "string");
+
+    // Case 2: supply both refs -> completeness passes.
+    const complete = assertCompletenessAgainstFreeze(freeze, frozenRefs);
+    assert.equal(complete.complete, true, "supplying every ref must satisfy completeness");
+    assert.equal(complete.satisfied, 2);
+    assert.equal(complete.missing.length, 0);
+    assert.equal(complete.mismatched.length, 0);
+
+    // Case 3: supply a ref whose content_hash does not match -> mismatch.
+    const tampered = {
+      ...frozenRefs[0],
+      content_hash: "0".repeat(64),
+    };
+    const mismatch = assertCompletenessAgainstFreeze(freeze, [tampered, frozenRefs[1]]);
+    assert.equal(mismatch.complete, false, "content_hash mismatch must fail completeness");
+    assert.equal(mismatch.mismatched.length, 1);
+    assert.equal(mismatch.mismatched[0].expected_hash, frozenRefs[0].content_hash);
+    assert.equal(mismatch.mismatched[0].observed_hash, "0".repeat(64));
+  });
+});
+
+test("normalizeEvidenceReferenceShape rejects refs without a kind", () => {
+  // Plain shape contract: kind is the only required field; artifact_path and
+  // content_hash are validated when present.
+  assert.throws(
+    () => normalizeEvidenceReferenceShape({ artifact_path: "findings.jsonl" }),
+    /kind must be a non-empty string/,
+  );
+  assert.throws(
+    () => normalizeEvidenceReferenceShape({ kind: "finding", content_hash: "not-a-hash" }),
+    /content_hash must be a 64-hex content digest/,
+  );
+  assert.throws(
+    () => normalizeEvidenceReferenceShape({ kind: "finding", artifact_path: "" }),
+    /artifact_path must be a non-empty string/,
+  );
+  // Valid: a finding ref with full descriptors round-trips.
+  const ok = normalizeEvidenceReferenceShape({
+    kind: "finding",
+    artifact_path: "findings.jsonl",
+    finding_id: "F-1",
+    content_hash: "a".repeat(64),
+    source_run_id: "AR-1",
+  });
+  assert.equal(ok.kind, "finding");
+  assert.equal(ok.finding_id, "F-1");
+});
+
+test("appendCandidateClaim enforces EvidenceReference shape on every evidence_refs[] entry", () => {
+  withTempHome(() => {
+    const domain = "evidence-shape-guard.example.com";
+    // A CandidateClaim with a malformed evidence ref is rejected up front so a
+    // later completeness gate cannot encounter ill-typed entries.
+    assert.throws(
+      () => appendCandidateClaim({
+        target_domain: domain,
+        title: "Bad ref claim",
+        summary: "Carries an evidence ref without a kind.",
+        severity: "high",
+        evidence_refs: [{ artifact_path: "findings.jsonl" }],
+      }),
+      /kind must be a non-empty string/,
+    );
+
+    // A well-formed ref accepts.
+    const claim = appendCandidateClaim({
+      target_domain: domain,
+      title: "Well-formed claim",
+      summary: "Carries a complete EvidenceReference.",
+      severity: "high",
+      evidence_refs: [{
+        kind: "finding",
+        artifact_path: "findings.jsonl",
+        finding_id: "F-1",
+        content_hash: "b".repeat(64),
+        source_run_id: "AR-7",
+      }],
+    });
+    assert.equal(claim.evidence_refs.length, 1);
+    assert.equal(claim.evidence_refs[0].kind, "finding");
+  });
+});
+
+test("evidence pack content_hash agrees with the frozen reference", () => {
+  withTempHome(() => {
+    const domain = "evidence-pack-hash.example.com";
+    recordFindingViaTool(domain, { endpoint: "https://victim.example/api/billing/1" });
+    const freeze = buildClaimFreeze(domain, {
+      write: true,
+      now: new Date("2026-05-27T01:00:00.000Z"),
+    });
+    assert.equal(freeze.claim_count, 1);
+
+    // Read the frozen ref straight off the freeze on disk and confirm
+    // round-trip identity with the in-memory document.
+    const onDisk = readCurrentClaimFreeze(domain);
+    assert.ok(onDisk, "freeze must persist to disk");
+    assert.equal(onDisk.claim_count, 1);
+
+    const frozenRef = onDisk.claims[0].evidence_refs[0];
+    assert.equal(frozenRef.kind, "finding");
+    assert.equal(typeof frozenRef.content_hash, "string");
+    assert.equal(frozenRef.content_hash.length, 64);
+
+    // Pull the same ref via the iterator and confirm content_hash equality.
+    const fromIterator = [...iterateFrozenEvidenceRefs(onDisk)][0].ref;
+    assert.equal(fromIterator.content_hash, frozenRef.content_hash);
+  });
+});
+
+test("assertEvidenceCompletenessForFreeze reads the on-disk freeze and reports a structured verdict", () => {
+  withTempHome(() => {
+    const domain = "evidence-on-disk.example.com";
+    recordFindingViaTool(domain, { endpoint: "https://victim.example/api/billing/1" });
+    recordFindingViaTool(domain, { endpoint: "https://victim.example/api/billing/2" });
+    buildClaimFreeze(domain, {
+      write: true,
+      now: new Date("2026-05-27T01:00:00.000Z"),
+    });
+
+    // No evidence pack yet -> completeness fails because no observed refs.
+    const empty = assertEvidenceCompletenessForFreeze(domain);
+    assert.equal(empty.complete, false);
+    assert.equal(empty.required, 2);
+    assert.equal(empty.satisfied, 0);
+    assert.equal(empty.missing.length, 2);
+
+    // Supply every ref directly -> completeness passes.
+    const freeze = readCurrentClaimFreeze(domain);
+    const refs = [];
+    for (const entry of iterateFrozenEvidenceRefs(freeze)) {
+      refs.push(entry.ref);
+    }
+    const full = assertEvidenceCompletenessForFreeze(domain, { suppliedRefs: refs });
+    assert.equal(full.complete, true);
+    assert.equal(full.required, 2);
+    assert.equal(full.satisfied, 2);
+  });
+});
+
+test("completeness gate when no freeze exists: blocker_reason explains the missing source", () => {
+  withTempHome(() => {
+    const domain = "evidence-no-freeze.example.com";
+    const verdict = assertEvidenceCompletenessForFreeze(domain);
+    assert.equal(verdict.complete, false);
+    assert.equal(verdict.blocker_reason, "no claim freeze available");
+  });
+});

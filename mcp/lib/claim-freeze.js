@@ -35,6 +35,15 @@ const {
 
 const CLAIM_FREEZE_VERSION = 1;
 
+// EvidenceReference helpers come from claims.js. The schema lives there because
+// CandidateClaim is the first-class carrier of evidence_refs[]; this module
+// composes the frozen payload over those refs.
+const {
+  EVIDENCE_REFERENCE_KIND_VALUES,
+  evidenceReferenceLookupKey,
+  normalizeEvidenceReferenceShape,
+} = require("./claims.js");
+
 function generatedClaimFreezeId(fields) {
   return `CF-${hashCanonicalJson(fields).slice(0, 24)}`;
 }
@@ -149,10 +158,131 @@ function readCurrentClaimFreeze(targetDomain) {
   return readJsonFile(filePath, { label: "claim-freeze.json" });
 }
 
+// Iterate the EvidenceReference entries on every CandidateClaim in the freeze.
+// Emits {claim, claimId, ref, refKey} tuples for deterministic traversal.
+function* iterateFrozenEvidenceRefs(freeze) {
+  if (!freeze || !Array.isArray(freeze.claims)) return;
+  for (const claim of freeze.claims) {
+    if (!claim || typeof claim !== "object") continue;
+    const claimId = typeof claim.claim_id === "string" ? claim.claim_id : null;
+    if (!Array.isArray(claim.evidence_refs)) continue;
+    for (const ref of claim.evidence_refs) {
+      if (!ref || typeof ref !== "object") continue;
+      yield {
+        claim,
+        claim_id: claimId,
+        ref,
+        ref_key: evidenceReferenceLookupKey(ref),
+      };
+    }
+  }
+}
+
+// Cycle C.5 completeness gate. The frozen claim batch is authoritative; the
+// gate measures whether every CandidateClaim's required EvidenceReference is
+// observed in the supplied evidence_refs[] payload (and whether the observed
+// content_hash matches the frozen reference). Missing/mismatched refs are
+// blockers; the GRADE phase must not advance while complete: false.
+//
+// Parameters:
+//   freeze           : the claim-freeze document (typically from
+//                      readCurrentClaimFreeze).
+//   suppliedRefs     : observed refs (e.g., evidence-pack lookup keys) keyed
+//                      by `evidenceReferenceLookupKey(ref)` with the observed
+//                      content_hash as the map value, or an iterable of
+//                      ref objects.
+//
+// Returns a structured verdict:
+//   {
+//     complete: boolean,
+//     required: number,
+//     satisfied: number,
+//     missing: [{claim_id, kind, ref_key}],
+//     mismatched: [{claim_id, kind, ref_key, expected_hash, observed_hash}],
+//     extras: [{ref_key}], // observed refs not present in the freeze
+//   }
+function suppliedRefsAsMap(supplied) {
+  if (supplied == null) return new Map();
+  if (supplied instanceof Map) return supplied;
+  const map = new Map();
+  if (Array.isArray(supplied)) {
+    for (const ref of supplied) {
+      const key = evidenceReferenceLookupKey(ref);
+      if (key == null) continue;
+      const hash = ref && typeof ref === "object" && typeof ref.content_hash === "string"
+        ? ref.content_hash
+        : null;
+      map.set(key, hash);
+    }
+    return map;
+  }
+  if (typeof supplied === "object") {
+    for (const [key, value] of Object.entries(supplied)) {
+      map.set(key, typeof value === "string" ? value : null);
+    }
+  }
+  return map;
+}
+
+function assertCompletenessAgainstFreeze(freeze, suppliedRefs) {
+  const required = [];
+  for (const entry of iterateFrozenEvidenceRefs(freeze)) {
+    required.push(entry);
+  }
+  const observed = suppliedRefsAsMap(suppliedRefs);
+  const missing = [];
+  const mismatched = [];
+  let satisfied = 0;
+  const requiredKeys = new Set();
+  for (const entry of required) {
+    requiredKeys.add(entry.ref_key);
+    if (!observed.has(entry.ref_key)) {
+      missing.push({
+        claim_id: entry.claim_id,
+        kind: entry.ref ? entry.ref.kind || null : null,
+        ref_key: entry.ref_key,
+      });
+      continue;
+    }
+    const expectedHash = entry.ref && typeof entry.ref.content_hash === "string"
+      ? entry.ref.content_hash
+      : null;
+    const observedHash = observed.get(entry.ref_key);
+    if (expectedHash != null && observedHash != null && expectedHash !== observedHash) {
+      mismatched.push({
+        claim_id: entry.claim_id,
+        kind: entry.ref.kind || null,
+        ref_key: entry.ref_key,
+        expected_hash: expectedHash,
+        observed_hash: observedHash,
+      });
+      continue;
+    }
+    satisfied += 1;
+  }
+  const extras = [];
+  for (const key of observed.keys()) {
+    if (!requiredKeys.has(key)) extras.push({ ref_key: key });
+  }
+  return {
+    complete: missing.length === 0 && mismatched.length === 0,
+    required: required.length,
+    satisfied,
+    missing,
+    mismatched,
+    extras,
+  };
+}
+
 module.exports = {
   CLAIM_FREEZE_VERSION,
+  EVIDENCE_REFERENCE_KIND_VALUES,
+  assertCompletenessAgainstFreeze,
   buildClaimFreeze,
+  evidenceReferenceLookupKey,
   generatedClaimFreezeId,
+  iterateFrozenEvidenceRefs,
+  normalizeEvidenceReferenceShape,
   readCurrentClaimFreeze,
   verificationSnapshotFromClaimFreeze,
 };

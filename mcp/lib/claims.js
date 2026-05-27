@@ -34,6 +34,96 @@ const CLAIMS_MAX_RECORDS = 20000;
 const CLAIM_STATUSES = Object.freeze(["candidate", "clustered", "frozen", "verified", "dismissed", "reported"]);
 const CLAIM_SEVERITIES = Object.freeze(["critical", "high", "medium", "low", "informational"]);
 
+// EvidenceReference schema (Cycle C.5).
+//
+// CandidateClaim carries a first-class evidence_refs[] payload. Each reference
+// names an external artifact whose canonical-hash content is the durable
+// evidence; once the claim batch is frozen, downstream stages (verification,
+// evidence pack, grade, report snapshot) read evidence from these references
+// rather than re-scanning live disk artifacts.
+//
+// Canonical shape:
+//   {
+//     kind: "<one of EVIDENCE_REFERENCE_KIND_VALUES>",
+//     artifact_path?: relative or absolute path under the session dir,
+//     content_hash?: sha256 hex of the canonical payload of the referenced
+//                    artifact,
+//     source_run_id?: AgentRun id that produced the evidence,
+//     ref?: optional line/anchor pointer into the artifact,
+//     ...kind-specific fields (finding_id, chain_attempt_id, ...)
+//   }
+const EVIDENCE_REFERENCE_KIND_VALUES = Object.freeze([
+  "finding",
+  "verification_round",
+  "chain_attempt",
+  "http_audit",
+  "smart_contract_evidence",
+  "agent_run",
+]);
+
+function isHex64(value) {
+  return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
+}
+
+function normalizeEvidenceReferenceShape(ref, fieldName = "evidence_refs[]") {
+  if (ref == null || typeof ref !== "object" || Array.isArray(ref)) {
+    throw new Error(`${fieldName} must be an object`);
+  }
+  const kind = ref.kind;
+  if (typeof kind !== "string" || !kind.trim()) {
+    throw new Error(`${fieldName}.kind must be a non-empty string`);
+  }
+  const artifactPath = ref.artifact_path;
+  if (artifactPath != null && (typeof artifactPath !== "string" || !artifactPath.trim())) {
+    throw new Error(`${fieldName}.artifact_path must be a non-empty string when present`);
+  }
+  const contentHash = ref.content_hash;
+  if (contentHash != null && !isHex64(contentHash)) {
+    throw new Error(`${fieldName}.content_hash must be a 64-hex content digest when present`);
+  }
+  const sourceRunId = ref.source_run_id;
+  if (sourceRunId != null && (typeof sourceRunId !== "string" || !sourceRunId.trim())) {
+    throw new Error(`${fieldName}.source_run_id must be a non-empty string when present`);
+  }
+  return ref;
+}
+
+function evidenceReferenceLookupKey(ref) {
+  // Stable identity for completeness comparison. Two refs are "the same"
+  // reference when their kind + the natural identifier for that kind match.
+  // Falls back to a tuple of (kind, artifact_path, content_hash) when no
+  // kind-specific id is available so two arbitrary refs over the same artifact
+  // compare equal.
+  if (!ref || typeof ref !== "object") return null;
+  const kind = typeof ref.kind === "string" ? ref.kind : "";
+  if (kind === "finding" && typeof ref.finding_id === "string") {
+    return `${kind}:${ref.finding_id}`;
+  }
+  if (kind === "verification_round") {
+    const round = typeof ref.verification_round === "string"
+      ? ref.verification_round
+      : (typeof ref.round === "string" ? ref.round : "");
+    if (round) return `${kind}:${round}`;
+  }
+  if (kind === "chain_attempt" && typeof ref.chain_attempt_id === "string") {
+    return `${kind}:${ref.chain_attempt_id}`;
+  }
+  if (kind === "http_audit") {
+    if (typeof ref.http_audit_id === "string") return `${kind}:${ref.http_audit_id}`;
+    if (typeof ref.request_id === "string") return `${kind}:${ref.request_id}`;
+  }
+  if (kind === "smart_contract_evidence" && typeof ref.contract_address === "string") {
+    const chain = typeof ref.chain_id === "string" || typeof ref.chain_id === "number"
+      ? `:${ref.chain_id}`
+      : "";
+    return `${kind}:${ref.contract_address}${chain}`;
+  }
+  if (kind === "agent_run" && typeof ref.agent_run_id === "string") {
+    return `${kind}:${ref.agent_run_id}`;
+  }
+  return `${kind}:${ref.artifact_path || ""}:${ref.content_hash || ""}`;
+}
+
 function normalizeConfidence(value) {
   if (value == null) return null;
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
@@ -66,7 +156,12 @@ function normalizeCandidateClaim(input, { targetDomain = null, now = new Date() 
   const severity = assertEnumValue(input.severity || "medium", CLAIM_SEVERITIES, "severity");
   const surfaceIds = normalizeOptionalTextArray(input.surface_ids, "surface_ids");
   const lenses = normalizeLensArray(input.lenses);
-  const evidenceRefs = normalizeReferenceArray(input.evidence_refs, "evidence_refs");
+  // C.5: evidence_refs[] are first-class EvidenceReference entries. Each must
+  // carry a kind; artifact_path and content_hash are validated when present so
+  // a CandidateClaim whose refs cannot be content-hash-matched at GRADE time
+  // is rejected up front.
+  const evidenceRefs = normalizeReferenceArray(input.evidence_refs, "evidence_refs")
+    .map((ref, index) => normalizeEvidenceReferenceShape(ref, `evidence_refs[${index}]`));
   const controlExpectation = normalizeOptionalObject(input.control_expectation, "control_expectation");
   const impact = normalizeOptionalText(input.impact, "impact");
   const confidence = normalizeConfidence(input.confidence);
@@ -126,8 +221,11 @@ module.exports = {
   CLAIM_SEVERITIES,
   CLAIM_STATUSES,
   CLAIM_VERSION,
+  EVIDENCE_REFERENCE_KIND_VALUES,
   appendCandidateClaim,
+  evidenceReferenceLookupKey,
   generatedClaimId,
   normalizeCandidateClaim,
+  normalizeEvidenceReferenceShape,
   readCandidateClaims,
 };
