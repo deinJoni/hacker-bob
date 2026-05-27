@@ -31,6 +31,7 @@ const {
   buildSessionNucleus,
   LIFECYCLE_STATE_VALUES,
   normalizeLifecycleState,
+  normalizeOperatorConstraint,
 } = require("./governance-contracts.js");
 const {
   appendSessionEvent,
@@ -303,12 +304,57 @@ function readStateSummary(args) {
   });
 }
 
+function applyOperatorConstraintUpdate(domain, transform) {
+  const priorNucleus = readSessionNucleus(domain);
+  if (!priorNucleus || typeof priorNucleus !== "object") {
+    throw new ToolError(
+      ERROR_CODES.STATE_CONFLICT,
+      `session nucleus missing for ${domain}; call bounty_init_session first`,
+    );
+  }
+  const priorConstraint = (priorNucleus.operator_constraint && typeof priorNucleus.operator_constraint === "object")
+    ? priorNucleus.operator_constraint
+    : {};
+  const nextConstraintInput = transform({ ...priorConstraint });
+  const operatorConstraint = normalizeOperatorConstraint(nextConstraintInput);
+  const nextNucleus = buildSessionNucleus({
+    target_domain: priorNucleus.target_domain,
+    target_url: priorNucleus.scope_policy && priorNucleus.scope_policy.target_url,
+    scope_policy: priorNucleus.scope_policy,
+    egress_identity: priorNucleus.egress_identity,
+    auth_context: priorNucleus.auth_context,
+    operator_constraint: operatorConstraint,
+    lifecycle_state: priorNucleus.lifecycle_state,
+  });
+  writeJsonDocument(sessionNucleusPath(domain), nextNucleus);
+  const updatedEvent = appendSessionEvent({
+    target_domain: domain,
+    kind: "governance.operator_constraint.updated",
+    nucleus_hash: nextNucleus.nucleus_hash,
+    payload: {
+      prior_nucleus_hash: priorNucleus.nucleus_hash,
+      nucleus_hash: nextNucleus.nucleus_hash,
+      operator_constraint_hash: hashCanonicalJson(nextNucleus.operator_constraint),
+    },
+  });
+  return {
+    priorNucleus,
+    nextNucleus,
+    operatorConstraint,
+    eventId: updatedEvent.event_id,
+  };
+}
+
 function setOperatorNote(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   const operatorNote = assertOperatorNote(args.operator_note, "operator_note");
 
   return withSessionLock(domain, () => {
     const { raw, state } = readSessionStateStrict(domain);
+    const { nextNucleus, operatorConstraint, eventId } = applyOperatorConstraintUpdate(
+      domain,
+      (prior) => ({ ...prior, operator_note: operatorNote }),
+    );
     const nextState = {
       ...state,
       operator_note: operatorNote,
@@ -318,6 +364,9 @@ function setOperatorNote(args) {
       version: 1,
       updated: true,
       operator_note: operatorNote,
+      nucleus_hash: nextNucleus.nucleus_hash,
+      operator_constraint: operatorConstraint,
+      event_id: eventId,
       state: compactSessionState(nextState),
     });
   });
@@ -328,6 +377,14 @@ function clearOperatorNote(args) {
 
   return withSessionLock(domain, () => {
     const { raw, state } = readSessionStateStrict(domain);
+    const { nextNucleus, operatorConstraint, eventId } = applyOperatorConstraintUpdate(
+      domain,
+      (prior) => {
+        const next = { ...prior };
+        delete next.operator_note;
+        return next;
+      },
+    );
     const nextState = {
       ...state,
       operator_note: null,
@@ -337,6 +394,9 @@ function clearOperatorNote(args) {
       version: 1,
       cleared: true,
       operator_note: null,
+      nucleus_hash: nextNucleus.nucleus_hash,
+      operator_constraint: operatorConstraint,
+      event_id: eventId,
       state: compactSessionState(nextState),
     });
   });

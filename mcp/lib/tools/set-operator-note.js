@@ -30,5 +30,5 @@ module.exports = Object.freeze({
   browser_access: false,
   scope_required: false,
   sensitive_output: false,
-  session_artifacts_written: ["state.json"],
+  session_artifacts_written: ["state.json", "session-nucleus.json", "session-events.jsonl"],
 });
