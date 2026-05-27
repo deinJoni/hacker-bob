@@ -150,6 +150,9 @@ const {
 const {
   safeRecordEvaluatorStoppedPipelineEvent,
 } = require("./pipeline-events.js");
+const {
+  safeGovernanceContextForDomain,
+} = require("./governance-context.js");
 
 const TECHNIQUE_ATTEMPT_COMPLETION_STATUSES = new Set([
   "attempted",
@@ -389,12 +392,18 @@ function recordAgentCompletionTelemetry(evaluation, options = {}) {
   // field and pass it through to the recorders unchanged.
   if (evaluation && evaluation.runType === "evidence") {
     safeRecordAgentRunTelemetry(evaluation);
-    safeRecordEvaluatorStoppedPipelineEvent(evaluation);
+    safeRecordEvaluatorStoppedPipelineEvent(
+      evaluation,
+      safeGovernanceContextForDomain(evaluation.target_domain),
+    );
     return evaluation;
   }
   const input = telemetryInput(evaluation, options);
   safeRecordAgentRunTelemetry(input);
-  safeRecordEvaluatorStoppedPipelineEvent(input);
+  safeRecordEvaluatorStoppedPipelineEvent(
+    input,
+    safeGovernanceContextForDomain(input.target_domain),
+  );
   return input;
 }
 

@@ -30,6 +30,9 @@ const {
 const {
   safeAppendPipelineEventDirect,
 } = require("./pipeline-events.js");
+const {
+  safeGovernanceContextForDomain,
+} = require("./governance-context.js");
 
 function normalizeCoverageRecord(record, { expectedDomain = null, lineNumber = null } = {}) {
   if (record == null || typeof record !== "object" || Array.isArray(record)) {
@@ -274,7 +277,7 @@ function logCoverage(args) {
         records: records.length,
         ...statuses,
       },
-    });
+    }, safeGovernanceContextForDomain(domain));
 
     return JSON.stringify({
       appended: records.length,

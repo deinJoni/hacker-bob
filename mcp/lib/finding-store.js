@@ -26,6 +26,9 @@ const {
   safeAppendPipelineEventDirect,
 } = require("./pipeline-events.js");
 const {
+  safeGovernanceContextForDomain,
+} = require("./governance-context.js");
+const {
   normalizeFindingRecord,
   renderFindingMarkdownEntry,
 } = require("./finding-contracts.js");
@@ -276,6 +279,7 @@ function recordFinding(args) {
     }
 
     appendMarkdownMirror(findingsMarkdownPath(domain), renderFindingMarkdownEntry(finding), response);
+    const governanceContext = safeGovernanceContextForDomain(domain);
     safeAppendPipelineEventDirect(domain, "finding_recorded", {
       wave,
       agent,
@@ -286,7 +290,7 @@ function recordFinding(args) {
         findings: scan.total + 1,
         validated: finding.validated ? 1 : 0,
       },
-    });
+    }, governanceContext);
     try {
       const { indexFinding } = require("./findings-index.js");
       indexFinding({
@@ -317,7 +321,7 @@ function recordFinding(args) {
           findings: scan.total + 1,
           validated: finding.validated ? 1 : 0,
         },
-      });
+      }, governanceContext);
     }
     return JSON.stringify(response);
   });

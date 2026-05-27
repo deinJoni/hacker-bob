@@ -45,6 +45,9 @@ const {
   safeAppendPipelineEventDirect,
 } = require("./pipeline-events.js");
 const {
+  safeGovernanceContextForDomain,
+} = require("./governance-context.js");
+const {
   resourceCandidatePaths,
 } = require("./runtime-resources.js");
 const {
@@ -1074,7 +1077,7 @@ function logTechniqueAttempt(args) {
       counts: {
         records: 1,
       },
-    });
+    }, safeGovernanceContextForDomain(domain));
     return JSON.stringify({
       appended: 1,
       log_path: logPath,

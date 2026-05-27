@@ -103,6 +103,9 @@ const {
   appendPipelineEventDirect,
 } = require("../mcp/lib/pipeline-events.js");
 const {
+  buildGovernanceContext,
+} = require("../mcp/lib/governance-context.js");
+const {
   attachHandoffOrigin,
   BLOCKED_PREREQ_KIND_VALUES,
   HANDOFF_PROVENANCE_MODEL,
@@ -3176,14 +3179,15 @@ test("pipeline analytics flags blocked pending waves and malformed event lines",
 test("pipeline event appends are reentrant under the session lock", () => {
   withTempHome(() => {
     const domain = "pipeline-lock.example";
-    seedSessionState(domain, { phase: "EVALUATE" });
+    const state = seedSessionState(domain, { phase: "EVALUATE" });
+    const governanceContext = buildGovernanceContext(state);
 
     withSessionLock(domain, () => {
       const event = appendPipelineEventDirect(domain, "report_written", {
         status: "written",
         source: "lock-test",
         counts: { report_size_bytes: 12 },
-      });
+      }, governanceContext);
       assert.equal(event.type, "report_written");
       assert.ok(fs.existsSync(sessionLockPath(domain)));
     });

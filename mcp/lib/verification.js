@@ -116,10 +116,14 @@ function readStateSafe(domain) {
   }
 }
 
-function safeAppendPipelineEvent(domain, type, fields) {
+function safeAppendPipelineEvent(domain, type, fields, governanceContext) {
   try {
-    pipelineEventsLib().safeAppendPipelineEventDirect(domain, type, fields);
+    pipelineEventsLib().safeAppendPipelineEventDirect(domain, type, fields, governanceContext);
   } catch {}
+}
+
+function governanceContextForDomain(domain) {
+  return require("./governance-context.js").safeGovernanceContextForDomain(domain);
 }
 
 function verificationSourceFiles(domain) {
@@ -213,7 +217,7 @@ function pruneOldVerificationArchives(domain) {
       status: "pruned",
       source: "verification_v2",
       counts: { pruned: pruned.length },
-    });
+    }, governanceContextForDomain(domain));
   }
   if (fs.existsSync(dir)) return pruned;
   return pruned;
@@ -298,7 +302,7 @@ function archiveCurrentV2Attempt(domain, { attemptId, snapshotHash }) {
         files: Object.keys(files).length,
         missing_files: missingFiles.length,
       },
-    });
+    }, governanceContextForDomain(domain));
     pruneOldVerificationArchives(domain);
     return manifest;
   } catch (error) {
@@ -346,7 +350,7 @@ function prepareVerificationEntry(domain, state, { now = new Date() } = {}) {
     counts: {
       findings: snapshot.finding_ids.length,
     },
-  });
+  }, governanceContextForDomain(domain));
 
   return {
     schema_version: VERIFICATION_SCHEMA_V2,
@@ -698,7 +702,7 @@ function buildVerificationAdjudication(args) {
       replay_required: replayRequired.size,
       qa_sampled: qaSampledIds.length,
     },
-  });
+  }, governanceContextForDomain(domain));
   refreshVerificationManifest(domain);
   return JSON.stringify({
     version: 1,

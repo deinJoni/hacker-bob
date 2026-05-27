@@ -33,6 +33,9 @@ const {
   safeAppendPipelineEventDirect,
 } = require("./pipeline-events.js");
 const {
+  safeGovernanceContextForDomain,
+} = require("./governance-context.js");
+const {
   finalVerificationHash,
 } = require("./verification-contracts.js");
 const {
@@ -377,7 +380,7 @@ function writeVerificationRound(args) {
       reportable: results.filter((result) => result.reportable).length,
       confirmed: results.filter((result) => result.disposition === "confirmed").length,
     },
-  });
+  }, safeGovernanceContextForDomain(domain));
   if (schemaVersion === 2) verificationLib().refreshVerificationManifest(domain, { throw_on_error: true });
   return JSON.stringify(response);
   });

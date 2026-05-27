@@ -80,6 +80,9 @@ const {
   safeAppendPipelineEventDirect,
 } = require("./pipeline-events.js");
 const {
+  buildGovernanceContext,
+} = require("./governance-context.js");
+const {
   ensureHandoffSigningKey,
 } = require("./handoff-signing-key.js");
 const { listAuthProfiles } = require("./auth.js");
@@ -336,7 +339,7 @@ function startWaveLocked(domain, {
     counts: {
       assignments: assignments.length,
     },
-  });
+  }, buildGovernanceContext(nextState));
 
   return {
     wave_number: waveNumber,
@@ -780,7 +783,7 @@ function applyWaveMerge(args) {
           missing_handoffs: readiness.missing_agents.length,
           unexpected_handoffs: readiness.unexpected_agents.length,
         },
-      });
+      }, buildGovernanceContext(state));
       return JSON.stringify({
         version: 1,
         status: "pending",
@@ -917,6 +920,7 @@ function applyWaveMerge(args) {
     };
 
     writeSessionStateDocument(domain, raw, nextState);
+    const mergeGovernanceContext = buildGovernanceContext(nextState);
     // Emit one surface_terminally_blocked event per (surface, blocker)
     // pair so analytics can attribute promotions back to specific
     // missing-prereq tuples without joining against state.
@@ -930,7 +934,7 @@ function applyWaveMerge(args) {
           surface_id: promotion.surface_id,
           kind: blocker.kind,
           identifier_hint: blocker.identifier_hint || null,
-        });
+        }, mergeGovernanceContext);
       }
     }
     safeAppendPipelineEventDirect(domain, "wave_merged", {
@@ -952,7 +956,7 @@ function applyWaveMerge(args) {
         terminally_blocked_total: settledTerminallyBlocked.length,
         findings: findings.total,
       },
-    });
+    }, mergeGovernanceContext);
     return JSON.stringify({
       version: 1,
       status: "merged",

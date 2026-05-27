@@ -31,6 +31,9 @@ const {
 const {
   normalizeVerificationRoundDocument,
 } = require("./verification-round-store.js");
+const {
+  safeGovernanceContextForDomain,
+} = require("./governance-context.js");
 
 const EVIDENCE_PACKS_VERSION = 1;
 const MAX_SAMPLE_COUNT = 1000;
@@ -449,7 +452,7 @@ function writeEvidencePacks(args) {
         representative_samples: response.representative_samples_count,
         reportable_findings_covered: reportableIds.length,
       },
-    });
+    }, safeGovernanceContextForDomain(domain));
     if (verificationBinding) verificationLib().refreshVerificationManifest(domain, { throw_on_error: true });
     return JSON.stringify(response);
   });

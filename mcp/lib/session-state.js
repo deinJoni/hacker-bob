@@ -52,6 +52,10 @@ const {
   safeAppendPipelineEventDirect,
 } = require("./pipeline-events.js");
 const {
+  buildGovernanceContext,
+  buildGovernanceContextFromNucleus,
+} = require("./governance-context.js");
+const {
   assertHttpScopeDomain,
   validateHttpScanScope,
 } = require("./scope.js");
@@ -130,7 +134,7 @@ function assertSessionEgressIdentity(domain, profile, { source = "egress_request
           source,
           legacy_migration: true,
           ...identityFields,
-        });
+        }, buildGovernanceContext(nextState));
         bound = true;
         return;
       }
@@ -275,7 +279,7 @@ function initSession(args) {
       block_internal_hosts: state.block_internal_hosts,
       block_internal_hosts_source: state.block_internal_hosts_source,
       ...egressFields,
-    });
+    }, buildGovernanceContextFromNucleus(sessionNucleus));
 
     return JSON.stringify({
       version: 1,
@@ -694,7 +698,7 @@ function transitionPhase(args) {
         eventFields.counts.verify_phase_wall_clock_ms = Math.max(0, Date.now() - enteredMs);
       }
     }
-    safeAppendPipelineEventDirect(domain, "phase_transitioned", eventFields);
+    safeAppendPipelineEventDirect(domain, "phase_transitioned", eventFields, buildGovernanceContext(nextState));
     return JSON.stringify({
       version: 1,
       transitioned: true,
@@ -787,7 +791,7 @@ function clearTerminalBlock(args) {
         terminally_blocked_total: remainingTerminallyBlocked.length,
         clear_history_size: nextClearHistory.length,
       },
-    });
+    }, buildGovernanceContext(nextState));
 
     return JSON.stringify({
       version: 1,
@@ -812,13 +816,14 @@ function reportWritten(args) {
     );
   }
   const stats = fs.statSync(reportPath);
+  const { state } = readSessionStateStrict(domain);
   safeAppendPipelineEventDirect(domain, "report_written", {
     status: "written",
     source: "bounty_report_written",
     counts: {
       report_size_bytes: stats.size,
     },
-  });
+  }, buildGovernanceContext(state));
   return JSON.stringify({
     version: 1,
     report_written: true,

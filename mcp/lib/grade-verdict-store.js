@@ -31,6 +31,9 @@ const {
   safeAppendPipelineEventDirect,
 } = require("./pipeline-events.js");
 const {
+  safeGovernanceContextForDomain,
+} = require("./governance-context.js");
+const {
   readFindingIdSet,
 } = require("./finding-store.js");
 const {
@@ -274,7 +277,7 @@ function writeGradeVerdict(args) {
       findings: findings.length,
       total_score: totalScore,
     },
-  });
+  }, safeGovernanceContextForDomain(domain));
   return JSON.stringify(response);
   });
 }
