@@ -49,6 +49,7 @@ const BOB_COMMAND_FILES = Object.freeze([
   "bob-update.md",
   "bob-egress.md",
   "bob-export.md",
+  "bob-evaluate.md",
 ]);
 
 const LEGACY_BOB_COMMAND_FILES = Object.freeze([
@@ -381,12 +382,17 @@ function install({
     );
   }
 
-  // Copy static command files (not renderer-driven). bob-egress.md is hand-
-  // authored and shipped verbatim; the renderer pattern is only used for
-  // commands that have dynamic per-host content like bob-update.md.
+  // Copy static command files (not renderer-driven). bob-egress.md and
+  // bob-evaluate.md are hand-authored and shipped verbatim; the renderer
+  // pattern is only used for commands that have dynamic per-host content
+  // like bob-update.md.
   copyFile(
     path.join(sourceRoot, ".claude", "commands", "bob-egress.md"),
     path.join(claudeDir, "commands", "bob-egress.md"),
+  );
+  copyFile(
+    path.join(sourceRoot, ".claude", "commands", "bob-evaluate.md"),
+    path.join(claudeDir, "commands", "bob-evaluate.md"),
   );
 
   for (const skill of BOB_SKILLS) {
