@@ -128,6 +128,20 @@ function normalizeScopeUrlFields(entry) {
   return Object.freeze(entry.scope_url_fields.slice());
 }
 
+// Aliases are either plain strings (alias adopts the primary's schema and
+// passes args through unchanged) or alias-descriptor objects:
+//
+//   {
+//     name: "bounty_transition_phase",
+//     description: "Deprecated: ...",
+//     inputSchema: { ... },               // overrides primary's schema
+//     arg_adapter: (args) => newArgs,     // remaps legacy args to primary args
+//   }
+//
+// Descriptor aliases let Cycle D.1 redirect `bounty_transition_phase` to
+// `bob_advance_session` even though the legacy tool spoke `to_phase` over an
+// eight-value phase enum and the canonical tool speaks `to_state` over the
+// six-value lifecycle enum. The arg_adapter runs before the primary handler.
 function normalizeAliases(entry) {
   if (!Object.prototype.hasOwnProperty.call(entry, "aliases")) {
     return Object.freeze([]);
@@ -135,15 +149,45 @@ function normalizeAliases(entry) {
   if (!Array.isArray(entry.aliases)) {
     throw new Error(`tool registry entry for ${entry.name} has invalid aliases (must be array)`);
   }
+  const normalized = [];
   for (const alias of entry.aliases) {
-    if (typeof alias !== "string" || !alias.trim()) {
-      throw new Error(`tool registry entry for ${entry.name} has invalid alias entry`);
+    if (typeof alias === "string") {
+      if (!alias.trim()) {
+        throw new Error(`tool registry entry for ${entry.name} has invalid alias entry`);
+      }
+      if (alias === entry.name) {
+        throw new Error(`tool registry entry for ${entry.name} aliases itself`);
+      }
+      normalized.push(alias);
+      continue;
     }
-    if (alias === entry.name) {
-      throw new Error(`tool registry entry for ${entry.name} aliases itself`);
+    if (alias && typeof alias === "object" && !Array.isArray(alias)) {
+      if (typeof alias.name !== "string" || !alias.name.trim()) {
+        throw new Error(`tool registry entry for ${entry.name} has invalid alias descriptor (missing name)`);
+      }
+      if (alias.name === entry.name) {
+        throw new Error(`tool registry entry for ${entry.name} aliases itself`);
+      }
+      if (alias.inputSchema != null && (typeof alias.inputSchema !== "object" || Array.isArray(alias.inputSchema))) {
+        throw new Error(`tool registry entry for ${entry.name} alias ${alias.name} has invalid inputSchema`);
+      }
+      if (alias.arg_adapter != null && typeof alias.arg_adapter !== "function") {
+        throw new Error(`tool registry entry for ${entry.name} alias ${alias.name} has invalid arg_adapter`);
+      }
+      if (alias.description != null && typeof alias.description !== "string") {
+        throw new Error(`tool registry entry for ${entry.name} alias ${alias.name} has invalid description`);
+      }
+      normalized.push(Object.freeze({
+        name: alias.name,
+        description: alias.description == null ? null : alias.description,
+        inputSchema: alias.inputSchema == null ? null : deepFreeze(cloneJsonCompatible(alias.inputSchema)),
+        arg_adapter: alias.arg_adapter == null ? null : alias.arg_adapter,
+      }));
+      continue;
     }
+    throw new Error(`tool registry entry for ${entry.name} has invalid alias entry`);
   }
-  return frozenStringArray(entry.aliases);
+  return Object.freeze(normalized);
 }
 
 function defineTool(entry) {
@@ -229,16 +273,28 @@ function recordToolDeprecation({ aliasName, primaryName, args }) {
   }
 }
 
-function buildAliasEntry(primary, aliasName) {
+function buildAliasEntry(primary, alias) {
   const primaryName = primary.name;
+  // Both simple-string aliases and descriptor aliases share the same handler
+  // wrapper. Descriptor aliases can carry an arg_adapter that maps legacy
+  // arguments to the primary tool's argument shape before invocation; simple
+  // aliases pass args through verbatim.
+  const isDescriptor = alias && typeof alias === "object";
+  const aliasName = isDescriptor ? alias.name : alias;
+  const argAdapter = isDescriptor && typeof alias.arg_adapter === "function" ? alias.arg_adapter : null;
+  const aliasInputSchema = isDescriptor && alias.inputSchema != null ? alias.inputSchema : primary.inputSchema;
+  const aliasDescription = isDescriptor && typeof alias.description === "string" && alias.description.trim()
+    ? alias.description
+    : aliasDescriptionFor(primaryName, aliasName, primary.description);
   const aliasHandler = (args) => {
     recordToolDeprecation({ aliasName, primaryName, args });
-    return primary.handler(args);
+    const mappedArgs = argAdapter ? argAdapter(args) : args;
+    return primary.handler(mappedArgs);
   };
   return Object.freeze({
     name: aliasName,
-    description: aliasDescriptionFor(primaryName, aliasName, primary.description),
-    inputSchema: primary.inputSchema,
+    description: aliasDescription,
+    inputSchema: aliasInputSchema,
     handler: aliasHandler,
     role_bundles: primary.role_bundles,
     mutating: primary.mutating,
@@ -256,6 +312,10 @@ function buildAliasEntry(primary, aliasName) {
   });
 }
 
+function aliasEntryName(alias) {
+  return typeof alias === "string" ? alias : alias.name;
+}
+
 function buildToolRegistry({
   toolModules = TOOL_MODULES,
 } = {}) {
@@ -268,12 +328,13 @@ function buildToolRegistry({
     }
     seenNames.add(tool.name);
     entries.push(tool);
-    for (const aliasName of tool.aliases) {
+    for (const alias of tool.aliases) {
+      const aliasName = aliasEntryName(alias);
       if (seenNames.has(aliasName)) {
         throw new Error(`Duplicate tool name in registry (alias collision): ${aliasName}`);
       }
       seenNames.add(aliasName);
-      entries.push(buildAliasEntry(tool, aliasName));
+      entries.push(buildAliasEntry(tool, alias));
     }
   }
   return Object.freeze(entries);
@@ -300,12 +361,13 @@ const TOOLS = Object.freeze(TOOL_REGISTRY
     inputSchema: tool.inputSchema,
   })));
 
-// TOOL_MANIFEST surfaces only primary tools (and pre-existing standalone
-// deprecation shims like bounty_transition_phase / bounty_report_written that
-// each ship as their own module). Cycle P.1 aliases are registry-only
-// compatibility entries; they share their primary's metadata so the alias
-// manifest entry would be a perfect duplicate. Excluding them keeps tests and
-// permission generators that iterate the manifest from double-counting.
+// TOOL_MANIFEST surfaces only primary tools. Cycle P.1 aliases (including
+// the legacy phase-FSM redirect for bounty_report_written and the Cycle D.1
+// arg-adapter alias that maps the retired bounty phase tool onto
+// bob_advance_session) are registry-only compatibility entries; they share
+// their primary's metadata so the alias manifest entry would be a perfect
+// duplicate. Excluding them keeps tests and permission generators that
+// iterate the manifest from double-counting.
 const TOOL_MANIFEST = Object.freeze(TOOL_REGISTRY.reduce((manifest, tool) => {
   if (tool.alias_of) return manifest;
   const base = {
@@ -321,7 +383,7 @@ const TOOL_MANIFEST = Object.freeze(TOOL_REGISTRY.reduce((manifest, tool) => {
     scope_url_fields: frozenStringArray(tool.scope_url_fields),
   };
   if (Array.isArray(tool.aliases) && tool.aliases.length > 0) {
-    base.aliases = frozenStringArray(tool.aliases);
+    base.aliases = frozenStringArray(tool.aliases.map(aliasEntryName));
   }
   manifest[tool.name] = Object.freeze(base);
   return manifest;
@@ -348,7 +410,8 @@ function isAliasName(toolName) {
 
 function aliasNamesForTool(toolName) {
   const tool = TOOL_BY_NAME.get(toolName);
-  return tool && Array.isArray(tool.aliases) ? tool.aliases.slice() : [];
+  if (!tool || !Array.isArray(tool.aliases)) return [];
+  return tool.aliases.map(aliasEntryName);
 }
 
 function primaryToolName(toolName) {

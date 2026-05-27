@@ -44,7 +44,6 @@ const COSMWASM_NETWORK_VALUES = [
   "kava",
   "localnet",
 ];
-const PHASE_VALUES = ["SURFACE_DISCOVERY", "AUTH", "EVALUATE", "CHAIN", "VERIFY", "GRADE", "REPORT", "EXPLORE"];
 const AUTH_STATUS_VALUES = ["pending", "authenticated", "unauthenticated"];
 const CHECKPOINT_MODE_VALUES = ["normal", "paranoid", "yolo"];
 const VERIFICATION_ROUND_VALUES = ["brutalist", "balanced", "final"];
@@ -159,7 +158,6 @@ module.exports = {
   GRADE_VERDICT_VALUES,
   HTTP_AUDIT_LOG_MAX_RECORDS,
   HTTP_AUDIT_SUMMARY_MAX_ITEMS,
-  PHASE_VALUES,
   PUBLIC_INTEL_MAX_ITEMS,
   PUBLIC_INTEL_MAX_RESPONSE_BYTES,
   SESSION_LOCK_NAME,

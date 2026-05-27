@@ -2,11 +2,6 @@
 
 const fs = require("fs");
 const {
-  AUTH_STATUS_VALUES,
-  PHASE_VALUES,
-} = require("./constants.js");
-const {
-  assertEnumValue,
   assertBoolean,
   assertNonEmptyString,
 } = require("./validation.js");
@@ -21,7 +16,6 @@ const {
   isSessionDirEffectivelyEmpty,
   readJsonFile,
   withSessionLock,
-  writeFileAtomic,
 } = require("./storage.js");
 const {
   ERROR_CODES,
@@ -69,18 +63,12 @@ const {
   validateHttpScanScope,
 } = require("./scope.js");
 const {
-  computeChainToVerifyGate,
-  computeEvaluationToChainGate,
-  computeVerifyToGradeGate,
-  formatTransitionBlockers,
-} = require("./phase-gates.js");
-
-const {
   assertOperatorNote,
   blockInternalHostsPolicyFields,
   buildInitialSessionState,
   compactSessionState,
   deriveBlockInternalHostsPolicy,
+  deriveLegacyPhaseFromLifecycleState,
   egressProfileStateFields,
   publicSessionState,
 } = require("./session-state-contracts.js");
@@ -89,10 +77,6 @@ const {
   sessionStateMissing,
   writeSessionStateDocument,
 } = require("./session-state-store.js");
-
-function verificationLib() {
-  return require("./verification.js");
-}
 
 function assertBlockInternalHostsCompatibleWithEgress(policy, profile) {
   if (!policy || policy.block_internal_hosts !== true || !profile || profile.proxy_configured !== true) {
@@ -279,11 +263,13 @@ function initSession(args) {
       egressProfile,
       blockInternalHostsPolicy: sessionNucleus.scope_policy,
     });
-    // LEGACY: removed in Plane D — state.json keeps the SURFACE_DISCOVERY phase
-    // shape so the legacy phase machine and waves planner still function during
-    // the dual-write window.
-    writeFileAtomic(filePath, `${JSON.stringify(state, null, 2)}\n`);
+    // LEGACY: removed in Plane D — state.json keeps the legacy phase field
+    // shape so the waves planner still functions during the dual-write window.
+    // The legacy phase is the only lifecycle field persisted on disk;
+    // lifecycle_state is derived at read time from the nucleus / phase fallback.
+    writeSessionStateDocument(domain, {}, state);
     safeAppendPipelineEventDirect(domain, "session_started", {
+      lifecycle_state: state.lifecycle_state,
       phase: state.phase,
       source: "bob_init_session",
       deep_mode: state.deep_mode,
@@ -475,51 +461,6 @@ function clearOperatorNote(args) {
   });
 }
 
-// Lifecycle map (precise): legacy phase strings collapse into the six target
-// lifecycle states because the old machine carved frontier work into eight
-// phases that the topology now treats as a single OPEN_FRONTIER state with
-// task lenses. The map below is consumed by bounty_transition_phase's shim
-// (advance-session.js maps each legacy phase one-shot, no chaining):
-//
-//   SURFACE_DISCOVERY -> OPEN_FRONTIER  (seed discovery is the first frontier
-//                                        work; SETUP is reserved for the
-//                                        bootstrap nucleus before any work)
-//   AUTH              -> OPEN_FRONTIER  (auth capture is still discovery work
-//                                        in the topology lens taxonomy)
-//   EVALUATE          -> OPEN_FRONTIER  (evaluation is per-claim frontier work)
-//   CHAIN             -> OPEN_FRONTIER  (chain assembly is per-claim frontier
-//                                        work; freezing a batch is now the
-//                                        CLAIM_FREEZE state, not a phase)
-//   EXPLORE           -> OPEN_FRONTIER  (re-exploration after report is
-//                                        re-entry of OPEN_FRONTIER, D3)
-//   VERIFY            -> VERIFY
-//   GRADE             -> GRADE
-//   REPORT            -> REPORT
-//
-// Note: SETUP is the bootstrap state assigned by init-session. The legacy
-// machine never returned to SURFACE_DISCOVERY after work began, so the shim
-// never collapses to SETUP.
-const LEGACY_PHASE_TO_LIFECYCLE = Object.freeze({
-  SURFACE_DISCOVERY: "OPEN_FRONTIER",
-  AUTH: "OPEN_FRONTIER",
-  EVALUATE: "OPEN_FRONTIER",
-  CHAIN: "OPEN_FRONTIER",
-  EXPLORE: "OPEN_FRONTIER",
-  VERIFY: "VERIFY",
-  GRADE: "GRADE",
-  REPORT: "REPORT",
-});
-
-function mapLegacyPhaseToLifecycle(legacyPhase) {
-  if (!Object.prototype.hasOwnProperty.call(LEGACY_PHASE_TO_LIFECYCLE, legacyPhase)) {
-    throw new ToolError(
-      ERROR_CODES.INVALID_ARGUMENTS,
-      `Unknown legacy phase: ${legacyPhase}`,
-    );
-  }
-  return LEGACY_PHASE_TO_LIFECYCLE[legacyPhase];
-}
-
 function advanceSession(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   let toState;
@@ -600,6 +541,47 @@ function advanceSession(args) {
     });
     writeJsonDocument(sessionNucleusPath(domain), nextNucleus);
 
+    // Mirror the new lifecycle_state into state.json. The legacy `phase` field
+    // is also refreshed via the back-compat projection so unmigrated readers
+    // see the lifecycle move. state.json is dual-write authoritative during
+    // the deprecation window; the nucleus is the topology-level authority.
+    // The VERIFY transition also triggers verification snapshot bootstrap so
+    // downstream evidence/grade gates have the v2 attempt context the legacy
+    // phase machine used to bind here.
+    let verificationEntry = null;
+    try {
+      const { raw, state } = readSessionStateStrict(domain);
+      verificationEntry = (toState === "VERIFY")
+        ? require("./verification.js").prepareVerificationEntry(domain, state)
+        : null;
+      const derivedLegacyPhase = deriveLegacyPhaseFromLifecycleState(toState);
+      const nextState = {
+        ...state,
+        ...(verificationEntry ? verificationEntry.state_fields : {}),
+        lifecycle_state: toState,
+        ...(derivedLegacyPhase ? { phase: derivedLegacyPhase } : {}),
+      };
+      writeSessionStateDocument(domain, raw, nextState);
+      if (verificationEntry && verificationEntry.schema_version === 2) {
+        try {
+          require("./verification.js").refreshVerificationManifest(domain, { throw_on_error: true });
+        } catch (manifestError) {
+          // Roll back state mirror on manifest failure; nucleus already
+          // advanced but downstream re-entry is allowed by the topology.
+          try {
+            writeSessionStateDocument(domain, raw, state);
+          } catch {}
+          throw manifestError;
+        }
+      }
+    } catch (error) {
+      if (!sessionStateMissing(error)) {
+        throw error;
+      }
+      // Session predates init-session-with-state-store; nucleus mutation is
+      // still authoritative. Downstream readers fall back to the nucleus.
+    }
+
     const advancedEvent = appendSessionEvent({
       target_domain: domain,
       kind: "governance.lifecycle.advanced",
@@ -612,6 +594,45 @@ function advanceSession(args) {
       },
     });
 
+    // Mirror the advance into pipeline-events.jsonl for analytics consumers
+    // that previously aggregated `phase_transitioned`. The new event uses
+    // lifecycle vocabulary; the legacy phase fields are derived for
+    // back-compat readers via the pipeline-events whitelist (G.4 / D.3).
+    try {
+      const { state: nextStateForEvent } = readSessionStateStrict(domain);
+      const derivedLegacyPhase = deriveLegacyPhaseFromLifecycleState(toState);
+      const eventFields = {
+        from_state: fromState,
+        to_state: toState,
+        lifecycle_state: toState,
+        status: "advanced",
+        source: "bob_advance_session",
+        egress_profile: nextStateForEvent.egress_profile,
+        egress_region: nextStateForEvent.egress_region,
+        proxy_configured: nextStateForEvent.proxy_configured,
+        egress_profile_identity_hash: nextStateForEvent.egress_profile_identity_hash,
+        egress_profile_identity_version: nextStateForEvent.egress_profile_identity_version,
+      };
+      if (derivedLegacyPhase) {
+        eventFields.phase = derivedLegacyPhase;
+        eventFields.to_phase = derivedLegacyPhase;
+      }
+      if (override === "operator_force") {
+        eventFields.override = true;
+        if (overrideReason != null) eventFields.override_reason = overrideReason;
+      }
+      if (verificationEntry && verificationEntry.schema_version === 2) {
+        eventFields.verification_attempt_id = verificationEntry.state_fields.verification_attempt_id;
+        eventFields.verification_snapshot_hash = verificationEntry.state_fields.verification_snapshot_hash;
+      }
+      safeAppendPipelineEventDirect(domain, "lifecycle_advanced", eventFields, buildGovernanceContextFromNucleus(nextNucleus));
+    } catch (error) {
+      if (!sessionStateMissing(error)) {
+        // Pipeline event is observational; failures to append are tolerated
+        // unless the state is fully missing.
+      }
+    }
+
     return JSON.stringify({
       version: 1,
       advanced: true,
@@ -621,158 +642,6 @@ function advanceSession(args) {
       prior_nucleus_hash: priorNucleus.nucleus_hash,
       override: override === "operator_force" ? "operator_force" : null,
       event_id: advancedEvent.event_id,
-    });
-  });
-}
-
-function transitionPhase(args) {
-  const domain = assertNonEmptyString(args.target_domain, "target_domain");
-  const toPhase = assertEnumValue(args.to_phase, PHASE_VALUES, "to_phase");
-
-  return withSessionLock(domain, () => {
-    const { raw, state } = readSessionStateStrict(domain);
-    const fromPhase = state.phase;
-    const allowedTransitions = {
-      SURFACE_DISCOVERY: ["AUTH"],
-      AUTH: ["EVALUATE"],
-      EVALUATE: ["CHAIN"],
-      CHAIN: ["VERIFY"],
-      VERIFY: ["GRADE"],
-      GRADE: ["REPORT", "EVALUATE"],
-      REPORT: ["EXPLORE"],
-      EXPLORE: ["CHAIN"],
-    };
-
-    if (!(allowedTransitions[fromPhase] || []).includes(toPhase)) {
-      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Invalid phase transition: ${fromPhase} -> ${toPhase}`);
-    }
-
-    let overrideReason = null;
-    const overrideAllowed = (
-      (fromPhase === "EVALUATE" && toPhase === "CHAIN") ||
-      (fromPhase === "CHAIN" && toPhase === "VERIFY")
-    );
-    if (args.override_reason != null) {
-      if (!overrideAllowed) {
-        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "override_reason is only allowed for EVALUATE -> CHAIN or CHAIN -> VERIFY");
-      }
-      if (typeof args.override_reason !== "string" || !args.override_reason.trim()) {
-        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "override_reason must be a non-empty string");
-      }
-      overrideReason = args.override_reason.trim();
-      if (overrideReason.length < 20) {
-        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "override_reason must be at least 20 characters");
-      }
-    }
-
-    let nextAuthStatus = state.auth_status;
-    if (fromPhase === "AUTH" && toPhase === "EVALUATE") {
-      if (args.auth_status == null) {
-        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "auth_status is required for AUTH -> EVALUATE");
-      }
-      nextAuthStatus = assertEnumValue(
-        args.auth_status,
-        AUTH_STATUS_VALUES.filter((value) => value !== "pending"),
-        "auth_status",
-      );
-    } else if (args.auth_status != null) {
-      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "auth_status is only allowed for AUTH -> EVALUATE");
-    }
-
-    let transitionGate = null;
-    let transitionGateLabel = null;
-    if (fromPhase === "EVALUATE" && toPhase === "CHAIN") {
-      transitionGate = computeEvaluationToChainGate(domain, state);
-      transitionGateLabel = "EVALUATE -> CHAIN";
-    } else if (fromPhase === "CHAIN" && toPhase === "VERIFY") {
-      transitionGate = computeChainToVerifyGate(domain, state);
-      transitionGateLabel = "CHAIN -> VERIFY";
-    } else if (fromPhase === "VERIFY" && toPhase === "GRADE") {
-      transitionGate = computeVerifyToGradeGate(domain, state);
-      transitionGateLabel = "VERIFY -> GRADE";
-    } else if (fromPhase === "GRADE" && toPhase === "REPORT") {
-      transitionGate = computeVerifyToGradeGate(domain, state);
-      transitionGateLabel = "GRADE -> REPORT";
-    }
-    if (transitionGate && transitionGate.transition_blockers.length > 0 && overrideReason == null) {
-      throw new ToolError(
-        ERROR_CODES.STATE_CONFLICT,
-        `${transitionGateLabel} blocked: ${formatTransitionBlockers(transitionGate.transition_blockers)}`,
-      );
-    }
-
-    const verificationEntry = fromPhase === "CHAIN" && toPhase === "VERIFY"
-      ? verificationLib().prepareVerificationEntry(domain, state)
-      : null;
-
-    const nextState = {
-      ...state,
-      ...(verificationEntry ? verificationEntry.state_fields : {}),
-      phase: toPhase,
-      auth_status: nextAuthStatus,
-      hold_count: fromPhase === "GRADE" && toPhase === "EVALUATE"
-        ? state.hold_count + 1
-        : state.hold_count,
-    };
-
-    writeSessionStateDocument(domain, raw, nextState);
-    if (verificationEntry && verificationEntry.schema_version === 2) {
-      try {
-        verificationLib().refreshVerificationManifest(domain, { throw_on_error: true });
-      } catch (manifestError) {
-        // Roll back the state advance so the transition is fully aborted on
-        // manifest write failure. The verification snapshot stays on disk and
-        // will be archived under its real attempt_id by the next CHAIN -> VERIFY.
-        try {
-          writeSessionStateDocument(domain, raw, state);
-        } catch {}
-        throw manifestError;
-      }
-    }
-    const eventFields = {
-      from_phase: fromPhase,
-      to_phase: toPhase,
-      phase: toPhase,
-      status: "transitioned",
-      source: "bounty_transition_phase",
-      egress_profile: nextState.egress_profile,
-      egress_region: nextState.egress_region,
-      proxy_configured: nextState.proxy_configured,
-      egress_profile_identity_hash: nextState.egress_profile_identity_hash,
-      egress_profile_identity_version: nextState.egress_profile_identity_version,
-      counts: {
-        hold_count: nextState.hold_count,
-      },
-    };
-    if (overrideReason != null) {
-      eventFields.override = true;
-      eventFields.override_reason = overrideReason;
-      eventFields.counts.transition_blockers = transitionGate
-        ? transitionGate.transition_blockers.length
-        : 0;
-    }
-    if (verificationEntry && verificationEntry.schema_version === 2) {
-      eventFields.verification_attempt_id = verificationEntry.state_fields.verification_attempt_id;
-      eventFields.verification_snapshot_hash = verificationEntry.state_fields.verification_snapshot_hash;
-      eventFields.counts.verification_findings = verificationEntry.snapshot
-        ? verificationEntry.snapshot.finding_ids.length
-        : 0;
-      eventFields.counts.verification_archived = verificationEntry.archived != null ? 1 : 0;
-    }
-    if (fromPhase === "VERIFY" && toPhase === "GRADE" && state.verification_entered_at) {
-      const enteredMs = Date.parse(state.verification_entered_at);
-      if (Number.isFinite(enteredMs)) {
-        eventFields.verification_attempt_id = state.verification_attempt_id;
-        eventFields.verification_snapshot_hash = state.verification_snapshot_hash;
-        eventFields.counts.verify_phase_wall_clock_ms = Math.max(0, Date.now() - enteredMs);
-      }
-    }
-    safeAppendPipelineEventDirect(domain, "phase_transitioned", eventFields, buildGovernanceContext(nextState));
-    return JSON.stringify({
-      version: 1,
-      transitioned: true,
-      from_phase: fromPhase,
-      to_phase: toPhase,
       verification: verificationEntry
         ? {
           schema_version: verificationEntry.schema_version,
@@ -781,7 +650,6 @@ function transitionPhase(args) {
           archived: verificationEntry.archived != null,
         }
         : undefined,
-      state: compactSessionState(nextState),
     });
   });
 }
@@ -908,12 +776,9 @@ module.exports = {
   clearOperatorNote,
   clearTerminalBlock,
   initSession,
-  LEGACY_PHASE_TO_LIFECYCLE,
-  mapLegacyPhaseToLifecycle,
   reportWritten,
   resolveAndAssertSessionEgressIdentity,
   setOperatorNote,
   readSessionState,
   readStateSummary,
-  transitionPhase,
 };

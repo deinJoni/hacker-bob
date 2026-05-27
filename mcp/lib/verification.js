@@ -349,7 +349,7 @@ function prepareVerificationEntry(domain, state, { now = new Date() } = {}) {
   safeAppendPipelineEvent(domain, "verification_snapshot_created", {
     phase: "VERIFY",
     status: "created",
-    source: "bounty_transition_phase",
+    source: "bob_advance_session",
     verification_attempt_id: attemptId,
     verification_snapshot_hash: snapshot.snapshot_hash,
     claim_freeze_id: snapshot.claim_freeze_id,

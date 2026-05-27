@@ -29,6 +29,7 @@ const PIPELINE_EVENT_TYPES = Object.freeze([
   "session_started",
   "egress_identity_bound",
   "phase_transitioned",
+  "lifecycle_advanced",
   "wave_started",
   "evaluator_stopped",
   "wave_merge_pending",

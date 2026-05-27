@@ -3,7 +3,6 @@
 const {
   AUTH_STATUS_VALUES,
   CHECKPOINT_MODE_VALUES,
-  PHASE_VALUES,
   SESSION_PUBLIC_STATE_FIELDS,
 } = require("./constants.js");
 const {
@@ -17,6 +16,67 @@ const {
 const {
   validateNoSensitiveMaterial,
 } = require("./sensitive-material.js");
+
+// Local copy of the lifecycle enum. The canonical source is
+// governance-contracts.js, but that module depends on
+// blockInternalHostsPolicyFields exported below, so requiring it here would
+// create a top-level import cycle. Tests assert these two arrays stay in
+// sync (see test/session-state-store.test.js).
+const SESSION_STATE_LIFECYCLE_VALUES = Object.freeze([
+  "SETUP",
+  "OPEN_FRONTIER",
+  "CLAIM_FREEZE",
+  "VERIFY",
+  "GRADE",
+  "REPORT",
+]);
+
+// Cycle D.1 retired the legacy eight-phase FSM in favor of the six-state
+// lifecycle authority on session-nucleus.json. state.lifecycle_state is the
+// new canonical projection of nucleus.lifecycle_state into the session-state
+// document. state.phase persists as a derived back-compat read for callers
+// that still consume the legacy field; Cycle D.3 deletes the projection.
+//
+// Reverse-mapping rationale: lifecycle states are coarser than phases, so
+// each lifecycle state has one canonical pre-image (the legacy phase
+// readers will see when no explicit phase is on disk):
+//
+//   SETUP         -> SURFACE_DISCOVERY (init-session bootstrap window)
+//   OPEN_FRONTIER -> EVALUATE          (the modal frontier phase under v1.x)
+//   CLAIM_FREEZE  -> CHAIN             (chain assembly was the pre-verify hold)
+//   VERIFY        -> VERIFY            (identity)
+//   GRADE         -> GRADE             (identity)
+//   REPORT        -> REPORT            (identity)
+const LIFECYCLE_STATE_TO_LEGACY_PHASE = Object.freeze({
+  SETUP: "SURFACE_DISCOVERY",
+  OPEN_FRONTIER: "EVALUATE",
+  CLAIM_FREEZE: "CHAIN",
+  VERIFY: "VERIFY",
+  GRADE: "GRADE",
+  REPORT: "REPORT",
+});
+
+// Legacy phases that pre-date the lifecycle vocabulary still appear on disk
+// in sessions created before D.1. The forward map normalizes them so the
+// state-store can synthesize the lifecycle_state field on read.
+const LEGACY_PHASE_TO_LIFECYCLE_STATE = Object.freeze({
+  SURFACE_DISCOVERY: "SETUP",
+  AUTH: "OPEN_FRONTIER",
+  EVALUATE: "OPEN_FRONTIER",
+  CHAIN: "OPEN_FRONTIER",
+  EXPLORE: "OPEN_FRONTIER",
+  VERIFY: "VERIFY",
+  GRADE: "GRADE",
+  REPORT: "REPORT",
+});
+
+function deriveLegacyPhaseFromLifecycleState(lifecycleState) {
+  return LIFECYCLE_STATE_TO_LEGACY_PHASE[lifecycleState] || null;
+}
+
+function deriveLifecycleStateFromLegacyPhase(legacyPhase) {
+  return LEGACY_PHASE_TO_LIFECYCLE_STATE[legacyPhase] || null;
+}
 
 const OPERATOR_NOTE_MAX_CHARS = 1000;
 const BLOCK_INTERNAL_HOSTS_SOURCE_VALUES = Object.freeze([
@@ -332,7 +392,8 @@ function buildInitialSessionState(domain, targetUrl, {
     target_url: targetUrl,
     deep_mode: deepMode,
     ...internalHostPolicy,
-    phase: "SURFACE_DISCOVERY",
+    lifecycle_state: "SETUP",
+    phase: deriveLegacyPhaseFromLifecycleState("SETUP"),
     evaluation_wave: 0,
     pending_wave: null,
     total_findings: 0,
@@ -528,6 +589,30 @@ function normalizeSessionStateDocument(document, requestedDomain) {
     assertNonEmptyString(document.target, "target");
   }
 
+  // Cycle D.1 dual-write window: a session may carry lifecycle_state, the
+  // legacy phase, or both on disk. The canonical authority is the lifecycle
+  // state; the legacy phase is a derived back-compat read for callers that
+  // have not yet migrated. Accept either, then synthesize whichever side is
+  // missing so consumers always see both fields.
+  let resolvedLifecycleState = null;
+  if (document.lifecycle_state != null) {
+    resolvedLifecycleState = assertEnumValue(
+      document.lifecycle_state,
+      SESSION_STATE_LIFECYCLE_VALUES,
+      "lifecycle_state",
+    );
+  } else if (typeof document.phase === "string") {
+    resolvedLifecycleState = deriveLifecycleStateFromLegacyPhase(document.phase);
+    if (!resolvedLifecycleState) {
+      throw new Error(`phase must be one of ${Object.keys(LEGACY_PHASE_TO_LIFECYCLE_STATE).join(", ")} (legacy fallback); got ${JSON.stringify(document.phase)}`);
+    }
+  } else {
+    throw new Error("lifecycle_state (or legacy phase) is required");
+  }
+  const resolvedLegacyPhase = typeof document.phase === "string"
+    ? document.phase
+    : deriveLegacyPhaseFromLifecycleState(resolvedLifecycleState);
+
   const normalized = {
     target: requestedDomain,
     target_url: assertNonEmptyString(document.target_url, "target_url"),
@@ -535,7 +620,8 @@ function normalizeSessionStateDocument(document, requestedDomain) {
       ? false
       : assertBoolean(document.deep_mode, "deep_mode"),
     ...normalizeBlockInternalHostsStateFields(document),
-    phase: assertEnumValue(document.phase, PHASE_VALUES, "phase"),
+    lifecycle_state: resolvedLifecycleState,
+    phase: resolvedLegacyPhase,
     evaluation_wave: document.evaluation_wave == null
       ? 0
       : assertInteger(document.evaluation_wave, "evaluation_wave", { min: 0 }),
@@ -634,7 +720,10 @@ module.exports = {
   compactSessionState,
   composeSessionStateDocument,
   deriveBlockInternalHostsPolicy,
+  deriveLegacyPhaseFromLifecycleState,
+  deriveLifecycleStateFromLegacyPhase,
   egressProfileStateFields,
+  LIFECYCLE_STATE_TO_LEGACY_PHASE,
   normalizeSessionStateDocument,
   publicSessionState,
   terminallyBlockedSurfaceIds,

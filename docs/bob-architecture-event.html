@@ -1,9 +1,16 @@
 <!doctype html>
+<!--
+  v1.x snapshot. These slides describe the legacy eight-phase FSM
+  (SURFACE_DISCOVERY -> AUTH -> ... -> EXPLORE) that the v2.0 frontier-topology
+  rewrite retired. The current lifecycle is the six-state SETUP ->
+  OPEN_FRONTIER -> CLAIM_FREEZE -> VERIFY -> GRADE -> REPORT machine; see
+  docs/releases/v2.0.0.md and CHANGELOG.md v2.0.0.
+-->
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Hacker Bob Architecture Slides</title>
+  <title>Hacker Bob Architecture Slides (v1.x snapshot)</title>
   <style>
     :root {
       --ink: #111a16;

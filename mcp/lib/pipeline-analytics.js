@@ -2,9 +2,14 @@
 
 const fs = require("fs");
 const {
-  PHASE_VALUES,
   VERIFICATION_ROUND_VALUES,
 } = require("./constants.js");
+const {
+  LIFECYCLE_STATE_VALUES,
+} = require("./governance-contracts.js");
+const {
+  deriveLifecycleStateFromLegacyPhase,
+} = require("./session-state-contracts.js");
 const {
   assertNonEmptyString,
 } = require("./validation.js");
@@ -112,16 +117,20 @@ function buildBackfillEvents(targetDomain, artifacts) {
     block_internal_hosts_source: artifacts.state.block_internal_hosts_source,
   };
   const events = [];
+  // session_started always synthesizes with the bootstrap lifecycle state.
+  // Legacy backfill emits the derived legacy phase alongside so callers that
+  // still read `to_phase` see a value during the deprecation window.
   events.push(normalizePipelineEvent(targetDomain, "session_started", {
     ts: artifacts.state.mtime || ts,
-    phase: "SURFACE_DISCOVERY",
+    lifecycle_state: "SETUP",
     source,
     ...egressFields,
   }));
-  if (artifacts.state.phase && artifacts.state.phase !== "SURFACE_DISCOVERY") {
-    events.push(normalizePipelineEvent(targetDomain, "phase_transitioned", {
+  const currentLifecycleState = artifacts.state.lifecycle_state;
+  if (currentLifecycleState && currentLifecycleState !== "SETUP") {
+    events.push(normalizePipelineEvent(targetDomain, "lifecycle_advanced", {
       ts: artifacts.state.mtime || ts,
-      to_phase: artifacts.state.phase,
+      to_state: currentLifecycleState,
       status: "current",
       source,
       ...egressFields,
@@ -481,8 +490,12 @@ function buildEvaluatorHealth({ targetDomain = null, cutoffMs = null, limit = DE
   };
 }
 
+// Both inputs may be lifecycle-state strings or legacy phase strings; we
+// normalize each to the canonical lifecycle ordering before comparison so
+// analytics keep working during the dual-write window.
 function phaseIndex(phase) {
-  return PHASE_VALUES.indexOf(phase);
+  const lifecycleState = deriveLifecycleStateFromLegacyPhase(phase) || phase;
+  return LIFECYCLE_STATE_VALUES.indexOf(lifecycleState);
 }
 
 function phaseAtLeast(phase, requiredPhase) {
@@ -494,12 +507,15 @@ function phaseAtLeast(phase, requiredPhase) {
 function computeChainPhaseDurationMs(events) {
   let chainStartMs = null;
   for (const event of events) {
-    if (event.type !== "phase_transitioned") continue;
-    if (event.to_phase === "CHAIN") {
+    if (event.type !== "phase_transitioned" && event.type !== "lifecycle_advanced") continue;
+    // Accept the legacy CHAIN phase or its lifecycle equivalent CLAIM_FREEZE;
+    // both mark "claim batch is being assembled" in the old/new vocabularies.
+    const toLifecycle = event.to_state || deriveLifecycleStateFromLegacyPhase(event.to_phase);
+    if (toLifecycle === "CLAIM_FREEZE" || event.to_phase === "CHAIN") {
       chainStartMs = timestampMs(event.ts);
       continue;
     }
-    if (event.to_phase === "VERIFY" && chainStartMs != null) {
+    if ((toLifecycle === "VERIFY" || event.to_phase === "VERIFY") && chainStartMs != null) {
       const verifyMs = timestampMs(event.ts);
       return verifyMs >= chainStartMs ? verifyMs - chainStartMs : null;
     }

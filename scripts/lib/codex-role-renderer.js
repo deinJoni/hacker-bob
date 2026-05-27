@@ -98,7 +98,7 @@ function workerLabel(roleId) {
 
 function codexLaunchTemplates() {
   return Object.freeze({
-    "{{SPAWN_SURFACE_DISCOVERY_AGENT}}": [
+    "{{SPAWN_SEED_DISCOVERY_AGENT}}": [
       "```text",
       `Use Codex spawn_agent for ${workerLabel("surface-discovery")}.`,
       "- agent_type: \"worker\"",
@@ -106,7 +106,7 @@ function codexLaunchTemplates() {
       "Wait with `wait_agent` before continuing. After reading the result and checking `attack_surface.json`, call `close_agent` for the host agent.",
       "```",
     ].join("\n"),
-    "{{SPAWN_DEEP_SURFACE_DISCOVERY_AGENT}}": [
+    "{{SPAWN_DEEP_SEED_DISCOVERY_AGENT}}": [
       "```text",
       `Use Codex spawn_agent for ${workerLabel("deep-surface-discovery")}.`,
       "- agent_type: \"worker\"",

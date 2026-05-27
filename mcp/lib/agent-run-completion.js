@@ -88,11 +88,23 @@ function evaluateEvidenceCompletion(marker) {
       reason: `Post-report evidence marker could not read session state: ${error.message || String(error)}`,
     };
   }
-  if (!state || (state.phase !== "REPORT" && state.phase !== "EXPLORE")) {
+  // Post-report evidence runs are allowed only when the session has reached
+  // REPORT (or re-entered OPEN_FRONTIER from REPORT). Either lifecycle state
+  // signals the evidence-collection window per the topology re-entry edge.
+  // The hook reads state.json directly (not through readSessionStateStrict)
+  // so lifecycle_state may be absent on legacy disk; fall back to the legacy
+  // phase field where REPORT and EXPLORE both signal the post-report window.
+  const allowedLifecycleStates = new Set(["REPORT", "OPEN_FRONTIER"]);
+  const allowedLegacyPhases = new Set(["REPORT", "EXPLORE"]);
+  const lifecycleState = state && state.lifecycle_state;
+  const legacyPhase = state && state.phase;
+  const lifecycleAllowed = lifecycleState && allowedLifecycleStates.has(lifecycleState);
+  const legacyAllowed = !lifecycleState && legacyPhase && allowedLegacyPhases.has(legacyPhase);
+  if (!state || (!lifecycleAllowed && !legacyAllowed)) {
     return {
       ok: false,
       block_code: "evidence_phase_mismatch",
-      reason: `Post-report evidence marker is allowed only in REPORT or EXPLORE phase; current phase is ${state && state.phase ? state.phase : "unknown"}.`,
+      reason: `Post-report evidence marker is allowed only when lifecycle_state is REPORT or OPEN_FRONTIER (legacy phase REPORT or EXPLORE); current lifecycle_state is ${lifecycleState || "unknown"} / phase ${legacyPhase || "unknown"}.`,
     };
   }
   return {

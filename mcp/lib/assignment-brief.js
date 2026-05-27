@@ -367,6 +367,7 @@ function readAssignmentBrief(args) {
   return JSON.stringify({
     run_context: {
       target_domain: domain,
+      lifecycle_state: state.lifecycle_state,
       phase: state.phase,
       auth_status: state.auth_status,
       egress_profile: egressIdentity.egress_profile,

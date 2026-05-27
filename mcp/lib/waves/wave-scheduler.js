@@ -53,8 +53,8 @@ const {
 } = require("./wave-promotion-detector.js");
 
 function assertWaveStartState(state, waveNumber) {
-  if (state.phase !== "EVALUATE" && state.phase !== "EXPLORE") {
-    throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Wave start requires phase EVALUATE or EXPLORE, found ${state.phase}`);
+  if (state.lifecycle_state !== "OPEN_FRONTIER") {
+    throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Wave start requires lifecycle_state OPEN_FRONTIER, found ${state.lifecycle_state}`);
   }
   if (state.pending_wave != null) {
     throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Wave start requires pending_wave null, found ${state.pending_wave}`);
@@ -223,8 +223,8 @@ function startNextWave(args) {
 
   return withSessionLock(domain, () => {
     const { raw, state } = readSessionStateStrict(domain);
-    if (state.phase !== "EVALUATE" && state.phase !== "EXPLORE") {
-      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Wave start requires phase EVALUATE or EXPLORE, found ${state.phase}`);
+    if (state.lifecycle_state !== "OPEN_FRONTIER") {
+      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Wave start requires lifecycle_state OPEN_FRONTIER, found ${state.lifecycle_state}`);
     }
 
     const basePromotionPreview = basePromotionPreviewForState(domain, state);

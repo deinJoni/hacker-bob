@@ -2,9 +2,6 @@
 
 const fs = require("fs");
 const {
-  PHASE_VALUES,
-} = require("./constants.js");
-const {
   assertNonEmptyString,
 } = require("./validation.js");
 const {
@@ -19,10 +16,23 @@ const {
 const {
   readSessionNucleus,
 } = require("./governance-store.js");
+const {
+  deriveLifecycleStateFromLegacyPhase,
+} = require("./session-state-contracts.js");
+const {
+  LIFECYCLE_STATE_VALUES,
+} = require("./governance-contracts.js");
 
+// LIFECYCLE_STATE_VALUES is ordered SETUP -> OPEN_FRONTIER -> CLAIM_FREEZE ->
+// VERIFY -> GRADE -> REPORT, which is the canonical "progress" ordering.
+// phaseAtLeast still accepts legacy phase strings so existing readers do not
+// need a rewrite during the deprecation window; both inputs are projected to
+// their lifecycle state before comparison.
 function phaseAtLeast(phase, requiredPhase) {
-  const current = PHASE_VALUES.indexOf(phase);
-  const required = PHASE_VALUES.indexOf(requiredPhase);
+  const currentState = deriveLifecycleStateFromLegacyPhase(phase) || phase;
+  const requiredState = deriveLifecycleStateFromLegacyPhase(requiredPhase) || requiredPhase;
+  const current = LIFECYCLE_STATE_VALUES.indexOf(currentState);
+  const required = LIFECYCLE_STATE_VALUES.indexOf(requiredState);
   return current >= 0 && required >= 0 && current >= required;
 }
 
@@ -82,15 +92,29 @@ function nextAction(state, artifacts, blockers) {
     return "Run the report writer, then call bob_read_session_summary again.";
   }
   if (artifacts.grade.verdict === "HOLD") {
-    return "Return to EVALUATE with grader feedback, then re-run CHAIN through REPORT.";
+    return "Return to OPEN_FRONTIER with grader feedback, then re-run CLAIM_FREEZE through REPORT.";
   }
-  if (state.phase === "SURFACE_DISCOVERY") return "Run surface-discovery, write attack_surface.json, then transition to AUTH.";
-  if (state.phase === "AUTH") return "Complete auth or use --no-auth, then transition to EVALUATE.";
-  if (state.phase === "EVALUATE" || state.phase === "EXPLORE") return "Start or resume the next evaluator wave.";
-  if (state.phase === "CHAIN") return "Run chain-builder and write terminal chain attempts.";
-  if (state.phase === "VERIFY") return "Run verification rounds and evidence collection for final reportables.";
-  if (state.phase === "GRADE") return "Run grader and read back the grade verdict.";
-  if (state.phase === "REPORT") {
+  // Lifecycle-state-driven narration. The state field is the canonical
+  // projection of nucleus.lifecycle_state into state.json; older sessions
+  // without the field fall through the chain via the legacy phase mapping
+  // emitted by session-state-contracts.
+  const lifecycleState = state.lifecycle_state;
+  if (lifecycleState === "SETUP") {
+    return "Complete SETUP (seed discovery, auth capture as needed), then bob_advance_session to OPEN_FRONTIER.";
+  }
+  if (lifecycleState === "OPEN_FRONTIER") {
+    return "Schedule or resume the next evaluator wave; freeze a claim batch with bob_advance_session to CLAIM_FREEZE.";
+  }
+  if (lifecycleState === "CLAIM_FREEZE") {
+    return "Inspect the frozen claim batch, then bob_advance_session to VERIFY (or back to OPEN_FRONTIER).";
+  }
+  if (lifecycleState === "VERIFY") {
+    return "Run verification rounds and evidence collection for final reportables.";
+  }
+  if (lifecycleState === "GRADE") {
+    return "Run grader and read back the grade verdict.";
+  }
+  if (lifecycleState === "REPORT") {
     return artifacts.report.present
       ? "Present the compact summary and report path to the operator."
       : "Run report-writer and write report.md.";

@@ -32,11 +32,59 @@ const ALLOWED_TRANSITIONS = Object.freeze({
 // array of structured blocker entries; an empty array means "transition is
 // permitted by this gate".
 //
-// Cycle G.2 ships every gate as a no-op so the hook architecture is in
-// place. Later cycles (e.g., CLAIM_FREEZE requires a CandidateClaim per
-// F.3 / C.3, REPORT requires a hash-bound ReportSnapshot per C.7) hang
-// concrete checks here without touching the advance-session tool surface.
-const TRANSITION_GATES = Object.freeze({});
+// Cycle G.2 ships the gate architecture; Cycle D.1 retires the legacy
+// phase-gates module and migrates the VERIFY -> GRADE freshness check here.
+// The gate consults requireVerificationCompleteForGrade and surfaces blocked
+// entries that mirror the legacy "VERIFY -> GRADE blocked" message.
+const TRANSITION_GATES = Object.freeze({
+  "VERIFY->GRADE": gateVerifyToGrade,
+  "GRADE->REPORT": gateGradeToReport,
+});
+
+function compactError(error) {
+  return error && error.message ? error.message : String(error);
+}
+
+function gateVerifyToGrade(context) {
+  const blockers = [];
+  try {
+    require("./verification.js").requireVerificationCompleteForGrade(context.target_domain);
+  } catch (error) {
+    const message = compactError(error);
+    const evidenceLike = /Evidence packs|evidence packs|Missing evidence packs|final reportable/i.test(message);
+    const prefix = evidenceLike
+      ? "evidence packs are missing or invalid for final reportable findings"
+      : "verification v2 chain is incomplete or stale";
+    blockers.push({
+      code: evidenceLike ? "evidence_packs_invalid" : "verification_chain_incomplete",
+      blocked_by: "verification_stale",
+      message: `VERIFY -> GRADE blocked: ${prefix}: ${message}`,
+      error: message,
+    });
+  }
+  return blockers;
+}
+
+function gateGradeToReport(context) {
+  // GRADE -> REPORT keeps the legacy invariant that final reportable
+  // findings have valid evidence packs at advance time. The new finalize-
+  // report tool re-verifies the four-hash binding (C.7); this gate keeps
+  // the legacy refusal so callers receive a structured blocker before they
+  // start writing report.md.
+  const blockers = [];
+  try {
+    require("./verification.js").requireVerificationCompleteForGrade(context.target_domain);
+  } catch (error) {
+    const message = compactError(error);
+    blockers.push({
+      code: "evidence_packs_invalid",
+      blocked_by: "evidence_incomplete",
+      message: `GRADE -> REPORT blocked: ${message}`,
+      error: message,
+    });
+  }
+  return blockers;
+}
 
 function transitionKey(fromState, toState) {
   return `${fromState}->${toState}`;

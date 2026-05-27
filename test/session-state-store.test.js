@@ -1487,11 +1487,12 @@ test("session-state store write callers keep explicit lock boundaries", () => {
     /after import/,
   );
   const directStoreWriterLockChecks = [
+    { relativePath: "mcp/lib/session-state.js", functionName: "advanceSession", callCount: 2 },
     { relativePath: "mcp/lib/session-state.js", functionName: "assertSessionEgressIdentity", callCount: 1 },
     { relativePath: "mcp/lib/session-state.js", functionName: "clearOperatorNote", callCount: 1 },
     { relativePath: "mcp/lib/session-state.js", functionName: "clearTerminalBlock", callCount: 1 },
+    { relativePath: "mcp/lib/session-state.js", functionName: "initSession", callCount: 1 },
     { relativePath: "mcp/lib/session-state.js", functionName: "setOperatorNote", callCount: 1 },
-    { relativePath: "mcp/lib/session-state.js", functionName: "transitionPhase", callCount: 2 },
     { relativePath: "mcp/lib/waves/wave-merge-settler.js", functionName: "applyWaveMerge", callCount: 1 },
   ];
   const storeWriterSummaries = runtimeCallSummaries("writeSessionStateDocument");

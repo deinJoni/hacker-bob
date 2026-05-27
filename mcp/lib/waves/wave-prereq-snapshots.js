@@ -8,8 +8,8 @@ const {
   readSessionStateStrict,
 } = require("../session-state-store.js");
 const {
-  computeEvaluationToChainGate,
-} = require("../phase-gates.js");
+  computeFrontierReadiness,
+} = require("../frontier-readiness.js");
 const {
   readFindingsFromJsonl,
   summarizeFindings,
@@ -70,18 +70,18 @@ function waveStatus(args) {
   const findings = readFindingsFromJsonl(domain);
   const summary = summarizeFindings(findings);
 
-  // Compute transition-gate inputs for deterministic wave decisions.
+  // Compute frontier-readiness analytics for deterministic wave decisions.
   let coverage = null;
   let transitionBlockers = [];
   try {
     const { state } = readSessionStateStrict(domain);
-    const gate = computeEvaluationToChainGate(domain, state);
-    coverage = gate.coverage;
-    transitionBlockers = gate.transition_blockers;
+    const readiness = computeFrontierReadiness(domain, state);
+    coverage = readiness.coverage;
+    transitionBlockers = readiness.transition_blockers;
   } catch (error) {
     transitionBlockers = [{
       code: "state_unavailable",
-      message: "session state could not be read for EVALUATE -> CHAIN gating",
+      message: "session state could not be read for frontier readiness",
       error: error && error.message ? error.message : String(error),
     }];
   }

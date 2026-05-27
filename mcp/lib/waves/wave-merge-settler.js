@@ -228,8 +228,8 @@ function applyWaveMerge(args) {
 
   return withSessionLock(domain, () => {
     const { raw, state } = readSessionStateStrict(domain);
-    if (state.phase !== "EVALUATE" && state.phase !== "EXPLORE") {
-      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Wave merge requires phase EVALUATE or EXPLORE, found ${state.phase}`);
+    if (state.lifecycle_state !== "OPEN_FRONTIER") {
+      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Wave merge requires lifecycle_state OPEN_FRONTIER, found ${state.lifecycle_state}`);
     }
     if (state.pending_wave == null) {
       throw new ToolError(ERROR_CODES.STATE_CONFLICT, "Wave merge requires pending_wave to be set");

@@ -34,12 +34,12 @@ const SUPPORTED_CLAUDE_AGENT_COLORS = Object.freeze([
 ]);
 
 const CLAUDE_LAUNCH_TEMPLATES = Object.freeze({
-  "{{SPAWN_SURFACE_DISCOVERY_AGENT}}": [
+  "{{SPAWN_SEED_DISCOVERY_AGENT}}": [
     "```text",
     "deep_mode false: Agent(subagent_type: \"surface-discovery-agent\", name: \"surface-discovery\", prompt: \"DOMAIN=[domain] SESSION=~/hacker-bob-sessions/[domain]\")",
     "```",
   ].join("\n"),
-  "{{SPAWN_DEEP_SURFACE_DISCOVERY_AGENT}}": [
+  "{{SPAWN_DEEP_SEED_DISCOVERY_AGENT}}": [
     "```text",
     "deep_mode true: Agent(subagent_type: \"deep-surface-discovery-agent\", name: \"deep-surface-discovery\", prompt: \"DOMAIN=[domain] SESSION=~/hacker-bob-sessions/[domain]\")",
     "```",

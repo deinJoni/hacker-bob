@@ -140,7 +140,6 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_svm_fetch_account: "smart_contract_contextual",
   bob_svm_fetch_program: "smart_contract_contextual",
   bob_temp_email: "global_preapproval",
-  bounty_transition_phase: "initialized_session_mutation",
   bob_wave_handoff_status: "initialized_session_read",
   bob_wave_status: "initialized_session_read",
   bob_write_chain_attempt: "initialized_session_mutation",

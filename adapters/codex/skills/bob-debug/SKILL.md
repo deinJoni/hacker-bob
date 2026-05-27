@@ -56,7 +56,7 @@ Use these only when they help confirm a telemetry finding or fill a gap:
 For local artifact fallback, inspect only file presence/mtimes under `~/hacker-bob-sessions/[target_domain]` plus Codex session log files needed for `--deep`; do not dump protected raw Bob artifacts.
 
 ## What To Check
-- Phase path: whether the session followed SURFACE_DISCOVERY -> AUTH -> EVALUATE -> CHAIN -> VERIFY -> GRADE -> REPORT, or documented EXPLORE after REPORT.
+- Lifecycle path: whether the session followed SETUP -> OPEN_FRONTIER -> CLAIM_FREEZE -> VERIFY -> GRADE -> REPORT, including any re-entries into OPEN_FRONTIER from later states (D3 bidirectional edge).
 - Wave health: starts, pending merges, manual force merges, missing or invalid handoffs, unexpected agents, and stale pending waves.
 - Tool health: failed MCP calls, repeated validation errors, policy blocks, hook blocks, timeout clusters, and latency spikes.
 - Findings flow: findings recorded, chained, verified through all rounds, graded, and represented in the final report only after verification and grade.

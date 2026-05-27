@@ -6,16 +6,16 @@ The `Target URL` and `Tests` columns are authority contracts for N2-004 enforcem
 
 ## Summary
 
-- Registered tools: 112
-- Tools with `target_domain`: 105
-- Tools requiring `target_domain`: 99
+- Registered tools: 111
+- Tools with `target_domain`: 104
+- Tools requiring `target_domain`: 98
 - Mode-dependent tools: 6
 
 | Authority Class | Default Tool Count | Resolved Mode/Tool Count |
 | --- | ---: | ---: |
 | `bootstrap_session` | 1 | 1 |
 | `initialized_session_read` | 34 | 39 |
-| `initialized_session_mutation` | 38 | 39 |
+| `initialized_session_mutation` | 37 | 38 |
 | `scoped_http_network` | 7 | 7 |
 | `smart_contract_contextual` | 19 | 19 |
 | `optional_session_context` | 0 | 0 |
@@ -110,7 +110,6 @@ Fail-closed fields: `target`, `target_url`, `checkpoint_mode`, `block_internal_h
 | bob_read_session_state | mcp/lib/tools/read-session-state.js | `initialized_session_read` | has=true<br>required=true | mutating=false<br>global_preapproval=true<br>network_access=false<br>browser_access=false<br>scope_required=false<br>sensitive_output=false<br>artifacts=[] | [] | validate_session_target_url | allowlist_required | not_applicable | not_applicable | Reads target-bound session artifacts and must resolve an initialized session first. | Require initialized session, target match, target_url validation, and legacy allowlist before read. | Direct tests for missing session, mismatch, target_url drift, and legacy allowlist. |
 | bob_read_session_nucleus | mcp/lib/tools/read-session-nucleus.js | `initialized_session_read` | has=true<br>required=true | mutating=false<br>global_preapproval=true<br>network_access=false<br>browser_access=false<br>scope_required=false<br>sensitive_output=false<br>artifacts=[] | [] | validate_session_target_url | allowlist_required | not_applicable | not_applicable | Reads target-bound session artifacts and must resolve an initialized session first. | Require initialized session, target match, target_url validation, and legacy allowlist before read. | Direct tests for missing session, mismatch, target_url drift, and legacy allowlist. |
 | bob_advance_session | mcp/lib/tools/advance-session.js | `initialized_session_mutation` | has=true<br>required=true | mutating=true<br>global_preapproval=false<br>network_access=false<br>browser_access=false<br>scope_required=false<br>sensitive_output=false<br>artifacts=session-nucleus.json+session-events.jsonl | [] | validate_session_target_url | allowlist_required | not_applicable | not_applicable | Writes session artifacts or mutates session state and must be bound to an initialized session. | Require initialized session, target match, target_url validation, and legacy allowlist before write. | Direct tests for missing session, mismatch, legacy fail-closed fields, and artifact write path. |
-| bounty_transition_phase | mcp/lib/tools/transition-phase.js | `initialized_session_mutation` | has=true<br>required=true | mutating=true<br>global_preapproval=false<br>network_access=false<br>browser_access=false<br>scope_required=false<br>sensitive_output=false<br>artifacts=state.json+verification-input-snapshot.json+verification-manifest.json+verification-attempts/attempt-*/ | [] | validate_session_target_url | allowlist_required | not_applicable | not_applicable | Writes session artifacts or mutates session state and must be bound to an initialized session. | Require initialized session, target match, target_url validation, and legacy allowlist before write. | Direct tests for missing session, mismatch, legacy fail-closed fields, and artifact write path. |
 | bob_apply_wave_merge | mcp/lib/tools/apply-wave-merge.js | `initialized_session_mutation` | has=true<br>required=true | mutating=true<br>global_preapproval=false<br>network_access=false<br>browser_access=false<br>scope_required=false<br>sensitive_output=false<br>artifacts=state.json | [] | validate_session_target_url | allowlist_required | not_applicable | not_applicable | Writes session artifacts or mutates session state and must be bound to an initialized session. | Require initialized session, target match, target_url validation, and legacy allowlist before write. | Direct tests for missing session, mismatch, legacy fail-closed fields, and artifact write path. |
 | bob_write_handoff | mcp/lib/tools/write-handoff.js | `initialized_session_mutation` | has=true<br>required=true | mutating=true<br>global_preapproval=false<br>network_access=false<br>browser_access=false<br>scope_required=false<br>sensitive_output=false<br>artifacts=SESSION_HANDOFF.md | [] | validate_session_target_url | allowlist_required | not_applicable | not_applicable | Writes session artifacts or mutates session state and must be bound to an initialized session. | Require initialized session, target match, target_url validation, and legacy allowlist before write. | Direct tests for missing session, mismatch, legacy fail-closed fields, and artifact write path. |
 | bob_write_wave_handoff | mcp/lib/tools/write-wave-handoff.js | `initialized_session_mutation` | has=true<br>required=true | mutating=true<br>global_preapproval=true<br>network_access=false<br>browser_access=false<br>scope_required=false<br>sensitive_output=false<br>artifacts=handoff-wN-aN.json+handoff-wN-aN.md | [] | validate_session_target_url | allowlist_required | not_applicable | not_applicable | Writes session artifacts or mutates session state and must be bound to an initialized session. | Require initialized session, target match, target_url validation, and legacy allowlist before write. | Direct tests for missing session, mismatch, legacy fail-closed fields, and artifact write path. |

@@ -561,9 +561,9 @@ function buildEvidenceReportCoverageBlockers(sessions) {
         error: evidence.error || null,
       });
     }
-    if (artifacts.state && artifacts.state.phase === "REPORT" && artifacts.report && !artifacts.report.present) {
+    if (artifacts.state && artifacts.state.lifecycle_state === "REPORT" && artifacts.report && !artifacts.report.present) {
       addBlocker(groups, "report_missing", session, {
-        phase: artifacts.state.phase,
+        lifecycle_state: artifacts.state.lifecycle_state,
         findings_total: artifacts.findings ? artifacts.findings.total : 0,
         final_reportable_count: evidence.final_reportable_count || 0,
       });

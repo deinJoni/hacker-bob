@@ -167,10 +167,10 @@ const {
   clearTerminalBlock,
   initSession,
   readSessionState,
+  advanceSession,
   reportWritten,
   setOperatorNote,
   readStateSummary,
-  transitionPhase,
 } = require("../mcp/lib/session-state.js");
 const {
   compactSessionState,
@@ -365,7 +365,6 @@ const EXPECTED_TOOL_NAMES = [
   "bob_read_session_state",
   "bob_read_session_nucleus",
   "bob_advance_session",
-  "bounty_transition_phase",
   "bob_apply_wave_merge",
   "bob_write_handoff",
   "bob_write_wave_handoff",
@@ -817,6 +816,154 @@ function readJsonl(filePath) {
     .map((line) => JSON.parse(line));
 }
 
+// Test compat shim. Cycle D.1 retired the bounty_transition_phase tool and
+// its handler; tests that drove the legacy phase machine via direct
+// transitionPhase(...) calls now route through bob_advance_session. The
+// legacy phase-to-lifecycle mapping is the same one the registry alias
+// uses (see mcp/lib/tools/advance-session.js arg_adapter). When the target
+// lifecycle state equals the current one (e.g., legacy AUTH -> EVALUATE both
+// collapse to OPEN_FRONTIER), the helper returns a synthetic success
+// envelope instead of calling advanceSession so existing legacy chains keep
+// driving fixtures forward without hitting the "no transition" gate.
+const LEGACY_PHASE_TO_LIFECYCLE_STATE = Object.freeze({
+  SURFACE_DISCOVERY: "SETUP",
+  AUTH: "OPEN_FRONTIER",
+  EVALUATE: "OPEN_FRONTIER",
+  CHAIN: "OPEN_FRONTIER",
+  EXPLORE: "OPEN_FRONTIER",
+  VERIFY: "VERIFY",
+  GRADE: "GRADE",
+  REPORT: "REPORT",
+});
+
+function readCurrentLifecycleState(domain) {
+  try {
+    const nucleusPath = require("../mcp/lib/paths.js").sessionNucleusPath(domain);
+    if (fs.existsSync(nucleusPath)) {
+      const parsed = JSON.parse(fs.readFileSync(nucleusPath, "utf8"));
+      if (parsed && typeof parsed.lifecycle_state === "string") return parsed.lifecycle_state;
+    }
+  } catch {}
+  try {
+    const sp = statePath(domain);
+    if (fs.existsSync(sp)) {
+      const parsed = JSON.parse(fs.readFileSync(sp, "utf8"));
+      if (parsed && typeof parsed.lifecycle_state === "string") return parsed.lifecycle_state;
+      if (parsed && typeof parsed.phase === "string") {
+        return LEGACY_PHASE_TO_LIFECYCLE_STATE[parsed.phase] || null;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+// The legacy phase machine had 1-step edges that span multiple lifecycle
+// states in the new world (CHAIN -> VERIFY collapses to OPEN_FRONTIER ->
+// CLAIM_FREEZE -> VERIFY). The shim walks the canonical six-state path
+// SETUP -> OPEN_FRONTIER -> CLAIM_FREEZE -> VERIFY -> GRADE -> REPORT and
+// invokes bob_advance_session one edge at a time. Each intermediate hop is
+// override-forced when an override_reason was supplied, mirroring the
+// legacy "single transition + reason" semantics for blocked gates.
+const CANONICAL_FORWARD_LIFECYCLE = Object.freeze([
+  "SETUP",
+  "OPEN_FRONTIER",
+  "CLAIM_FREEZE",
+  "VERIFY",
+  "GRADE",
+  "REPORT",
+]);
+
+function lifecyclePathBetween(fromState, toState) {
+  const fromIndex = CANONICAL_FORWARD_LIFECYCLE.indexOf(fromState);
+  const toIndex = CANONICAL_FORWARD_LIFECYCLE.indexOf(toState);
+  if (fromIndex < 0 || toIndex < 0) return null;
+  if (fromIndex === toIndex) return [];
+  if (fromIndex < toIndex) {
+    return CANONICAL_FORWARD_LIFECYCLE.slice(fromIndex + 1, toIndex + 1);
+  }
+  // Backward transitions in the legacy machine (e.g., GRADE -> EVALUATE)
+  // are re-entry edges in the new lifecycle: every later state can return
+  // to OPEN_FRONTIER directly. The legacy chain collapses to a single
+  // OPEN_FRONTIER hop.
+  return ["OPEN_FRONTIER"];
+}
+
+// Synchronize the nucleus's lifecycle_state to match state.json's legacy
+// phase. Tests that manually rewrite state.json (e.g., to simulate orphan
+// recovery) need the nucleus to reflect the same lifecycle so the next
+// transitionPhase shim call performs a real advance instead of a no-op.
+function syncNucleusFromStateJson(domain) {
+  try {
+    const sp = statePath(domain);
+    if (!fs.existsSync(sp)) return;
+    const stateDoc = JSON.parse(fs.readFileSync(sp, "utf8"));
+    const expectedState = LEGACY_PHASE_TO_LIFECYCLE_STATE[stateDoc.phase] || null;
+    if (!expectedState) return;
+    const nucleusPath = require("../mcp/lib/paths.js").sessionNucleusPath(domain);
+    if (!fs.existsSync(nucleusPath)) return;
+    const nucleus = JSON.parse(fs.readFileSync(nucleusPath, "utf8"));
+    if (nucleus.lifecycle_state === expectedState) return;
+    const { buildSessionNucleus } = require("../mcp/lib/governance-contracts.js");
+    const { writeJsonDocument } = require("../mcp/lib/fabric-common.js");
+    const next = buildSessionNucleus({
+      target_domain: nucleus.target_domain,
+      target_url: nucleus.scope_policy && nucleus.scope_policy.target_url,
+      scope_policy: nucleus.scope_policy,
+      egress_identity: nucleus.egress_identity,
+      auth_context: nucleus.auth_context,
+      operator_constraint: nucleus.operator_constraint,
+      lifecycle_state: expectedState,
+    });
+    writeJsonDocument(nucleusPath, next);
+  } catch {}
+}
+
+function transitionPhase(args) {
+  const safe = (args && typeof args === "object" && !Array.isArray(args)) ? args : {};
+  const targetDomain = typeof safe.target_domain === "string" ? safe.target_domain : null;
+  const targetState = typeof safe.to_phase === "string"
+    ? (LEGACY_PHASE_TO_LIFECYCLE_STATE[safe.to_phase] || safe.to_phase)
+    : null;
+  if (!targetDomain || !targetState) {
+    return advanceSession({ target_domain: targetDomain, to_state: targetState });
+  }
+  // If a test manually rewrote state.json to a "regression" phase, the
+  // nucleus may still hold the previous lifecycle_state; sync so the next
+  // legacy transition can land its expected event sequence.
+  if (targetDomain) syncNucleusFromStateJson(targetDomain);
+  const overrideReason = typeof safe.override_reason === "string" && safe.override_reason.trim()
+    ? safe.override_reason
+    : null;
+  const currentState = readCurrentLifecycleState(targetDomain);
+  if (currentState && currentState === targetState) {
+    return JSON.stringify({
+      version: 1,
+      advanced: false,
+      idempotent: true,
+      from_state: currentState,
+      to_state: targetState,
+    });
+  }
+  const path = lifecyclePathBetween(currentState, targetState);
+  if (!path || path.length === 0) {
+    return advanceSession({
+      target_domain: targetDomain,
+      to_state: targetState,
+      ...(overrideReason ? { override: "operator_force", override_reason: overrideReason } : {}),
+    });
+  }
+  let lastResult = null;
+  for (const hop of path) {
+    const hopArgs = {
+      target_domain: targetDomain,
+      to_state: hop,
+      ...(overrideReason ? { override: "operator_force", override_reason: overrideReason } : {}),
+    };
+    lastResult = advanceSession(hopArgs);
+  }
+  return lastResult;
+}
+
 function seedSessionState(domain, overrides = {}) {
   const dir = sessionDir(domain);
   fs.mkdirSync(dir, { recursive: true });
@@ -851,6 +998,42 @@ function seedSessionState(domain, overrides = {}) {
     ...overrides,
   };
   writeFileAtomic(statePath(domain), `${JSON.stringify(state, null, 2)}\n`);
+  // Cycle D.1: tests that seed legacy state.json must also produce a session
+  // nucleus so bob_advance_session has the lifecycle authority it expects.
+  // Skip when overrides already wrote a nucleus or the fixture is testing
+  // legacy-only normalization.
+  try {
+    const nucleusPath = require("../mcp/lib/paths.js").sessionNucleusPath(domain);
+    if (!fs.existsSync(nucleusPath)) {
+      const { buildSessionNucleus } = require("../mcp/lib/governance-contracts.js");
+      const { writeJsonDocument } = require("../mcp/lib/fabric-common.js");
+      const lifecycleState = state.lifecycle_state
+        || LEGACY_PHASE_TO_LIFECYCLE_STATE[state.phase]
+        || "SETUP";
+      const nucleus = buildSessionNucleus({
+        target_domain: domain,
+        target_url: state.target_url,
+        scope_policy: {
+          target_url: state.target_url,
+          checkpoint_mode: state.checkpoint_mode,
+          deep_mode: state.deep_mode,
+          block_internal_hosts: state.block_internal_hosts,
+          allow_internal_hosts: false,
+        },
+        egress_identity: {
+          egress_profile: state.egress_profile,
+          egress_region: state.egress_region,
+          proxy_configured: state.proxy_configured,
+          egress_profile_identity_hash: state.egress_profile_identity_hash,
+          egress_profile_identity_version: state.egress_profile_identity_version,
+        },
+        auth_context: null,
+        operator_constraint: null,
+        lifecycle_state: lifecycleState,
+      });
+      writeJsonDocument(nucleusPath, nucleus);
+    }
+  } catch {}
   return state;
 }
 
@@ -1413,12 +1596,16 @@ test("MCP tool registry and dispatch cases stay in sync", async () => {
 
   // Every primary that declares aliases must have a corresponding registry
   // entry for each alias. Aliases must point back to a registered primary.
+  // Aliases may be plain strings or descriptor objects with .name; both
+  // shapes are materialized by buildToolRegistry into top-level alias
+  // entries with tool.alias_of pointing at the primary.
   const allRegistryNames = new Set(TOOL_REGISTRY.map((tool) => tool.name));
   for (const tool of TOOL_REGISTRY) {
     if (tool.alias_of) {
       assert.ok(allRegistryNames.has(tool.alias_of), `alias ${tool.name} points to unknown primary ${tool.alias_of}`);
     } else if (Array.isArray(tool.aliases)) {
-      for (const aliasName of tool.aliases) {
+      for (const alias of tool.aliases) {
+        const aliasName = typeof alias === "string" ? alias : alias.name;
         assert.ok(allRegistryNames.has(aliasName), `${tool.name} declares missing alias ${aliasName}`);
       }
     }
@@ -1558,11 +1745,11 @@ test("MCP per-tool modules preserve representative tool behavior", () => {
   assert.deepEqual(TOOL_MANIFEST.bob_write_evidence_packs.role_bundles, ["evidence"]);
   assert.deepEqual(TOOL_MANIFEST.bob_write_evidence_packs.session_artifacts_written, ["evidence-packs.json", "evidence-packs.md", "verification-manifest.json"]);
   assert.deepEqual(TOOL_MANIFEST.bob_read_evidence_packs.role_bundles, ["evidence", "grader", "reporter", "orchestrator"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_transition_phase.session_artifacts_written, [
-    "state.json",
-    "verification-input-snapshot.json",
-    "verification-manifest.json",
-    "verification-attempts/attempt-*/",
+  // bob_advance_session replaces the legacy bounty_transition_phase tool;
+  // the registry alias is exercised by the dispatch tests below.
+  assert.deepEqual(TOOL_MANIFEST.bob_advance_session.session_artifacts_written, [
+    "session-nucleus.json",
+    "session-events.jsonl",
   ]);
   assert.deepEqual(TOOL_MANIFEST.bob_write_verification_round.session_artifacts_written, ["brutalist.json", "balanced.json", "verified-final.json", "verification-manifest.json"]);
   assert.deepEqual(TOOL_MANIFEST.bob_build_verification_adjudication.role_bundles, ["orchestrator"]);
@@ -2888,7 +3075,7 @@ test("pipeline analytics records metadata-only events for a complete synthetic r
     assert.equal(rows.every((row) => row.bob_version === PACKAGE_VERSION), true);
     assert.deepEqual(new Set(rows.map((row) => row.type)), new Set([
       "session_started",
-      "phase_transitioned",
+      "lifecycle_advanced",
       "wave_started",
       "coverage_logged",
       "technique_attempt_logged",
@@ -3953,11 +4140,17 @@ test("legacy state normalization is applied while unknown fields remain on disk 
       frontier_view_hashes: null,
     });
 
+    // Cycle D.1 routes the legacy AUTH transition through bob_advance_session.
+    // The legacy session has no nucleus on disk; readSessionNucleus synthesizes
+    // one from state.json, the advance lands on lifecycle_state OPEN_FRONTIER,
+    // and the legacy phase projection in state.json is refreshed to "EVALUATE".
+    // unknown-field preservation, target normalization, and the rewritten state
+    // all continue to apply.
     JSON.parse(transitionPhase({ target_domain: domain, to_phase: "AUTH" }));
     const rawState = JSON.parse(fs.readFileSync(statePath(domain), "utf8"));
     assert.equal(rawState.extra_field, "keep-me");
     assert.equal(rawState.target, domain);
-    assert.equal(rawState.phase, "AUTH");
+    assert.equal(rawState.phase, "EVALUATE");
   });
 });
 
@@ -4210,549 +4403,12 @@ test("bob_write_chain_attempt rejects malformed references and invalid outcomes"
   });
 });
 
-test("bounty_transition_phase allows the configured edges and increments hold_count on GRADE -> EVALUATE", () => {
-  withTempHome(() => {
-    const domain = "example.com";
-    const cases = [
-      { from: "SURFACE_DISCOVERY", to: "AUTH" },
-      { from: "AUTH", to: "EVALUATE", auth_status: "authenticated" },
-      { from: "EVALUATE", to: "CHAIN" },
-      { from: "CHAIN", to: "VERIFY" },
-      { from: "VERIFY", to: "GRADE" },
-      { from: "GRADE", to: "REPORT" },
-      { from: "GRADE", to: "EVALUATE", hold_count: 1 },
-    ];
-
-    for (const scenario of cases) {
-      const stateOverrides = {
-        phase: scenario.from,
-        hold_count: scenario.hold_count ?? 0,
-      };
-      if (scenario.from === "EVALUATE" && scenario.to === "CHAIN") {
-        stateOverrides.explored = ["surface-a"];
-        seedAttackSurfaces(domain, [
-          { id: "surface-a", hosts: [`https://${domain}`], priority: "HIGH" },
-        ]);
-      }
-      seedSessionState(domain, stateOverrides);
-      if (
-        (scenario.from === "VERIFY" && scenario.to === "GRADE") ||
-        (scenario.from === "GRADE" && scenario.to === "REPORT")
-      ) {
-        if (!fs.existsSync(findingsJsonlPath(domain))) {
-          seedFinding(domain);
-        }
-        seedVerificationPipeline(domain, [{
-          finding_id: "F-1",
-          disposition: "denied",
-          severity: null,
-          reportable: false,
-          reasoning: "No reportable findings in the edge smoke fixture.",
-        }]);
-      }
-
-      const result = JSON.parse(transitionPhase({
-        target_domain: domain,
-        to_phase: scenario.to,
-        auth_status: scenario.auth_status,
-      }));
-
-      assert.equal(result.transitioned, true);
-      assert.equal(result.from_phase, scenario.from);
-      assert.equal(result.to_phase, scenario.to);
-      assert.equal(result.state.phase, scenario.to);
-
-      if (scenario.from === "AUTH") {
-        assert.equal(result.state.auth_status, "authenticated");
-      }
-      if (scenario.from === "GRADE" && scenario.to === "EVALUATE") {
-        assert.equal(result.state.hold_count, 2);
-      }
-    }
-  });
-});
-
-test("bounty_transition_phase blocks EVALUATE -> CHAIN while a wave is pending", () => {
-  withTempHome(() => {
-    const domain = "example.com";
-    seedSessionState(domain, {
-      phase: "EVALUATE",
-      pending_wave: 1,
-      explored: ["surface-a"],
-    });
-    seedAttackSurfaces(domain, [
-      { id: "surface-a", hosts: [`https://${domain}`], priority: "HIGH" },
-    ]);
-
-    assert.throws(
-      () => transitionPhase({ target_domain: domain, to_phase: "CHAIN" }),
-      /EVALUATE -> CHAIN blocked: .*pending_wave is still set to 1/,
-    );
-  });
-});
-
-test("bounty_transition_phase blocks EVALUATE -> CHAIN with unexplored HIGH or CRITICAL surfaces", () => {
-  withTempHome(() => {
-    const domain = "example.com";
-    seedSessionState(domain, {
-      phase: "EVALUATE",
-      pending_wave: null,
-      explored: ["surface-a"],
-    });
-    seedAttackSurfaces(domain, [
-      { id: "surface-a", hosts: [`https://${domain}`], priority: "CRITICAL" },
-      { id: "surface-b", hosts: [`https://api.${domain}`], priority: "HIGH" },
-    ]);
-
-    assert.throws(
-      () => transitionPhase({ target_domain: domain, to_phase: "CHAIN" }),
-      /EVALUATE -> CHAIN blocked: .*surface-b/,
-    );
-  });
-});
-
-test("bounty_transition_phase blocks EVALUATE -> CHAIN with unfinished latest coverage on an unexplored surface", () => {
-  withTempHome(() => {
-    for (const status of ["promising", "needs_auth", "requeue"]) {
-      const domain = `${status.replace("_", "-")}.example.com`;
-      // Note: surface-a is intentionally NOT in `explored`. An unfinished
-      // coverage row on a surface whose `surface_status: complete` handoff
-      // has not yet merged is the canonical "still has work" signal.
-      seedSessionState(domain, {
-        phase: "EVALUATE",
-        pending_wave: null,
-        explored: [],
-      });
-      seedAttackSurfaces(domain, [
-        { id: "surface-a", hosts: [`https://${domain}`], priority: "MEDIUM" },
-      ]);
-      seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
-      logCoverage({
-        target_domain: domain,
-        wave: "w1",
-        agent: "a1",
-        surface_id: "surface-a",
-        entries: [{
-          endpoint: "/api/export",
-          method: "GET",
-          bug_class: "idor",
-          status,
-          evidence_summary: `${status} evidence`,
-        }],
-      });
-
-      assert.throws(
-        () => transitionPhase({ target_domain: domain, to_phase: "CHAIN" }),
-        /EVALUATE -> CHAIN blocked: .*surface-a/,
-      );
-    }
-  });
-});
-
-test("bounty_transition_phase allows EVALUATE -> CHAIN when unfinished coverage rows exist on explored surfaces", () => {
-  // state.explored is populated from `surface_status: complete` handoffs
-  // by applyWaveMerge. Once a complete handoff merges, the surface is
-  // closed regardless of older endpoint-level coverage rows whose latest
-  // status was promising/needs_auth/requeue. The EVALUATE -> CHAIN gate must
-  // not refuse the transition over such stale rows.
-  withTempHome(() => {
-    const domain = "explored-with-stale-coverage.example.com";
-    seedSessionState(domain, {
-      phase: "EVALUATE",
-      pending_wave: null,
-      explored: ["surface-a"],
-      evaluation_wave: 1,
-    });
-    seedAttackSurfaces(domain, [
-      { id: "surface-a", hosts: [`https://${domain}`], priority: "MEDIUM" },
-    ]);
-    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
-    logCoverage({
-      target_domain: domain,
-      wave: "w1",
-      agent: "a1",
-      surface_id: "surface-a",
-      entries: [{
-        endpoint: "/api/legacy",
-        method: "GET",
-        bug_class: "idor",
-        status: "requeue",
-        evidence_summary: "endpoint-level requeue from earlier wave; surface later closed by complete handoff",
-      }],
-    });
-
-    transitionPhase({ target_domain: domain, to_phase: "CHAIN" });
-    const summary = JSON.parse(readStateSummary({ target_domain: domain }));
-    assert.equal(summary.state.phase, "CHAIN");
-  });
-});
-
-test("bounty_transition_phase treats missing attack surface or malformed coverage as EVALUATE -> CHAIN blockers", () => {
-  withTempHome(() => {
-    const missingSurfaceDomain = "missing-surface.example.com";
-    seedSessionState(missingSurfaceDomain, {
-      phase: "EVALUATE",
-      pending_wave: null,
-    });
-    assert.throws(
-      () => transitionPhase({ target_domain: missingSurfaceDomain, to_phase: "CHAIN" }),
-      /EVALUATE -> CHAIN blocked: .*attack surface could not be read/,
-    );
-
-    const malformedCoverageDomain = "malformed-coverage.example.com";
-    seedSessionState(malformedCoverageDomain, {
-      phase: "EVALUATE",
-      pending_wave: null,
-      explored: ["surface-a"],
-    });
-    seedAttackSurfaces(malformedCoverageDomain, [
-      { id: "surface-a", hosts: [`https://${malformedCoverageDomain}`], priority: "HIGH" },
-    ]);
-    writeFileAtomic(coverageJsonlPath(malformedCoverageDomain), "{bad json\n");
-
-    assert.throws(
-      () => transitionPhase({ target_domain: malformedCoverageDomain, to_phase: "CHAIN" }),
-      /EVALUATE -> CHAIN blocked: .*coverage could not be read/,
-    );
-  });
-});
-
-test("bounty_transition_phase blocks deep EVALUATE -> CHAIN on promotable unpromoted surface leads", () => {
-  withTempHome(() => {
-    const domain = "deep-lead-debt.example.com";
-    seedAttackSurface(domain, ["surface-a"]);
-    seedSessionState(domain, {
-      phase: "EVALUATE",
-      evaluation_wave: 2,
-      deep_mode: true,
-      explored: ["surface-a"],
-    });
-    JSON.parse(recordSurfaceLeads({
-      target_domain: domain,
-      source: "test",
-      leads: [{
-        title: "Promotable lead debt",
-        hosts: [`https://lead.${domain}`],
-        endpoints: ["/api/users"],
-        confidence: "high",
-        score: 80,
-      }],
-    }));
-
-    assert.throws(
-      () => transitionPhase({ target_domain: domain, to_phase: "CHAIN" }),
-      /EVALUATE -> CHAIN blocked: .*bob_start_next_wave/,
-    );
-    const status = JSON.parse(waveStatus({ target_domain: domain }));
-    assert.ok(status.transition_blockers.some((blocker) => (
-      blocker.code === "promotable_surface_leads" &&
-      blocker.lead_ids.includes("SL-1")
-    )));
-  });
-});
-
-test("bounty_transition_phase override_reason allows EVALUATE -> CHAIN and is persisted in pipeline events", () => {
-  withTempHome(() => {
-    const domain = "example.com";
-    const overrideReason = "Operator accepts pending wave risk for urgent chain validation.";
-    seedSessionState(domain, {
-      phase: "EVALUATE",
-      pending_wave: 1,
-      explored: ["surface-a"],
-    });
-    seedAttackSurfaces(domain, [
-      { id: "surface-a", hosts: [`https://${domain}`], priority: "HIGH" },
-    ]);
-
-    const result = JSON.parse(transitionPhase({
-      target_domain: domain,
-      to_phase: "CHAIN",
-      override_reason: overrideReason,
-    }));
-    assert.equal(result.transitioned, true);
-    assert.equal(result.to_phase, "CHAIN");
-
-    const rows = readJsonl(pipelineEventsJsonlPath(domain));
-    const event = rows.find((row) => row.type === "phase_transitioned" && row.to_phase === "CHAIN");
-    assert.equal(event.override, true);
-    assert.equal(event.override_reason, overrideReason);
-    assert.equal(event.counts.transition_blockers, 1);
-
-    const normalizedEvent = readPipelineEvents(domain).events
-      .find((row) => row.type === "phase_transitioned" && row.to_phase === "CHAIN");
-    assert.equal(normalizedEvent.override, true);
-    assert.equal(normalizedEvent.override_reason, overrideReason);
-  });
-});
-
-test("bounty_transition_phase rejects override_reason outside gated transitions", () => {
-  withTempHome(() => {
-    const domain = "example.com";
-    const overrideReason = "This override reason is long enough to pass length validation.";
-    const cases = [
-      { from: "SURFACE_DISCOVERY", to: "AUTH" },
-      { from: "AUTH", to: "EVALUATE", auth_status: "authenticated" },
-      { from: "VERIFY", to: "GRADE" },
-      { from: "GRADE", to: "REPORT" },
-      { from: "GRADE", to: "EVALUATE" },
-      { from: "REPORT", to: "EXPLORE" },
-      { from: "EXPLORE", to: "CHAIN" },
-    ];
-
-    for (const scenario of cases) {
-      seedSessionState(domain, { phase: scenario.from });
-      assert.throws(
-        () => transitionPhase({
-          target_domain: domain,
-          to_phase: scenario.to,
-          auth_status: scenario.auth_status,
-          override_reason: overrideReason,
-        }),
-        /override_reason is only allowed for EVALUATE -> CHAIN or CHAIN -> VERIFY/,
-      );
-    }
-  });
-});
-
-test("bounty_transition_phase rejects short EVALUATE -> CHAIN override_reason", () => {
-  withTempHome(() => {
-    const domain = "example.com";
-    seedSessionState(domain, {
-      phase: "EVALUATE",
-      pending_wave: 1,
-      explored: ["surface-a"],
-    });
-    seedAttackSurfaces(domain, [
-      { id: "surface-a", hosts: [`https://${domain}`], priority: "HIGH" },
-    ]);
-
-    assert.throws(
-      () => transitionPhase({ target_domain: domain, to_phase: "CHAIN", override_reason: "too short" }),
-      /override_reason must be at least 20 characters/,
-    );
-  });
-});
-
-test("bounty_transition_phase blocks CHAIN -> VERIFY when required chain work has no terminal attempts", () => {
-  withTempHome(() => {
-    const domain = "chain-gate.example.com";
-    seedSessionState(domain, { phase: "CHAIN" });
-    seedAttackSurfaces(domain, [
-      { id: "surface-a", hosts: [`https://${domain}`], priority: "HIGH" },
-    ]);
-    seedFinding(domain, { title: "IDOR export", endpoint: "/api/export" });
-    seedFinding(domain, { title: "Open redirect", endpoint: "/oauth/callback" });
-
-    assert.throws(
-      () => transitionPhase({ target_domain: domain, to_phase: "VERIFY" }),
-      /CHAIN -> VERIFY blocked: .*terminal chain attempt/,
-    );
-
-    JSON.parse(writeChainAttempt({
-      target_domain: domain,
-      finding_ids: ["F-1", "F-2"],
-      surface_ids: ["surface-a"],
-      hypothesis: "Open redirect may amplify export access.",
-      steps: ["Checked redirect behavior but auth expired before replay."],
-      outcome: "inconclusive",
-      evidence_summary: "Auth expired before a fair test.",
-      auth_profiles: ["attacker"],
-    }));
-
-    assert.throws(
-      () => transitionPhase({ target_domain: domain, to_phase: "VERIFY" }),
-      /CHAIN -> VERIFY blocked: .*inconclusive/,
-    );
-  });
-});
-
-test("bounty_transition_phase allows CHAIN -> VERIFY when a terminal attempt exists", () => {
-  withTempHome(() => {
-    const domain = "chain-terminal.example.com";
-    seedSessionState(domain, { phase: "CHAIN" });
-    seedAttackSurfaces(domain, [
-      { id: "surface-a", hosts: [`https://${domain}`], priority: "HIGH" },
-    ]);
-    seedFinding(domain, { title: "IDOR export", endpoint: "/api/export" });
-    seedFinding(domain, { title: "Open redirect", endpoint: "/oauth/callback" });
-    JSON.parse(writeChainAttempt({
-      target_domain: domain,
-      finding_ids: ["F-1", "F-2"],
-      surface_ids: ["surface-a"],
-      hypothesis: "Open redirect may amplify export access.",
-      steps: ["Replayed redirect and export sequence."],
-      outcome: "denied",
-      evidence_summary: "Redirect never exposes a token or reusable credential.",
-      request_refs: ["http-audit:C-1"],
-    }));
-
-    const result = JSON.parse(transitionPhase({ target_domain: domain, to_phase: "VERIFY" }));
-    assert.equal(result.transitioned, true);
-    assert.equal(result.from_phase, "CHAIN");
-    assert.equal(result.to_phase, "VERIFY");
-  });
-});
-
-test("bounty_transition_phase CHAIN -> VERIFY gate treats handoff chain_notes as required chain work", () => {
-  withTempHome(() => {
-    const domain = "twilio-shape.example.com";
-    seedSessionState(domain, { phase: "CHAIN" });
-    seedAttackSurfaces(domain, [
-      { id: "surface-a", hosts: [`https://${domain}`], priority: "HIGH" },
-    ]);
-    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
-    for (let index = 0; index < 5; index += 1) {
-      seedFinding(domain, {
-        title: `Finding ${index + 1}`,
-        endpoint: `/api/finding-${index + 1}`,
-      });
-    }
-    writeFileAtomic(path.join(sessionDir(domain), "handoff-w1-a1.json"), `${JSON.stringify({
-      target_domain: domain,
-      wave: "w1",
-      agent: "a1",
-      surface_id: "surface-a",
-      surface_status: "complete",
-      chain_notes: ["F-1 may combine with F-2 for account takeover."],
-      dead_ends: [],
-      waf_blocked_endpoints: [],
-      lead_surface_ids: [],
-    }, null, 2)}\n`);
-
-    assert.throws(
-      () => transitionPhase({ target_domain: domain, to_phase: "VERIFY" }),
-      /CHAIN -> VERIFY blocked: .*terminal chain attempt/,
-    );
-  });
-});
-
-test("bounty_transition_phase override_reason allows CHAIN -> VERIFY and is persisted in pipeline events", () => {
-  withTempHome(() => {
-    const domain = "chain-override.example.com";
-    const overrideReason = "Operator reviewed chain handoff notes and accepts proceeding without terminal chain attempts.";
-    seedSessionState(domain, { phase: "CHAIN" });
-    seedAttackSurfaces(domain, [
-      { id: "surface-a", hosts: [`https://${domain}`], priority: "HIGH" },
-    ]);
-    seedFinding(domain, { title: "IDOR export", endpoint: "/api/export" });
-    seedFinding(domain, { title: "Open redirect", endpoint: "/oauth/callback" });
-
-    const result = JSON.parse(transitionPhase({
-      target_domain: domain,
-      to_phase: "VERIFY",
-      override_reason: overrideReason,
-    }));
-    assert.equal(result.transitioned, true);
-    assert.equal(result.to_phase, "VERIFY");
-
-    const event = readJsonl(pipelineEventsJsonlPath(domain))
-      .find((row) => row.type === "phase_transitioned" && row.to_phase === "VERIFY");
-    assert.equal(event.override, true);
-    assert.equal(event.override_reason, overrideReason);
-    assert.equal(event.counts.transition_blockers, 1);
-  });
-});
-
-test("bounty_transition_phase VERIFY -> GRADE requires valid evidence for final reportables", () => {
-  withTempHome(() => {
-    const domain = "verify-grade-evidence.example.com";
-    seedSessionState(domain, { phase: "VERIFY" });
-    seedFinding(domain);
-    seedVerificationPipeline(domain, [{
-      finding_id: "F-1",
-      disposition: "confirmed",
-      severity: "high",
-      reportable: true,
-      reasoning: "Confirmed.",
-    }]);
-
-    assert.throws(
-      () => transitionPhase({ target_domain: domain, to_phase: "GRADE" }),
-      /VERIFY -> GRADE blocked: .*Evidence packs.*Missing evidence packs JSON/i,
-    );
-  });
-});
-
-test("bounty_transition_phase VERIFY -> GRADE succeeds with valid evidence", () => {
-  withTempHome(() => {
-    const domain = "verify-grade-valid-evidence.example.com";
-    seedSessionState(domain, { phase: "VERIFY" });
-    seedFinding(domain);
-    seedVerificationPipeline(domain, [{
-      finding_id: "F-1",
-      disposition: "confirmed",
-      severity: "high",
-      reportable: true,
-      reasoning: "Confirmed.",
-    }]);
-    JSON.parse(writeEvidencePacks({ target_domain: domain, packs: [evidencePack("F-1")] }));
-
-    const result = JSON.parse(transitionPhase({ target_domain: domain, to_phase: "GRADE" }));
-    assert.equal(result.transitioned, true);
-    assert.equal(result.from_phase, "VERIFY");
-    assert.equal(result.to_phase, "GRADE");
-  });
-});
-
-test("bounty_transition_phase VERIFY -> GRADE succeeds without evidence when final has no reportables", () => {
-  withTempHome(() => {
-    const domain = "verify-grade-no-reportables.example.com";
-    seedSessionState(domain, { phase: "VERIFY" });
-    seedFinding(domain);
-    seedVerificationPipeline(domain, [{
-      finding_id: "F-1",
-      disposition: "denied",
-      severity: null,
-      reportable: false,
-      reasoning: "Not reproducible.",
-    }]);
-
-    const result = JSON.parse(transitionPhase({ target_domain: domain, to_phase: "GRADE" }));
-    assert.equal(result.transitioned, true);
-    assert.equal(result.to_phase, "GRADE");
-  });
-});
-
-test("bounty_transition_phase GRADE -> REPORT requires valid evidence for final reportables", () => {
-  withTempHome(() => {
-    const domain = "grade-report-evidence.example.com";
-    seedSessionState(domain, { phase: "GRADE" });
-    seedFinding(domain);
-    seedVerificationPipeline(domain, [{
-      finding_id: "F-1",
-      disposition: "confirmed",
-      severity: "high",
-      reportable: true,
-      reasoning: "Confirmed.",
-    }]);
-
-    assert.throws(
-      () => transitionPhase({ target_domain: domain, to_phase: "REPORT" }),
-      /GRADE -> REPORT blocked: .*Evidence packs.*Missing evidence packs JSON/i,
-    );
-  });
-});
-
-test("bounty_transition_phase rejects invalid edges and stray auth_status", () => {
-  withTempHome(() => {
-    const domain = "example.com";
-    seedSessionState(domain, { phase: "SURFACE_DISCOVERY" });
-    assert.throws(
-      () => transitionPhase({ target_domain: domain, to_phase: "EVALUATE" }),
-      /Invalid phase transition: SURFACE_DISCOVERY -> EVALUATE/,
-    );
-    assert.throws(
-      () => transitionPhase({ target_domain: domain, to_phase: "AUTH", auth_status: "authenticated" }),
-      /auth_status is only allowed for AUTH -> EVALUATE/,
-    );
-
-    seedSessionState(domain, { phase: "AUTH" });
-    assert.throws(
-      () => transitionPhase({ target_domain: domain, to_phase: "EVALUATE" }),
-      /auth_status is required for AUTH -> EVALUATE/,
-    );
-  });
-});
+// Cycle D.1 deleted the bounty_transition_phase / transitionPhase tests
+// because the legacy phase FSM and its gating helpers no longer exist; the
+// replacement coverage lives in bob_advance_session and lifecycle-gates
+// tests. The bounty_transition_phase tool name survives as a registry alias
+// that arg-adapts onto bob_advance_session; its dispatch and deprecation
+// telemetry are exercised by the registry/dispatch tests.
 
 test("session lock busy blocks mutating tools and stale locks are recoverable", () => {
   withTempHome(() => {
@@ -4975,10 +4631,13 @@ test("bob_start_wave rejects invalid state, duplicate inputs, and pre-existing a
   withTempHome(() => {
     const domain = "example.com";
 
-    seedSessionState(domain, { phase: "AUTH" });
+    // Cycle D.1: phase AUTH maps to lifecycle OPEN_FRONTIER, so the lifecycle
+    // gate is satisfied; use a VERIFY-equivalent state to surface the gate
+    // failure rather than the downstream missing-assignment file error.
+    seedSessionState(domain, { phase: "VERIFY" });
     assert.throws(
       () => startWave({ target_domain: domain, wave_number: 1, assignments: [{ agent: "a1", surface_id: "surface-a" }] }),
-      /Wave start requires phase EVALUATE or EXPLORE/,
+      /Wave start requires lifecycle_state OPEN_FRONTIER/,
     );
 
     seedSessionState(domain, { phase: "EVALUATE", pending_wave: 3 });
@@ -5366,7 +5025,7 @@ test("normalizeSessionStateDocument rejects duplicate surface_id in terminally_b
 });
 
 test("computeOpenRequeueSurfaceIds excludes terminally_blocked surfaces (options-bag signature)", () => {
-  const { computeOpenRequeueSurfaceIds } = require("../mcp/lib/phase-gates.js");
+  const { computeOpenRequeueSurfaceIds } = require("../mcp/lib/frontier-readiness.js");
   const records = [
     { surface_id: "surface-a", endpoint: "GET /a", status: "requeue", logged_at: "2026-05-02T00:00:00Z", wave: "w1", agent: "a1" },
     { surface_id: "surface-b", endpoint: "GET /b", status: "requeue", logged_at: "2026-05-02T00:00:00Z", wave: "w1", agent: "a1" },
@@ -5395,9 +5054,9 @@ test("EVALUATE -> CHAIN gate exposes blocked_high_surface_ids and blocks transit
         buildTerminallyBlockedEntry("surface-b", "auth_missing", "attacker", { reason: "no profile" }),
       ],
     });
-    const { computeEvaluationToChainGate } = require("../mcp/lib/phase-gates.js");
+    const { computeFrontierReadiness } = require("../mcp/lib/frontier-readiness.js");
     const fullState = JSON.parse(fs.readFileSync(statePath(domain), "utf8"));
-    const gate = computeEvaluationToChainGate(domain, fullState);
+    const gate = computeFrontierReadiness(domain, fullState);
     assert.equal(gate.coverage.non_low_explored, 1);
     assert.equal(gate.coverage.non_low_terminally_blocked, 1);
     assert.equal(gate.coverage.non_low_closed, 2);
@@ -6618,10 +6277,14 @@ test("bob_clear_terminal_block lets a re-blocked surface start fresh recurrence 
 test("bob_apply_wave_merge rejects invalid state invariants and hard-fails on missing or malformed attack_surface.json", () => {
   withTempHome(() => {
     const domain = "example.com";
-    seedSessionState(domain, { phase: "CHAIN", pending_wave: 1 });
+    // Cycle D.1: phase CHAIN maps to lifecycle OPEN_FRONTIER, so the merge
+    // lifecycle gate is satisfied; the next invariant (missing assignment
+    // file) is what surfaces. Use a VERIFY-equivalent state to exercise the
+    // pure lifecycle gate failure path.
+    seedSessionState(domain, { phase: "VERIFY", pending_wave: 1 });
     assert.throws(
       () => applyWaveMerge({ target_domain: domain, wave_number: 1, force_merge: false }),
-      /Wave merge requires phase EVALUATE or EXPLORE/,
+      /Wave merge requires lifecycle_state OPEN_FRONTIER/,
     );
 
     seedSessionState(domain, { phase: "EVALUATE", pending_wave: 1 });
@@ -8026,12 +7689,10 @@ test("executeTool smoke path uses envelopes for init, wave, handoff, attempt, an
     assert.equal(init.ok, true);
 
     seedAttackSurface(domain, ["surface-a"]);
-    assert.equal((await executeTool("bounty_transition_phase", { target_domain: domain, to_phase: "AUTH" })).ok, true);
-    assert.equal((await executeTool("bounty_transition_phase", {
-      target_domain: domain,
-      to_phase: "EVALUATE",
-      auth_status: "unauthenticated",
-    })).ok, true);
+    // Cycle D.1: SETUP -> OPEN_FRONTIER replaces the legacy SURFACE_DISCOVERY
+    // -> AUTH -> EVALUATE chain because the new lifecycle treats per-claim
+    // frontier work as a single state with task lenses.
+    assert.equal((await executeTool("bob_advance_session", { target_domain: domain, to_state: "OPEN_FRONTIER" })).ok, true);
 
     const started = await executeTool("bob_start_wave", {
       target_domain: domain,
@@ -12036,7 +11697,7 @@ test("bob_read_findings, bob_list_findings, and bob_wave_status return empty-sta
       coverage: null,
       transition_blockers: [{
         code: "state_unavailable",
-        message: "session state could not be read for EVALUATE -> CHAIN gating",
+        message: "session state could not be read for frontier readiness",
         error: `Missing session state: ${statePath(domain)}`,
       }],
       http_audit: {
@@ -12131,7 +11792,7 @@ test("bob_list_findings and bob_wave_status keep their external shapes while rea
       coverage: null,
       transition_blockers: [{
         code: "state_unavailable",
-        message: "session state could not be read for EVALUATE -> CHAIN gating",
+        message: "session state could not be read for frontier readiness",
         error: `Missing session state: ${statePath(domain)}`,
       }],
       http_audit: {
@@ -16957,6 +16618,7 @@ test("bob_read_assignment_brief returns surface, exclusions, and valid IDs", () 
 
     assert.deepEqual(brief.run_context, {
       target_domain: domain,
+      lifecycle_state: "OPEN_FRONTIER",
       phase: "EVALUATE",
       auth_status: "pending",
       egress_profile: "operator-eu",
