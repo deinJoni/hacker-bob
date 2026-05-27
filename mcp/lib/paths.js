@@ -26,7 +26,19 @@ function sessionDir(domain) {
   return path.join(sessionsRoot(), safe);
 }
 
+// Canonical session root. Cycle P.2 of the frontier-topology realization
+// hypergraph moves the session root from `~/bounty-agent-sessions` to
+// `~/hacker-bob-sessions`. Per Risk R6, the legacy root is *preserved*: it is
+// still resolvable as a read-fallback (so sessions created before the
+// migration remain readable), and the migration shim copies — never moves —
+// legacy session directories into the canonical location. The destructive
+// purge is gated behind the explicit `--purge-legacy-session-root` flag and
+// is reserved for v2.1.0.
 function sessionsRoot() {
+  return path.join(os.homedir(), "hacker-bob-sessions");
+}
+
+function legacySessionsRoot() {
   return path.join(os.homedir(), "bounty-agent-sessions");
 }
 
@@ -326,6 +338,7 @@ module.exports = {
   frontierEventsJsonlPath,
   findingsIndexJsonlPath,
   invariantRunsJsonlPath,
+  legacySessionsRoot,
   reportSnapshotsJsonlPath,
   schedulerDecisionsJsonlPath,
   schemaContractsJsonlPath,

@@ -249,7 +249,7 @@ function checkCanonicalPack(rootPackage) {
       foundDisallowed = true;
       fail(`canonical pack includes local install metadata ${file}`);
     }
-    if (file.includes("bounty-agent-sessions")) {
+    if (file.includes("bounty-agent-sessions") || file.includes("hacker-bob-sessions")) {
       foundDisallowed = true;
       fail(`canonical pack includes session artifact ${file}`);
     }

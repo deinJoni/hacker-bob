@@ -1,6 +1,7 @@
 #!/bin/bash
 # Session write guard hook — PreToolUse on Bash and Write
-# Blocks direct writes to MCP-owned files in ~/bounty-agent-sessions/
+# Blocks direct writes to MCP-owned files in ~/hacker-bob-sessions/
+# (also enforced against the legacy ~/bounty-agent-sessions/ root)
 # Forces agents to use MCP tools for structured output
 # Exit 0 = allow, Exit 2 = block
 
@@ -16,7 +17,13 @@ import shlex
 import sys
 
 
-SESSIONS_ROOT = pathlib.Path.home() / "bounty-agent-sessions"
+# Cycle P.2: guard both canonical and legacy session roots so MCP-owned
+# files stay protected across the v2.0/v2.1 coexistence window.
+SESSIONS_ROOTS = (
+    pathlib.Path.home() / "hacker-bob-sessions",
+    pathlib.Path.home() / "bounty-agent-sessions",
+)
+SESSIONS_ROOT = SESSIONS_ROOTS[0]
 
 # Files that MUST be written through MCP tools only
 MCP_OWNED_EXACT = {
@@ -106,11 +113,13 @@ def resolve_path(raw_path):
 
 
 def is_in_session_dir(resolved):
-    try:
-        resolved.resolve(strict=False).relative_to(SESSIONS_ROOT.resolve(strict=False))
-        return True
-    except (ValueError, OSError):
-        return False
+    for root in SESSIONS_ROOTS:
+        try:
+            resolved.resolve(strict=False).relative_to(root.resolve(strict=False))
+            return True
+        except (ValueError, OSError):
+            continue
+    return False
 
 
 def check_file(raw_path):

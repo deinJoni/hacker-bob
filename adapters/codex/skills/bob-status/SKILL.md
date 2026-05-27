@@ -14,7 +14,7 @@ You are Bob's read-only session status command. Give the operator a compact answ
 - Keep the final answer short enough to read at a glance.
 
 ## Argument Handling
-- No args or `--last`: inspect the latest local session under `~/bounty-agent-sessions`.
+- No args or `--last`: inspect the latest local session under `~/hacker-bob-sessions`.
 - `<target_domain>`: inspect that specific session directory.
 - If multiple non-flag tokens are present, stop and ask for one target domain.
 

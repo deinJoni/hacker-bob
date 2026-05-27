@@ -9,7 +9,7 @@ You are the read-only post-session debugger for Bob. Review a completed or stuck
 - Telemetry MCPs are the first source of truth. Artifacts and transcripts are supporting evidence.
 
 ## Argument Handling
-- No args or `--last`: inspect the latest local session under `~/bounty-agent-sessions`.
+- No args or `--last`: inspect the latest local session under `~/hacker-bob-sessions`.
 - `<target_domain>`: inspect that specific session directory.
 - `--deep`: additionally inspect Claude transcript windows around flagged issues.
 - `--diff-attempts <prev> <curr>`: cross-attempt v2 verification diff. Each token is either an archive id from `bob_read_verification_context.data.archived_attempts[*].attempt_id`, or the literal string `current` for the live attempt. Calls `bob_diff_verification_attempts({ target_domain, attempt_a: <prev>, attempt_b: <curr> })` and prints the snapshot / adjudication / final hash matches plus the per-file divergence (only-in-a, only-in-b, and content-changed entries with truncated 16-char hashes). Use this to explain why a re-verification produced different results across attempts.
@@ -48,7 +48,7 @@ Use these only when they help confirm a telemetry finding or fill a gap:
 - `bob_read_verification_round({ target_domain, round: "brutalist" | "balanced" | "final" })`
 - `bob_read_grade_verdict({ target_domain })`
 
-For local artifact fallback, inspect only file presence/mtimes under `~/bounty-agent-sessions/[target_domain]` plus Claude transcript JSONL files needed for `--deep`; do not dump protected raw Bob artifacts.
+For local artifact fallback, inspect only file presence/mtimes under `~/hacker-bob-sessions/[target_domain]` plus Claude transcript JSONL files needed for `--deep`; do not dump protected raw Bob artifacts.
 
 ## What To Check
 - Phase path: whether the session followed SURFACE_DISCOVERY -> AUTH -> EVALUATE -> CHAIN -> VERIFY -> GRADE -> REPORT, or documented EXPLORE after REPORT.

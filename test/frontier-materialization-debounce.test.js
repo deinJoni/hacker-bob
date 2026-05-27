@@ -209,7 +209,7 @@ test("materialization is deterministic: same frontier-events.jsonl yields same v
   });
 });
 
-test("scheduleMaterialization writes view files under ~/bounty-agent-sessions/<domain>/", () => {
+test("scheduleMaterialization writes view files under ~/hacker-bob-sessions/<domain>/", () => {
   withTempHome((home) => {
     const domain = "debounce-paths.example.com";
     appendFrontierEvent({
@@ -227,7 +227,7 @@ test("scheduleMaterialization writes view files under ~/bounty-agent-sessions/<d
       scheduleMaterialization(domain);
     });
 
-    const expectedRoot = path.join(home, "bounty-agent-sessions", domain);
+    const expectedRoot = path.join(home, "hacker-bob-sessions", domain);
     assert.equal(fs.existsSync(path.join(expectedRoot, "surface-index.json")), true,
       "surface-index.json under the expected session root");
     assert.equal(fs.existsSync(path.join(expectedRoot, "task-queue.json")), true,

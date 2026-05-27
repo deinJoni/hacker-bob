@@ -30,7 +30,7 @@ module.exports = Object.freeze({
   name: "bob_set_queue_policy",
   description:
     "Persist an operator-supplied QueuePolicy override for a target_domain to " +
-    "~/bounty-agent-sessions/<domain>/queue-policy.json. The policy is normalized via " +
+    "~/hacker-bob-sessions/<domain>/queue-policy.json. The policy is normalized via " +
     "normalizeQueuePolicy and consumed by the wave planner and scheduler. Carries " +
     "max_parallel_tasks, priority_order, stale_after_ms, close_blocked_on_freeze, " +
     "and the wave targets/budgets/lens.",

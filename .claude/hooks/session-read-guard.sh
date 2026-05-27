@@ -15,7 +15,14 @@ import shlex
 import sys
 
 
-SESSIONS_ROOT = pathlib.Path.home() / "bounty-agent-sessions"
+# Cycle P.2: guard both the canonical `hacker-bob-sessions` root and the
+# legacy `bounty-agent-sessions` root so direct reads remain blocked during
+# the v2.0/v2.1 coexistence window.
+SESSIONS_ROOTS = (
+    pathlib.Path.home() / "hacker-bob-sessions",
+    pathlib.Path.home() / "bounty-agent-sessions",
+)
+SESSIONS_ROOT = SESSIONS_ROOTS[0]
 
 BLOCKED_EXACT = {
     "state.json",
@@ -103,21 +110,34 @@ def resolve_path(raw_path):
 
 
 def is_in_session_dir(resolved):
-    try:
-        resolved.resolve(strict=False).relative_to(SESSIONS_ROOT.resolve(strict=False))
-        return True
-    except (ValueError, OSError):
-        return False
+    for root in SESSIONS_ROOTS:
+        try:
+            resolved.resolve(strict=False).relative_to(root.resolve(strict=False))
+            return True
+        except (ValueError, OSError):
+            continue
+    return False
+
+
+def session_root_for(resolved):
+    for root in SESSIONS_ROOTS:
+        try:
+            resolved.resolve(strict=False).relative_to(root.resolve(strict=False))
+            return root
+        except (ValueError, OSError):
+            continue
+    return None
 
 
 def check_file(raw_path, *, block_session_dirs=False):
     resolved = resolve_path(raw_path)
-    if not is_in_session_dir(resolved):
+    root = session_root_for(resolved)
+    if root is None:
         return None
 
     try:
         session_relative_parts = resolved.resolve(strict=False).relative_to(
-            SESSIONS_ROOT.resolve(strict=False)
+            root.resolve(strict=False)
         ).parts
     except (ValueError, OSError):
         session_relative_parts = ()
@@ -160,6 +180,7 @@ def looks_like_path(token):
         token.startswith("/")
         or token.startswith("~")
         or token.startswith("$")
+        or "hacker-bob-sessions" in token
         or "bounty-agent-sessions" in token
         or token.endswith((".json", ".jsonl", ".md", ".txt", ".har"))
         or "/" in token

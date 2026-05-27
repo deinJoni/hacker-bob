@@ -2751,7 +2751,7 @@ test("bob-evaluate routes surfaces during SETUP and spawns returned evaluator ag
     setupSection,
     /Agent\(subagent_type: "surface-router-agent", name: "surface-router", prompt: "/,
   );
-  assert.match(setupSection, /Domain: \[domain\]\. Session: ~\/bounty-agent-sessions\/\[domain\]\./);
+  assert.match(setupSection, /Domain: \[domain\]\. Session: ~\/hacker-bob-sessions\/\[domain\]\./);
   assert.match(setupSection, /bob_route_surfaces\(\{ target_domain: '\[domain\]' \}\) and use \.data/);
   assert.match(setupSection, /If routing fails or returns zero surfaces, report the error and stop/);
   assert.match(

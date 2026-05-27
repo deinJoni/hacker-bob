@@ -189,6 +189,7 @@ test("npm package contains runtime surfaces and excludes test/cache artifacts", 
       assert.notEqual(file, ".claude/hooks/bob-update-lib.js", "hook-local update library should not be packed");
       assert.ok(!LOCAL_INSTALL_METADATA_FILES.has(file), `${file} should not be packed`);
       assert.ok(!file.includes("bounty-agent-sessions"), `${file} should not be packed`);
+      assert.ok(!file.includes("hacker-bob-sessions"), `${file} should not be packed`);
       assert.ok(!file.includes(".cache/"), `${file} should not be packed`);
       if (isPackedTextFile(file)) {
         const sourcePath = path.join(ROOT, file);

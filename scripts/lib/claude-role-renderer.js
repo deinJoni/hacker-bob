@@ -36,17 +36,17 @@ const SUPPORTED_CLAUDE_AGENT_COLORS = Object.freeze([
 const CLAUDE_LAUNCH_TEMPLATES = Object.freeze({
   "{{SPAWN_SURFACE_DISCOVERY_AGENT}}": [
     "```text",
-    "deep_mode false: Agent(subagent_type: \"surface-discovery-agent\", name: \"surface-discovery\", prompt: \"DOMAIN=[domain] SESSION=~/bounty-agent-sessions/[domain]\")",
+    "deep_mode false: Agent(subagent_type: \"surface-discovery-agent\", name: \"surface-discovery\", prompt: \"DOMAIN=[domain] SESSION=~/hacker-bob-sessions/[domain]\")",
     "```",
   ].join("\n"),
   "{{SPAWN_DEEP_SURFACE_DISCOVERY_AGENT}}": [
     "```text",
-    "deep_mode true: Agent(subagent_type: \"deep-surface-discovery-agent\", name: \"deep-surface-discovery\", prompt: \"DOMAIN=[domain] SESSION=~/bounty-agent-sessions/[domain]\")",
+    "deep_mode true: Agent(subagent_type: \"deep-surface-discovery-agent\", name: \"deep-surface-discovery\", prompt: \"DOMAIN=[domain] SESSION=~/hacker-bob-sessions/[domain]\")",
     "```",
   ].join("\n"),
   "{{SPAWN_SURFACE_ROUTER_AGENT}}": [
     "```text",
-    "Agent(subagent_type: \"surface-router-agent\", name: \"surface-router\", prompt: \"Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Confirm attack_surface.json exists and has surfaces, then call bob_route_surfaces({ target_domain: '[domain]' }) and use .data. If routing fails or returns zero surfaces, report the error and stop. Otherwise return route count, capability-pack counts, and surface_routes_path.\")",
+    "Agent(subagent_type: \"surface-router-agent\", name: \"surface-router\", prompt: \"Domain: [domain]. Session: ~/hacker-bob-sessions/[domain]. Confirm attack_surface.json exists and has surfaces, then call bob_route_surfaces({ target_domain: '[domain]' }) and use .data. If routing fails or returns zero surfaces, report the error and stop. Otherwise return route count, capability-pack counts, and surface_routes_path.\")",
     "```",
   ].join("\n"),
   "{{SPAWN_EVALUATOR_AGENT}}": [
@@ -76,37 +76,37 @@ const CLAUDE_LAUNCH_TEMPLATES = Object.freeze({
   // prompt regeneration; no per-pack template lives inline here anymore.
   "{{SPAWN_CHAIN_AGENT}}": [
     "```",
-    "Agent(subagent_type: \"chain-builder\", name: \"chain\", prompt: \"Domain: [domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. Session: ~/bounty-agent-sessions/[domain]. Read findings, wave handoffs, auth profiles, HTTP audit, and prior chain attempts through MCP. Test plausible chains with bob_http_scan as needed, passing egress_profile and block_internal_hosts on every scan, and write every outcome through bob_write_chain_attempt with the required steps array. Do not read findings.md, chains.md, or markdown handoffs.\")",
+    "Agent(subagent_type: \"chain-builder\", name: \"chain\", prompt: \"Domain: [domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. Session: ~/hacker-bob-sessions/[domain]. Read findings, wave handoffs, auth profiles, HTTP audit, and prior chain attempts through MCP. Test plausible chains with bob_http_scan as needed, passing egress_profile and block_internal_hosts on every scan, and write every outcome through bob_write_chain_attempt with the required steps array. Do not read findings.md, chains.md, or markdown handoffs.\")",
     "```",
   ].join("\n"),
   "{{SPAWN_BRUTALIST_VERIFIER}}": [
     "```",
-    "Agent(subagent_type: \"brutalist-verifier\", name: \"brutalist\", prompt: \"Session: ~/bounty-agent-sessions/[domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. First call bob_read_verification_context({ target_domain }); for v2 use current_attempt_id and snapshot_hash on writes and verification_replay context, pass egress_profile and block_internal_hosts on replay HTTP tools, cover exactly the snapshot findings, then write only through bob_write_verification_round(round='brutalist').\")",
+    "Agent(subagent_type: \"brutalist-verifier\", name: \"brutalist\", prompt: \"Session: ~/hacker-bob-sessions/[domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. First call bob_read_verification_context({ target_domain }); for v2 use current_attempt_id and snapshot_hash on writes and verification_replay context, pass egress_profile and block_internal_hosts on replay HTTP tools, cover exactly the snapshot findings, then write only through bob_write_verification_round(round='brutalist').\")",
     "```",
   ].join("\n"),
   "{{SPAWN_BALANCED_VERIFIER}}": [
     "```",
-    "Agent(subagent_type: \"balanced-verifier\", name: \"balanced\", prompt: \"Session: ~/bounty-agent-sessions/[domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. First call bob_read_verification_context({ target_domain }). If v1, read brutalist and preserve the legacy cascade. If v2, do not read brutalist or adjudication; use current_attempt_id and snapshot_hash, pass verification_replay context plus egress_profile and block_internal_hosts on replay HTTP tools, cover exactly snapshot findings, then write only through bob_write_verification_round(round='balanced').\")",
+    "Agent(subagent_type: \"balanced-verifier\", name: \"balanced\", prompt: \"Session: ~/hacker-bob-sessions/[domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. First call bob_read_verification_context({ target_domain }). If v1, read brutalist and preserve the legacy cascade. If v2, do not read brutalist or adjudication; use current_attempt_id and snapshot_hash, pass verification_replay context plus egress_profile and block_internal_hosts on replay HTTP tools, cover exactly snapshot findings, then write only through bob_write_verification_round(round='balanced').\")",
     "```",
   ].join("\n"),
   "{{SPAWN_FINAL_VERIFIER}}": [
     "```",
-    "Agent(subagent_type: \"final-verifier\", name: \"final-verify\", prompt: \"Session: ~/bounty-agent-sessions/[domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. First call bob_read_verification_context({ target_domain }). If v2, consume adjudication_context.adjudication_plan_hash from bob_read_verification_context, do not compute diffs, pass verification_replay context plus egress_profile and block_internal_hosts on replay HTTP tools, and write round='final' with verification_attempt_id, verification_snapshot_hash, and adjudication_plan_hash. If v1, read balanced and use the legacy final cascade.\")",
+    "Agent(subagent_type: \"final-verifier\", name: \"final-verify\", prompt: \"Session: ~/hacker-bob-sessions/[domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. First call bob_read_verification_context({ target_domain }). If v2, consume adjudication_context.adjudication_plan_hash from bob_read_verification_context, do not compute diffs, pass verification_replay context plus egress_profile and block_internal_hosts on replay HTTP tools, and write round='final' with verification_attempt_id, verification_snapshot_hash, and adjudication_plan_hash. If v1, read balanced and use the legacy final cascade.\")",
     "```",
   ].join("\n"),
   "{{SPAWN_EVIDENCE_AGENT}}": [
     "```",
-    "Agent(subagent_type: \"evidence-agent\", name: \"evidence\", prompt: \"Domain: [domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. Session: ~/bounty-agent-sessions/[domain]. Call bob_read_verification_context, bob_read_candidate_claims, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), bob_read_http_audit, and bob_list_auth_profiles; for v2 pass evidence_replay context plus egress_profile and block_internal_hosts on replay HTTP tools and rely on MCP to bind evidence to final_verification_hash; write only through bob_write_evidence_packs.\")",
+    "Agent(subagent_type: \"evidence-agent\", name: \"evidence\", prompt: \"Domain: [domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. Session: ~/hacker-bob-sessions/[domain]. Call bob_read_verification_context, bob_read_candidate_claims, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), bob_read_http_audit, and bob_list_auth_profiles; for v2 pass evidence_replay context plus egress_profile and block_internal_hosts on replay HTTP tools and rely on MCP to bind evidence to final_verification_hash; write only through bob_write_evidence_packs.\")",
     "```",
   ].join("\n"),
   "{{SPAWN_GRADER_AGENT}}": [
     "```",
-    "Agent(subagent_type: \"grader\", name: \"grader\", prompt: \"Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Call bob_read_candidate_claims, bob_read_chain_attempts, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), and bob_read_evidence_packs, score survivors, then write only through bob_write_grade_verdict.\")",
+    "Agent(subagent_type: \"grader\", name: \"grader\", prompt: \"Domain: [domain]. Session: ~/hacker-bob-sessions/[domain]. Call bob_read_candidate_claims, bob_read_chain_attempts, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), and bob_read_evidence_packs, score survivors, then write only through bob_write_grade_verdict.\")",
     "```",
   ].join("\n"),
   "{{SPAWN_REPORTER_AGENT}}": [
     "```",
-    "Agent(subagent_type: \"report-writer\", name: \"reporter\", prompt: \"Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Call bob_read_candidate_claims, bob_read_chain_attempts, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), bob_read_evidence_packs, and bob_read_grade_verdict, then write the canonical ~/bounty-agent-sessions/[domain]/report.md. For SUBMIT, include only confirmed chain evidence. For SKIP/no reportables, write a concise no-findings closeout with verification, chain-attempt, and blocker summary.\")",
+    "Agent(subagent_type: \"report-writer\", name: \"reporter\", prompt: \"Domain: [domain]. Session: ~/hacker-bob-sessions/[domain]. Call bob_read_candidate_claims, bob_read_chain_attempts, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), bob_read_evidence_packs, and bob_read_grade_verdict, then write the canonical ~/hacker-bob-sessions/[domain]/report.md. For SUBMIT, include only confirmed chain evidence. For SKIP/no reportables, write a concise no-findings closeout with verification, chain-attempt, and blocker summary.\")",
     "```",
   ].join("\n"),
 });

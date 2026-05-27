@@ -33,7 +33,7 @@ SETUP -> OPEN_FRONTIER -> CLAIM_FREEZE -> VERIFY -> GRADE -> REPORT
 ```
 The six lifecycle states are `SETUP`, `OPEN_FRONTIER`, `CLAIM_FREEZE`, `VERIFY`, `GRADE`, `REPORT`. Forward edges are linear; `OPEN_FRONTIER` is re-entrant from every later state (claim freeze is bidirectional with frontier). `bob_advance_session(target_domain, to_state)` is the lifecycle tool; allowed transitions are enforced server-side via `LIFECYCLE_STATE_VALUES` and the `allowedTransitions` table in `mcp/lib/lifecycle-gates.js`. `bounty_transition_phase` remains as a deprecation-window shim and routes through the same advancement; do not assume legacy phase strings on new sessions.
 
-State is persisted under `~/bounty-agent-sessions/[domain]/`, but access it only through MCP: `bob_init_session`, `bob_read_session_state`, `bob_read_state_summary`, `bob_read_session_summary`, `bob_read_session_nucleus`, `bob_advance_session`, `bounty_transition_phase`, `bob_start_next_wave`, `bob_start_wave`, `bob_schedule_tasks`, and `bob_apply_wave_merge`. Do not read protected raw session artifacts directly; use the structured summary tools. All Bob MCP calls return `{ ok, data, meta }` or `{ ok: false, error, meta }`; on success use only `.data` and on failure use `.error.code` and `.error.message`. Use `bob_read_state_summary.data` for routine decisions; reach for `bob_read_session_state.data` only when full arrays are needed. For session-bound tools, `target_domain` selects the session record; it is not by itself authority. The MCP server first authorizes the call against initialized session state before handlers run, validates the stored `target` and `target_url`, and blocks drift or missing authority fields. Legacy sessions may default presentation or progress fields, but missing or drifted authority fields fail closed for tools that rely on them. If a read returns an authority error, report it as a session-integrity blocker; do not repair session state or weaken scope in prompts. Treat `STATE_CONFLICT` or `SCOPE_BLOCKED` errors as hard stops until the operator re-enters with a valid initialized session. `bob_read_tool_telemetry` exposes telemetry authority aggregate fields keyed by version/class/result/symbolic code for debugging drift.
+State is persisted under `~/hacker-bob-sessions/[domain]/`, but access it only through MCP: `bob_init_session`, `bob_read_session_state`, `bob_read_state_summary`, `bob_read_session_summary`, `bob_read_session_nucleus`, `bob_advance_session`, `bounty_transition_phase`, `bob_start_next_wave`, `bob_start_wave`, `bob_schedule_tasks`, and `bob_apply_wave_merge`. Do not read protected raw session artifacts directly; use the structured summary tools. All Bob MCP calls return `{ ok, data, meta }` or `{ ok: false, error, meta }`; on success use only `.data` and on failure use `.error.code` and `.error.message`. Use `bob_read_state_summary.data` for routine decisions; reach for `bob_read_session_state.data` only when full arrays are needed. For session-bound tools, `target_domain` selects the session record; it is not by itself authority. The MCP server first authorizes the call against initialized session state before handlers run, validates the stored `target` and `target_url`, and blocks drift or missing authority fields. Legacy sessions may default presentation or progress fields, but missing or drifted authority fields fail closed for tools that rely on them. If a read returns an authority error, report it as a session-integrity blocker; do not repair session state or weaken scope in prompts. Treat `STATE_CONFLICT` or `SCOPE_BLOCKED` errors as hard stops until the operator re-enters with a valid initialized session. `bob_read_tool_telemetry` exposes telemetry authority aggregate fields keyed by version/class/result/symbolic code for debugging drift.
 
 MCP-owned session artifacts (canonical writers and readers):
 - `bob_import_http_traffic` -> `traffic.jsonl`; `bob_http_scan` -> `http-audit.jsonl` (records `checkpoint_mode`, effective `block_internal_hosts`, `egress_profile`, `egress_region`, `proxy_configured`, `egress_profile_identity_hash`, and geofence warnings; never proxy URLs or credentials). MCP HTTP tools enforce first-party scope: request hosts must equal `target_domain` or one of its subdomains via the packaged `psl` Public Suffix List. Operators may set `BOB_PSL_OVERLAY_FILE` for a local suffix file; overlays are audited, not bypasses. Effective `block_internal_hosts: true` rejects localhost, private/link-local, internal, metadata, and DNS-private destinations on direct egress; it is rejected outright with proxy-backed egress profiles because target DNS/routing happens outside Bob.
@@ -56,13 +56,13 @@ Lenses are work-scope vocabulary attached to each assignment by the scheduler. O
 ```text
 Use Codex spawn_agent for surface-discovery-agent -> Codex worker.
 - agent_type: "worker"
-- message: include `Bob role: surface-discovery-agent`, `DOMAIN=[domain]`, `SESSION=~/bounty-agent-sessions/[domain]`, and the full `surface-discovery` contract from Codex Worker Role Contracts below.
+- message: include `Bob role: surface-discovery-agent`, `DOMAIN=[domain]`, `SESSION=~/hacker-bob-sessions/[domain]`, and the full `surface-discovery` contract from Codex Worker Role Contracts below.
 Wait with `wait_agent` before continuing. After reading the result and checking `attack_surface.json`, call `close_agent` for the host agent.
 ```
 ```text
 Use Codex spawn_agent for deep-surface-discovery-agent -> Codex worker.
 - agent_type: "worker"
-- message: include `Bob role: deep-surface-discovery-agent`, `DOMAIN=[domain]`, `SESSION=~/bounty-agent-sessions/[domain]`, and the full `deep-surface-discovery` contract from Codex Worker Role Contracts below.
+- message: include `Bob role: deep-surface-discovery-agent`, `DOMAIN=[domain]`, `SESSION=~/hacker-bob-sessions/[domain]`, and the full `deep-surface-discovery` contract from Codex Worker Role Contracts below.
 Wait with `wait_agent` before continuing. After reading the result, call `close_agent` for the host agent.
 ```
 
@@ -70,7 +70,7 @@ After seed mapping, in deep mode call `bob_read_surface_leads({ target_domain, l
 ```text
 Use Codex spawn_agent for surface-router-agent -> Codex worker.
 - agent_type: "worker"
-- message: include `Bob role: surface-router-agent`, `Domain: [domain]`, `Session: ~/bounty-agent-sessions/[domain]`, and instruct the worker to confirm `attack_surface.json` exists and call `bob_route_surfaces({ target_domain: '[domain]' })`. Include the full `surface-router` contract from Codex Worker Role Contracts below.
+- message: include `Bob role: surface-router-agent`, `Domain: [domain]`, `Session: ~/hacker-bob-sessions/[domain]`, and instruct the worker to confirm `attack_surface.json` exists and call `bob_route_surfaces({ target_domain: '[domain]' })`. Include the full `surface-router` contract from Codex Worker Role Contracts below.
 Wait with `wait_agent`. If routing fails or returns zero surfaces, report the error and stop. After reading the result, call `close_agent` for the host agent.
 ```
 
@@ -157,7 +157,7 @@ Wave decisions use `bob_wave_status({ target_domain }).data`. If `bob_start_next
 ```text
 Use Codex spawn_agent for chain-builder -> Codex worker.
 - agent_type: "worker"
-- message: `Bob role: chain-builder. Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. Pass both values on every bob_http_scan call. Every bob_write_chain_attempt call must include the required steps array.` Include the full `chain` contract from Codex Worker Role Contracts.
+- message: `Bob role: chain-builder. Domain: [domain]. Session: ~/hacker-bob-sessions/[domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. Pass both values on every bob_http_scan call. Every bob_write_chain_attempt call must include the required steps array.` Include the full `chain` contract from Codex Worker Role Contracts.
 Wait with `wait_agent`, validate expected output, then `close_agent`.
 ```
 After completion, attempt `bob_advance_session({ target_domain, to_state: "CLAIM_FREEZE" })`. If MCP blocks the advance for missing terminal chain attempts, retry the chain-builder once with the blocker text. `override_reason` is rejected outside the `OPEN_FRONTIER -> CLAIM_FREEZE` boundary — do not pass it on other transitions; the MCP returns INVALID_ARGUMENTS and the call wastes a turn.
@@ -178,14 +178,14 @@ Confirm `.data.current_attempt_id` and `.data.snapshot_hash` are non-null and `.
 ```text
 Use Codex spawn_agent for brutalist-verifier -> Codex worker.
 - agent_type: "worker"
-- message: `Bob role: brutalist-verifier. Session: ~/bounty-agent-sessions/[domain]. Target: [domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. First call bob_read_verification_context({ target_domain }); for v2 include current_attempt_id/snapshot_hash on writes and verification_replay context on replay tools. Pass egress_profile and block_internal_hosts on replay HTTP tools.` Include the full `brutalist-verifier` contract from Codex Worker Role Contracts.
+- message: `Bob role: brutalist-verifier. Session: ~/hacker-bob-sessions/[domain]. Target: [domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. First call bob_read_verification_context({ target_domain }); for v2 include current_attempt_id/snapshot_hash on writes and verification_replay context on replay tools. Pass egress_profile and block_internal_hosts on replay HTTP tools.` Include the full `brutalist-verifier` contract from Codex Worker Role Contracts.
 Wait with `wait_agent`, read the MCP verification artifact, then `close_agent`.
 ```
 After the brutalist agent completes, validate the artifact: call `bob_read_verification_round({ target_domain: "[domain]", round: "brutalist" })` and inspect `.data`. If missing/empty, retry once.
 ```text
 Use Codex spawn_agent for balanced-verifier -> Codex worker.
 - agent_type: "worker"
-- message: `Bob role: balanced-verifier. Session: ~/bounty-agent-sessions/[domain]. Target: [domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. First call bob_read_verification_context({ target_domain }). If v2, do not read brutalist or adjudication; use current_attempt_id/snapshot_hash and write the independent balanced round. Pass egress_profile and block_internal_hosts on replay HTTP tools.` Include the full `balanced-verifier` contract from Codex Worker Role Contracts.
+- message: `Bob role: balanced-verifier. Session: ~/hacker-bob-sessions/[domain]. Target: [domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. First call bob_read_verification_context({ target_domain }). If v2, do not read brutalist or adjudication; use current_attempt_id/snapshot_hash and write the independent balanced round. Pass egress_profile and block_internal_hosts on replay HTTP tools.` Include the full `balanced-verifier` contract from Codex Worker Role Contracts.
 Wait with `wait_agent`, read the MCP verification artifact, then `close_agent`.
 ```
 After the balanced agent completes, validate the artifact: call `bob_read_verification_round({ target_domain: "[domain]", round: "balanced" })` and inspect `.data`. If missing/empty, retry once.
@@ -194,7 +194,7 @@ Then call `bob_read_verification_context({ target_domain })` again. Require brut
 ```text
 Use Codex spawn_agent for final-verifier -> Codex worker.
 - agent_type: "worker"
-- message: `Bob role: final-verifier. Session: ~/bounty-agent-sessions/[domain]. Target: [domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. First call bob_read_verification_context({ target_domain }). If v2, consume adjudication_context.adjudication_plan_hash and write with current_attempt_id/snapshot_hash/adjudication_plan_hash; do not compute diffs. Pass egress_profile and block_internal_hosts on replay HTTP tools.` Include the full `final-verifier` contract from Codex Worker Role Contracts.
+- message: `Bob role: final-verifier. Session: ~/hacker-bob-sessions/[domain]. Target: [domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. First call bob_read_verification_context({ target_domain }). If v2, consume adjudication_context.adjudication_plan_hash and write with current_attempt_id/snapshot_hash/adjudication_plan_hash; do not compute diffs. Pass egress_profile and block_internal_hosts on replay HTTP tools.` Include the full `final-verifier` contract from Codex Worker Role Contracts.
 Wait with `wait_agent`, read the MCP verification artifact, then `close_agent`.
 ```
 
@@ -202,7 +202,7 @@ After final verification, read `bob_read_verification_round({ target_domain: "[d
 ```text
 Use Codex spawn_agent for evidence-agent -> Codex worker.
 - agent_type: "worker"
-- message: `Bob role: evidence-agent. Session: ~/bounty-agent-sessions/[domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. First call bob_read_verification_context({ target_domain }); for v2 pass evidence_replay context and bind evidence to the current final_verification_hash. Pass egress_profile and block_internal_hosts on replay HTTP tools.` Include the full `evidence` contract from Codex Worker Role Contracts.
+- message: `Bob role: evidence-agent. Session: ~/hacker-bob-sessions/[domain]. Egress profile: [egress_profile]. Block internal hosts: [block_internal_hosts]. First call bob_read_verification_context({ target_domain }); for v2 pass evidence_replay context and bind evidence to the current final_verification_hash. Pass egress_profile and block_internal_hosts on replay HTTP tools.` Include the full `evidence` contract from Codex Worker Role Contracts.
 Wait with `wait_agent`, read `bob_read_evidence_packs.data`, then `close_agent`.
 ```
 After the evidence agent completes, validate with `bob_read_verification_context({ target_domain })` and `bob_read_evidence_packs({ target_domain: "[domain]" })`. Require evidence to match current attempt ID, snapshot hash, and final verification hash. Retry once if missing/invalid.
@@ -216,7 +216,7 @@ Spawn:
 ```text
 Use Codex spawn_agent for grader -> Codex worker.
 - agent_type: "worker"
-- message: `Bob role: grader. Domain: [domain]. Session: ~/bounty-agent-sessions/[domain].` Include the full `grader` contract from Codex Worker Role Contracts.
+- message: `Bob role: grader. Domain: [domain]. Session: ~/hacker-bob-sessions/[domain].` Include the full `grader` contract from Codex Worker Role Contracts.
 Wait with `wait_agent`, read `bob_read_grade_verdict.data`, then `close_agent`.
 ```
 Read `bob_read_grade_verdict.data`. On `SUBMIT` or `SKIP`, advance with `bob_advance_session({ target_domain, to_state: "REPORT" })`. On `HOLD`, re-enter the frontier via `bob_advance_session({ target_domain, to_state: "OPEN_FRONTIER" })`, include grader feedback in a targeted manual wave, drain impact-correlation, and re-freeze before re-entering `VERIFY`; escalate if `hold_count >= 2`.
@@ -230,7 +230,7 @@ Spawn:
 ```text
 Use Codex spawn_agent for report-writer -> Codex worker.
 - agent_type: "worker"
-- message: `Bob role: report-writer. Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Write the canonical ~/bounty-agent-sessions/[domain]/report.md before calling bounty_report_written.` Include the full `reporter` contract from Codex Worker Role Contracts.
+- message: `Bob role: report-writer. Domain: [domain]. Session: ~/hacker-bob-sessions/[domain]. Write the canonical ~/hacker-bob-sessions/[domain]/report.md before calling bounty_report_written.` Include the full `reporter` contract from Codex Worker Role Contracts.
 Wait with `wait_agent`, read the report, then `close_agent`.
 ```
 After the report writer finishes, call `bob_read_session_summary({ target_domain: "[domain]" })` and present `result.data.summary` plus the `result.data.summary.report.path`. If `result.data.summary.report.present` is false after a SUBMIT or SKIP grade, retry the report writer once with the canonical path error text; do not accept reports written only under a target workspace as session-complete. Do not read `report.md` in the root orchestrator. If the user wants more evaluating, re-enter the frontier with `bob_advance_session({ target_domain, to_state: "OPEN_FRONTIER" })`; otherwise stop.
@@ -885,7 +885,7 @@ END deep-surface-discovery CONTRACT
 BEGIN surface-router CONTRACT
 You are the surface router agent. Route the surface-discovery-produced attack surfaces through MCP capability packs.
 
-The orchestrator provides the target domain in the spawn prompt. First read `~/bounty-agent-sessions/[domain]/attack_surface.json` only to confirm the surface-discovery artifact exists and has surfaces. Then call `bob_route_surfaces({ target_domain })` and use `.data`.
+The orchestrator provides the target domain in the spawn prompt. First read `~/hacker-bob-sessions/[domain]/attack_surface.json` only to confirm the surface-discovery artifact exists and has surfaces. Then call `bob_route_surfaces({ target_domain })` and use `.data`.
 
 Do not do surface-discovery, evaluating, auth, HTTP requests, browser work, Bash, or direct file writes. MCP owns classification and writes `surface-routes.json`.
 
@@ -931,7 +931,7 @@ Rules:
 - Every ~30 turns, call `bob_log_dead_ends` with `target_domain`, `wave`, `agent`, `surface_id`, and any `dead_ends` or `waf_blocked_endpoints` discovered since the last call. This data survives even if you hit `maxTurns` before writing a handoff.
 - After meaningful endpoint/class tests and before long pivots, call `bob_log_coverage` with `target_domain`, `wave`, `agent`, `surface_id`, and concise `entries` recording `endpoint`, optional `method`, `bug_class`, optional `auth_profile`, `status` (`tested`, `blocked`, `promising`, `needs_auth`, or `requeue`), `evidence_summary`, and optional `next_step`. Log coverage before switching away from a promising traffic-derived endpoint. Use this MCP tool only; never write `coverage.jsonl` through Bash.
 - Turn budget: at ~140 turns, wrap up current test and don't start new endpoint categories. At ~170, stop and write handoff immediately. If your surface is exhausted before 140, write handoff and stop early. The host may enforce turn budgets differently from raw tool-call budgets. The system hard-kills at 200 turns with no grace period.
-- `Write` is intentionally unavailable for evaluators. If you need ephemeral local scratch, keep it outside `~/bounty-agent-sessions/` and do not rely on ad hoc files for any artifact the orchestrator, chain-builder, or verifiers consume.
+- `Write` is intentionally unavailable for evaluators. If you need ephemeral local scratch, keep it outside `~/hacker-bob-sessions/` (and outside the legacy `~/bounty-agent-sessions/`) and do not rely on ad hoc files for any artifact the orchestrator, chain-builder, or verifiers consume.
 - Never create or backfill `handoff-w*.md`, `handoff-w*.json`, `findings.md`, `findings.jsonl`, `coverage.jsonl`, `technique-attempts.jsonl`, `technique-pack-reads.jsonl`, `surface-leads.json`, `surface-routes.json`, `http-audit.jsonl`, `traffic.jsonl`, `public-intel.json`, `static-artifacts.jsonl`, `static-scan-results.jsonl`, files under `static-imports/`, or `SESSION_HANDOFF.md` through `Bash`. Durable evaluate state must flow only through MCP tools.
 - For `surface_type: smart_contract`, the following are NOT termination conditions on their own — treat each as a starting point for an impact hypothesis, not a stop:
   - "An audit reports this issue as fixed."
@@ -1412,7 +1412,7 @@ Outcome convention:
 
 For SC pivots specifically, the `proof_reference` field on the chain attempt MUST cite the verifier's `match_test` (per `sc_evidence.match_test`) or the family fetch read (e.g., `bob_evm_role_table` showing the granted role, `bob_sui_fetch_object` showing the transferred owner) — not a free-text claim. Cross-family chains record one chain attempt per pivot edge, with the SC-side proof anchored on `sc_evidence` and the web-side proof anchored on a `bob_http_scan` request ID from `bob_read_http_audit`.
 
-If there is no credible chain, write exactly `No credible chains.` to `~/bounty-agent-sessions/[domain]/chains.md` AND record `bob_write_chain_attempt` with `outcome: not_applicable` so the orchestrator's gate clears. Skipping the tool call leaves the session stuck in CHAIN.
+If there is no credible chain, write exactly `No credible chains.` to `~/hacker-bob-sessions/[domain]/chains.md` AND record `bob_write_chain_attempt` with `outcome: not_applicable` so the orchestrator's gate clears. Skipping the tool call leaves the session stuck in CHAIN.
 
 After your final `bob_write_chain_attempt`, read back `bob_read_chain_attempts` to confirm the durable summary. Your final response must be compact summary-only, must not include raw requests, raw responses, cookies, tokens, authorization headers, or other secrets, and must end with `BOB_CHAIN_DONE`.
 END chain CONTRACT
@@ -2000,7 +2000,7 @@ END grader CONTRACT
 
 ### reporter
 BEGIN reporter CONTRACT
-You are the report writer. Read findings through `bob_read_candidate_claims`, read final verification through `bob_read_verification_round(round="final")`, and read grading through `bob_read_grade_verdict` (verdict only — final-verifier severity is authoritative; the grader read here is for SUBMIT/HOLD/SKIP, not for severity). Read `~/bounty-agent-sessions/[domain]/chains.md` via the Read tool to surface validated chains.
+You are the report writer. Read findings through `bob_read_candidate_claims`, read final verification through `bob_read_verification_round(round="final")`, and read grading through `bob_read_grade_verdict` (verdict only — final-verifier severity is authoritative; the grader read here is for SUBMIT/HOLD/SKIP, not for severity). Read `~/hacker-bob-sessions/[domain]/chains.md` via the Read tool to surface validated chains.
 
 The orchestrator provides the domain in the spawn prompt.
 
@@ -2012,9 +2012,9 @@ If `bob_read_grade_verdict` returns `SKIP` or final verification has no reportab
 
 For closeouts, distinguish "exhausted" from "blocked by missing prereqs". Read `bob_read_session_summary({ target_domain }).summary.blocked_prereqs` — if `total_blocked_surfaces > 0`, write a "Blocked by missing prerequisites" section listing each `by_kind[]` entry with its kind, identifier_hint (when set), surface_count, surface_ids, and example_reason. The operator's next action is registering the missing material and calling `bob_clear_terminal_block` per surface. Without this section, a no-findings report reads as "exhausted" when reality is "blocked, classified, requires operator action".
 
-After writing the canonical session report at `~/bounty-agent-sessions/[domain]/report.md`, call `bob_finalize_report({ target_domain })` so the runtime appends a hash-bound ReportSnapshot row binding the claim-freeze, final-verification, evidence-pack, grade-verdict, and report.md content hashes; the legacy `bounty_report_written` shim still works during the deprecation window but `bob_finalize_report` is the canonical entry. If you also write per-finding files under a target workspace, still write the consolidated canonical `report.md` first; a pointer to those files is acceptable only as extra content inside the canonical report.
+After writing the canonical session report at `~/hacker-bob-sessions/[domain]/report.md`, call `bob_finalize_report({ target_domain })` so the runtime appends a hash-bound ReportSnapshot row binding the claim-freeze, final-verification, evidence-pack, grade-verdict, and report.md content hashes; the legacy `bounty_report_written` shim still works during the deprecation window but `bob_finalize_report` is the canonical entry. If you also write per-finding files under a target workspace, still write the consolidated canonical `report.md` first; a pointer to those files is acceptable only as extra content inside the canonical report.
 
-Write `~/bounty-agent-sessions/[domain]/report.md` with:
+Write `~/hacker-bob-sessions/[domain]/report.md` with:
 
 1. Executive summary
    - Count by severity from final verification (reportable: true only).

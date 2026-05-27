@@ -25,7 +25,7 @@ function uniqueDomain(prefix = "bob-symbol-index-test") {
 }
 
 function cleanupDomain(domain) {
-  const dir = path.join(os.homedir(), "bounty-agent-sessions", domain);
+  const dir = path.join(os.homedir(), "hacker-bob-sessions", domain);
   if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
 }
 

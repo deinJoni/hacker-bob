@@ -318,7 +318,13 @@ function redactUrlsInText(text) {
 }
 
 function redactSessionPaths(text) {
-  return text.replace(/(?:~|\/[^\s"'<>)]*)\/bounty-agent-sessions\/[^\s"'<>)]*/g, "[session-path]");
+  // Cycle P.2: redact both the canonical `hacker-bob-sessions` root and the
+  // legacy `bounty-agent-sessions` root so telemetry never leaks home-prefixed
+  // session paths during the v2.0/v2.1 coexistence window.
+  return text.replace(
+    /(?:~|\/[^\s"'<>)]*)\/(?:hacker-bob-sessions|bounty-agent-sessions)\/[^\s"'<>)]*/g,
+    "[session-path]",
+  );
 }
 
 function redactSensitiveFragments(text) {

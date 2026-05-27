@@ -33,8 +33,13 @@ process.stdin.on('end', () => {
     }
 
     // Bounty session status
+    // Cycle P.2: prefer the canonical `hacker-bob-sessions` root; fall back to
+    // the legacy `bounty-agent-sessions` root for sessions created before the
+    // migration so the statusline still surfaces in-progress runs.
     let bounty = '';
-    const sessDir = path.join(os.homedir(), 'bounty-agent-sessions');
+    const canonicalSessDir = path.join(os.homedir(), 'hacker-bob-sessions');
+    const legacySessDir = path.join(os.homedir(), 'bounty-agent-sessions');
+    const sessDir = fs.existsSync(canonicalSessDir) ? canonicalSessDir : legacySessDir;
     try {
       const dirs = fs.readdirSync(sessDir)
         .map(d => {

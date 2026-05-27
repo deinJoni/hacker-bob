@@ -7,7 +7,7 @@ import sys
 
 HOOK = os.path.join(os.path.dirname(__file__), "..", ".claude", "hooks", "session-read-guard.sh")
 HOME = os.path.expanduser("~")
-SESSION = f"{HOME}/bounty-agent-sessions/example.com"
+SESSION = f"{HOME}/hacker-bob-sessions/example.com"
 
 TESTS = [
     ("Read findings.jsonl blocks",

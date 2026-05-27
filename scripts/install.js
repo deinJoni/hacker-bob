@@ -453,7 +453,7 @@ function installProject(projectDir, options = {}) {
     // A stale update hint is cosmetic; never fail an otherwise valid install.
   }
 
-  fs.mkdirSync(path.join(os.homedir(), "bounty-agent-sessions"), { recursive: true });
+  fs.mkdirSync(path.join(os.homedir(), "hacker-bob-sessions"), { recursive: true });
 
   return {
     adapters: adapterIds,
@@ -511,7 +511,7 @@ function printInstallSummary(summary) {
   console.log(`  MCP runtime (mcp/server.js, auto-signup.js, redaction.js, lib/*.js, lib/tools/*.js, dependency files ${summary.runtimeDependencyFiles})`);
   console.log("  .hacker-bob/ resources");
   console.log("  .hacker-bob/VERSION and install.json");
-  console.log("  ~/bounty-agent-sessions/");
+  console.log("  ~/hacker-bob-sessions/  (legacy ~/bounty-agent-sessions/ remains readable until v2.1.0)");
   console.log("");
   console.log("Dependency check:");
   console.log("");

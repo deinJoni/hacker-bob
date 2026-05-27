@@ -209,7 +209,7 @@ test("bob_run_doc_delta drives the real MCP tool against a local HTTP fixture", 
         assert.ok(run.data.summary.divergences_total >= 3);
         assert.equal(run.data.results_path, "doc-delta-results.json");
 
-        const resultsPath = path.join(tempHome, "bounty-agent-sessions", domain, "doc-delta-results.json");
+        const resultsPath = path.join(tempHome, "hacker-bob-sessions", domain, "doc-delta-results.json");
         assert.ok(fs.existsSync(resultsPath), "doc-delta-results.json was not written");
         const results = JSON.parse(fs.readFileSync(resultsPath, "utf8"));
         assert.equal(results.summary.run_id, "doc-delta-e2e");

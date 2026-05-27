@@ -753,7 +753,7 @@ test("CLI uninstall --yes removes Bob-managed files and preserves unrelated conf
         { name: "operator", proxy_url: "${BOB_EGRESS_OPERATOR_PROXY}", region: "EU", description: "Operator-owned", enabled: true },
       ],
     }, null, 2)}\n`);
-    fs.writeFileSync(path.join(tempHome, "bounty-agent-sessions", "keep.txt"), "keep\n");
+    fs.writeFileSync(path.join(tempHome, "hacker-bob-sessions", "keep.txt"), "keep\n");
 
     const output = execFileSync(process.execPath, [CLI, "uninstall", workspace, "--yes", "--json"], {
       cwd: ROOT,
@@ -791,7 +791,7 @@ test("CLI uninstall --yes removes Bob-managed files and preserves unrelated conf
       entry.hooks &&
       entry.hooks.some((hook) => /scope-guard\.sh|session-write-guard\.sh/.test(hook.command))
     )));
-    assert.ok(fs.existsSync(path.join(tempHome, "bounty-agent-sessions", "keep.txt")));
+    assert.ok(fs.existsSync(path.join(tempHome, "hacker-bob-sessions", "keep.txt")));
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(tempHome, { recursive: true, force: true });

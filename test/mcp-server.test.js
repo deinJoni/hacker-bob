@@ -2211,6 +2211,7 @@ test("central session authority shadow mode is bounded to missing read-only sess
       assert.equal(readOnly.error.code, "NOT_FOUND");
       assert.equal(readOnly.error.message.includes(process.env.HOME), false);
       assert.equal(readOnly.error.message.includes("bounty-agent-sessions"), false);
+      assert.equal(readOnly.error.message.includes("hacker-bob-sessions"), false);
 
       const mutating = await executeTool("bob_log_coverage", {
         target_domain: "shadow-missing.example.com",
@@ -2231,6 +2232,7 @@ test("central session authority shadow mode is bounded to missing read-only sess
       assert.equal(readRow.authority.authority_shadowed, true);
       assert.equal(JSON.stringify(readRow).includes(process.env.HOME), false);
       assert.equal(JSON.stringify(readRow).includes("bounty-agent-sessions"), false);
+      assert.equal(JSON.stringify(readRow).includes("hacker-bob-sessions"), false);
       assert.equal(writeRow.authority.authority_result, "blocked");
       assert.equal(writeRow.authority.authority_error_code, "no_session");
       assert.equal(writeRow.authority.authority_shadowed, false);
@@ -2529,6 +2531,7 @@ test("tool telemetry reader summarizes at read time and skips malformed lines", 
     assert.deepEqual(summary.totals.authority, summary.authority);
     assert.equal(JSON.stringify(summary).includes("raw-secret-token"), false);
     assert.equal(JSON.stringify(summary).includes("bounty-agent-sessions"), false);
+    assert.equal(JSON.stringify(summary).includes("hacker-bob-sessions"), false);
 
     const httpSummary = summary.tools.find((toolSummary) => toolSummary.tool === "bob_http_scan");
     assert.ok(httpSummary);
@@ -3058,7 +3061,7 @@ test("pipeline analytics backfills legacy sessions from artifacts without an eve
     writeFileAtomic(reportMarkdownPath(domain), "# Legacy report\n");
 
     assert.equal(fs.existsSync(pipelineEventsJsonlPath(domain)), false);
-    assert.equal(sessionsRoot(), path.join(process.env.HOME, "bounty-agent-sessions"));
+    assert.equal(sessionsRoot(), path.join(process.env.HOME, "hacker-bob-sessions"));
 
     const artifactSummary = readSessionArtifactSummary(domain, { validateAuthority: true });
     assert.equal(artifactSummary.state.checkpoint_mode, "normal");
@@ -14329,7 +14332,7 @@ test("bob_auth_store writes v2 auth.json with attacker profile", async () => {
   const previousHome = process.env.HOME;
   process.env.HOME = tempHome;
   try {
-    const sessionsDir = path.join(tempHome, "bounty-agent-sessions");
+    const sessionsDir = path.join(tempHome, "hacker-bob-sessions");
     fs.mkdirSync(path.join(sessionsDir, "target.com"), { recursive: true });
     seedSessionState("target.com");
 
@@ -14362,7 +14365,7 @@ test("bob_auth_store adds victim profile to existing v2 auth.json", async () => 
   const previousHome = process.env.HOME;
   process.env.HOME = tempHome;
   try {
-    const sessionsDir = path.join(tempHome, "bounty-agent-sessions");
+    const sessionsDir = path.join(tempHome, "hacker-bob-sessions");
     const targetDir = path.join(sessionsDir, "target.com");
     fs.mkdirSync(targetDir, { recursive: true });
     seedSessionState("target.com");
@@ -14422,7 +14425,7 @@ test("bob_auth_store migrates legacy auth.json", async () => {
   const previousHome = process.env.HOME;
   process.env.HOME = tempHome;
   try {
-    const sessionsDir = path.join(tempHome, "bounty-agent-sessions");
+    const sessionsDir = path.join(tempHome, "hacker-bob-sessions");
     const targetDir = path.join(sessionsDir, "target.com");
     fs.mkdirSync(targetDir, { recursive: true });
     seedSessionState("target.com");
@@ -14460,7 +14463,7 @@ test("bob_auth_store stores credentials alongside headers", async () => {
   const previousHome = process.env.HOME;
   process.env.HOME = tempHome;
   try {
-    const sessionsDir = path.join(tempHome, "bounty-agent-sessions");
+    const sessionsDir = path.join(tempHome, "hacker-bob-sessions");
     fs.mkdirSync(path.join(sessionsDir, "target.com"), { recursive: true });
     seedSessionState("target.com");
 
@@ -14485,7 +14488,7 @@ test("bob_auth_store writes and migrates auth.json with 0600 permissions", async
   const previousHome = process.env.HOME;
   process.env.HOME = tempHome;
   try {
-    const targetDir = path.join(tempHome, "bounty-agent-sessions", "target.com");
+    const targetDir = path.join(tempHome, "hacker-bob-sessions", "target.com");
     const authPath = path.join(targetDir, "auth.json");
     fs.mkdirSync(targetDir, { recursive: true });
     seedSessionState("target.com");
@@ -14515,7 +14518,7 @@ test("bob_auth_store reports persistence failures instead of claiming success", 
   const previousHome = process.env.HOME;
   process.env.HOME = tempHome;
   try {
-    const authPath = path.join(tempHome, "bounty-agent-sessions", "target.com", "auth.json");
+    const authPath = path.join(tempHome, "hacker-bob-sessions", "target.com", "auth.json");
     seedSessionState("target.com");
     fs.mkdirSync(authPath, { recursive: true });
 
@@ -18493,7 +18496,7 @@ test("writeHandoff writes file atomically", () => {
 
 test("resolveAuthJsonPath requires an explicit domain by default and keeps fallback legacy-only", () => {
   withTempHome((tempHome) => {
-    const sessionsDir = path.join(tempHome, "bounty-agent-sessions");
+    const sessionsDir = path.join(tempHome, "hacker-bob-sessions");
 
     // Create two session dirs: aaa-old.com (older) and zzz-new.com (newer alphabetically but older mtime)
     const oldDir = path.join(sessionsDir, "zzz-alphabetically-last.com");

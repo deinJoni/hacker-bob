@@ -21,7 +21,7 @@ module.exports = Object.freeze({
   name: "bob_read_queue_policy",
   description:
     "Read the persisted QueuePolicy for a target_domain. Returns the normalized policy " +
-    "from ~/bounty-agent-sessions/<domain>/queue-policy.json, falling back to " +
+    "from ~/hacker-bob-sessions/<domain>/queue-policy.json, falling back to " +
     "DEFAULT_QUEUE_POLICY when the file is absent. Carries max_parallel_tasks, " +
     "priority_order, stale_after_ms, close_blocked_on_freeze, and the wave " +
     "targets/budgets/lens consumed by the wave planner.",

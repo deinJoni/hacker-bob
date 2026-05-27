@@ -97,7 +97,7 @@ For Claude, run:
 /bob-status
 ```
 
-For a fresh install, it is normal for Bob to report that there is no completed session yet. The command should load without a missing-command error and should be able to read the local MCP/status files.
+For a fresh install, it is normal for Bob to report that there is no completed session yet. The command should load without a missing-command error and should be able to read the local MCP/status files. Bob writes session state under `~/hacker-bob-sessions/<target_domain>/`; if a pre-existing `~/bounty-agent-sessions/<target_domain>/` directory remains from before the v2.0 rename, Bob copies (never moves) it into the canonical location on first access and preserves the legacy directory until the v2.1.0 `--purge-legacy-session-root` flag is invoked.
 
 For Codex, invoke `$bob-status`. For generic MCP hosts, list the `bountyagent` tools or call a read-only status tool through the host's MCP UI.
 
