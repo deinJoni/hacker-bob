@@ -123,6 +123,7 @@ test("canonical package lists shipped Claude hooks explicitly", () => {
     "bob-export.js",
     "bob-update.js",
     "bounty-statusline.js",
+    "agent-run-start.js",
     "agent-run-stop.js",
     "session-read-guard.sh",
     "session-write-guard.sh",

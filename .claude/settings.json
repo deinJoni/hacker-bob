@@ -122,6 +122,68 @@
         ]
       }
     ],
+    "SubagentStart": [
+      {
+        "matcher": "evaluator-agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/agent-run-start.js\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "evaluator-evm-agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/agent-run-start.js\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "evaluator-svm-agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/agent-run-start.js\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "evaluator-move-agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/agent-run-start.js\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "evaluator-substrate-agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/agent-run-start.js\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "evaluator-cosmwasm-agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/agent-run-start.js\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "SubagentStop": [
       {
         "matcher": "evaluator-agent",

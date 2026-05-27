@@ -27,6 +27,7 @@
     ".claude/hooks/bob-export.js",
     ".claude/hooks/bob-update.js",
     ".claude/hooks/bounty-statusline.js",
+    ".claude/hooks/agent-run-start.js",
     ".claude/hooks/agent-run-stop.js",
     ".claude/hooks/session-read-guard.sh",
     ".claude/hooks/session-write-guard.sh",

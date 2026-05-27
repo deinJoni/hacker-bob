@@ -125,6 +125,25 @@ function defaultSubagentStopHooks() {
   ));
 }
 
+function defaultSubagentStartHooks() {
+  // Cycle S.5: mark the AgentRun ledger row `running` when the evaluator
+  // subagent starts. Best-effort and never blocks the agent's start; the
+  // file-presence fallback (Pact P2) covers misses during the deprecation
+  // window.
+  return evaluatorAgentNamesForCapabilityPacks().map((evaluatorAgent) => (
+    {
+      matcher: evaluatorAgent,
+      hooks: [
+        {
+          type: "command",
+          command: `node "${PROJECT_DIR_EXPR}/.claude/hooks/agent-run-start.js"`,
+          timeout: 5,
+        },
+      ],
+    }
+  ));
+}
+
 function defaultSessionStartHooks() {
   return [
     {
@@ -159,6 +178,7 @@ function defaultClaudeSettings() {
     hooks: {
       PreToolUse: defaultPreToolUseHooks(),
       SessionStart: defaultSessionStartHooks(),
+      SubagentStart: defaultSubagentStartHooks(),
       SubagentStop: defaultSubagentStopHooks(),
     },
     statusLine: {
@@ -175,6 +195,7 @@ module.exports = {
   defaultGlobalMcpPermissions,
   defaultPreToolUseHooks,
   defaultSessionStartHooks,
+  defaultSubagentStartHooks,
   defaultSubagentStopHooks,
   isOrchestratorOnlyMutator,
   mcpPermissionForTool,

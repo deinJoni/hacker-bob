@@ -80,6 +80,91 @@ function loadAgentCompletion() {
   return require(path.join(projectRoot(), "mcp", "lib", "agent-run-completion.js"));
 }
 
+function loadAgentRuns() {
+  return require(path.join(projectRoot(), "mcp", "lib", "agent-runs.js"));
+}
+
+function loadAssignments() {
+  return require(path.join(projectRoot(), "mcp", "lib", "assignments.js"));
+}
+
+function loadPaths() {
+  return require(path.join(projectRoot(), "mcp", "lib", "paths.js"));
+}
+
+function loadHandoffSigningKey() {
+  return require(path.join(projectRoot(), "mcp", "lib", "handoff-signing-key.js"));
+}
+
+// Settle the AgentRun ledger row through the same signed-handoff provenance
+// the merge path uses. Best-effort: hook failure must not block the agent's
+// stop, and the merge gate's file-presence fallback still protects readiness.
+function settleAgentRunForMarker(marker) {
+  if (!marker || !marker.target_domain || !marker.wave || !marker.agent || !marker.surface_id) return;
+  try {
+    const { settleAgentRunFromHandoff } = loadAgentRuns();
+    const { loadWaveAssignments } = loadAssignments();
+    const { sessionDir } = loadPaths();
+    const { readHandoffSigningKey } = loadHandoffSigningKey();
+    const waveNumber = Number(marker.wave.slice(1));
+    if (!Number.isInteger(waveNumber) || waveNumber < 1) return;
+    const assignments = loadWaveAssignments(marker.target_domain, waveNumber);
+    const assignment = assignments && assignments.assignmentByAgent
+      ? assignments.assignmentByAgent.get(marker.agent)
+      : null;
+    if (!assignment) return;
+    const handoffPath = path.join(
+      sessionDir(marker.target_domain),
+      `handoff-${marker.wave}-${marker.agent}.json`,
+    );
+    if (!fs.existsSync(handoffPath)) return;
+    let handoffJson;
+    try {
+      handoffJson = JSON.parse(fs.readFileSync(handoffPath, "utf8"));
+    } catch {
+      return;
+    }
+    let signingKey = null;
+    try {
+      signingKey = readHandoffSigningKey(marker.target_domain);
+    } catch {
+      signingKey = null;
+    }
+    settleAgentRunFromHandoff({
+      target_domain: marker.target_domain,
+      wave: marker.wave,
+      agent: marker.agent,
+      surface_id: marker.surface_id,
+      assignment,
+      handoff: handoffJson,
+      signing_key: signingKey,
+    }, { write: true });
+  } catch {
+    // Ledger write is best-effort during the dual-write window.
+  }
+}
+
+// Append a terminal non-settled row (failed/abandoned) so the merge gate can
+// distinguish "evaluator stopped without valid handoff" from "evaluator still
+// running". The file-presence fallback keeps the merge gate functional even
+// when this write fails.
+function markAgentRunTerminalForMarker(marker, { status, reason }) {
+  if (!marker || !marker.target_domain || !marker.wave || !marker.agent) return;
+  try {
+    const { markAgentRunTerminal } = loadAgentRuns();
+    markAgentRunTerminal({
+      targetDomain: marker.target_domain,
+      wave: marker.wave,
+      agent: marker.agent,
+      surfaceId: marker.surface_id || null,
+      status,
+      failureReason: typeof reason === "string" && reason.length > 0 ? reason.slice(0, 240) : null,
+    });
+  } catch {
+    // Best-effort ledger write.
+  }
+}
+
 function recordAgentCompletionTelemetry(input) {
   if (!input) return;
   try {
@@ -199,6 +284,10 @@ function main() {
   const markerResult = parseMarkerWithStatus(message);
   marker = markerResult.marker;
   if (!marker) {
+    // No marker at all: the agent stopped without finalizing. We have no
+    // (wave, agent) anchor to attribute the AgentRun row to, so the ledger
+    // gets nothing here. The merge gate's file-presence fallback (Pact P2)
+    // keeps the gate closed until a real handoff lands.
     block(
       `Evaluator stop blocked: write the wave handoff with bounty_write_wave_handoff, then emit ${MARKER} {"target_domain":"...","wave":"wN","agent":"aN","surface_id":"..."}.`,
       markerTelemetryInput({
@@ -217,6 +306,13 @@ function main() {
         payload, marker, now, status: "blocked", block_code: markerError.block_code,
       }));
     } else {
+      // Malformed wave marker: agent had partial coordinates but the row is
+      // not settleable. Record as failed so the merge gate sees a terminal
+      // state rather than a stuck `running` row.
+      markAgentRunTerminalForMarker(marker, {
+        status: "failed",
+        reason: markerError.reason,
+      });
       block(markerError.reason, markerTelemetryInput({
         payload, marker, now, status: "blocked", block_code: markerError.block_code,
       }));
@@ -241,9 +337,19 @@ function main() {
 
   const finalization = finalizeMarker(marker, payload, now);
   if (!finalization.ok) {
+    // Handoff is missing/invalid or technique-attempt log is missing.
+    // Append a `failed` AgentRun row so the merge gate's state-driven path
+    // can refuse to merge without waiting for a wall-clock timeout.
+    markAgentRunTerminalForMarker(marker, {
+      status: "failed",
+      reason: finalization.reason,
+    });
     console.error(finalization.reason);
     process.exit(2);
   }
+  // Handoff was validated and finalization succeeded — settle the AgentRun
+  // ledger through the same signed-handoff provenance the merge path uses.
+  settleAgentRunForMarker(marker);
   console.log(JSON.stringify({ ok: true, message: finalization.reason }));
   process.exit(0);
 }

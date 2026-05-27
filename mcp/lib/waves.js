@@ -84,6 +84,9 @@ const {
   appendFrontierEvent,
 } = require("./frontier-events.js");
 const {
+  appendWaveAssignmentAgentRun,
+} = require("./agent-runs.js");
+const {
   scheduleMaterialization,
 } = require("./frontier-materialize-debounce.js");
 const {
@@ -388,6 +391,25 @@ function startWaveLocked(domain, {
       ERROR_CODES.STATE_CONFLICT,
       `State write failed after writing assignments; ${rollbackStatus}: ${assignmentsPath} (${error.message || String(error)})`,
     );
+  }
+  // Cycle S.5: AgentRun ledger gains an `assigned` row per wave assignment so
+  // the merge gate (wave-handoff-store.js) can drive readiness from
+  // AgentRun.status instead of handoff-file presence. Failure here must not
+  // unwind the wave — the merge gate falls back to file-presence per Pact P2.
+  const waveLabel = `w${waveNumber}`;
+  for (const assignment of persistedAssignments) {
+    try {
+      appendWaveAssignmentAgentRun({
+        targetDomain: domain,
+        wave: waveLabel,
+        agent: assignment.agent,
+        surfaceId: assignment.surface_id,
+        contextSliceHash: assignment.handoff_token_sha256 || null,
+      });
+    } catch {
+      // Best-effort during the dual-write window; the file-presence fallback
+      // keeps the merge path functional even when the ledger write fails.
+    }
   }
   safeAppendPipelineEventDirect(domain, "wave_started", {
     phase: state.phase,

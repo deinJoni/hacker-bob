@@ -20,6 +20,7 @@ const HOOK_FILES = Object.freeze([
   "session-read-guard.sh",
   "session-write-guard.sh",
   "bounty-statusline.js",
+  "agent-run-start.js",
   "agent-run-stop.js",
   "bob-egress.js",
   "bob-export.js",
@@ -37,6 +38,7 @@ const STALE_HOOK_FILES = Object.freeze([
 const EXECUTABLE_HOOKS = Object.freeze([
   "session-read-guard.sh",
   "session-write-guard.sh",
+  "agent-run-start.js",
   "agent-run-stop.js",
   "bob-egress.js",
   "bob-export.js",

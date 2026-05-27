@@ -49,6 +49,55 @@ const {
   validateHandoffProvenance,
   validateWaveHandoffPayload,
 } = require("./wave-handoff-contracts.js");
+const {
+  latestAgentRunForWaveAgent,
+} = require("./agent-runs.js");
+
+// Cycle S.5: drive the merge gate from AgentRun.state instead of the
+// handoff-file presence on disk. Pact P2 keeps file-presence as the fallback
+// during the deprecation window: until the SubagentStart hook lands in every
+// adapter, freshly-started agents may have only an `assigned` row when the
+// merge gate inspects them. Treat the three signals as follows:
+//
+//   settled                       -> handoff authoritative, no fallback.
+//   failed | abandoned            -> explicit terminal-non-settled, refuse.
+//   running                       -> agent observed running but never settled;
+//                                    the SubagentStop hook should have fired
+//                                    to either settle or mark terminal, so a
+//                                    stuck `running` row means the agent died
+//                                    mid-flight — refuse.
+//   assigned | completed | null   -> not enough state-machine signal yet; fall
+//                                    back to handoff-file presence so the
+//                                    dual-write window keeps producing valid
+//                                    merges for legacy callers and adapters
+//                                    that have not wired the SubagentStart
+//                                    hook yet.
+//
+// A `gate` of "settled" closes the merge gate in favor of the AgentRun row.
+// A `gate` of "closed_terminal_non_settled" closes it against the agent.
+// A `gate` of "fallback" defers to file-presence checks at the call site.
+const AGENT_RUN_GATE_FALLBACK_STATUSES = new Set([null, "assigned", "completed"]);
+
+function agentRunGateForAssignment(domain, wave, assignment) {
+  let run = null;
+  try {
+    run = latestAgentRunForWaveAgent(domain, {
+      wave,
+      agent: assignment.agent,
+      surfaceId: assignment.surface_id,
+    });
+  } catch {
+    run = null;
+  }
+  const status = run ? run.status : null;
+  if (status === "settled") {
+    return { status, gate: "settled" };
+  }
+  if (status === "failed" || status === "abandoned" || status === "running") {
+    return { status, gate: "closed_terminal_non_settled" };
+  }
+  return { status, gate: "fallback" };
+}
 
 const WAVE_ARTIFACT_KEYS = Object.freeze([
   "dir",
@@ -135,7 +184,21 @@ function buildWaveReadiness(artifacts, { domain = null } = {}) {
   }
 
   for (const assignment of artifacts.assignments) {
-    if (!artifacts.handoffPathByAgent.has(assignment.agent)) {
+    // Cycle S.5: drive readiness from AgentRun.state with file-presence as
+    // the deprecation-window fallback (Pact P2).
+    const handoffPresent = artifacts.handoffPathByAgent.has(assignment.agent);
+    const gate = domain
+      ? agentRunGateForAssignment(domain, artifacts.wave, assignment)
+      : { status: null, gate: "fallback" };
+    if (gate.gate === "closed_terminal_non_settled") {
+      missingAgents.push(assignment.agent);
+      continue;
+    }
+    if (gate.gate === "fallback" && !handoffPresent) {
+      missingAgents.push(assignment.agent);
+      continue;
+    }
+    if (gate.gate === "settled" && !handoffPresent) {
       missingAgents.push(assignment.agent);
       continue;
     }
@@ -245,7 +308,22 @@ function mergeWaveHandoffsInternal(domain, waveNumber) {
 
   for (const assignment of artifacts.assignments) {
     const filePath = artifacts.handoffPathByAgent.get(assignment.agent);
+    // Cycle S.5: drive the merge gate from AgentRun.state. The file-presence
+    // check stays as a fallback when no AgentRun row exists yet (legacy
+    // session, pre-S.5 wave, or hook write failure) per Pact P2.
+    const gate = agentRunGateForAssignment(domain, artifacts.wave, assignment);
+    if (gate.gate === "closed_terminal_non_settled") {
+      missingSurfaceIds.push(assignment.surface_id);
+      continue;
+    }
+    if (gate.gate === "fallback" && !filePath) {
+      missingSurfaceIds.push(assignment.surface_id);
+      continue;
+    }
     if (!filePath) {
+      // AgentRun says settled but the handoff file is absent — dual-write
+      // mismatch. Treat as missing so the merge gate refuses to advance
+      // until both ledger and on-disk evidence agree.
       missingSurfaceIds.push(assignment.surface_id);
       continue;
     }
@@ -438,7 +516,26 @@ function buildWaveHandoffsDocument(domain, waveNumbers) {
 
     for (const assignment of artifacts.assignments) {
       const filePath = artifacts.handoffPathByAgent.get(assignment.agent);
-      if (!filePath) {
+      // Cycle S.5: drive the readout from AgentRun.state with file-presence as
+      // the deprecation-window fallback (Pact P2).
+      const gate = agentRunGateForAssignment(domain, artifacts.wave, assignment);
+      if (gate.gate === "closed_terminal_non_settled") {
+        missingHandoffs.push({
+          wave: artifacts.wave,
+          agent: assignment.agent,
+          surface_id: assignment.surface_id,
+        });
+        continue;
+      }
+      if (gate.gate === "fallback" && !filePath) {
+        missingHandoffs.push({
+          wave: artifacts.wave,
+          agent: assignment.agent,
+          surface_id: assignment.surface_id,
+        });
+        continue;
+      }
+      if (gate.gate === "settled" && !filePath) {
         missingHandoffs.push({
           wave: artifacts.wave,
           agent: assignment.agent,
