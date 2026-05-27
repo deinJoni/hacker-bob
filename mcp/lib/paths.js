@@ -129,6 +129,10 @@ function taskQueuePath(domain) {
   return path.join(sessionDir(domain), "task-queue.json");
 }
 
+function queuePolicyPath(domain) {
+  return path.join(sessionDir(domain), "queue-policy.json");
+}
+
 function agentRunsJsonlPath(domain) {
   return path.join(sessionDir(domain), "agent-runs.jsonl");
 }
@@ -297,6 +301,7 @@ module.exports = {
   liveDeadEndsJsonlPath,
   pipelineEventsJsonlPath,
   publicIntelPath,
+  queuePolicyPath,
   reportMarkdownPath,
   scopeWarningsPath,
   sessionDir,

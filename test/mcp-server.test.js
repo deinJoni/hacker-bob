@@ -434,6 +434,8 @@ const EXPECTED_TOOL_NAMES = [
   "bounty_query_surface_graph",
   "bob_append_frontier_event",
   "bob_materialize_frontier",
+  "bob_read_queue_policy",
+  "bob_set_queue_policy",
 ];
 
 function withTempHome(fn) {

@@ -1,11 +1,12 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
-  DEFAULT_WAVE_TASK_BUDGET,
-  DEFAULT_WAVE_TASK_LENS,
   isOpenForAssignment,
   planNextWave,
 } = require("../mcp/lib/wave-planner.js");
+const {
+  DEFAULT_QUEUE_POLICY,
+} = require("../mcp/lib/queue-policy.js");
 
 function surface(id, priority, score = 0) {
   return {
@@ -19,8 +20,8 @@ function planned(agent, surfaceId) {
   return {
     agent,
     surface_id: surfaceId,
-    task_lens: DEFAULT_WAVE_TASK_LENS,
-    budget: { ...DEFAULT_WAVE_TASK_BUDGET },
+    task_lens: DEFAULT_QUEUE_POLICY.default_wave_task_lens,
+    budget: { ...DEFAULT_QUEUE_POLICY.default_wave_task_budget },
   };
 }
 

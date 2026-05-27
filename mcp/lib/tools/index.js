@@ -110,6 +110,8 @@ const TOOL_MODULES = Object.freeze([
   require("./query-surface-graph.js"),
   require("./append-frontier-event.js"),
   require("./materialize-frontier.js"),
+  require("./read-queue-policy.js"),
+  require("./set-queue-policy.js"),
 ]);
 
 module.exports = {

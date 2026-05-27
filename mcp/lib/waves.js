@@ -61,6 +61,9 @@ const {
   planNextWave,
 } = require("./wave-planner.js");
 const {
+  loadQueuePolicy,
+} = require("./queue-policy.js");
+const {
   readFindingsFromJsonl,
   summarizeFindings,
 } = require("./findings.js");
@@ -489,6 +492,20 @@ function readRankedAttackSurfacesForPlanning(domain) {
   return ranked.surfaces || [];
 }
 
+function readTaskQueueTasksForPlanning(domain) {
+  const filePath = require("./paths.js").taskQueuePath(domain);
+  if (!fs.existsSync(filePath)) return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    // Malformed task-queue.json falls back to the legacy ranking path during
+    // the dual-write window; the materializer is the source of truth on rebuild.
+    return [];
+  }
+  return Array.isArray(parsed && parsed.tasks) ? parsed.tasks : [];
+}
+
 function startNextWave(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   const dryRun = args.dry_run == null ? false : assertBoolean(args.dry_run, "dry_run");
@@ -517,8 +534,10 @@ function startNextWave(args) {
       promoted_surface_ids: [],
     };
 
+    const queuePolicy = loadQueuePolicy(domain);
+
     if (state.pending_wave != null) {
-      const plan = planNextWave({ state, surfaces: [] });
+      const plan = planNextWave({ state, surfaces: [], queuePolicy });
       return JSON.stringify(buildStartNextWaveResponse({
         domain,
         dryRun,
@@ -559,10 +578,13 @@ function startNextWave(args) {
 
       const rankedSurfaces = readRankedAttackSurfacesForPlanning(domain);
       const coverageRecords = readCoverageRecordsFromJsonl(domain);
+      const taskQueueTasks = readTaskQueueTasksForPlanning(domain);
       const plan = planNextWave({
         state: planningState,
         surfaces: rankedSurfaces,
         coverageRecords,
+        taskQueueTasks,
+        queuePolicy,
       });
 
       if (dryRun || plan.decision !== "start_wave") {

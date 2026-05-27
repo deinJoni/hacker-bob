@@ -7,16 +7,12 @@ const {
 const {
   priorityRank,
 } = require("./ranking.js");
-
-const STANDARD_WAVE_TARGET = 4;
-const STANDARD_WAVE_MAX = 6;
-const DEEP_WAVE_TARGET = 6;
-const DEEP_WAVE_MAX = 8;
-const DEFAULT_WAVE_TASK_LENS = "surface_scout";
-const DEFAULT_WAVE_TASK_BUDGET = Object.freeze({
-  max_steps: 6,
-  max_context_tokens: 24000,
-});
+const {
+  DEFAULT_QUEUE_POLICY,
+  compareQueuedTasks,
+  loadQueuePolicy,
+  normalizeQueuePolicy,
+} = require("./queue-policy.js");
 
 function surfaceIdOf(value) {
   if (value == null) return null;
@@ -58,9 +54,22 @@ function rankingScore(surface) {
   return Number.isFinite(score) ? score : 0;
 }
 
-function compareSurfaces(a, b) {
-  const priorityDelta = priorityRank(b && b.priority) - priorityRank(a && a.priority);
-  if (priorityDelta !== 0) return priorityDelta;
+function compareSurfaces(a, b, policy) {
+  const aPriorityToken = String(a && a.priority || "").toLowerCase();
+  const bPriorityToken = String(b && b.priority || "").toLowerCase();
+  const priorityOrder = Array.isArray(policy && policy.priority_order) && policy.priority_order.length > 0
+    ? policy.priority_order
+    : DEFAULT_QUEUE_POLICY.priority_order;
+  const aPolicyIndex = priorityOrder.indexOf(aPriorityToken);
+  const bPolicyIndex = priorityOrder.indexOf(bPriorityToken);
+  if (aPolicyIndex !== -1 || bPolicyIndex !== -1) {
+    const aIndex = aPolicyIndex === -1 ? priorityOrder.length : aPolicyIndex;
+    const bIndex = bPolicyIndex === -1 ? priorityOrder.length : bPolicyIndex;
+    if (aIndex !== bIndex) return aIndex - bIndex;
+  } else {
+    const priorityDelta = priorityRank(b && b.priority) - priorityRank(a && a.priority);
+    if (priorityDelta !== 0) return priorityDelta;
+  }
 
   const scoreDelta = rankingScore(b) - rankingScore(a);
   if (scoreDelta !== 0) return scoreDelta;
@@ -95,7 +104,7 @@ function computeOpenRequeueSurfaceIds(coverageRecords, state, surfaceIdSet) {
   return ids;
 }
 
-function surfacesForIds(ids, surfaceById, state) {
+function surfacesForIds(ids, surfaceById, state, policy) {
   const result = [];
   const seen = new Set();
   const surfaceIdSet = new Set(surfaceById.keys());
@@ -108,18 +117,18 @@ function surfacesForIds(ids, surfaceById, state) {
     seen.add(surfaceId);
     result.push(surface);
   }
-  return result.sort(compareSurfaces);
+  return result.sort((a, b) => compareSurfaces(a, b, policy));
 }
 
-function priorityBucket(surfaces, state, priorities) {
-  const wanted = new Set(priorities);
+function priorityBucket(surfaces, state, priorities, policy) {
+  const wanted = new Set(priorities.map((priority) => String(priority).toUpperCase()));
   const surfaceIdSet = new Set(surfaces.map((surface) => surface.id));
   return surfaces
     .filter((surface) => (
       isOpenForAssignment(surface, state, { surfaceIdSet }) &&
       wanted.has(String(surface.priority || "").toUpperCase())
     ))
-    .sort(compareSurfaces);
+    .sort((a, b) => compareSurfaces(a, b, policy));
 }
 
 function dedupeBuckets(bucketSpecs) {
@@ -156,16 +165,95 @@ function selectFromBuckets(buckets, { target, max }) {
   return selected;
 }
 
+function priorityTokensForBucket(name, priorityOrder) {
+  if (name === "critical_high") {
+    return priorityOrder.filter((token) => token === "critical" || token === "high");
+  }
+  if (name === "medium") {
+    return priorityOrder.filter((token) => token === "medium");
+  }
+  if (name === "low") {
+    return priorityOrder.filter((token) => token === "low");
+  }
+  return [];
+}
+
+function bucketSpecOrder(priorityOrder) {
+  // Walk the policy's priority_order and emit a bucket for each priority family
+  // in the order it appears. `critical` and `high` collapse into a single
+  // overflow-capable bucket the first time either appears; the other priorities
+  // produce stand-alone buckets that do not overflow past target.
+  const order = [];
+  let criticalHighEmitted = false;
+  for (const priority of priorityOrder) {
+    const token = String(priority).toLowerCase();
+    if ((token === "critical" || token === "high") && !criticalHighEmitted) {
+      order.push("critical_high");
+      criticalHighEmitted = true;
+      continue;
+    }
+    if (token === "medium" && !order.includes("medium")) {
+      order.push("medium");
+      continue;
+    }
+    if (token === "low" && !order.includes("low")) {
+      order.push("low");
+      continue;
+    }
+  }
+  if (!criticalHighEmitted) order.unshift("critical_high");
+  if (!order.includes("medium")) order.push("medium");
+  if (!order.includes("low")) order.push("low");
+  return order;
+}
+
+function priorityBuckets(openSurfaces, state, policy) {
+  const order = bucketSpecOrder(policy.priority_order);
+  return order.map((name) => {
+    const priorityTokens = priorityTokensForBucket(name, policy.priority_order);
+    const upperTokens = priorityTokens.map((token) => token.toUpperCase());
+    return {
+      name,
+      overflow_to_max: name === "critical_high",
+      surfaces: priorityBucket(openSurfaces, state, upperTokens, policy),
+    };
+  });
+}
+
+function legacySurfacesFromInputs(surfaceById, state, policy) {
+  return Array.from(surfaceById.values())
+    .filter((surface) => isOpenForAssignment(surface, state, { surfaceIdSet: new Set(surfaceById.keys()) }))
+    .sort((a, b) => compareSurfaces(a, b, policy));
+}
+
+function surfaceIdsFromTaskQueue(taskQueueTasks, policy) {
+  const sorted = (Array.isArray(taskQueueTasks) ? taskQueueTasks.slice() : [])
+    .filter((task) => task && task.status === "queued")
+    .sort((a, b) => compareQueuedTasks(a, b, policy));
+  const ids = [];
+  const seen = new Set();
+  for (const task of sorted) {
+    const surfaceId = surfaceIdOf(task.surface_id);
+    if (!surfaceId || seen.has(surfaceId)) continue;
+    seen.add(surfaceId);
+    ids.push(surfaceId);
+  }
+  return ids;
+}
+
 function planNextWave({
   state,
   surfaces,
   coverageRecords = [],
   openRequeueSurfaceIds = null,
+  taskQueueTasks = null,
+  queuePolicy = null,
 } = {}) {
   const normalizedState = state || {};
+  const policy = normalizeQueuePolicy(queuePolicy || DEFAULT_QUEUE_POLICY);
   const deepMode = normalizedState.deep_mode === true;
-  const target = deepMode ? DEEP_WAVE_TARGET : STANDARD_WAVE_TARGET;
-  const max = deepMode ? DEEP_WAVE_MAX : STANDARD_WAVE_MAX;
+  const target = deepMode ? policy.deep_wave_target : policy.standard_wave_target;
+  const max = deepMode ? policy.deep_wave_max : policy.standard_wave_max;
   const nextWave = (Number.isInteger(normalizedState.evaluation_wave) ? normalizedState.evaluation_wave : 0) + 1;
 
   const basePlan = {
@@ -193,51 +281,60 @@ function planNextWave({
   const surfaceIdSet = new Set(surfaceById.keys());
   const openSurfaces = allSurfaces.filter((surface) => isOpenForAssignment(surface, normalizedState, { surfaceIdSet }));
 
-  const bucketSpecs = nextWave === 1
-    ? [
-        {
-          name: "critical_high",
-          overflow_to_max: true,
-          surfaces: priorityBucket(openSurfaces, normalizedState, ["CRITICAL", "HIGH"]),
-        },
-        {
-          name: "medium",
-          surfaces: priorityBucket(openSurfaces, normalizedState, ["MEDIUM"]),
-        },
-        {
-          name: "low",
-          surfaces: priorityBucket(openSurfaces, normalizedState, ["LOW"]),
-        },
-      ]
-    : [
-        {
-          name: "open_requeue",
-          overflow_to_max: true,
-          surfaces: surfacesForIds(
-            openRequeueSurfaceIds || computeOpenRequeueSurfaceIds(coverageRecords, normalizedState, surfaceIdSet),
-            surfaceById,
-            normalizedState,
-          ),
-        },
-        {
-          name: "lead_surface_ids",
-          overflow_to_max: true,
-          surfaces: surfacesForIds(normalizedState.lead_surface_ids, surfaceById, normalizedState),
-        },
-        {
-          name: "critical_high",
-          overflow_to_max: true,
-          surfaces: priorityBucket(openSurfaces, normalizedState, ["CRITICAL", "HIGH"]),
-        },
-        {
-          name: "medium",
-          surfaces: priorityBucket(openSurfaces, normalizedState, ["MEDIUM"]),
-        },
-        {
-          name: "low",
-          surfaces: priorityBucket(openSurfaces, normalizedState, ["LOW"]),
-        },
-      ];
+  const hasTaskQueueRows = Array.isArray(taskQueueTasks) && taskQueueTasks.length > 0;
+
+  let bucketSpecs;
+  if (hasTaskQueueRows) {
+    // Materialized-view path: sort task-queue.json rows via compareQueuedTasks
+    // and use the resulting surface order as the single bucket. Legacy ranking
+    // remains the fallback when task-queue.json is empty (dual-write window).
+    const orderedIds = surfaceIdsFromTaskQueue(taskQueueTasks, policy);
+    bucketSpecs = [
+      {
+        name: "task_queue",
+        overflow_to_max: true,
+        surfaces: surfacesForIds(orderedIds, surfaceById, normalizedState, policy),
+      },
+    ];
+    if (nextWave > 1) {
+      bucketSpecs.unshift({
+        name: "open_requeue",
+        overflow_to_max: true,
+        surfaces: surfacesForIds(
+          openRequeueSurfaceIds || computeOpenRequeueSurfaceIds(coverageRecords, normalizedState, surfaceIdSet),
+          surfaceById,
+          normalizedState,
+          policy,
+        ),
+      });
+      bucketSpecs.splice(1, 0, {
+        name: "lead_surface_ids",
+        overflow_to_max: true,
+        surfaces: surfacesForIds(normalizedState.lead_surface_ids, surfaceById, normalizedState, policy),
+      });
+    }
+  } else if (nextWave === 1) {
+    bucketSpecs = priorityBuckets(openSurfaces, normalizedState, policy);
+  } else {
+    bucketSpecs = [
+      {
+        name: "open_requeue",
+        overflow_to_max: true,
+        surfaces: surfacesForIds(
+          openRequeueSurfaceIds || computeOpenRequeueSurfaceIds(coverageRecords, normalizedState, surfaceIdSet),
+          surfaceById,
+          normalizedState,
+          policy,
+        ),
+      },
+      {
+        name: "lead_surface_ids",
+        overflow_to_max: true,
+        surfaces: surfacesForIds(normalizedState.lead_surface_ids, surfaceById, normalizedState, policy),
+      },
+      ...priorityBuckets(openSurfaces, normalizedState, policy),
+    ];
+  }
 
   const buckets = dedupeBuckets(bucketSpecs);
   const candidateSurfaces = buckets.flatMap((bucket) => bucket.surfaces);
@@ -245,8 +342,8 @@ function planNextWave({
   const assignments = selected.map((surface, index) => ({
     agent: `a${index + 1}`,
     surface_id: surface.id,
-    task_lens: DEFAULT_WAVE_TASK_LENS,
-    budget: { ...DEFAULT_WAVE_TASK_BUDGET },
+    task_lens: policy.default_wave_task_lens,
+    budget: { ...policy.default_wave_task_budget },
   }));
 
   return {
@@ -265,12 +362,7 @@ function planNextWave({
 }
 
 module.exports = {
-  DEEP_WAVE_MAX,
-  DEEP_WAVE_TARGET,
-  DEFAULT_WAVE_TASK_BUDGET,
-  DEFAULT_WAVE_TASK_LENS,
-  STANDARD_WAVE_MAX,
-  STANDARD_WAVE_TARGET,
   isOpenForAssignment,
+  loadQueuePolicy,
   planNextWave,
 };
