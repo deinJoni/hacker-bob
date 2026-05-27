@@ -370,6 +370,16 @@ function installProject(projectDir, options = {}) {
     fs.rmSync(targetToolsDir, { recursive: true, force: true });
     copyDirFiles(sourceToolsDir, targetToolsDir, (name) => name.endsWith(".js"));
   }
+  // waves/ holds the wave-scheduler/assignment-store/merge-settler/prereq-
+  // snapshots/promotion-detector split modules plus the index aggregator.
+  // mcp/lib/waves.js re-exports from waves/index.js so existing
+  // require("../waves.js") callers stay intact.
+  const sourceWavesDir = path.join(sourceRoot, "mcp", "lib", "waves");
+  const targetWavesDir = path.join(mcpDir, "lib", "waves");
+  if (path.resolve(sourceWavesDir) !== path.resolve(targetWavesDir)) {
+    fs.rmSync(targetWavesDir, { recursive: true, force: true });
+    copyDirFiles(sourceWavesDir, targetWavesDir, (name) => name.endsWith(".js"));
+  }
   const copiedRuntimeDependencies = copyRuntimeNodeDependencies(sourceRoot, mcpDir);
 
   // Policy-replay diagnostic harness. Adapter-agnostic tooling under

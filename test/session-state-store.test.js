@@ -932,7 +932,7 @@ function surfaceArtifactWriteSummaries(relativePath, source) {
 
 function assertSurfaceArtifactRollbackRestoreIsLocked(wavesSource) {
   const semanticSource = sourceWithoutCommentsAndStrings(wavesSource);
-  const exportsBlock = moduleExportsObjectBlock(wavesSource, "waves.js");
+  const exportsBlock = moduleExportsObjectBlock(wavesSource, "wave-scheduler.js");
   assert.doesNotMatch(exportsBlock, /\bsnapshotFileForRollback\b/);
   assert.doesNotMatch(exportsBlock, /\brestoreFileSnapshot\b/);
   const startNextWaveBody = functionBody(semanticSource, "startNextWave");
@@ -953,8 +953,8 @@ function assertSurfaceArtifactRollbackRestoreIsLocked(wavesSource) {
     "restoreFileSnapshot must keep the snapshot.path write explicit",
   );
   assert.deepEqual(runtimeCallSummaries("restoreFileSnapshot"), [
-    "mcp/lib/waves.js:startNextWave",
-    "mcp/lib/waves.js:startNextWave",
+    "mcp/lib/waves/wave-scheduler.js:startNextWave",
+    "mcp/lib/waves/wave-scheduler.js:startNextWave",
   ]);
   assertCallsInsideSessionLock(wavesSource, "startNextWave", "restoreFileSnapshot", { requireMatchingDomain: false });
 }
@@ -1272,12 +1272,15 @@ test("state-writing surface lead helper is not exported unlocked", () => {
   );
   assert.doesNotMatch(semanticWaveWrapperBody, /\bupdate_state:\s*true\b/);
 
-  const wavesSource = readSource("mcp/lib/waves.js");
-  assert.doesNotMatch(wavesSource, /\bpromoteSurfaceLeadsInternal\b/);
-  assert.doesNotMatch(wavesSource, /\brecordSurfaceLeadsInternal\b/);
-  assert.match(wavesSource, /\bpromoteSurfaceLeadsForWave\b/);
-  assert.match(wavesSource, /\brecordSurfaceLeadsForWaveHandoff\b/);
-  assertCallsInsideSessionLock(wavesSource, "writeWaveHandoff", "recordSurfaceLeadsForWaveHandoff");
+  const waveSchedulerSource = readSource("mcp/lib/waves/wave-scheduler.js");
+  const waveAssignmentStoreSource = readSource("mcp/lib/waves/wave-assignment-store.js");
+  for (const source of [waveSchedulerSource, waveAssignmentStoreSource]) {
+    assert.doesNotMatch(source, /\bpromoteSurfaceLeadsInternal\b/);
+    assert.doesNotMatch(source, /\brecordSurfaceLeadsInternal\b/);
+  }
+  assert.match(waveSchedulerSource, /\bpromoteSurfaceLeadsForWave\b/);
+  assert.match(waveAssignmentStoreSource, /\brecordSurfaceLeadsForWaveHandoff\b/);
+  assertCallsInsideSessionLock(waveAssignmentStoreSource, "writeWaveHandoff", "recordSurfaceLeadsForWaveHandoff");
   assert.deepEqual(runtimeCallSummaries("writeSurfaceLeadsDocument"), [
     "mcp/lib/lead-promotion.js:promoteSurfaceLeadsInternal",
     "mcp/lib/lead-promotion.js:recordSurfaceLeadsInternal",
@@ -1323,7 +1326,7 @@ test("state-writing surface lead helper is not exported unlocked", () => {
     "mcp/lib/lead-intake.js:writeSurfaceLeadsDocument:writeFileAtomic:surfaceLeadsPath",
     "mcp/lib/surface-mutator.js:applyPromotionToLegacySurface:writeFileAtomic:attackSurfacePath",
   ]);
-  assertSurfaceArtifactRollbackRestoreIsLocked(wavesSource);
+  assertSurfaceArtifactRollbackRestoreIsLocked(waveSchedulerSource);
   assert.deepEqual(surfaceArtifactWriteSummaries("fixture.js", `
     const fs = require("fs");
     function direct(domain) { fs.writeFileSync(surfaceLeadsPath(domain), "{}"); }
@@ -1489,7 +1492,7 @@ test("session-state store write callers keep explicit lock boundaries", () => {
     { relativePath: "mcp/lib/session-state.js", functionName: "clearTerminalBlock", callCount: 1 },
     { relativePath: "mcp/lib/session-state.js", functionName: "setOperatorNote", callCount: 1 },
     { relativePath: "mcp/lib/session-state.js", functionName: "transitionPhase", callCount: 2 },
-    { relativePath: "mcp/lib/waves.js", functionName: "applyWaveMerge", callCount: 1 },
+    { relativePath: "mcp/lib/waves/wave-merge-settler.js", functionName: "applyWaveMerge", callCount: 1 },
   ];
   const storeWriterSummaries = runtimeCallSummaries("writeSessionStateDocument");
   assert.deepEqual(
@@ -1501,7 +1504,8 @@ test("session-state store write callers keep explicit lock boundaries", () => {
     assertCallsInsideSessionLock(readSource(relativePath), functionName, "writeSessionStateDocument");
   }
 
-  const wavesSource = readSource("mcp/lib/waves.js");
+  const waveSchedulerSource = readSource("mcp/lib/waves/wave-scheduler.js");
+  const waveAssignmentStoreSource = readSource("mcp/lib/waves/wave-assignment-store.js");
   const promotionSource = readSource("mcp/lib/lead-promotion.js");
   const stateDisabledPromotionProof = {
     functionName: "promoteSurfaceLeadsForWave",
@@ -1518,9 +1522,9 @@ test("session-state store write callers keep explicit lock boundaries", () => {
   };
   const delegatedStoreWriterChecks = [
     {
-      relativePath: "mcp/lib/waves.js",
+      relativePath: "mcp/lib/waves/wave-scheduler.js",
       helperName: "startWaveLocked",
-      source: wavesSource,
+      source: waveSchedulerSource,
       lockedCallers: ["startWave", "startNextWave"],
       stateDisabledCallers: [],
       referenceGate: "startWaveLocked",
@@ -1554,11 +1558,11 @@ test("session-state store write callers keep explicit lock boundaries", () => {
     "mcp/lib/lead-promotion.js:recordSurfaceLeadsForWaveHandoff",
   ].sort());
   assert.deepEqual(runtimeCallSummaries("recordSurfaceLeadsForWaveHandoff"), [
-    "mcp/lib/waves.js:writeWaveHandoff",
+    "mcp/lib/waves/wave-assignment-store.js:writeWaveHandoff",
   ]);
   assertCallsInsideSessionLock(promotionSource, "recordSurfaceLeads", "recordSurfaceLeadsInternal");
   assertCallsInsideSessionLock(promotionSource, "recordSurfaceLeadsForWaveHandoff", "recordSurfaceLeadsInternal");
-  assertCallsInsideSessionLock(wavesSource, "writeWaveHandoff", "recordSurfaceLeadsForWaveHandoff");
+  assertCallsInsideSessionLock(waveAssignmentStoreSource, "writeWaveHandoff", "recordSurfaceLeadsForWaveHandoff");
   assert.throws(
     () => assertStateDisabledDelegatedCalls(`
       function promoteSurfaceLeadsForWave(domain, options = {}) {

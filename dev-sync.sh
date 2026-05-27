@@ -97,6 +97,9 @@ sync_shared_runtime() {
   rm -rf "$TARGET_ABS/mcp/lib/tools"
   mkdir -p "$TARGET_ABS/mcp/lib/tools"
   cp "$SCRIPT_DIR/mcp/lib/tools/"*.js "$TARGET_ABS/mcp/lib/tools/"
+  rm -rf "$TARGET_ABS/mcp/lib/waves"
+  mkdir -p "$TARGET_ABS/mcp/lib/waves"
+  cp "$SCRIPT_DIR/mcp/lib/waves/"*.js "$TARGET_ABS/mcp/lib/waves/"
   chmod +x "$TARGET_ABS/mcp/server.js"
 }
 
