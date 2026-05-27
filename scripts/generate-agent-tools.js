@@ -19,11 +19,11 @@ const AGENTS_DIR = path.join(ROOT, ".claude", "agents");
 const AGENT_TOOL_SPECS = Object.freeze({
   "surface-discovery-agent.md": {
     roleBundles: [],
-    extras: ["Bash", "Read", "Write", "Glob", "Grep"],
+    extras: ["Bash", "Read", "Write", "Glob", "Grep", "mcp__bountyagent__bob_read_session_nucleus"],
   },
   "deep-surface-discovery-agent.md": {
     roleBundles: [],
-    extras: ["Bash", "Read", "Write", "Glob", "Grep"],
+    extras: ["Bash", "Read", "Write", "Glob", "Grep", "mcp__bountyagent__bob_read_session_nucleus"],
   },
   "surface-router-agent.md": {
     roleBundles: [],

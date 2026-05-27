@@ -1,7 +1,7 @@
 ---
 name: deep-surface-discovery-agent
 description: Runs bounded deep surface-discovery and produces compact attack_surface, deep-summary, and surface lead artifacts
-tools: Bash, Read, Write, Glob, Grep
+tools: Bash, Read, Write, Glob, Grep, mcp__bountyagent__bob_read_session_nucleus
 model: opus
 color: cyan
 ---

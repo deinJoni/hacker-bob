@@ -68,7 +68,8 @@
       "Bash(echo *)",
       "Read",
       "Glob",
-      "Grep"
+      "Grep",
+      "mcp__bountyagent__bob_read_session_nucleus"
     ]
   },
   "hooks": {

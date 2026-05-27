@@ -16,6 +16,9 @@ const {
 const {
   readSessionArtifactSummary,
 } = require("./pipeline-analytics.js");
+const {
+  readSessionNucleus,
+} = require("./governance-store.js");
 
 function phaseAtLeast(phase, requiredPhase) {
   const current = PHASE_VALUES.indexOf(phase);
@@ -162,12 +165,24 @@ function readSessionSummary(args) {
   const artifacts = readSessionArtifactSummary(domain);
   const blockers = deriveBlockers(state, artifacts);
   const reportPath = reportMarkdownPath(domain);
+  let nucleusHash = null;
+  let lifecycleState = null;
+  try {
+    const nucleus = readSessionNucleus(domain);
+    nucleusHash = nucleus && typeof nucleus.nucleus_hash === "string" ? nucleus.nucleus_hash : null;
+    lifecycleState = nucleus && typeof nucleus.lifecycle_state === "string" ? nucleus.lifecycle_state : null;
+  } catch (_error) {
+    nucleusHash = null;
+    lifecycleState = null;
+  }
 
   return JSON.stringify({
     version: 1,
     summary: {
       target: domain,
       phase: state.phase,
+      nucleus_hash: nucleusHash,
+      lifecycle_state: lifecycleState,
       auth_status: state.auth_status,
       checkpoint_mode: state.checkpoint_mode,
       block_internal_hosts: state.block_internal_hosts,

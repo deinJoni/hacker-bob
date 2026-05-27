@@ -593,12 +593,27 @@ test("MCP-dependent agents declare official mcpServers bountyagent metadata", ()
   }
 });
 
-test("surface-discovery agents remain MCP-free", () => {
+test("surface-discovery agents remain MCP-free except for governance read", () => {
+  // Surface-discovery operates on the filesystem and must not require MCP servers.
+  // The only permitted MCP exposure is the read-only governance nucleus tool, so
+  // the agent can confirm the active session's scope policy before scanning.
   for (const agent of ["surface-discovery-agent", "deep-surface-discovery-agent"]) {
     const document = readFile(`.claude/agents/${agent}.md`);
     assert.doesNotMatch(document, /mcpServers:/, `${agent} should not declare MCP servers`);
     assert.doesNotMatch(document, /requiredMcpServers:/, `${agent} should not require MCP servers`);
-    assert.doesNotMatch(document, /mcp__/i, `${agent} should not expose MCP tools`);
+    const frontmatterMatch = document.match(/^---\n[\s\S]*?\n---\n/);
+    const body = frontmatterMatch ? document.slice(frontmatterMatch[0].length) : document;
+    assert.doesNotMatch(body, /mcp__/i, `${agent} body should not invoke MCP tools`);
+    const mcpExposures = Array.from(
+      (frontmatterMatch ? frontmatterMatch[0] : "").matchAll(/mcp__[A-Za-z0-9_]+/g),
+    ).map((match) => match[0]);
+    for (const exposure of mcpExposures) {
+      assert.equal(
+        exposure,
+        "mcp__bountyagent__bob_read_session_nucleus",
+        `${agent} frontmatter exposes unexpected MCP tool ${exposure}`,
+      );
+    }
   }
 });
 
@@ -1304,12 +1319,16 @@ test("deep surface-discovery target family probing stays bounded and sibling liv
 test("surface-discovery prompts remain enrichment-only without new commands or imported toolsets", () => {
   for (const agent of ["surface-discovery-agent", "deep-surface-discovery-agent"]) {
     const surfaceDiscoveryPrompt = readFile(`.claude/agents/${agent}.md`);
+    const frontmatterMatch = surfaceDiscoveryPrompt.match(/^---\n[\s\S]*?\n---\n/);
+    const surfaceDiscoveryBody = frontmatterMatch
+      ? surfaceDiscoveryPrompt.slice(frontmatterMatch[0].length)
+      : surfaceDiscoveryPrompt;
 
     assert.doesNotMatch(surfaceDiscoveryPrompt, /\/bob-evaluate/, `${agent} should not mention slash commands`);
     assert.doesNotMatch(surfaceDiscoveryPrompt, /slash commands?/i, `${agent} should not mention slash commands`);
     assert.doesNotMatch(surfaceDiscoveryPrompt, /claude-bug-bounty/i, `${agent} should not import external prompts`);
     assert.doesNotMatch(surfaceDiscoveryPrompt, /scripts\/|tools\//i, `${agent} should not require repo scripts or tools`);
-    assert.doesNotMatch(surfaceDiscoveryPrompt, /mcp__/i, `${agent} should not use MCP tools`);
+    assert.doesNotMatch(surfaceDiscoveryBody, /mcp__/i, `${agent} body should not invoke MCP tools`);
   }
 });
 
@@ -1756,8 +1775,10 @@ test("renderer source files contain no per-chain workflow strings (pack.spawn is
 
 test("evaluator agent tool counts stay bounded under capability packs (anti-cruft budget)", () => {
   // Cap routed evaluators tightly. The web evaluator has explicit web-only technique
-  // pack tools; smart-contract evaluators stay on the stricter pack budget.
-  const EVALUATOR_MCP_TOOL_BUDGET = 16;
+  // pack tools and bob_read_session_nucleus for governance plane introspection;
+  // smart-contract evaluators stay on the stricter pack budget plus the same
+  // governance read tool.
+  const EVALUATOR_MCP_TOOL_BUDGET = 17;
   const agentNameToRoleId = {};
   for (const [roleId, spec] of Object.entries(CLAUDE_ROLE_SPECS)) {
     if (spec.kind === "agent" && typeof spec.output_path === "string") {
@@ -1768,7 +1789,7 @@ test("evaluator agent tool counts stay bounded under capability packs (anti-cruf
   for (const pack of Object.values(CAPABILITY_PACKS)) {
     const roleId = agentNameToRoleId[pack.evaluator_agent];
     const tools = mcpToolNamesForRole(roleId);
-    const budget = pack.brief_profile === "web" ? 18 : EVALUATOR_MCP_TOOL_BUDGET;
+    const budget = pack.brief_profile === "web" ? 19 : EVALUATOR_MCP_TOOL_BUDGET;
     assert.ok(
       tools.length <= budget,
       `pack ${pack.id} evaluator ${pack.evaluator_agent} has ${tools.length} MCP tools (budget ${budget}); justify or split before raising the cap`,

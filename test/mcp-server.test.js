@@ -360,6 +360,7 @@ const EXPECTED_TOOL_NAMES = [
   "bounty_read_grade_verdict",
   "bounty_init_session",
   "bounty_read_session_state",
+  "bob_read_session_nucleus",
   "bounty_transition_phase",
   "bounty_apply_wave_merge",
   "bounty_write_handoff",
@@ -1385,7 +1386,7 @@ test("MCP tool registry and dispatch cases stay in sync", async () => {
   assert.deepEqual(TOOL_REGISTRY.map((tool) => tool.name), EXPECTED_TOOL_NAMES);
   assert.deepEqual(TOOL_MODULES.map((tool) => defineTool(tool).name), EXPECTED_TOOL_NAMES);
   assert.deepEqual([...toolNames].sort(), [...new Set(toolNames)].sort(), "tool names must be unique");
-  assert.ok(toolNames.every((name) => name.startsWith("bounty_")));
+  assert.ok(toolNames.every((name) => name.startsWith("bounty_") || name.startsWith("bob_")));
   assert.ok(!toolNames.includes("bounty_auth_manual"));
   assert.ok(!toolNames.includes("bounty_read_handoff"));
   assert.equal(

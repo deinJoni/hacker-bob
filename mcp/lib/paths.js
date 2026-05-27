@@ -98,6 +98,14 @@ function frontierEventsJsonlPath(domain) {
   return path.join(sessionDir(domain), "frontier-events.jsonl");
 }
 
+function sessionNucleusPath(domain) {
+  return path.join(sessionDir(domain), "session-nucleus.json");
+}
+
+function sessionEventsJsonlPath(domain) {
+  return path.join(sessionDir(domain), "session-events.jsonl");
+}
+
 function surfaceIndexPath(domain) {
   return path.join(sessionDir(domain), "surface-index.json");
 }
@@ -275,7 +283,9 @@ module.exports = {
   reportMarkdownPath,
   scopeWarningsPath,
   sessionDir,
+  sessionEventsJsonlPath,
   sessionLockPath,
+  sessionNucleusPath,
   sessionsRoot,
   statePath,
   surfaceLeadsPath,

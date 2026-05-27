@@ -12,6 +12,7 @@ const {
 } = require("./validation.js");
 const {
   sessionDir,
+  sessionNucleusPath,
   statePath,
 } = require("./paths.js");
 const {
@@ -29,6 +30,15 @@ const {
 const {
   buildSessionNucleus,
 } = require("./governance-contracts.js");
+const {
+  appendSessionEvent,
+} = require("./session-events.js");
+const {
+  hashCanonicalJson,
+} = require("./verification-contracts.js");
+const {
+  writeJsonDocument,
+} = require("./fabric-common.js");
 const {
   safeAppendPipelineEventDirect,
 } = require("./pipeline-events.js");
@@ -227,6 +237,19 @@ function initSession(args) {
       },
       operator_constraint: {
         handoff_provenance_required: true,
+      },
+    });
+    writeJsonDocument(sessionNucleusPath(domain), sessionNucleus);
+    appendSessionEvent({
+      target_domain: domain,
+      kind: "governance.session.initialized",
+      nucleus_hash: sessionNucleus.nucleus_hash,
+      payload: {
+        nucleus_hash: sessionNucleus.nucleus_hash,
+        scope_policy_hash: hashCanonicalJson(sessionNucleus.scope_policy),
+        egress_identity_hash: hashCanonicalJson(sessionNucleus.egress_identity),
+        auth_context_hash: hashCanonicalJson(sessionNucleus.auth_context),
+        operator_constraint_hash: hashCanonicalJson(sessionNucleus.operator_constraint),
       },
     });
     const state = buildInitialSessionState(sessionNucleus.target_domain, sessionNucleus.scope_policy.target_url, {

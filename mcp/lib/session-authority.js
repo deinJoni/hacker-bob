@@ -98,6 +98,7 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bounty_read_assignment_brief: "initialized_session_read",
   bounty_read_invariant_runs: "initialized_session_read",
   bounty_read_pipeline_analytics: "mode_dependent_session",
+  bob_read_session_nucleus: "initialized_session_read",
   bounty_read_session_state: "initialized_session_read",
   bounty_read_session_summary: "initialized_session_read",
   bounty_read_state_summary: "initialized_session_read",
