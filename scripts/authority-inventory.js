@@ -96,6 +96,7 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_materialize_frontier: "initialized_session_mutation",
   bob_read_queue_policy: "initialized_session_read",
   bob_read_session_nucleus: "initialized_session_read",
+  bob_schedule_tasks: "initialized_session_mutation",
   bob_set_queue_policy: "initialized_session_mutation",
   bounty_read_session_state: "initialized_session_read",
   bounty_read_session_summary: "initialized_session_read",

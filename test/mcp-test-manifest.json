@@ -40,6 +40,7 @@
   "test/frontier-fabric.test.js",
   "test/frontier-projections.test.js",
   "test/scheduler-decisions.test.js",
+  "test/scheduler-decisions-wiring.test.js",
   "test/claim-fabric.test.js",
   "test/candidate-claim-dual-write.test.js",
   "test/claim-cluster-compute.test.js",

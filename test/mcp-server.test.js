@@ -436,6 +436,7 @@ const EXPECTED_TOOL_NAMES = [
   "bob_materialize_frontier",
   "bob_read_queue_policy",
   "bob_set_queue_policy",
+  "bob_schedule_tasks",
 ];
 
 function withTempHome(fn) {

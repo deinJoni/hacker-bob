@@ -76,6 +76,7 @@ allowed-tools:
   - mcp__bountyagent__bob_materialize_frontier
   - mcp__bountyagent__bob_read_queue_policy
   - mcp__bountyagent__bob_set_queue_policy
+  - mcp__bountyagent__bob_schedule_tasks
   - mcp__bountyagent__bounty_http_scan
   - mcp__bountyagent__bounty_temp_email
   - mcp__bountyagent__bounty_signup_detect

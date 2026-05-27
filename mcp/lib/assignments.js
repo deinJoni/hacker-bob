@@ -88,7 +88,23 @@ function loadWaveAssignments(domain, waveNumber) {
     assignmentByAgent.set(agent, normalizedAssignment);
   }
 
-  return { dir, wave: `w${waveNumber}`, assignmentsPath, assignments, assignmentByAgent };
+  const schedulerDecisionId = typeof assignmentsDoc.scheduler_decision_id === "string"
+    && assignmentsDoc.scheduler_decision_id.trim()
+    ? assignmentsDoc.scheduler_decision_id.trim()
+    : null;
+  const assignmentBatchId = typeof assignmentsDoc.assignment_batch_id === "string"
+    && assignmentsDoc.assignment_batch_id.trim()
+    ? assignmentsDoc.assignment_batch_id.trim()
+    : null;
+  return {
+    dir,
+    wave: `w${waveNumber}`,
+    assignmentsPath,
+    assignments,
+    assignmentByAgent,
+    scheduler_decision_id: schedulerDecisionId,
+    assignment_batch_id: assignmentBatchId,
+  };
 }
 
 function normalizeWaveAssignmentsInput(assignments) {

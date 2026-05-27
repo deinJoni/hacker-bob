@@ -112,6 +112,7 @@ const TOOL_MODULES = Object.freeze([
   require("./materialize-frontier.js"),
   require("./read-queue-policy.js"),
   require("./set-queue-policy.js"),
+  require("./schedule-tasks.js"),
 ]);
 
 module.exports = {

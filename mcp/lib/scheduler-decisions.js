@@ -42,8 +42,33 @@ const DEFAULT_ASSIGNMENT_BUDGET = Object.freeze({
   max_context_tokens: 24000,
 });
 
+// Decision kinds describe the scheduling caller surface so downstream consumers
+// (wave-merge integrity checks, telemetry, debug) can distinguish a wave-driven
+// scheduler call from a direct operator dispatch.
+const SCHEDULER_DECISION_KIND_VALUES = Object.freeze([
+  "schedule_work",
+  "wave_start",
+  "manual_dispatch",
+]);
+
+function normalizeSchedulerDecisionKind(value, fieldName = "decision_kind") {
+  if (value == null) return "schedule_work";
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${fieldName} must be a non-empty string`);
+  }
+  const trimmed = value.trim();
+  if (!SCHEDULER_DECISION_KIND_VALUES.includes(trimmed)) {
+    throw new Error(`${fieldName} must be one of ${SCHEDULER_DECISION_KIND_VALUES.join(", ")}`);
+  }
+  return trimmed;
+}
+
 function generatedSchedulerDecisionId(fields) {
   return `SD-${hashCanonicalJson(fields).slice(0, 24)}`;
+}
+
+function generatedAssignmentBatchId(fields) {
+  return `AB-${hashCanonicalJson(fields).slice(0, 24)}`;
 }
 
 function generatedAssignmentId(fields) {
@@ -138,6 +163,7 @@ function normalizeSchedulerDecision(input, { targetDomain = null, now = new Date
   const domain = assertSafeDomain(input.target_domain || targetDomain);
   const createdAt = normalizeIsoTimestamp(input.created_at || input.ts, "created_at", now);
   const policy = normalizeQueuePolicy(input.policy || {});
+  const decisionKind = normalizeSchedulerDecisionKind(input.decision_kind);
   const assignments = Array.isArray(input.assignments)
     ? input.assignments.map((assignment, index) =>
         normalizeSchedulerAssignment(assignment, { targetDomain: domain, createdAt, index }))
@@ -146,26 +172,43 @@ function normalizeSchedulerDecision(input, { targetDomain = null, now = new Date
   const skippedTaskIds = Array.isArray(input.skipped_task_ids)
     ? input.skipped_task_ids.map((taskId, index) => normalizeId(taskId, `skipped_task_ids[${index}]`))
     : [];
+  const sourceQueueHash = normalizeOptionalId(input.source_task_queue_hash, "source_task_queue_hash");
+  // queue_policy_hash is hash-of-policy at decision time. If absent, compute a
+  // deterministic digest of the normalized policy via withDocumentHash so the
+  // ledger row can be reasoned about against the queue-policy.json at-rest
+  // hash later.
+  const queuePolicyHash = normalizeOptionalId(input.queue_policy_hash, "queue_policy_hash")
+    || withDocumentHash({ ...policy }, "queue_policy_hash").queue_policy_hash;
+  const assignmentBatchId = normalizeOptionalId(input.assignment_batch_id, "assignment_batch_id")
+    || generatedAssignmentBatchId({
+      target_domain: domain,
+      created_at: createdAt,
+      selected_task_ids: selectedTaskIds,
+      source_task_queue_hash: sourceQueueHash,
+    });
   const decision = {
     version: SCHEDULER_DECISION_VERSION,
     target_domain: domain,
     created_at: createdAt,
-    decision_kind: "schedule_work",
+    decision_kind: decisionKind,
     policy,
+    queue_policy_hash: queuePolicyHash,
+    assignment_batch_id: assignmentBatchId,
     selected_task_ids: selectedTaskIds,
     skipped_task_ids: skippedTaskIds,
     assignment_count: assignments.length,
     assignments,
   };
-  const sourceQueueHash = normalizeOptionalId(input.source_task_queue_hash, "source_task_queue_hash");
   if (sourceQueueHash) decision.source_task_queue_hash = sourceQueueHash;
   const decisionId = normalizeOptionalId(input.scheduler_decision_id, "scheduler_decision_id")
     || generatedSchedulerDecisionId({
       target_domain: domain,
       created_at: createdAt,
+      decision_kind: decisionKind,
       selected_task_ids: selectedTaskIds,
       skipped_task_ids: skippedTaskIds,
       source_task_queue_hash: sourceQueueHash,
+      assignment_batch_id: assignmentBatchId,
     });
   return withDocumentHash({
     scheduler_decision_id: decisionId,
@@ -178,6 +221,8 @@ function scheduleTasksFromQueue(targetDomain, {
   maxAssignments = null,
   now = new Date(),
   write = false,
+  decisionKind = "schedule_work",
+  assignmentBatchId = null,
 } = {}) {
   const domain = assertSafeDomain(targetDomain);
   const queue = taskQueue || readTaskQueueDocument(domain);
@@ -196,6 +241,8 @@ function scheduleTasksFromQueue(targetDomain, {
     target_domain: domain,
     created_at: createdAt,
     policy,
+    decision_kind: decisionKind,
+    assignment_batch_id: assignmentBatchId,
     source_task_queue_hash: queue.task_queue_hash,
     skipped_task_ids: skipped.map((task) => task.task_id),
     assignments: selected.map((task, index) =>
@@ -206,6 +253,43 @@ function scheduleTasksFromQueue(targetDomain, {
     appendSchedulerDecision(decision);
   }
   return decision;
+}
+
+// Recompute a SchedulerDecision against the current task-queue.json to detect
+// drift between the time a decision was recorded and a later wave merge. The
+// helper does NOT mutate the ledger; callers (apply-wave-merge integrity
+// check) use it to compare the live queue hash against the stored
+// source_task_queue_hash and decide whether to log a warning during the dual-
+// write window.
+function readCurrentTaskQueueHash(targetDomain) {
+  const domain = assertSafeDomain(targetDomain);
+  const queue = readTaskQueueDocument(domain);
+  if (typeof queue.task_queue_hash === "string" && queue.task_queue_hash) {
+    return queue.task_queue_hash;
+  }
+  return null;
+}
+
+function findSchedulerDecisionById(targetDomain, schedulerDecisionId) {
+  if (!schedulerDecisionId) return null;
+  const decisions = readSchedulerDecisions(targetDomain);
+  for (let i = decisions.length - 1; i >= 0; i -= 1) {
+    if (decisions[i] && decisions[i].scheduler_decision_id === schedulerDecisionId) {
+      return decisions[i];
+    }
+  }
+  return null;
+}
+
+function findSchedulerDecisionByAssignmentBatchId(targetDomain, assignmentBatchId) {
+  if (!assignmentBatchId) return null;
+  const decisions = readSchedulerDecisions(targetDomain);
+  for (let i = decisions.length - 1; i >= 0; i -= 1) {
+    if (decisions[i] && decisions[i].assignment_batch_id === assignmentBatchId) {
+      return decisions[i];
+    }
+  }
+  return null;
 }
 
 function appendSchedulerDecision(input, options = {}) {
@@ -230,12 +314,18 @@ function readSchedulerDecisions(targetDomain) {
 module.exports = {
   DEFAULT_ASSIGNMENT_BUDGET,
   SCHEDULER_DECISIONS_MAX_RECORDS,
+  SCHEDULER_DECISION_KIND_VALUES,
   SCHEDULER_DECISION_VERSION,
   appendSchedulerDecision,
+  findSchedulerDecisionByAssignmentBatchId,
+  findSchedulerDecisionById,
+  generatedAssignmentBatchId,
   generatedAssignmentId,
   generatedSchedulerDecisionId,
   normalizeSchedulerAssignment,
   normalizeSchedulerDecision,
+  normalizeSchedulerDecisionKind,
+  readCurrentTaskQueueHash,
   readSchedulerDecisions,
   scheduleTasksFromQueue,
 };

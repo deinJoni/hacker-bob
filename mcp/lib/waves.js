@@ -64,6 +64,11 @@ const {
   loadQueuePolicy,
 } = require("./queue-policy.js");
 const {
+  findSchedulerDecisionByAssignmentBatchId,
+  readCurrentTaskQueueHash,
+  scheduleTasksFromQueue,
+} = require("./scheduler-decisions.js");
+const {
   readFindingsFromJsonl,
   summarizeFindings,
 } = require("./findings.js");
@@ -124,6 +129,46 @@ const {
   readWaveHandoffs,
   waveHandoffStatus,
 } = require("./wave-handoff-store.js");
+
+function inspectSchedulerDecisionIntegrity({ domain, assignmentBatchId, schedulerDecisionId }) {
+  const summary = {
+    assignment_batch_id: assignmentBatchId || null,
+    scheduler_decision_id: schedulerDecisionId || null,
+    decision_found: false,
+    queue_hash_drift: false,
+    warning: null,
+  };
+  if (!assignmentBatchId && !schedulerDecisionId) {
+    return summary;
+  }
+  let decision = null;
+  try {
+    if (assignmentBatchId) {
+      decision = findSchedulerDecisionByAssignmentBatchId(domain, assignmentBatchId);
+    }
+  } catch {}
+  if (!decision) {
+    summary.warning = "scheduler_decision_not_found";
+    return summary;
+  }
+  summary.decision_found = true;
+  if (!summary.scheduler_decision_id) {
+    summary.scheduler_decision_id = decision.scheduler_decision_id || null;
+  }
+  let currentQueueHash = null;
+  try {
+    currentQueueHash = readCurrentTaskQueueHash(domain);
+  } catch {
+    // task-queue.json may be absent in narrow fixture paths.
+  }
+  if (decision.source_task_queue_hash && currentQueueHash && decision.source_task_queue_hash !== currentQueueHash) {
+    summary.queue_hash_drift = true;
+    summary.source_task_queue_hash = decision.source_task_queue_hash;
+    summary.current_task_queue_hash = currentQueueHash;
+    summary.warning = "task_queue_hash_drift";
+  }
+  return summary;
+}
 
 function computeRequeueSurfaceIds(artifacts, merge, coverageRecords = []) {
   const requeueSurfaceIds = [];
@@ -225,6 +270,8 @@ function startWaveLocked(domain, {
   source = "bounty_start_wave",
   startedBy = source,
   statePatch = null,
+  schedulerDecisionId = null,
+  assignmentBatchId = null,
 } = {}) {
   assertWaveStartState(state, waveNumber);
 
@@ -309,13 +356,16 @@ function startWaveLocked(domain, {
     { wave: waveNumber, ...startSnapshot },
   ].sort((a, b) => a.wave - b.wave);
 
-  writeFileAtomic(assignmentsPath, `${JSON.stringify({
+  const assignmentsDocument = {
     version: 1,
     handoff_tokens_required: true,
     handoff_provenance_model: HANDOFF_PROVENANCE_MODEL,
     wave_number: waveNumber,
     assignments: assignmentsForDisk,
-  }, null, 2)}\n`);
+  };
+  if (schedulerDecisionId) assignmentsDocument.scheduler_decision_id = schedulerDecisionId;
+  if (assignmentBatchId) assignmentsDocument.assignment_batch_id = assignmentBatchId;
+  writeFileAtomic(assignmentsPath, `${JSON.stringify(assignmentsDocument, null, 2)}\n`);
 
   const nextState = {
     ...state,
@@ -345,6 +395,8 @@ function startWaveLocked(domain, {
     status: "started",
     source,
     started_by: startedBy,
+    scheduler_decision_id: schedulerDecisionId || null,
+    assignment_batch_id: assignmentBatchId || null,
     counts: {
       assignments: assignments.length,
     },
@@ -607,6 +659,25 @@ function startNextWave(args) {
       }
 
       const assignments = normalizeWaveAssignmentsInput(plan.assignments);
+      // Route task selection through bob_schedule_tasks so wave starts become
+      // thin callers of the scheduler. The persisted SchedulerDecision carries
+      // selected_task_ids, skipped_task_ids, source_task_queue_hash, and an
+      // assignment_batch_id that downstream wave-internal verbs (apply-wave-
+      // merge) reference. The wave-internal selection (planNextWave above)
+      // remains the authority for assignment surface/agent mapping during the
+      // dual-write window; the SchedulerDecision is the ledger row even when
+      // task-queue.json is empty (selected_task_ids[] is then also empty).
+      let schedulerDecision = null;
+      try {
+        schedulerDecision = scheduleTasksFromQueue(domain, {
+          write: true,
+          decisionKind: "wave_start",
+        });
+      } catch {
+        // task-queue.json may be absent in early-wave fixtures during dual-write;
+        // never block a wave start on a missing ledger row.
+        schedulerDecision = null;
+      }
       const started = startWaveLocked(domain, {
         raw,
         state: planningState,
@@ -618,6 +689,8 @@ function startNextWave(args) {
         statePatch: promotedForThisStart
           ? { lead_surface_ids: planningState.lead_surface_ids }
           : null,
+        schedulerDecisionId: schedulerDecision ? schedulerDecision.scheduler_decision_id : null,
+        assignmentBatchId: schedulerDecision ? schedulerDecision.assignment_batch_id : null,
       });
 
       return JSON.stringify(buildStartNextWaveResponse({
@@ -823,6 +896,16 @@ function applyWaveMerge(args) {
     }
 
     const { artifacts, merge } = mergeWaveHandoffsInternal(domain, waveNumber);
+    // Decision integrity check (Cycle S.2): the assignment file may reference
+    // an assignment_batch_id from a SchedulerDecision; resolve it back to the
+    // ledger row and flag queue-hash drift. During the dual-write window this
+    // is a warning, not a hard error — wave-internal task selection is still
+    // authoritative for surface/agent mapping.
+    const schedulerDecisionIntegrity = inspectSchedulerDecisionIntegrity({
+      domain,
+      assignmentBatchId: artifacts.assignment_batch_id,
+      schedulerDecisionId: artifacts.scheduler_decision_id,
+    });
     const coverageRecords = readCoverageRecordsFromJsonl(domain);
     const requeueSurfaceIds = computeRequeueSurfaceIds(artifacts, merge, coverageRecords);
     const requeueSurfaceIdSet = new Set(requeueSurfaceIds);
@@ -972,6 +1055,9 @@ function applyWaveMerge(args) {
       force_merge_reason: forceMergeReason,
       status: "merged",
       source: "bounty_apply_wave_merge",
+      scheduler_decision_id: schedulerDecisionIntegrity.scheduler_decision_id,
+      assignment_batch_id: schedulerDecisionIntegrity.assignment_batch_id,
+      scheduler_decision_integrity: schedulerDecisionIntegrity,
       counts: {
         assignments: readiness.assignments_total,
         handoffs: readiness.handoffs_total,
@@ -992,6 +1078,7 @@ function applyWaveMerge(args) {
       force_merge: forceMerge,
       force_merge_reason: forceMergeReason,
       readiness,
+      scheduler_decision_integrity: schedulerDecisionIntegrity,
       merge: {
         received_agents: merge.received_agents,
         invalid_agents: merge.invalid_agents,
