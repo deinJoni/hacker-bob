@@ -210,6 +210,50 @@ function currentBlockers(targetDomain) {
   return fallbackBlockersFromState(readStateRaw(domain));
 }
 
+function normalizeObservationEvent(event) {
+  const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+    ? event.payload
+    : {};
+  // F.4 normalized shape: `kind` carries the observation-class label (e.g.
+  // "http_route", "schema_field", "auth_redirect"). Producers stamp this on
+  // `payload.observation_kind`; callers can also stash it under `payload.kind`
+  // for backward compatibility. Falls back to the event source artifact name.
+  let observationKind = null;
+  if (typeof payload.observation_kind === "string" && payload.observation_kind.trim()) {
+    observationKind = payload.observation_kind.trim();
+  } else if (typeof payload.kind === "string" && payload.kind.trim()) {
+    observationKind = payload.kind.trim();
+  } else if (event.source && typeof event.source === "object" && !Array.isArray(event.source)
+    && typeof event.source.artifact === "string" && event.source.artifact.trim()) {
+    observationKind = event.source.artifact.trim();
+  }
+  const source = event.source && typeof event.source === "object" && !Array.isArray(event.source)
+    ? {
+      artifact: typeof event.source.artifact === "string" ? event.source.artifact : null,
+      ref: typeof event.source.ref === "string"
+        ? event.source.ref
+        : (typeof event.source.tool === "string" ? event.source.tool : null),
+    }
+    : { artifact: null, ref: null };
+  return {
+    event_id: typeof event.event_id === "string" ? event.event_id : null,
+    surface_id: typeof event.surface_id === "string" ? event.surface_id : null,
+    ts: typeof event.ts === "string" ? event.ts : null,
+    kind: observationKind,
+    payload,
+    source,
+  };
+}
+
+function compareObservationEvents(a, b) {
+  const tsA = Date.parse(a.ts || "");
+  const tsB = Date.parse(b.ts || "");
+  if (Number.isFinite(tsA) && Number.isFinite(tsB) && tsA !== tsB) {
+    return tsA - tsB;
+  }
+  return String(a.event_id || "").localeCompare(String(b.event_id || ""));
+}
+
 function observationsForSurface(targetDomain, surfaceId) {
   const domain = assertSafeDomain(targetDomain);
   if (typeof surfaceId !== "string" || !surfaceId.trim()) {
@@ -217,23 +261,16 @@ function observationsForSurface(targetDomain, surfaceId) {
   }
   const trimmed = surfaceId.trim();
   const events = loadFrontierEventsSafely(domain);
-  // F.4 will refine this with a top-level observations[] view on
-  // surface-index.json. For now, return the ordered event stream so callers
-  // that need to walk observations per surface have a single entry point.
   return events
     .filter((event) => event.kind === "observation.recorded" && event.surface_id === trimmed)
-    .sort((a, b) => {
-      const tsA = Date.parse(a.ts || "");
-      const tsB = Date.parse(b.ts || "");
-      if (Number.isFinite(tsA) && Number.isFinite(tsB) && tsA !== tsB) {
-        return tsA - tsB;
-      }
-      return String(a.event_id || "").localeCompare(String(b.event_id || ""));
-    });
+    .sort(compareObservationEvents)
+    .map(normalizeObservationEvent);
 }
 
 module.exports = {
+  compareObservationEvents,
   currentBlockers,
   currentClosures,
+  normalizeObservationEvent,
   observationsForSurface,
 };

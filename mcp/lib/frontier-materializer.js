@@ -25,6 +25,10 @@ const {
   compareQueuedTasks,
   normalizeQueuePolicy,
 } = require("./queue-policy.js");
+const {
+  compareObservationEvents,
+  normalizeObservationEvent,
+} = require("./frontier-projections.js");
 
 function uniqueSorted(values) {
   return Array.from(new Set(values.filter((value) => typeof value === "string" && value.length > 0))).sort();
@@ -48,6 +52,7 @@ function ensureSurface(surfacesById, domain, surfaceId, ts) {
       source_event_ids: [],
       task_ids: [],
       observation_event_ids: [],
+      observations: [],
       control_expectation_event_ids: [],
       blocker_event_ids: [],
       closure_event_ids: [],
@@ -125,6 +130,7 @@ function materializeFrontierDocument(domain, { write = false, now = new Date(), 
     if (event.kind === "observation.recorded" && event.surface_id) {
       const surface = ensureSurface(surfacesById, domain, event.surface_id, event.ts);
       addUnique(surface.observation_event_ids, event.event_id);
+      surface.observations.push(normalizeObservationEvent(event));
     }
 
     if (event.kind === "control_expectation.recorded" && event.surface_id) {
@@ -160,16 +166,29 @@ function materializeFrontierDocument(domain, { write = false, now = new Date(), 
   }
 
   const surfaces = Array.from(surfacesById.values())
-    .map((surface) => ({
-      ...surface,
-      labels: uniqueSorted(surface.labels),
-      source_event_ids: uniqueSorted(surface.source_event_ids),
-      task_ids: uniqueSorted(surface.task_ids),
-      observation_event_ids: uniqueSorted(surface.observation_event_ids),
-      control_expectation_event_ids: uniqueSorted(surface.control_expectation_event_ids),
-      blocker_event_ids: uniqueSorted(surface.blocker_event_ids),
-      closure_event_ids: uniqueSorted(surface.closure_event_ids),
-    }))
+    .map((surface) => {
+      // Deduplicate observation entries by event_id (events can be referenced
+      // by multiple branches of the fold) and order them deterministically by
+      // (ts, event_id) so the same event log always yields the same hash.
+      const observationsById = new Map();
+      for (const observation of surface.observations) {
+        if (observation && observation.event_id && !observationsById.has(observation.event_id)) {
+          observationsById.set(observation.event_id, observation);
+        }
+      }
+      const observations = Array.from(observationsById.values()).sort(compareObservationEvents);
+      return {
+        ...surface,
+        labels: uniqueSorted(surface.labels),
+        source_event_ids: uniqueSorted(surface.source_event_ids),
+        task_ids: uniqueSorted(surface.task_ids),
+        observation_event_ids: uniqueSorted(surface.observation_event_ids),
+        observations,
+        control_expectation_event_ids: uniqueSorted(surface.control_expectation_event_ids),
+        blocker_event_ids: uniqueSorted(surface.blocker_event_ids),
+        closure_event_ids: uniqueSorted(surface.closure_event_ids),
+      };
+    })
     .sort(sortByTextField("surface_id"));
 
   const tasks = Array.from(tasksByKey.values()).sort((a, b) => compareQueuedTasks(a, b, policy));
