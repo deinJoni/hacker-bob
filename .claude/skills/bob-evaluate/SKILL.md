@@ -73,6 +73,7 @@ allowed-tools:
   - mcp__bountyagent__bounty_build_surface_graph
   - mcp__bountyagent__bounty_query_surface_graph
   - mcp__bountyagent__bob_append_frontier_event
+  - mcp__bountyagent__bob_materialize_frontier
   - mcp__bountyagent__bounty_http_scan
   - mcp__bountyagent__bounty_temp_email
   - mcp__bountyagent__bounty_signup_detect

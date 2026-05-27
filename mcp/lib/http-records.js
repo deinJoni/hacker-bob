@@ -48,6 +48,9 @@ const {
 const {
   appendFrontierEvent,
 } = require("./frontier-events.js");
+const {
+  scheduleMaterialization,
+} = require("./frontier-materialize-debounce.js");
 
 function normalizeHttpAuditRecord(record, { expectedDomain = null, lineNumber = null } = {}) {
   if (record == null || typeof record !== "object" || Array.isArray(record)) {
@@ -730,6 +733,7 @@ function importHttpTraffic(args, { rankAttackSurfaces = null } = {}) {
           },
           source: { artifact: "traffic.jsonl", tool: "bounty_import_http_traffic" },
         });
+        scheduleMaterialization(domain);
       } catch {
         // Frontier ledger is dual-write best-effort during the deprecation window.
       }

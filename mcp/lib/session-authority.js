@@ -100,6 +100,7 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bounty_read_pipeline_analytics: "mode_dependent_session",
   bob_advance_session: "initialized_session_mutation",
   bob_append_frontier_event: "initialized_session_mutation",
+  bob_materialize_frontier: "initialized_session_mutation",
   bob_read_session_nucleus: "initialized_session_read",
   bounty_read_session_state: "initialized_session_read",
   bounty_read_session_summary: "initialized_session_read",

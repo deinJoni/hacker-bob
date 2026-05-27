@@ -44,6 +44,9 @@ const {
 const {
   appendFrontierEvent,
 } = require("./frontier-events.js");
+const {
+  scheduleMaterialization,
+} = require("./frontier-materialize-debounce.js");
 
 function rejectPathImport(args) {
   for (const key of ["path", "file_path", "filename", "contract_path", "source_path"]) {
@@ -261,6 +264,7 @@ function importStaticArtifact(args) {
         },
         source: { artifact: "static-artifacts.jsonl", tool: "bounty_import_static_artifact" },
       });
+      scheduleMaterialization(domain);
     } catch {
       // Frontier ledger is dual-write best-effort during the deprecation window.
     }

@@ -30,6 +30,9 @@ const {
 const {
   appendFrontierEvent,
 } = require("./frontier-events.js");
+const {
+  scheduleMaterialization,
+} = require("./frontier-materialize-debounce.js");
 
 const LEAD_CONFIDENCE_VALUES = ["high", "medium", "low"];
 const LEAD_STATUS_VALUES = ["new", "promoted", "dismissed"];
@@ -276,6 +279,7 @@ function recordSurfaceLeadsInternal(domain, leads, context = {}) {
         },
         source: { artifact: "surface-leads.json", tool: "bounty_record_surface_leads" },
       });
+      scheduleMaterialization(domain);
     } catch {
       // Frontier ledger is dual-write best-effort during the deprecation window.
     }
@@ -455,6 +459,7 @@ function promoteSurfaceLeadsInternal(domain, options = {}) {
         },
         source: { artifact: "attack_surface.json", tool: "bounty_promote_surface_leads" },
       });
+      scheduleMaterialization(domain);
     } catch {
       // Frontier ledger is dual-write best-effort during the deprecation window.
     }

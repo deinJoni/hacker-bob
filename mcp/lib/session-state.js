@@ -14,9 +14,12 @@ const {
   sessionDir,
   sessionNucleusPath,
   statePath,
+  surfaceIndexPath,
+  taskQueuePath,
 } = require("./paths.js");
 const {
   isSessionDirEffectivelyEmpty,
+  readJsonFile,
   withSessionLock,
   writeFileAtomic,
 } = require("./storage.js");
@@ -39,6 +42,9 @@ const {
 const {
   appendFrontierEvent,
 } = require("./frontier-events.js");
+const {
+  scheduleMaterialization,
+} = require("./frontier-materialize-debounce.js");
 const {
   evaluateLifecycleTransition,
 } = require("./lifecycle-gates.js");
@@ -311,6 +317,7 @@ function initSession(args) {
         },
         source: { artifact: "session-nucleus.json", tool: "bounty_init_session" },
       });
+      scheduleMaterialization(domain);
     } catch {
       // Frontier ledger is dual-write best-effort during the deprecation window.
     }
@@ -324,12 +331,39 @@ function initSession(args) {
   });
 }
 
+function readFrontierViewHashes(domain) {
+  // Read materialized view hashes from disk. Returns null when either view is
+  // missing (typical for sessions whose first producer hasn't yet flushed) so
+  // callers can surface the absence without conflating it with a hash mismatch.
+  const surfacePath = surfaceIndexPath(domain);
+  const queuePath = taskQueuePath(domain);
+  if (!fs.existsSync(surfacePath) || !fs.existsSync(queuePath)) {
+    return null;
+  }
+  try {
+    const surfaceIndex = readJsonFile(surfacePath, { label: "surface-index.json" });
+    const taskQueue = readJsonFile(queuePath, { label: "task-queue.json" });
+    return {
+      surface_index_hash: surfaceIndex && typeof surfaceIndex.surface_index_hash === "string"
+        ? surfaceIndex.surface_index_hash
+        : null,
+      task_queue_hash: taskQueue && typeof taskQueue.task_queue_hash === "string"
+        ? taskQueue.task_queue_hash
+        : null,
+    };
+  } catch {
+    // Best-effort: a malformed view should not break the session-state read.
+    return null;
+  }
+}
+
 function readSessionState(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   const { state } = readSessionStateStrict(domain);
   return JSON.stringify({
     version: 1,
     state: publicSessionState(state),
+    frontier_view_hashes: readFrontierViewHashes(domain),
   });
 }
 
@@ -339,6 +373,7 @@ function readStateSummary(args) {
   return JSON.stringify({
     version: 1,
     state: compactSessionState(state),
+    frontier_view_hashes: readFrontierViewHashes(domain),
   });
 }
 

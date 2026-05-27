@@ -108,6 +108,7 @@ const TOOL_MODULES = Object.freeze([
   require("./build-surface-graph.js"),
   require("./query-surface-graph.js"),
   require("./append-frontier-event.js"),
+  require("./materialize-frontier.js"),
 ]);
 
 module.exports = {

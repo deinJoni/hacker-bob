@@ -36,6 +36,9 @@ const {
 const {
   appendFrontierEvent,
 } = require("./frontier-events.js");
+const {
+  scheduleMaterialization,
+} = require("./frontier-materialize-debounce.js");
 
 function normalizeCoverageRecord(record, { expectedDomain = null, lineNumber = null } = {}) {
   if (record == null || typeof record !== "object" || Array.isArray(record)) {
@@ -307,6 +310,7 @@ function logCoverage(args) {
         },
         source: { artifact: "coverage.jsonl", tool: "bounty_log_coverage" },
       });
+      scheduleMaterialization(domain);
     } catch {
       // Frontier ledger is dual-write best-effort during the deprecation window.
     }

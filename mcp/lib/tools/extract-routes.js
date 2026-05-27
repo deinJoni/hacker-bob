@@ -2,6 +2,7 @@
 
 const { extractRoutesFromFiles } = require("../route-extractor.js");
 const { appendFrontierEvent } = require("../frontier-events.js");
+const { scheduleMaterialization } = require("../frontier-materialize-debounce.js");
 
 function extractRoutesHandler(args) {
   const routes = extractRoutesFromFiles(args.files);
@@ -22,6 +23,7 @@ function extractRoutesHandler(args) {
         },
         source: { artifact: "route-extraction", tool: "bounty_extract_routes" },
       });
+      scheduleMaterialization(args.target_domain);
     } catch {
       // Frontier ledger is dual-write best-effort during the deprecation window.
     }

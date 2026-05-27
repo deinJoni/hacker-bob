@@ -432,6 +432,7 @@ const EXPECTED_TOOL_NAMES = [
   "bounty_build_surface_graph",
   "bounty_query_surface_graph",
   "bob_append_frontier_event",
+  "bob_materialize_frontier",
 ];
 
 function withTempHome(fn) {
@@ -3682,10 +3683,18 @@ test("bounty_init_session creates the initial state and bounty_read_session_stat
 
     const rawState = JSON.parse(fs.readFileSync(statePath(domain), "utf8"));
     assert.deepEqual(rawState, expectedState);
-    assert.deepEqual(JSON.parse(readSessionState({ target_domain: domain })), {
-      version: 1,
-      state: expectedState,
-    });
+    const stateResponse = JSON.parse(readSessionState({ target_domain: domain }));
+    assert.equal(stateResponse.version, 1);
+    assert.deepEqual(stateResponse.state, expectedState);
+    // F.2: readSessionState surfaces materialized view hashes when the views
+    // exist on disk. init_session emits a session.seeded frontier event which
+    // triggers the debounced materializer on outer-lock release, so the views
+    // are populated by the time the read returns.
+    assert.equal(typeof stateResponse.frontier_view_hashes, "object");
+    assert.equal(typeof stateResponse.frontier_view_hashes.surface_index_hash, "string");
+    assert.equal(typeof stateResponse.frontier_view_hashes.task_queue_hash, "string");
+    assert.match(stateResponse.frontier_view_hashes.surface_index_hash, /^[0-9a-f]{64}$/);
+    assert.match(stateResponse.frontier_view_hashes.task_queue_hash, /^[0-9a-f]{64}$/);
 
     const deepDomain = "deep.example.com";
     const deepCreated = JSON.parse(initSession({
@@ -3905,6 +3914,9 @@ test("legacy state normalization is applied while unknown fields remain on disk 
         verification_entered_at: null,
         handoff_provenance_required: false,
       },
+      // F.2: state.json was hand-written without a frontier-events.jsonl, so
+      // the materialized views never produced and frontier_view_hashes is null.
+      frontier_view_hashes: null,
     });
 
     JSON.parse(transitionPhase({ target_domain: domain, to_phase: "AUTH" }));

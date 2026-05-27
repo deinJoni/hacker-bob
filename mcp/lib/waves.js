@@ -76,6 +76,9 @@ const {
   appendFrontierEvent,
 } = require("./frontier-events.js");
 const {
+  scheduleMaterialization,
+} = require("./frontier-materialize-debounce.js");
+const {
   ERROR_CODES,
   ToolError,
 } = require("./envelope.js");
@@ -1068,6 +1071,7 @@ function logDeadEnds(args) {
         },
         source: { artifact: "live-dead-ends.jsonl", tool: "bounty_log_dead_ends" },
       });
+      scheduleMaterialization(domain);
     } catch {
       // Frontier ledger is dual-write best-effort during the deprecation window.
     }

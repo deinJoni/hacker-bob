@@ -4,9 +4,17 @@ const {
   FRONTIER_EVENT_KINDS,
   appendFrontierEvent,
 } = require("../frontier-events.js");
+const {
+  scheduleMaterialization,
+} = require("../frontier-materialize-debounce.js");
 
 function handler(args) {
   const event = appendFrontierEvent(args || {});
+  try {
+    scheduleMaterialization(event.target_domain);
+  } catch {
+    // Materialization debounce is best-effort; do not regress the event append.
+  }
   return JSON.stringify({
     version: 1,
     appended: true,
