@@ -76,6 +76,10 @@ const {
   selectCliToolPacks,
 } = require("./cli-tool-packs.js");
 const {
+  DEMOTION_SCORE_PENALTY,
+  loadPackTelemetry,
+} = require("./pack-telemetry.js");
+const {
   checkCliToolInstallation,
   presenceCachePath,
 } = require("./cli-tool-presence.js");
@@ -830,41 +834,53 @@ function readCliToolInstallStatusSync(targetDomain) {
 
 // Score + render the cli-tool section against a precomputed install status.
 // Shared by the sync brief-assembly path and the async caller that probes
-// install_check live (test/cli-tool-packs.test.js). telemetryPromotionForPack
-// is the T.8 hook; T.3 ships the zero-implementation so the scoring formula
-// is settled now instead of after telemetry lands.
+// install_check live (test/cli-tool-packs.test.js). `packTelemetry` is the
+// T.8 reader output (a Map keyed by pack id). T.3 carried a zero-promotion
+// stub; T.8 wires the real reader here. When `packTelemetry` is absent or
+// adaptive_curation is off, every promotion is 0 and the formula reduces to
+// its T.3 form (T-R8 determinism preserved).
 function scoreAndRenderCliToolPacks({
   surface_fingerprint,
   task_lens,
   observations,
   target_domain,
   installStatus,
-  telemetryPromotionForPack,
+  packTelemetry,
 }) {
+  const telemetryMap = packTelemetry && typeof packTelemetry.get === "function"
+    ? packTelemetry
+    : null;
   const applicable = selectCliToolPacks({
     surface_fingerprint,
     task_lens,
     observations,
     install_status: installStatus || {},
+    pack_telemetry: telemetryMap,
   });
   const applicableIds = new Set(applicable.map((pack) => pack.id));
-  const telemetryFn = typeof telemetryPromotionForPack === "function"
-    ? telemetryPromotionForPack
-    : () => 0;
+  const demotedIds = new Set(
+    applicable.filter((pack) => pack.demoted === true).map((pack) => pack.id),
+  );
   const scored = CLI_TOOL_PACKS
     .map((pack) => {
       const installEntry = (installStatus && installStatus[pack.id]) || { installed: false };
       const installScore = installEntry.installed ? INSTALL_PRESENT_WEIGHT : 0;
       const applicableScore = applicableIds.has(pack.id) ? APPLICABLE_MATCH_WEIGHT : 0;
+      const telemetryEntry = telemetryMap ? telemetryMap.get(pack.id) : null;
       let telemetryScore = 0;
-      try {
-        const raw = telemetryFn(pack);
-        telemetryScore = Number.isFinite(raw) ? raw * TELEMETRY_PROMOTION_WEIGHT : 0;
-      } catch {
-        telemetryScore = 0;
+      if (telemetryEntry && Number.isFinite(telemetryEntry.telemetry_promotion)) {
+        telemetryScore = telemetryEntry.telemetry_promotion * TELEMETRY_PROMOTION_WEIGHT;
       }
-      const score = installScore + applicableScore + telemetryScore;
-      return { pack, score, applicable: applicableIds.has(pack.id), installEntry };
+      const demoted = demotedIds.has(pack.id);
+      const demotionPenalty = demoted ? DEMOTION_SCORE_PENALTY : 0;
+      const score = installScore + applicableScore + telemetryScore + demotionPenalty;
+      return {
+        pack,
+        score,
+        applicable: applicableIds.has(pack.id),
+        installEntry,
+        demoted,
+      };
     })
     .filter((entry) => entry.applicable)
     .sort((a, b) => {
@@ -878,8 +894,9 @@ function scoreAndRenderCliToolPacks({
   for (const entry of scored) {
     const version = entry.installEntry && entry.installEntry.version ? entry.installEntry.version : null;
     const versionLabel = version ? ` (v${version})` : "";
+    const demotedLabel = entry.demoted ? " (demoted)" : "";
     const invocation = fillInvocationPlaceholders(entry.pack.invocation_template, renderContext);
-    lines.push(`- **${entry.pack.id}**${versionLabel} — ${entry.pack.narrative}`);
+    lines.push(`- **${entry.pack.id}**${versionLabel}${demotedLabel} — ${entry.pack.narrative}`);
     lines.push(`  \`${invocation}\``);
   }
   return lines.join("\n");
@@ -887,6 +904,12 @@ function scoreAndRenderCliToolPacks({
 
 // Sync variant used by readAssignmentBrief / WEB_BRIEF_SLICE_REGISTRY. Reads
 // the install-presence cache file directly; never spawns a subprocess.
+// T.8 — wire in the adaptive pack-telemetry projection. When the operator
+// has not enabled adaptive curation (pack-telemetry-config.json absent or
+// `adaptive_curation: false`), `loadPackTelemetry` returns a Map where every
+// pack carries `telemetry_promotion: 0` and `demoted: false`, so the scoring
+// formula collapses to its T.3 form — preserving determinism for the
+// default-off path (T-P5 / T-D5 / T-R8).
 function renderAvailableCliToolsSectionSync({
   surface_fingerprint,
   task_lens,
@@ -894,15 +917,26 @@ function renderAvailableCliToolsSectionSync({
   target_domain,
 } = {}) {
   const installStatus = readCliToolInstallStatusSync(target_domain);
+  const packTelemetry = loadPackTelemetrySafe(target_domain);
   return scoreAndRenderCliToolPacks({
     surface_fingerprint,
     task_lens,
     observations,
     target_domain,
     installStatus,
-    // T.8 will replace this with a real `pack-telemetry.js` reader.
-    telemetryPromotionForPack: () => 0,
+    packTelemetry,
   });
+}
+
+function loadPackTelemetrySafe(targetDomain) {
+  try {
+    return loadPackTelemetry(targetDomain);
+  } catch {
+    // Telemetry must never block brief rendering. A read failure (missing
+    // session dir, malformed JSONL) silently degrades to the default-off
+    // shape: every pack at promotion=0, demoted=false.
+    return null;
+  }
 }
 
 function buildCliToolRenderContext(surface_fingerprint, observations, target_domain) {
@@ -940,14 +974,14 @@ async function renderAvailableCliToolsSection({
   target_domain,
 } = {}) {
   const installStatus = await loadCliToolInstallStatus(target_domain, CLI_TOOL_PACKS);
+  const packTelemetry = loadPackTelemetrySafe(target_domain);
   return scoreAndRenderCliToolPacks({
     surface_fingerprint,
     task_lens,
     observations,
     target_domain,
     installStatus,
-    // T.8 will replace this with a real `pack-telemetry.js` reader.
-    telemetryPromotionForPack: () => 0,
+    packTelemetry,
   });
 }
 

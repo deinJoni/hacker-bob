@@ -74,6 +74,7 @@ allowed-tools:
   - mcp__hacker-bob__bob_read_queue_policy
   - mcp__hacker-bob__bob_set_queue_policy
   - mcp__hacker-bob__bob_schedule_tasks
+  - mcp__hacker-bob__bob_set_pack_telemetry_config
   - mcp__hacker-bob__bob_http_scan
   - mcp__hacker-bob__bob_temp_email
   - mcp__hacker-bob__bob_signup_detect

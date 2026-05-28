@@ -125,6 +125,7 @@ const TOOL_MODULES = Object.freeze([
   require("./browser-session-close.js"),
   require("./browser-session-start-recording.js"),
   require("./browser-flush-recorded-requests.js"),
+  require("./set-pack-telemetry-config.js"),
 ]);
 
 module.exports = {

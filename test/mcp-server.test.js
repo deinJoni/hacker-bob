@@ -462,6 +462,7 @@ const EXPECTED_TOOL_NAMES = [
   "bob_browser_session_close",
   "bob_browser_session_start_recording",
   "bob_browser_flush_recorded_requests",
+  "bob_set_pack_telemetry_config",
 ];
 
 function withTempHome(fn) {

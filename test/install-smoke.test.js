@@ -174,7 +174,7 @@ test("installer copies a require-able complete MCP runtime", () => {
         "const installedRequire = require('module').createRequire(process.argv[1]);",
         "installedRequire('psl');",
         "installedRequire('proxy-agent');",
-        "if (!Array.isArray(server.TOOLS) || server.TOOLS.length !== 124) process.exit(2);",
+        "if (!Array.isArray(server.TOOLS) || server.TOOLS.length !== 125) process.exit(2);",
         "if (!server.TOOLS.some((tool) => tool.name === 'bob_list_auth_profiles')) process.exit(3);",
         "if (!server.TOOLS.some((tool) => tool.name === 'bob_finalize_report')) process.exit(25);",
         "if (!server.TOOLS.some((tool) => tool.name === 'bob_read_tool_telemetry')) process.exit(6);",

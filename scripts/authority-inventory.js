@@ -110,6 +110,7 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_read_queue_policy: "initialized_session_read",
   bob_read_session_nucleus: "initialized_session_read",
   bob_schedule_tasks: "initialized_session_mutation",
+  bob_set_pack_telemetry_config: "initialized_session_mutation",
   bob_set_queue_policy: "initialized_session_mutation",
   bob_read_session_state: "initialized_session_read",
   bob_read_session_summary: "initialized_session_read",

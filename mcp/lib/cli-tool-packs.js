@@ -225,17 +225,30 @@ function observationList(observations) {
 // Pure selection. install_status is a map { [pack_id]: { installed, version? } }.
 // The predicate is the source of truth for applicability. install_status is
 // passed through so downstream rendering can rank installed packs higher.
+//
+// Plane T Cycle T.8 — optional `pack_telemetry` argument carries adaptive
+// curation signals. When a pack id appears in `pack_telemetry` with
+// `demoted: true`, the returned pack is wrapped with a `demoted: true` flag
+// so the brief renderer can apply the score penalty (T-D5: operator-gated
+// opt-in; T-R8: deterministic for fixed telemetry). The pack frozen object
+// itself is left untouched — we surface the annotation on a sibling
+// `demoted` property of the returned reference so the registry contract
+// (frozen packs only) holds.
 function selectCliToolPacks({
   surface_fingerprint,
   task_lens,
   observations,
   install_status,
+  pack_telemetry,
 } = {}) {
   const surface = surface_fingerprint || null;
   const observationsArg = observations == null ? [] : observations;
   const installStatusMap = install_status && typeof install_status === "object" && !Array.isArray(install_status)
     ? install_status
     : {};
+  const telemetryMap = pack_telemetry && typeof pack_telemetry.get === "function"
+    ? pack_telemetry
+    : null;
   const selected = [];
   for (const pack of CLI_TOOL_PACKS) {
     let applicable = false;
@@ -249,7 +262,13 @@ function selectCliToolPacks({
     } catch {
       applicable = false;
     }
-    if (applicable) selected.push(pack);
+    if (!applicable) continue;
+    const telemetry = telemetryMap ? telemetryMap.get(pack.id) : null;
+    if (telemetry && telemetry.demoted === true) {
+      selected.push(Object.freeze({ ...pack, demoted: true }));
+      continue;
+    }
+    selected.push(pack);
   }
   return selected;
 }
