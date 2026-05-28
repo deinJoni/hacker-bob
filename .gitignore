@@ -9,9 +9,11 @@ site/dist/
 .mcp.json
 !adapters/codex/hacker-bob/.mcp.json
 .codex/
+.kimi/
 .agents/
 .hacker-bob/VERSION
 .hacker-bob/install.json
+.hacker-bob/verification-rounds/
 .claude/bob/VERSION
 .claude/bob/install.json
 .claude/bob/egress-profiles.json

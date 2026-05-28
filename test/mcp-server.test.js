@@ -12187,6 +12187,57 @@ test("bounty_write_verification_round accepts notes null and validates duplicate
   });
 });
 
+test("bounty_write_verification_round accepts severity:null for tooling-unavailable denials and round-trips it", () => {
+  // Regression: severity=null is the documented escape hatch for verifier
+  // tooling-unavailable cases (prompts/roles/final-verifier.md:19,34,62 and
+  // brutalist-verifier.md:36,64,103). The MCP schema and the findings.js
+  // normalizer must both keep accepting it.
+  const { validateToolArguments } = require("../mcp/lib/tool-validation.js");
+
+  validateToolArguments("bounty_write_verification_round", {
+    target_domain: "example.com",
+    round: "brutalist",
+    notes: "tooling unavailable at this round",
+    results: [
+      {
+        finding_id: "F-1",
+        disposition: "denied",
+        severity: null,
+        reportable: false,
+        reasoning: "cannot finalize: tooling or RPC unavailable at this round",
+      },
+    ],
+  });
+
+  withTempHome(() => {
+    const domain = "example.com";
+    seedFinding(domain);
+
+    const result = JSON.parse(writeVerificationRound({
+      target_domain: domain,
+      round: "brutalist",
+      notes: null,
+      results: [
+        {
+          finding_id: "F-1",
+          disposition: "denied",
+          severity: null,
+          reportable: false,
+          reasoning: "cannot finalize: tooling or RPC unavailable at this round",
+        },
+      ],
+    }));
+
+    const paths = verificationRoundPaths(domain, "brutalist");
+    const persisted = JSON.parse(fs.readFileSync(paths.json, "utf8"));
+    assert.equal(result.results_count, 1);
+    assert.equal(persisted.results.length, 1);
+    assert.equal(persisted.results[0].severity, null);
+    assert.equal(persisted.results[0].disposition, "denied");
+    assert.equal(persisted.results[0].reportable, false);
+  });
+});
+
 test("bounty_write_verification_round rejects balanced/final rounds that drop prior-round findings", () => {
   withTempHome(() => {
     const domain = "example.com";

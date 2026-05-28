@@ -219,7 +219,7 @@ test("Codex skills render exactly from the shared role model", () => {
 });
 
 test("adapter registry exposes the shared lifecycle surface", () => {
-  assert.deepEqual(Object.keys(ADAPTERS).sort(), ["claude", "codex", "generic-mcp"].sort());
+  assert.deepEqual(Object.keys(ADAPTERS).sort(), ["claude", "codex", "generic-mcp", "kimi"].sort());
   for (const id of Object.keys(ADAPTERS)) {
     const adapter = getAdapter(id);
     assert.equal(adapter.id, id);
@@ -1130,9 +1130,11 @@ test("installer and dev-sync ship Claude hyphen skills and prune legacy slash pa
 test("dev-sync accepts adapters and gates Claude-specific sync paths", () => {
   const devSync = readFile("dev-sync.sh");
 
-  assert.match(devSync, /--adapter claude\|codex\|generic-mcp\|all/);
+  assert.match(devSync, /--adapter claude\|codex\|generic-mcp\|kimi\|all/);
   assert.match(devSync, /ADAPTER="claude"/);
   assert.match(devSync, /"\$SCRIPT_DIR\/install\.sh" "\$TARGET_ABS" --adapter "\$ADAPTER"/);
+  assert.match(devSync, /function sync_kimi_adapter\(\)|sync_kimi_adapter\(\) \{/);
+  assert.match(devSync, /if adapter_includes "kimi"; then\s+sync_kimi_adapter/s);
   assert.match(devSync, /function sync_claude_adapter\(\)|sync_claude_adapter\(\) \{/);
   assert.match(devSync, /if adapter_includes "claude"; then\s+sync_claude_adapter/s);
   assert.match(devSync, /\$bob-status skill/);

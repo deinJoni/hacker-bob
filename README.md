@@ -11,11 +11,12 @@
   <a href="https://www.npmjs.com/package/hacker-bob"><img alt="hacker-bob on npm" src="https://img.shields.io/npm/v/hacker-bob?label=hacker-bob" /></a>
   <a href="https://www.npmjs.com/package/hacker-bob-cc"><img alt="hacker-bob-cc on npm" src="https://img.shields.io/npm/v/hacker-bob-cc?label=hacker-bob-cc" /></a>
   <a href="https://www.npmjs.com/package/hacker-bob-codex"><img alt="hacker-bob-codex on npm" src="https://img.shields.io/npm/v/hacker-bob-codex?label=hacker-bob-codex" /></a>
+  <a href="https://www.npmjs.com/package/hacker-bob-kimi"><img alt="hacker-bob-kimi on npm" src="https://img.shields.io/npm/v/hacker-bob-kimi?label=hacker-bob-kimi" /></a>
   <a href="LICENSE"><img alt="Apache-2.0 license" src="https://img.shields.io/github/license/vmihalis/hacker-bob" /></a>
   <a href="https://securityscorecards.dev/viewer/?uri=github.com/vmihalis/hacker-bob"><img alt="OpenSSF Scorecard" src="https://api.securityscorecards.dev/projects/github.com/vmihalis/hacker-bob/badge" /></a>
 </p>
 
-Hacker Bob installs a local MCP runtime into a project directory and connects it to Claude Code, Codex, or another MCP-capable host. The runtime coordinates reconnaissance, authentication setup, parallel surface testing, finding verification, grading, reporting, and local evidence handling.
+Hacker Bob installs a local MCP runtime into a project directory and connects it to Claude Code, Codex, Kimi CLI, or another MCP-capable host. The runtime coordinates reconnaissance, authentication setup, parallel surface testing, finding verification, grading, reporting, and local evidence handling.
 
 Bob is designed for authorized security testing. It can send real network requests, run local recon tools, import local artifacts, and preserve sensitive run data on disk. You are responsible for using it only where you have permission.
 
@@ -35,6 +36,7 @@ Restart your host CLI from the same project directory, then run the matching com
 |---|---|
 | Claude Code | `/bob-hunt target.com` |
 | Codex | `$bob-hunt target.com` |
+| Kimi CLI | `/skill:bob-hunt target.com` |
 | Generic MCP host | Connect the generated `.mcp.json`, then follow `.hacker-bob/generic-mcp/hacker-bob.md`. |
 
 Run a status check before a full hunt if you want to confirm the integration is loaded:
@@ -43,6 +45,7 @@ Run a status check before a full hunt if you want to confirm the integration is 
 |---|---|
 | Claude Code | `/bob-status` |
 | Codex | `$bob-status` |
+| Kimi CLI | `/skill:bob-status` |
 | Shell | `hacker-bob doctor /path/to/your/project` |
 
 ## Safety
@@ -71,6 +74,7 @@ Adapter-specific installs are available when you want to choose the host explici
 npx -y hacker-bob@latest install /path/to/your/project --adapter claude
 npx -y hacker-bob@latest install /path/to/your/project --adapter codex
 npx -y hacker-bob@latest install /path/to/your/project --adapter generic-mcp
+npx -y hacker-bob@latest install /path/to/your/project --adapter kimi
 npx -y hacker-bob@latest install /path/to/your/project --adapter all
 ```
 
@@ -80,6 +84,7 @@ The installer is idempotent and preserves unrelated host configuration. It write
 |---|---|
 | `claude` | `.claude/` commands, skills, agents, hooks, statusline setup, and MCP settings. |
 | `codex` | `$bob-*` skills in `~/.codex/skills`, a local `.codex/plugins/hacker-bob` plugin, `.agents/plugins/marketplace.json`, and Codex MCP activation metadata. |
+| `kimi` | `.kimi/skills`, `.kimi/mcp.json`, and `.kimi/bob` compatibility metadata. Relies on prompt-side enforcement; no PreToolUse hooks until `~/.kimi/config.toml` wiring lands. |
 | `generic-mcp` | A root `.mcp.json` entry plus prompt guide files under `.hacker-bob/generic-mcp/`. |
 
 When `--adapter` is omitted, Bob chooses an adapter from prior install metadata, host environment markers, project files, and installed host CLIs. Claude is the final fallback.
@@ -91,6 +96,7 @@ Small wrapper packages are available when you want the host choice encoded in th
 ```bash
 npx -y hacker-bob-cc@latest install /path/to/your/project
 npx -y hacker-bob-codex@latest install /path/to/your/project
+npx -y hacker-bob-kimi@latest install /path/to/your/project
 ```
 
 You can also install the CLI globally:
@@ -136,11 +142,23 @@ $bob-export
 $bob-egress
 ```
 
+Kimi uses `/skill:` prefix:
+
+```text
+/skill:bob-hunt target.com
+/skill:bob-status
+/skill:bob-debug
+/skill:bob-update
+/skill:bob-export
+/skill:bob-egress
+```
+
 For install diagnostics:
 
 ```bash
 hacker-bob doctor /path/to/your/project
 hacker-bob doctor /path/to/your/project --adapter codex
+hacker-bob doctor /path/to/your/project --adapter kimi
 ```
 
 ## How A Hunt Works
@@ -164,7 +182,7 @@ MCP ranking computes runtime priority for status views and hunter briefs. Import
 ## Requirements
 
 - Node.js 20 or newer
-- One supported host: Claude Code, Codex, or another MCP-capable host
+- One supported host: Claude Code, Codex, Kimi CLI, or another MCP-capable host
 - `curl` and `python3`
 - A dedicated project directory for the installed runtime
 
@@ -201,6 +219,12 @@ From Codex:
 $bob-update
 ```
 
+From Kimi:
+
+```text
+/skill:bob-update
+```
+
 From a shell:
 
 ```bash
@@ -213,7 +237,7 @@ Bob also checks for available updates once per day on session start and stores t
 
 ## Exporting Run Data
 
-After testing with an installed release, run `/bob-export` in Claude or `$bob-export` in Codex. Bob writes a timestamped bundle under:
+After testing with an installed release, run `/bob-export` in Claude, `$bob-export` in Codex, or `/skill:bob-export` in Kimi. Bob writes a timestamped bundle under:
 
 ```text
 ~/bounty-agent-telemetry/release-bundles/v<version>/
@@ -234,6 +258,7 @@ Common checks:
 - `node -e "require('./mcp/server.js'); console.log('MCP ok')"` should pass from the installed project.
 - Claude Code must be restarted after install or update before `/bob-*` commands and MCP settings load.
 - Codex must be restarted after install or update before `$bob-*` skills and local plugin wiring load.
+- Kimi CLI must be restarted after install or update before `/skill:bob-*` skills and MCP config load.
 - `.mcp.json` should contain an `mcpServers.bountyagent` entry pointing at the installed project's `mcp/server.js`.
 - If an upgrade leaves `mcp/lib/tools/` missing, rerun the installer with `hacker-bob@latest`.
 
@@ -251,7 +276,7 @@ Bob stores local run state, telemetry, and evidence under `~/bounty-agent-sessio
 
 During a hunt, Bob may make outbound HTTP requests, run local recon tools, import HTTP or static artifacts, and use host-side reasoning over the collected context. Optional third-party services and dependencies, such as browser automation dependencies, CAPTCHA solving, public-intel sources, or external recon tools, are used only when you configure the relevant dependencies or credentials.
 
-The npm packages are published through the project release workflow with npm provenance. `hacker-bob` is the canonical package; `hacker-bob-cc` and `hacker-bob-codex` are small wrapper packages that depend on the matching canonical version.
+The npm packages are published through the project release workflow with npm provenance. `hacker-bob` is the canonical package; `hacker-bob-cc`, `hacker-bob-codex`, and `hacker-bob-kimi` are small wrapper packages that depend on the matching canonical version.
 
 Read [DISCLAIMER.md](DISCLAIMER.md) before using Bob on any target.
 
@@ -270,6 +295,7 @@ To push the current checkout into a separate test workspace:
 ```bash
 ./dev-sync.sh /absolute/path/to/test-workspace
 ./dev-sync.sh /absolute/path/to/test-workspace --adapter codex
+./dev-sync.sh /absolute/path/to/test-workspace --adapter kimi
 ```
 
 The maintainer workflow is documented in [CLAUDE.md](CLAUDE.md).

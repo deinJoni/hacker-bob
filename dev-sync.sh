@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ./dev-sync.sh /absolute/path/to/test-workspace [--adapter claude|codex|generic-mcp|all] [--no-health-check]
+Usage: ./dev-sync.sh /absolute/path/to/test-workspace [--adapter claude|codex|generic-mcp|kimi|all] [--no-health-check]
 
 Sync the current repo into a local host-adapter test workspace.
 
@@ -59,7 +59,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$ADAPTER" in
-  claude|codex|generic-mcp|all) ;;
+  claude|codex|generic-mcp|kimi|all) ;;
   *)
     usage
     exit 1
@@ -98,6 +98,17 @@ sync_shared_runtime() {
   mkdir -p "$TARGET_ABS/mcp/lib/tools"
   cp "$SCRIPT_DIR/mcp/lib/tools/"*.js "$TARGET_ABS/mcp/lib/tools/"
   chmod +x "$TARGET_ABS/mcp/server.js"
+}
+
+sync_kimi_adapter() {
+  local kimi_dir="$TARGET_ABS/.kimi"
+  mkdir -p "$kimi_dir/skills/bob-hunt" "$kimi_dir/skills/bob-status" "$kimi_dir/skills/bob-debug" "$kimi_dir/skills/bob-update" "$kimi_dir/skills/bob-export" "$kimi_dir/skills/bob-egress" "$kimi_dir/bob"
+  cp "$SCRIPT_DIR/adapters/kimi/skills/bob-hunt/SKILL.md" "$kimi_dir/skills/bob-hunt/"
+  cp "$SCRIPT_DIR/adapters/kimi/skills/bob-status/SKILL.md" "$kimi_dir/skills/bob-status/"
+  cp "$SCRIPT_DIR/adapters/kimi/skills/bob-debug/SKILL.md" "$kimi_dir/skills/bob-debug/"
+  cp "$SCRIPT_DIR/adapters/kimi/skills/bob-update/SKILL.md" "$kimi_dir/skills/bob-update/"
+  cp "$SCRIPT_DIR/adapters/kimi/skills/bob-export/SKILL.md" "$kimi_dir/skills/bob-export/"
+  cp "$SCRIPT_DIR/adapters/kimi/skills/bob-egress/SKILL.md" "$kimi_dir/skills/bob-egress/"
 }
 
 sync_claude_adapter() {
@@ -139,6 +150,9 @@ fi
 
 "$SCRIPT_DIR/install.sh" "$TARGET_ABS" --adapter "$ADAPTER"
 sync_shared_runtime
+if adapter_includes "kimi"; then
+  sync_kimi_adapter
+fi
 if adapter_includes "claude"; then
   sync_claude_adapter
 fi
@@ -176,6 +190,10 @@ elif adapter_includes "codex"; then
   echo "  1. Restart Codex in $TARGET_ABS"
   echo "  2. Confirm the hacker-bob plugin is available"
   echo "  3. Smoke test with the \$bob-status skill"
+elif adapter_includes "kimi"; then
+  echo "  1. Launch Kimi CLI in $TARGET_ABS with:"
+  echo "     kimi --mcp-config-file .kimi/mcp.json"
+  echo "  2. Smoke test with /skill:bob-status"
 else
   echo "  1. Configure your MCP host to use $TARGET_ABS/mcp/server.js"
   echo "  2. Read $BOB_DIR/generic-mcp/hacker-bob.md"

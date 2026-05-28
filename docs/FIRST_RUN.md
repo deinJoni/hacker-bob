@@ -16,10 +16,11 @@ Other adapters use the same target directory with an explicit adapter flag:
 ```bash
 npx -y hacker-bob@latest install /path/to/your/project --adapter codex
 npx -y hacker-bob@latest install /path/to/your/project --adapter generic-mcp
+npx -y hacker-bob@latest install /path/to/your/project --adapter kimi
 npx -y hacker-bob@latest install /path/to/your/project --adapter all
 ```
 
-The installer writes shared runtime files into `mcp/` and `.hacker-bob/`, then writes the selected adapter surface. Claude uses `.claude/`, Codex uses direct `$bob-*` skills in `~/.codex/skills` plus `.codex/plugins/hacker-bob`, `.agents/plugins/marketplace.json`, and Codex cache/config activation for MCP wiring, and generic MCP uses root `.mcp.json` plus `.hacker-bob/generic-mcp/` prompt docs. Codex exposes Bob as `$bob-hunt`, `$bob-status`, `$bob-debug`, `$bob-update`, `$bob-export`, and `$bob-egress` skills. A global npm install adds the `hacker-bob` command to your `PATH`, but it does not install Bob into every project automatically.
+The installer writes shared runtime files into `mcp/` and `.hacker-bob/`, then writes the selected adapter surface. Claude uses `.claude/`, Codex uses direct `$bob-*` skills in `~/.codex/skills` plus `.codex/plugins/hacker-bob`, `.agents/plugins/marketplace.json`, and Codex cache/config activation for MCP wiring, Kimi uses `.kimi/skills` with `.kimi/mcp.json`, and generic MCP uses root `.mcp.json` plus `.hacker-bob/generic-mcp/` prompt docs. Codex exposes Bob as `$bob-hunt`, `$bob-status`, `$bob-debug`, `$bob-update`, `$bob-export`, and `$bob-egress` skills. Kimi exposes Bob as `/skill:bob-hunt`, `/skill:bob-status`, `/skill:bob-debug`, `/skill:bob-update`, `/skill:bob-export`, and `/skill:bob-egress`. A global npm install adds the `hacker-bob` command to your `PATH`, but it does not install Bob into every project automatically.
 
 ## Doctor Check
 
@@ -28,6 +29,7 @@ Run the read-only doctor command:
 ```bash
 hacker-bob doctor /path/to/your/project
 hacker-bob doctor /path/to/your/project --adapter codex
+hacker-bob doctor /path/to/your/project --adapter kimi
 ```
 
 A healthy install has this shape:
@@ -87,7 +89,7 @@ Warning: `--dangerously-skip-permissions` disables Claude Code permission prompt
 
 The restart is required because Claude Code reads slash commands, MCP config, settings, hooks, and statusline setup at startup.
 
-For Codex, restart Codex in the target directory and confirm `$bob-hunt`, `$bob-status`, `$bob-debug`, `$bob-update`, `$bob-export`, and `$bob-egress` are available. The installer activates `hacker-bob@hacker-bob-local` in Codex's cache/config for MCP wiring; if skills are still missing, run `hacker-bob doctor /path/to/your/project --adapter codex --json`. For generic MCP hosts, reload the host's MCP server configuration and use `.hacker-bob/generic-mcp/hacker-bob.md` as the operator prompt guide.
+For Codex, restart Codex in the target directory and confirm `$bob-hunt`, `$bob-status`, `$bob-debug`, `$bob-update`, `$bob-export`, and `$bob-egress` are available. The installer activates `hacker-bob@hacker-bob-local` in Codex's cache/config for MCP wiring; if skills are still missing, run `hacker-bob doctor /path/to/your/project --adapter codex --json`. For Kimi, launch Kimi CLI with `kimi --mcp-config-file .kimi/mcp.json` and confirm `/skill:bob-hunt`, `/skill:bob-status`, `/skill:bob-debug`, `/skill:bob-update`, `/skill:bob-export`, and `/skill:bob-egress` are available. For generic MCP hosts, reload the host's MCP server configuration and use `.hacker-bob/generic-mcp/hacker-bob.md` as the operator prompt guide.
 
 ## Smoke Check
 
@@ -99,7 +101,7 @@ For Claude, run:
 
 For a fresh install, it is normal for Bob to report that there is no completed session yet. The command should load without a missing-command error and should be able to read the local MCP/status files.
 
-For Codex, invoke `$bob-status`. For generic MCP hosts, list the `bountyagent` tools or call a read-only status tool through the host's MCP UI.
+For Codex, invoke `$bob-status`. For Kimi, invoke `/skill:bob-status`. For generic MCP hosts, list the `bountyagent` tools or call a read-only status tool through the host's MCP UI.
 
 ## Pre-Run Checklist
 
