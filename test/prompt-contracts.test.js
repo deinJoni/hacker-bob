@@ -619,20 +619,40 @@ test("surface-router-agent is thin: Read and the single routing tool only", () =
   assert.deepEqual(tools, ["Read", permissionForToolName("bob_route_surfaces")]);
 });
 
-test("surface-discovery agents stay MCP-free except for the governance nucleus read", () => {
+test("surface-discovery agents expose only the governance nucleus read and the browser-driver bundle", () => {
+  // Cycle T.1 (frontier-topology Plane T) gives surface-discovery and
+  // deep-surface-discovery their own role bundles so the bob_browser_*
+  // tools can drive SPA, postMessage, WebAuthn, OAuth-callback, and
+  // ServiceWorker enumeration that curl/httpx/katana cannot reach. The
+  // permissive surface remains tight: only the session-nucleus read plus
+  // the bob_browser_* family.
+  const allowedPrimaries = new Set([
+    "bob_read_session_nucleus",
+    "bob_browser_session_start",
+    "bob_browser_navigate",
+    "bob_browser_snapshot",
+    "bob_browser_click",
+    "bob_browser_type",
+    "bob_browser_evaluate",
+    "bob_browser_network_requests",
+    "bob_browser_console_messages",
+    "bob_browser_wait_for",
+    "bob_browser_press_key",
+    "bob_browser_take_screenshot",
+    "bob_browser_fill_form",
+    "bob_browser_session_close",
+  ]);
   for (const agent of ["surface-discovery-agent", "deep-surface-discovery-agent"]) {
     const document = readFile(`.claude/agents/${agent}.md`);
-    assert.doesNotMatch(document, /mcpServers:/, `${agent} should not declare MCP servers`);
-    assert.doesNotMatch(document, /requiredMcpServers:/, `${agent} should not require MCP servers`);
     const frontmatterMatch = document.match(/^---\n[\s\S]*?\n---\n/);
     const body = frontmatterMatch ? document.slice(frontmatterMatch[0].length) : document;
-    assert.doesNotMatch(body, /mcp__/i, `${agent} body should not invoke MCP tools`);
+    assert.doesNotMatch(body, /mcp__/i, `${agent} body should not invoke MCP tools by literal reference`);
     const exposures = Array.from((frontmatterMatch ? frontmatterMatch[0] : "").matchAll(/mcp__[A-Za-z0-9_-]+/g))
       .map((m) => m[0]);
     for (const exposure of exposures) {
-      assert.equal(
-        exposure,
-        permissionForToolName("bob_read_session_nucleus"),
+      const toolName = exposure.replace(MCP_PERMISSION_PREFIX, "");
+      assert.ok(
+        allowedPrimaries.has(toolName),
         `${agent} frontmatter exposes unexpected MCP tool ${exposure}`,
       );
     }
@@ -878,7 +898,14 @@ test("chain-specific identifiers are not duplicated across registry consumers", 
 });
 
 test("evaluator agents stay under their MCP tool budget", () => {
-  const EVALUATOR_MCP_TOOL_BUDGET = 17;
+  // Cycle T.1 (Plane T) adds 13 bob_browser_* tools to evaluator-shared so
+  // every evaluator role can drive Patchright session-scoped DOM/postMessage/
+  // WebAuthn/OAuth-callback/ServiceWorker enumeration. The browser-driver
+  // family is opaque-context (one verb per command, idle/hard timeouts reap
+  // sessions) so it doesn't compound brief-rendered text; we bump the SC
+  // budget by +13 and the web budget by +13 to keep parity with the role
+  // bundle's actual surface.
+  const EVALUATOR_MCP_TOOL_BUDGET = 30;
   const agentNameToRoleId = {};
   for (const [roleId, spec] of Object.entries(CLAUDE_ROLE_SPECS)) {
     if (spec.kind === "agent" && typeof spec.output_path === "string") {
@@ -887,10 +914,10 @@ test("evaluator agents stay under their MCP tool budget", () => {
   }
   for (const pack of Object.values(CAPABILITY_PACKS)) {
     const roleId = agentNameToRoleId[pack.evaluator_agent];
-    const budget = pack.brief_profile === "web" ? 19 : EVALUATOR_MCP_TOOL_BUDGET;
+    const budget = pack.brief_profile === "web" ? 32 : EVALUATOR_MCP_TOOL_BUDGET;
     assert.ok(
       mcpToolNamesForRole(roleId).length <= budget,
-      `pack ${pack.id} evaluator over budget`,
+      `pack ${pack.id} evaluator over budget (got ${mcpToolNamesForRole(roleId).length}, budget ${budget})`,
     );
   }
 });

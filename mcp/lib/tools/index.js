@@ -110,6 +110,19 @@ const TOOL_MODULES = Object.freeze([
   require("./read-queue-policy.js"),
   require("./set-queue-policy.js"),
   require("./schedule-tasks.js"),
+  require("./browser-session-start.js"),
+  require("./browser-navigate.js"),
+  require("./browser-snapshot.js"),
+  require("./browser-click.js"),
+  require("./browser-type.js"),
+  require("./browser-evaluate.js"),
+  require("./browser-network-requests.js"),
+  require("./browser-console-messages.js"),
+  require("./browser-wait-for.js"),
+  require("./browser-press-key.js"),
+  require("./browser-take-screenshot.js"),
+  require("./browser-fill-form.js"),
+  require("./browser-session-close.js"),
 ]);
 
 module.exports = {

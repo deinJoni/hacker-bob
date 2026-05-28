@@ -447,6 +447,19 @@ const EXPECTED_TOOL_NAMES = [
   "bob_read_queue_policy",
   "bob_set_queue_policy",
   "bob_schedule_tasks",
+  "bob_browser_session_start",
+  "bob_browser_navigate",
+  "bob_browser_snapshot",
+  "bob_browser_click",
+  "bob_browser_type",
+  "bob_browser_evaluate",
+  "bob_browser_network_requests",
+  "bob_browser_console_messages",
+  "bob_browser_wait_for",
+  "bob_browser_press_key",
+  "bob_browser_take_screenshot",
+  "bob_browser_fill_form",
+  "bob_browser_session_close",
 ];
 
 function withTempHome(fn) {

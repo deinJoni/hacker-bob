@@ -477,3 +477,12 @@ Rules for `attack_surface.json`:
 - Populate hints from evidence, not guesses: object IDs -> `idor`/`authz`; URL fetch/import/image params -> `ssrf`; upload/file paths -> `upload`; checkout/refund/coupon/plan flows -> `business_logic`; token/OAuth/JWKS/callback paths and JWT-shaped candidates -> `jwt_oauth`; GraphQL endpoints -> `graphql`; dangling CNAME patterns -> `takeover`.
 - Prioritize auth flows, object IDs, admin/debug paths, uploads, GraphQL, payments, API/mobile backends, JS-disclosed key material, JWT candidates, takeover candidates, nuclei hits, and concrete tech/CVE leads.
 - Mark static/CDN-only/parked/WAF-only surfaces `LOW`.
+
+Browser-shaped surfaces (optional, only when the curl/httpx/katana ladder cannot resolve the surface).
+- The `bob_browser_*` tools (start / navigate / snapshot / click / type / evaluate / network_requests / console_messages / wait_for / press_key / take_screenshot / fill_form / session_close) drive a long-running Patchright (stealth Playwright fork) browser session. Use them ONLY when:
+  - The surface is a SPA whose routes never appear in archived URLs or in curl-fetched HTML.
+  - postMessage probes, WebAuthn ceremonies, OAuth-callback token storage, ServiceWorker registrations, IndexedDB seeds, or another in-session JS-driven flow is the only way to enumerate the surface.
+- Always pair `bob_browser_session_start` with `bob_browser_session_close` — sessions consume a per-domain concurrency slot (max 3 per `target_domain`) and a Chromium subprocess; idle (5 min) and hard (30 min) timeouts reap stragglers but explicit close releases the slot immediately.
+- `bob_browser_evaluate` is sandboxed: expressions containing `XMLHttpRequest`, `fetch(`, `navigator.sendBeacon`, `new EventSource`, or `new WebSocket` are rejected. Use `bob_http_scan` (audited, scope-checked) or `bob_browser_navigate` (scope-checked) for HTTP traffic instead.
+- The session is anti-detection-hardened (channel=chrome, no `--enable-automation`, ignoreDefaultArgs, randomized human-like delays inherited from `auto-signup.js`). Avoid bursts of mechanical interactions that defeat the human-like timing.
+- If `patchright` is not installed, every `bob_browser_*` tool returns `{ok:false, error:{code:"patchright_unavailable", ...}}`. Treat that as a graceful capability gap, not a failure.

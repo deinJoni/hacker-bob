@@ -21,6 +21,7 @@ const ALIAS_DEPRECATION_REPLACEMENT_HINT = "bob_*";
 const CROSS_CUTTING_ROLE_BUNDLES = Object.freeze([
   "auth",
   "chain",
+  "deep-surface-discovery",
   "evidence",
   "grader",
   "evaluator-shared",
@@ -28,6 +29,7 @@ const CROSS_CUTTING_ROLE_BUNDLES = Object.freeze([
   "orchestrator",
   "reporter",
   "router",
+  "surface-discovery",
   "verifier",
 ]);
 

@@ -367,6 +367,15 @@ PY
 Last step: build `[SESSION]/attack_surface.json` from `live_hosts.txt`, `family_live.txt`, `all_urls.txt`, `nuclei_results.txt`, `js_endpoints.txt`, `js_secrets.txt`, `jwt_candidates.txt`, and `surface-discovery-summary.json`.
 Do not make any additional Bash calls while building final JSON. Use collected files only.
 
+Browser-shaped surfaces (optional, only when curl/httpx/katana cannot reveal the surface).
+- The `bob_browser_*` tools (start / navigate / snapshot / click / type / evaluate / network_requests / console_messages / wait_for / press_key / take_screenshot / fill_form / session_close) drive a long-running Patchright (stealth Playwright fork) browser session. Use them ONLY when:
+  - The surface is a SPA whose routes do not appear in archived URLs or in the curl-fetched HTML body.
+  - postMessage, WebAuthn ceremony, OAuth-callback token storage, ServiceWorker, IndexedDB, or another in-session JS-driven flow is the only way to enumerate the surface.
+- Always pair `bob_browser_session_start` with a final `bob_browser_session_close` — sessions consume a per-domain concurrency slot (max 3 per `target_domain`) and a Chromium subprocess; reaping is bounded by an idle timeout (5 min) and a hard timeout (30 min) but explicit close releases the slot immediately.
+- `bob_browser_evaluate` is sandboxed: expressions containing `XMLHttpRequest`, `fetch(`, `navigator.sendBeacon`, `new EventSource`, or `new WebSocket` are rejected. For HTTP traffic from your scripts, use `bob_http_scan` (audited, scope-checked) or `bob_browser_navigate` (scope-checked) instead.
+- The session is anti-detection-hardened (channel=chrome, no `--enable-automation`, ignoreDefaultArgs, randomized human-like delays inherited from `auto-signup.js`). Avoid bursts of mechanical interactions that defeat the human-like timing.
+- If `patchright` is not installed, every `bob_browser_*` tool returns `{ok:false, error:{code:"patchright_unavailable", ...}}`. Treat that as a graceful capability gap, not a failure — record the surface as unmapped-by-browser and continue with the other tools.
+
 Use this backward-compatible schema:
 ```json
 {
@@ -879,6 +888,15 @@ Rules for `attack_surface.json`:
 - Populate hints from evidence, not guesses: object IDs -> `idor`/`authz`; URL fetch/import/image params -> `ssrf`; upload/file paths -> `upload`; checkout/refund/coupon/plan flows -> `business_logic`; token/OAuth/JWKS/callback paths and JWT-shaped candidates -> `jwt_oauth`; GraphQL endpoints -> `graphql`; dangling CNAME patterns -> `takeover`.
 - Prioritize auth flows, object IDs, admin/debug paths, uploads, GraphQL, payments, API/mobile backends, JS-disclosed key material, JWT candidates, takeover candidates, nuclei hits, and concrete tech/CVE leads.
 - Mark static/CDN-only/parked/WAF-only surfaces `LOW`.
+
+Browser-shaped surfaces (optional, only when the curl/httpx/katana ladder cannot resolve the surface).
+- The `bob_browser_*` tools (start / navigate / snapshot / click / type / evaluate / network_requests / console_messages / wait_for / press_key / take_screenshot / fill_form / session_close) drive a long-running Patchright (stealth Playwright fork) browser session. Use them ONLY when:
+  - The surface is a SPA whose routes never appear in archived URLs or in curl-fetched HTML.
+  - postMessage probes, WebAuthn ceremonies, OAuth-callback token storage, ServiceWorker registrations, IndexedDB seeds, or another in-session JS-driven flow is the only way to enumerate the surface.
+- Always pair `bob_browser_session_start` with `bob_browser_session_close` — sessions consume a per-domain concurrency slot (max 3 per `target_domain`) and a Chromium subprocess; idle (5 min) and hard (30 min) timeouts reap stragglers but explicit close releases the slot immediately.
+- `bob_browser_evaluate` is sandboxed: expressions containing `XMLHttpRequest`, `fetch(`, `navigator.sendBeacon`, `new EventSource`, or `new WebSocket` are rejected. Use `bob_http_scan` (audited, scope-checked) or `bob_browser_navigate` (scope-checked) for HTTP traffic instead.
+- The session is anti-detection-hardened (channel=chrome, no `--enable-automation`, ignoreDefaultArgs, randomized human-like delays inherited from `auto-signup.js`). Avoid bursts of mechanical interactions that defeat the human-like timing.
+- If `patchright` is not installed, every `bob_browser_*` tool returns `{ok:false, error:{code:"patchright_unavailable", ...}}`. Treat that as a graceful capability gap, not a failure.
 END deep-surface-discovery CONTRACT
 
 ### surface-router
@@ -939,6 +957,13 @@ Rules:
   - "A trusted relayer, DVN, executor, oracle, keeper, or bridge handles this."
   - "An existing test demonstrates safe behavior under normal conditions."
   The MCP server rejects `surface_status: complete` on a `smart_contract` surface that has neither a recorded finding for this surface nor at least one `bypass_attempts[]` entry. Each `bypass_attempts[]` entry must cite a `condition` (drawn from the program's `bob-spec.yaml` `trust_assumptions[*].bypass_conditions` when available — for example `admin_eoa_compromise`, `governance_proposal_bypass`, `signature_forgery`, `oracle_staleness`, `bridge_replay`, `chain_id_confusion`), describe the `attempt_summary` (what was tried), and set `outcome` to `no_finding`, `partial_evidence`, `finding_recorded` (with `finding_id`), or `blocked`. If the harness needed for the attempt was unavailable, also record it in `blocked_harness_runs[]` with the appropriate `kind` (`foundry_fork`, `rpc_endpoint`, `fuzzer`, `symbolic_solver`, `mock_dependency`, `external_api`, `other`) and set `surface_status: partial`. The platform-specific exception that makes a role-gated finding valid is encoded in `program.severity_system.admin_rule.exceptions` — consult it before deciding a bypass is out of scope.
+
+Browser-shaped surfaces (when HTTP-only tools cannot reach the impact).
+- Use the `bob_browser_*` tools (start / navigate / snapshot / click / type / evaluate / network_requests / console_messages / wait_for / press_key / take_screenshot / fill_form / session_close) when the bug lives in the browser context: DOM source/sink chains, postMessage probes, WebAuthn ceremonies, OAuth callbacks that store tokens client-side, ServiceWorker registrations, IndexedDB seeds, or multi-step in-session SPA flows that depend on JS state.
+- Start sessions with `bob_browser_session_start({ target_domain, target_url })` (in-scope URL only). Drive the page with the action tools, then ALWAYS close with `bob_browser_session_close` — sessions consume one of at most 3 concurrent slots per `target_domain` and reaping is bounded by an idle timeout (5 min) and a hard timeout (30 min).
+- `bob_browser_evaluate` is sandboxed: expressions containing `XMLHttpRequest`, `fetch(`, `navigator.sendBeacon`, `new EventSource`, or `new WebSocket` are rejected. The browser-driver is for DOM and storage observation; for HTTP traffic use `bob_http_scan` (audited, scope-checked) or `bob_browser_navigate` (also scope-checked) so the request stays in the audit ledger.
+- The session is anti-detection-hardened (Patchright stealth stack: channel=chrome, no `--enable-automation`, ignoreDefaultArgs, randomized human-like delays inherited from `auto-signup.js`). Avoid bursts of mechanical interactions that defeat the human-like timing — the timing IS the bug-class evidence for some surfaces.
+- If `patchright` is not installed, every `bob_browser_*` tool returns `{ok:false, error:{code:"patchright_unavailable", ...}}`. Record the surface as not-browser-reachable and continue with the HTTP-shaped tools.
 
 Never record these as standalone findings: missing security headers, SPF/DKIM/DMARC, GraphQL introspection, banner/version disclosure without working proof, clickjacking without PoC, tabnabbing, CSV injection, CORS wildcard without credentialed exfil, logout CSRF, self-XSS, open redirect, mobile app client_secret, SSRF DNS-only, host header injection, rate limit on non-critical forms, logout session issues, concurrent sessions, internal IP disclosure, missing cookie flags, password autocomplete. Only keep one if you prove the chain.
 

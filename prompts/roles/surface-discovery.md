@@ -107,6 +107,15 @@ PY
 Last step: build `[SESSION]/attack_surface.json` from `live_hosts.txt`, `family_live.txt`, `all_urls.txt`, `nuclei_results.txt`, `js_endpoints.txt`, `js_secrets.txt`, `jwt_candidates.txt`, and `surface-discovery-summary.json`.
 Do not make any additional Bash calls while building final JSON. Use collected files only.
 
+Browser-shaped surfaces (optional, only when curl/httpx/katana cannot reveal the surface).
+- The `bob_browser_*` tools (start / navigate / snapshot / click / type / evaluate / network_requests / console_messages / wait_for / press_key / take_screenshot / fill_form / session_close) drive a long-running Patchright (stealth Playwright fork) browser session. Use them ONLY when:
+  - The surface is a SPA whose routes do not appear in archived URLs or in the curl-fetched HTML body.
+  - postMessage, WebAuthn ceremony, OAuth-callback token storage, ServiceWorker, IndexedDB, or another in-session JS-driven flow is the only way to enumerate the surface.
+- Always pair `bob_browser_session_start` with a final `bob_browser_session_close` — sessions consume a per-domain concurrency slot (max 3 per `target_domain`) and a Chromium subprocess; reaping is bounded by an idle timeout (5 min) and a hard timeout (30 min) but explicit close releases the slot immediately.
+- `bob_browser_evaluate` is sandboxed: expressions containing `XMLHttpRequest`, `fetch(`, `navigator.sendBeacon`, `new EventSource`, or `new WebSocket` are rejected. For HTTP traffic from your scripts, use `bob_http_scan` (audited, scope-checked) or `bob_browser_navigate` (scope-checked) instead.
+- The session is anti-detection-hardened (channel=chrome, no `--enable-automation`, ignoreDefaultArgs, randomized human-like delays inherited from `auto-signup.js`). Avoid bursts of mechanical interactions that defeat the human-like timing.
+- If `patchright` is not installed, every `bob_browser_*` tool returns `{ok:false, error:{code:"patchright_unavailable", ...}}`. Treat that as a graceful capability gap, not a failure — record the surface as unmapped-by-browser and continue with the other tools.
+
 Use this backward-compatible schema:
 ```json
 {

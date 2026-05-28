@@ -46,13 +46,13 @@ const ROLE_DEFINITIONS = Object.freeze({
   "surface-discovery": Object.freeze({
     id: "surface-discovery",
     prompt_body: path.join(ROLE_PROMPT_DIR, "surface-discovery.md"),
-    mcp_role_bundles: Object.freeze([]),
+    mcp_role_bundles: Object.freeze(["surface-discovery"]),
     mcp_tools: Object.freeze(["bob_read_session_nucleus"]),
   }),
   "deep-surface-discovery": Object.freeze({
     id: "deep-surface-discovery",
     prompt_body: path.join(ROLE_PROMPT_DIR, "deep-surface-discovery.md"),
-    mcp_role_bundles: Object.freeze([]),
+    mcp_role_bundles: Object.freeze(["deep-surface-discovery"]),
     mcp_tools: Object.freeze(["bob_read_session_nucleus"]),
   }),
   "surface-router": Object.freeze({

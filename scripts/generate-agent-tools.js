@@ -18,11 +18,17 @@ const AGENTS_DIR = path.join(ROOT, ".claude", "agents");
 
 const AGENT_TOOL_SPECS = Object.freeze({
   "surface-discovery-agent.md": {
-    roleBundles: [],
+    // Cycle T.1 (Plane T) routes the bob_browser_* family through the
+    // surface-discovery role bundle plus the existing session-nucleus read.
+    // Defer to the shared Claude role renderer so the tools line matches the
+    // renderer's output exactly (extras → bundle tools → role mcp_tools).
+    roleId: "surface-discovery",
+    roleBundles: ["surface-discovery"],
     extras: ["Bash", "Read", "Write", "Glob", "Grep", "mcp__hacker-bob__bob_read_session_nucleus"],
   },
   "deep-surface-discovery-agent.md": {
-    roleBundles: [],
+    roleId: "deep-surface-discovery",
+    roleBundles: ["deep-surface-discovery"],
     extras: ["Bash", "Read", "Write", "Glob", "Grep", "mcp__hacker-bob__bob_read_session_nucleus"],
   },
   "surface-router-agent.md": {
