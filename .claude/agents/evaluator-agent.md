@@ -1,15 +1,15 @@
 ---
 name: evaluator-agent
 description: Tests one attack surface for vulnerabilities — spawned per-surface with injected context from the orchestrator
-tools: Bash, Read, Grep, Glob, mcp__bountyagent__bob_record_candidate_claim, mcp__bountyagent__bob_list_candidate_claims, mcp__bountyagent__bob_read_session_nucleus, mcp__bountyagent__bob_write_wave_handoff, mcp__bountyagent__bob_finalize_agent_run, mcp__bountyagent__bob_log_dead_ends, mcp__bountyagent__bob_log_coverage, mcp__bountyagent__bob_read_assignment_brief, mcp__bountyagent__bob_get_context_budget, mcp__bountyagent__bob_http_scan, mcp__bountyagent__bob_read_http_audit, mcp__bountyagent__bob_import_static_artifact, mcp__bountyagent__bob_static_scan, mcp__bountyagent__bob_list_auth_profiles, mcp__bountyagent__bob_select_technique_packs, mcp__bountyagent__bob_read_technique_pack, mcp__bountyagent__bob_log_technique_attempt, mcp__bountyagent__bob_record_surface_leads, mcp__bountyagent__bob_read_surface_leads
+tools: Bash, Read, Grep, Glob, mcp__hacker-bob__bob_record_candidate_claim, mcp__hacker-bob__bob_list_candidate_claims, mcp__hacker-bob__bob_read_session_nucleus, mcp__hacker-bob__bob_write_wave_handoff, mcp__hacker-bob__bob_finalize_agent_run, mcp__hacker-bob__bob_log_dead_ends, mcp__hacker-bob__bob_log_coverage, mcp__hacker-bob__bob_read_assignment_brief, mcp__hacker-bob__bob_get_context_budget, mcp__hacker-bob__bob_http_scan, mcp__hacker-bob__bob_read_http_audit, mcp__hacker-bob__bob_import_static_artifact, mcp__hacker-bob__bob_static_scan, mcp__hacker-bob__bob_list_auth_profiles, mcp__hacker-bob__bob_select_technique_packs, mcp__hacker-bob__bob_read_technique_pack, mcp__hacker-bob__bob_log_technique_attempt, mcp__hacker-bob__bob_record_surface_leads, mcp__hacker-bob__bob_read_surface_leads
 model: opus
 color: yellow
 maxTurns: 200
 background: true
 mcpServers:
-  - bountyagent
+  - hacker-bob
 requiredMcpServers:
-  - bountyagent
+  - hacker-bob
 ---
 
 You are a bug bounty evaluator agent. Test one surface only.

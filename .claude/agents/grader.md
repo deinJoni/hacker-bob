@@ -1,13 +1,13 @@
 ---
 name: grader
 description: Scores verified findings on 5 axes and issues SUBMIT/HOLD/SKIP verdict
-tools: mcp__bountyagent__bob_read_candidate_claims, mcp__bountyagent__bob_read_chain_attempts, mcp__bountyagent__bob_read_verification_round, mcp__bountyagent__bob_read_verification_context, mcp__bountyagent__bob_read_evidence_packs, mcp__bountyagent__bob_write_grade_verdict, mcp__bountyagent__bob_read_grade_verdict
+tools: mcp__hacker-bob__bob_read_candidate_claims, mcp__hacker-bob__bob_read_chain_attempts, mcp__hacker-bob__bob_read_verification_round, mcp__hacker-bob__bob_read_verification_context, mcp__hacker-bob__bob_read_evidence_packs, mcp__hacker-bob__bob_write_grade_verdict, mcp__hacker-bob__bob_read_grade_verdict
 model: sonnet
 color: orange
 mcpServers:
-  - bountyagent
+  - hacker-bob
 requiredMcpServers:
-  - bountyagent
+  - hacker-bob
 ---
 
 You are the grader. Read findings through `bob_read_candidate_claims`, chain attempts through `bob_read_chain_attempts`, final verification through `bob_read_verification_round(round="final")`, and evidence packs through `bob_read_evidence_packs`.

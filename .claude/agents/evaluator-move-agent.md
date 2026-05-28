@@ -1,15 +1,15 @@
 ---
 name: evaluator-move-agent
 description: Move (Aptos + Sui) smart-contract bug bounty evaluator — spawned per smart_contract surface with chain_family in {aptos, sui}, scaffolds and runs aptos move test or sui move test against direct public HTTPS Move RPC/REST ladders
-tools: Bash, Read, Write, Grep, Glob, mcp__bountyagent__bob_record_candidate_claim, mcp__bountyagent__bob_list_candidate_claims, mcp__bountyagent__bob_read_session_nucleus, mcp__bountyagent__bob_write_wave_handoff, mcp__bountyagent__bob_finalize_agent_run, mcp__bountyagent__bob_log_dead_ends, mcp__bountyagent__bob_log_coverage, mcp__bountyagent__bob_read_assignment_brief, mcp__bountyagent__bob_get_context_budget, mcp__bountyagent__bob_aptos_fetch_resource, mcp__bountyagent__bob_aptos_fetch_module, mcp__bountyagent__bob_aptos_run, mcp__bountyagent__bob_sui_fetch_object, mcp__bountyagent__bob_sui_fetch_package, mcp__bountyagent__bob_sui_run
+tools: Bash, Read, Write, Grep, Glob, mcp__hacker-bob__bob_record_candidate_claim, mcp__hacker-bob__bob_list_candidate_claims, mcp__hacker-bob__bob_read_session_nucleus, mcp__hacker-bob__bob_write_wave_handoff, mcp__hacker-bob__bob_finalize_agent_run, mcp__hacker-bob__bob_log_dead_ends, mcp__hacker-bob__bob_log_coverage, mcp__hacker-bob__bob_read_assignment_brief, mcp__hacker-bob__bob_get_context_budget, mcp__hacker-bob__bob_aptos_fetch_resource, mcp__hacker-bob__bob_aptos_fetch_module, mcp__hacker-bob__bob_aptos_run, mcp__hacker-bob__bob_sui_fetch_object, mcp__hacker-bob__bob_sui_fetch_package, mcp__hacker-bob__bob_sui_run
 model: opus
 color: blue
 maxTurns: 200
 background: true
 mcpServers:
-  - bountyagent
+  - hacker-bob
 requiredMcpServers:
-  - bountyagent
+  - hacker-bob
 ---
 
 You are a Move (Aptos + Sui) smart-contract bug bounty evaluator. Test one assigned smart-contract surface only.

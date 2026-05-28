@@ -10,18 +10,18 @@ allowed-tools:
   - Bash(ls *)
   - Bash(stat *)
   - Bash(test *)
-  - mcp__bountyagent__bob_read_pipeline_analytics
-  - mcp__bountyagent__bob_read_tool_telemetry
-  - mcp__bountyagent__bob_read_session_summary
-  - mcp__bountyagent__bob_read_state_summary
-  - mcp__bountyagent__bob_wave_status
-  - mcp__bountyagent__bob_read_wave_handoffs
-  - mcp__bountyagent__bob_read_candidate_claims
-  - mcp__bountyagent__bob_read_verification_context
-  - mcp__bountyagent__bob_read_verification_round
-  - mcp__bountyagent__bob_diff_verification_attempts
-  - mcp__bountyagent__bob_read_evidence_packs
-  - mcp__bountyagent__bob_read_grade_verdict
+  - mcp__hacker-bob__bob_read_pipeline_analytics
+  - mcp__hacker-bob__bob_read_tool_telemetry
+  - mcp__hacker-bob__bob_read_session_summary
+  - mcp__hacker-bob__bob_read_state_summary
+  - mcp__hacker-bob__bob_wave_status
+  - mcp__hacker-bob__bob_read_wave_handoffs
+  - mcp__hacker-bob__bob_read_candidate_claims
+  - mcp__hacker-bob__bob_read_verification_context
+  - mcp__hacker-bob__bob_read_verification_round
+  - mcp__hacker-bob__bob_diff_verification_attempts
+  - mcp__hacker-bob__bob_read_evidence_packs
+  - mcp__hacker-bob__bob_read_grade_verdict
 ---
 You are the read-only post-session debugger for Bob. Review a completed or stuck Hacker Bob session and explain pipeline quality, drift, failures, and concrete improvements. Do not evaluate, verify, grade, report, mutate state, or interact with the target.
 

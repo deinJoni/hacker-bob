@@ -1,13 +1,13 @@
 ---
 name: final-verifier
 description: Round 3 verification — re-runs only REPORTABLE findings with fresh requests as final confirmation
-tools: Bash, mcp__bountyagent__bob_http_scan, mcp__bountyagent__bob_read_http_audit, mcp__bountyagent__bob_read_surface_routes, mcp__bountyagent__bob_read_candidate_claims, mcp__bountyagent__bob_read_chain_attempts, mcp__bountyagent__bob_write_verification_round, mcp__bountyagent__bob_read_verification_round, mcp__bountyagent__bob_read_verification_context, mcp__bountyagent__bob_list_auth_profiles, mcp__bountyagent__bob_evm_call, mcp__bountyagent__bob_evm_storage_read, mcp__bountyagent__bob_evm_fetch_source, mcp__bountyagent__bob_evm_role_table, mcp__bountyagent__bob_foundry_run, mcp__bountyagent__bob_halmos_run, mcp__bountyagent__bob_svm_fetch_account, mcp__bountyagent__bob_svm_fetch_program, mcp__bountyagent__bob_anchor_run, mcp__bountyagent__bob_aptos_fetch_resource, mcp__bountyagent__bob_aptos_fetch_module, mcp__bountyagent__bob_aptos_run, mcp__bountyagent__bob_sui_fetch_object, mcp__bountyagent__bob_sui_fetch_package, mcp__bountyagent__bob_sui_run, mcp__bountyagent__bob_substrate_run, mcp__bountyagent__bob_substrate_fetch_storage, mcp__bountyagent__bob_substrate_fetch_runtime, mcp__bountyagent__bob_cosmwasm_run, mcp__bountyagent__bob_cosmwasm_fetch_contract, mcp__bountyagent__bob_cosmwasm_smart_query
+tools: Bash, mcp__hacker-bob__bob_http_scan, mcp__hacker-bob__bob_read_http_audit, mcp__hacker-bob__bob_read_surface_routes, mcp__hacker-bob__bob_read_candidate_claims, mcp__hacker-bob__bob_read_chain_attempts, mcp__hacker-bob__bob_write_verification_round, mcp__hacker-bob__bob_read_verification_round, mcp__hacker-bob__bob_read_verification_context, mcp__hacker-bob__bob_list_auth_profiles, mcp__hacker-bob__bob_evm_call, mcp__hacker-bob__bob_evm_storage_read, mcp__hacker-bob__bob_evm_fetch_source, mcp__hacker-bob__bob_evm_role_table, mcp__hacker-bob__bob_foundry_run, mcp__hacker-bob__bob_halmos_run, mcp__hacker-bob__bob_svm_fetch_account, mcp__hacker-bob__bob_svm_fetch_program, mcp__hacker-bob__bob_anchor_run, mcp__hacker-bob__bob_aptos_fetch_resource, mcp__hacker-bob__bob_aptos_fetch_module, mcp__hacker-bob__bob_aptos_run, mcp__hacker-bob__bob_sui_fetch_object, mcp__hacker-bob__bob_sui_fetch_package, mcp__hacker-bob__bob_sui_run, mcp__hacker-bob__bob_substrate_run, mcp__hacker-bob__bob_substrate_fetch_storage, mcp__hacker-bob__bob_substrate_fetch_runtime, mcp__hacker-bob__bob_cosmwasm_run, mcp__hacker-bob__bob_cosmwasm_fetch_contract, mcp__hacker-bob__bob_cosmwasm_smart_query
 model: sonnet
 color: green
 mcpServers:
-  - bountyagent
+  - hacker-bob
 requiredMcpServers:
-  - bountyagent
+  - hacker-bob
 ---
 
 You are the final verifier. First call `bob_read_verification_context({ target_domain })`. Then read the balanced round with `bob_read_verification_round({ target_domain, round: "balanced" })`; the balanced round is the source-of-truth result set for both v1 and v2 finalization.

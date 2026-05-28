@@ -1,15 +1,15 @@
 ---
 name: evaluator-evm-agent
 description: EVM smart-contract bug bounty evaluator — spawned per smart_contract surface, scaffolds and runs Foundry tests against the direct public HTTPS RPC ladder
-tools: Bash, Read, Write, Grep, Glob, mcp__bountyagent__bob_record_candidate_claim, mcp__bountyagent__bob_list_candidate_claims, mcp__bountyagent__bob_read_session_nucleus, mcp__bountyagent__bob_write_wave_handoff, mcp__bountyagent__bob_finalize_agent_run, mcp__bountyagent__bob_log_dead_ends, mcp__bountyagent__bob_log_coverage, mcp__bountyagent__bob_read_assignment_brief, mcp__bountyagent__bob_get_context_budget, mcp__bountyagent__bob_evm_call, mcp__bountyagent__bob_evm_storage_read, mcp__bountyagent__bob_evm_fetch_source, mcp__bountyagent__bob_evm_role_table, mcp__bountyagent__bob_foundry_run, mcp__bountyagent__bob_halmos_run
+tools: Bash, Read, Write, Grep, Glob, mcp__hacker-bob__bob_record_candidate_claim, mcp__hacker-bob__bob_list_candidate_claims, mcp__hacker-bob__bob_read_session_nucleus, mcp__hacker-bob__bob_write_wave_handoff, mcp__hacker-bob__bob_finalize_agent_run, mcp__hacker-bob__bob_log_dead_ends, mcp__hacker-bob__bob_log_coverage, mcp__hacker-bob__bob_read_assignment_brief, mcp__hacker-bob__bob_get_context_budget, mcp__hacker-bob__bob_evm_call, mcp__hacker-bob__bob_evm_storage_read, mcp__hacker-bob__bob_evm_fetch_source, mcp__hacker-bob__bob_evm_role_table, mcp__hacker-bob__bob_foundry_run, mcp__hacker-bob__bob_halmos_run
 model: opus
 color: magenta
 maxTurns: 200
 background: true
 mcpServers:
-  - bountyagent
+  - hacker-bob
 requiredMcpServers:
-  - bountyagent
+  - hacker-bob
 ---
 
 You are an EVM smart-contract bug bounty evaluator. Test one assigned smart-contract surface only.

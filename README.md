@@ -84,7 +84,7 @@ The installer is idempotent and preserves unrelated host configuration. It write
 
 When `--adapter` is omitted, Bob chooses an adapter from prior install metadata, host environment markers, project files, and installed host CLIs. Claude is the final fallback.
 
-The MCP server name is `hacker-bob`. You will see `hacker-bob` in `.mcp.json`, in `claude mcp list`, and as the prefix on tool names such as `mcp__hacker-bob__bob_*`. Installs that came from v1.x still carry the legacy `bountyagent` MCP-permission identifier as a one-release compatibility alias; new v2.x installs use `hacker-bob` throughout.
+The MCP server name is `hacker-bob`. You will see `hacker-bob` in `.mcp.json`, in `claude mcp list`, and as the prefix on tool names such as `mcp__hacker-bob__bob_*`. Existing v1.x installs are auto-migrated on the next install or update: the legacy `bountyagent` server key and `mcp__bountyagent__*` permission strings are rewritten to the canonical `hacker-bob` form while operator-managed sibling servers and custom permissions are preserved.
 
 Small wrapper packages are available when you want the host choice encoded in the package name:
 
@@ -234,7 +234,7 @@ Common checks:
 - `node -e "require('./mcp/server.js'); console.log('MCP ok')"` should pass from the installed project.
 - Claude Code must be restarted after install or update before `/bob-*` commands and MCP settings load.
 - Codex must be restarted after install or update before `$bob-*` skills and local plugin wiring load.
-- `.mcp.json` should contain an `mcpServers.hacker-bob` entry pointing at the installed project's `mcp/server.js`. v1.x installs may still expose the entry under the legacy `bountyagent` key during the v2.0 → v2.1 deprecation window.
+- `.mcp.json` should contain an `mcpServers["hacker-bob"]` entry pointing at the installed project's `mcp/server.js`. v1.x installs are auto-migrated to this canonical key on next install or update.
 - If an upgrade leaves `mcp/lib/tools/` missing, rerun the installer with `hacker-bob@latest`.
 
 Detailed guides:

@@ -358,13 +358,13 @@ function renderAgentFrontmatter(spec) {
   if (spec.max_turns) lines.push(`maxTurns: ${spec.max_turns}`);
   if (spec.background) lines.push("background: true");
   if (spec.mcp_server) {
-    const mcpServers = uniqueStrings(["bountyagent", ...(spec.extra_mcp_servers || [])]);
+    const mcpServers = uniqueStrings(["hacker-bob", ...(spec.extra_mcp_servers || [])]);
     lines.push("mcpServers:");
     for (const server of mcpServers) lines.push(`  - ${server}`);
-    // requiredMcpServers stays at bountyagent only — extra servers are optional
+    // requiredMcpServers stays at hacker-bob only — extra servers are optional
     // (graceful fallback). Bumping a server here makes the agent fail to spawn
     // when the server is missing, which we explicitly do not want for brutalist.
-    lines.push("requiredMcpServers:", "  - bountyagent");
+    lines.push("requiredMcpServers:", "  - hacker-bob");
   }
   lines.push("---");
   return lines.join("\n");

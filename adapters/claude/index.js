@@ -273,7 +273,7 @@ function requiredBobMcpPermissions(bobSettings) {
   return (bobSettings.permissions && Array.isArray(bobSettings.permissions.allow)
     ? bobSettings.permissions.allow
     : []
-  ).filter((permission) => permission.startsWith("mcp__bountyagent__"));
+  ).filter((permission) => permission.startsWith("mcp__hacker-bob__"));
 }
 
 function settingsMissingPermissions(settings, bobSettings) {
@@ -541,10 +541,10 @@ function doctor({
 
   const mcpPath = path.join(targetAbs, ".mcp.json");
   const mcp = jsonReadCheck(checks, mcpPath, checkId("mcp_json"), targetAbs);
-  if (mcp && mcpServerMatches(mcp.mcpServers && mcp.mcpServers.bountyagent, targetAbs)) {
-    addCheck(checks, "ok", checkId("mcp_server_config"), ".mcp.json points bountyagent at this project's mcp/server.js");
+  if (mcp && mcpServerMatches(mcp.mcpServers && mcp.mcpServers["hacker-bob"], targetAbs)) {
+    addCheck(checks, "ok", checkId("mcp_server_config"), ".mcp.json points hacker-bob at this project's mcp/server.js");
   } else if (mcp) {
-    addCheck(checks, "error", checkId("mcp_server_config"), ".mcp.json is missing the Bob-managed bountyagent server entry");
+    addCheck(checks, "error", checkId("mcp_server_config"), ".mcp.json is missing the Bob-managed hacker-bob server entry");
   }
 
   // brutalist MCP is optional — check is informational only, never errors.
@@ -662,13 +662,25 @@ function removeMcpConfig(targetAbs, result, helpers) {
     result.skipped.push({ type: "config", path: ".mcp.json", reason: `invalid JSON: ${error.message || String(error)}` });
     return;
   }
-  if (!isPlainObject(mcp) || !isPlainObject(mcp.mcpServers) || !("bountyagent" in mcp.mcpServers)) return;
-  if (!mcpServerMatches(mcp.mcpServers.bountyagent, targetAbs)) {
-    result.skipped.push({ type: "config", path: ".mcp.json", reason: "bountyagent server entry is not Bob-managed" });
+  if (!isPlainObject(mcp) || !isPlainObject(mcp.mcpServers)) return;
+  // Uninstall must clean up both the canonical `hacker-bob` server key and
+  // the legacy `bountyagent` key that older v1.x installs may still carry
+  // (the v2.0 install migration shim normally rewrites these on first install/
+  // update, but uninstall must be self-contained if migration was skipped).
+  const legacyServerKey = "bountyagent";
+  const serverKeyCandidates = ["hacker-bob", legacyServerKey].filter((key) => key in mcp.mcpServers);
+  if (serverKeyCandidates.length === 0) return;
+  const mismatchedKeys = serverKeyCandidates.filter((key) => !mcpServerMatches(mcp.mcpServers[key], targetAbs));
+  if (mismatchedKeys.length === serverKeyCandidates.length) {
+    result.skipped.push({ type: "config", path: ".mcp.json", reason: `${mismatchedKeys.join(", ")} server entry is not Bob-managed` });
     return;
   }
   const next = { ...mcp, mcpServers: { ...mcp.mcpServers } };
-  delete next.mcpServers.bountyagent;
+  for (const key of serverKeyCandidates) {
+    if (mcpServerMatches(mcp.mcpServers[key], targetAbs)) {
+      delete next.mcpServers[key];
+    }
+  }
   // Also remove the Bob-managed brutalist entry if present and unmodified.
   // Operator overrides (different command/args) are preserved.
   if (

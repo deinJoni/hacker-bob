@@ -451,7 +451,7 @@ const EXPECTED_TOOL_NAMES = [
 
 function withTempHome(fn) {
   const previousHome = process.env.HOME;
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-test-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-test-"));
   process.env.HOME = tempHome;
 
   const cleanup = () => {
@@ -717,7 +717,7 @@ function withTempTechniqueKnowledgeText(contents, fn) {
   const previousProjectDir = process.env.CLAUDE_PROJECT_DIR;
   const previousBobResourceDir = process.env.BOB_RESOURCE_DIR;
   const previousBobProjectDir = process.env.BOB_PROJECT_DIR;
-  const tempProjectDir = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-techniques-"));
+  const tempProjectDir = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-techniques-"));
   const knowledgeDir = path.join(tempProjectDir, ".claude", "knowledge");
   fs.mkdirSync(knowledgeDir, { recursive: true });
   fs.writeFileSync(
@@ -2366,7 +2366,7 @@ test("tool telemetry can be disabled and writer failures never change envelopes"
 
   await withTempHome(async () => {
     seedSessionState("example.com");
-    const blockingPath = path.join(os.tmpdir(), `bountyagent-telemetry-block-${process.pid}-${Date.now()}`);
+    const blockingPath = path.join(os.tmpdir(), `hacker-bob-telemetry-block-${process.pid}-${Date.now()}`);
     fs.writeFileSync(blockingPath, "not a directory\n");
     try {
       await withEnv({ BOUNTY_TELEMETRY: undefined, BOUNTY_TELEMETRY_DIR: blockingPath }, async () => {
@@ -2642,7 +2642,7 @@ test("tool telemetry rows do not store raw secret-bearing payloads", async () =>
 });
 
 test("tool telemetry reader summarizes at read time and skips malformed lines", () => {
-  const telemetryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-telemetry-"));
+  const telemetryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-telemetry-"));
   const env = { ...process.env, BOUNTY_TELEMETRY: "1", BOUNTY_TELEMETRY_DIR: telemetryRoot };
   try {
     const base = {
@@ -2887,7 +2887,7 @@ test("tool telemetry reader summarizes at read time and skips malformed lines", 
 });
 
 test("tool telemetry reader can include filtered evaluator run telemetry summaries", () => {
-  const telemetryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-telemetry-"));
+  const telemetryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-telemetry-"));
   const env = { ...process.env, BOUNTY_TELEMETRY: "1", BOUNTY_TELEMETRY_DIR: telemetryRoot };
   try {
     const allowed = buildToolInvocationTelemetryEvent({
@@ -13999,7 +13999,7 @@ test("bob_read_grade_verdict rejects JSON that references non-existent findings"
 // ── bob_auth_store tests ──
 
 test("bob_auth_store writes v2 auth.json with attacker profile", async () => {
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-test-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-test-"));
   const previousHome = process.env.HOME;
   process.env.HOME = tempHome;
   try {
@@ -14032,7 +14032,7 @@ test("bob_auth_store writes v2 auth.json with attacker profile", async () => {
 });
 
 test("bob_auth_store adds victim profile to existing v2 auth.json", async () => {
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-test-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-test-"));
   const previousHome = process.env.HOME;
   process.env.HOME = tempHome;
   try {
@@ -14092,7 +14092,7 @@ test("bob_auth_store accepts arbitrary profile names without clobbering existing
 });
 
 test("bob_auth_store migrates legacy auth.json", async () => {
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-test-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-test-"));
   const previousHome = process.env.HOME;
   process.env.HOME = tempHome;
   try {
@@ -14130,7 +14130,7 @@ test("bob_auth_store migrates legacy auth.json", async () => {
 });
 
 test("bob_auth_store stores credentials alongside headers", async () => {
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-test-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-test-"));
   const previousHome = process.env.HOME;
   process.env.HOME = tempHome;
   try {
@@ -14155,7 +14155,7 @@ test("bob_auth_store stores credentials alongside headers", async () => {
 });
 
 test("bob_auth_store writes and migrates auth.json with 0600 permissions", async () => {
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-test-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-test-"));
   const previousHome = process.env.HOME;
   process.env.HOME = tempHome;
   try {
@@ -14185,7 +14185,7 @@ test("bob_auth_store writes and migrates auth.json with 0600 permissions", async
 });
 
 test("bob_auth_store reports persistence failures instead of claiming success", async () => {
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-test-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-test-"));
   const previousHome = process.env.HOME;
   process.env.HOME = tempHome;
   try {
@@ -14234,7 +14234,7 @@ test("bob_auth_store preserves concurrent attacker and victim profile writes", a
 });
 
 test("bob_list_auth_profiles redacts secrets while reporting profile status", async () => {
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-test-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-test-"));
   const previousHome = process.env.HOME;
   process.env.HOME = tempHome;
   try {
@@ -17079,7 +17079,7 @@ test("bob_read_assignment_brief rejects unassigned agent", () => {
 });
 
 test("runtime resource resolution prefers neutral env paths and preserves Claude fallback", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-resources-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-resources-"));
   try {
     const neutralResources = path.join(root, "neutral-resources");
     const claudeProject = path.join(root, "claude-project");
@@ -17123,7 +17123,7 @@ test("runtime resource resolution prefers neutral env paths and preserves Claude
 });
 
 test("bob_read_assignment_brief loads knowledge and bypass tables from BOB_RESOURCE_DIR", () => {
-  const resources = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-resource-dir-"));
+  const resources = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-resource-dir-"));
   try {
     fs.mkdirSync(path.join(resources, "knowledge"), { recursive: true });
     fs.mkdirSync(path.join(resources, "bypass-tables"), { recursive: true });
@@ -17566,7 +17566,7 @@ test("malformed technique registry file warns instead of failing evaluator brief
 });
 
 test("temporary technique knowledge ignores and restores ambient Bob resource env", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-ambient-resources-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-ambient-resources-"));
   try {
     const resources = path.join(root, "resources");
     const project = path.join(root, "project");
@@ -18271,7 +18271,7 @@ test("Claude settings register only artifact guards; scoped HTTP policy is enfor
     assert.ok(bash.hooks.some((hook) => /session-write-guard\.sh/.test(hook.command)));
     assert.ok(bash.hooks.some((hook) => /session-read-guard\.sh/.test(hook.command)));
     assert.equal(
-      settings.hooks.PreToolUse.some((entry) => /^mcp__bountyagent__/.test(entry.matcher || "")),
+      settings.hooks.PreToolUse.some((entry) => /^mcp__(hacker-bob|bountyagent)__/.test(entry.matcher || "")),
       false,
       "MCP tool hooks should not imply an external scope guard",
     );
@@ -18296,7 +18296,7 @@ test("Claude settings register only artifact guards; scoped HTTP policy is enfor
           ],
         },
         {
-          matcher: "mcp__bountyagent__bob_http_scan",
+          matcher: "mcp__hacker-bob__bob_http_scan",
           hooks: [
             { type: "command", command: "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/scope-guard-mcp.sh\"", timeout: 5 },
           ],
@@ -18310,7 +18310,7 @@ test("Claude settings register only artifact guards; scoped HTTP policy is enfor
   assert.match(mergedHooksText, /session-read-guard\.sh/);
   assert.match(mergedHooksText, /echo existing/);
   assert.equal(
-    merged.hooks.PreToolUse.some((entry) => /^mcp__bountyagent__/.test(entry.matcher || "")),
+    merged.hooks.PreToolUse.some((entry) => /^mcp__(hacker-bob|bountyagent)__/.test(entry.matcher || "")),
     false,
     "stale MCP scope hook matchers should be removed when their only hook is stale",
   );
@@ -18653,7 +18653,7 @@ test("bob_wave_status excludes explored surfaces from open_requeue_surface_ids",
 
 test("httpScan returns error when auth_profile is requested but not found", async () => {
   const previousHome = process.env.HOME;
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-authtest-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-authtest-"));
   process.env.HOME = tempHome;
   try {
     seedSessionState("example.com");

@@ -10,16 +10,16 @@ allowed-tools:
   - Bash(node *)
   - Bash(stat *)
   - Bash(test *)
-  - mcp__bountyagent__bob_read_pipeline_analytics
-  - mcp__bountyagent__bob_read_session_summary
-  - mcp__bountyagent__bob_read_state_summary
-  - mcp__bountyagent__bob_wave_status
-  - mcp__bountyagent__bob_read_wave_handoffs
-  - mcp__bountyagent__bob_read_candidate_claims
-  - mcp__bountyagent__bob_read_verification_context
-  - mcp__bountyagent__bob_read_verification_round
-  - mcp__bountyagent__bob_read_evidence_packs
-  - mcp__bountyagent__bob_read_grade_verdict
+  - mcp__hacker-bob__bob_read_pipeline_analytics
+  - mcp__hacker-bob__bob_read_session_summary
+  - mcp__hacker-bob__bob_read_state_summary
+  - mcp__hacker-bob__bob_wave_status
+  - mcp__hacker-bob__bob_read_wave_handoffs
+  - mcp__hacker-bob__bob_read_candidate_claims
+  - mcp__hacker-bob__bob_read_verification_context
+  - mcp__hacker-bob__bob_read_verification_round
+  - mcp__hacker-bob__bob_read_evidence_packs
+  - mcp__hacker-bob__bob_read_grade_verdict
 ---
 You are Bob's read-only session status command. Give the operator a compact answer about where a Hacker Bob run stands and what command to run next. This is not a debug review.
 

@@ -1,7 +1,7 @@
 ---
 name: surface-discovery-agent
 description: Runs bounded normal surface-discovery — subdomain enum, live hosts, archived/crawled URLs, nuclei, JS/JWT extraction — and produces attack_surface.json
-tools: Bash, Read, Write, Glob, Grep, mcp__bountyagent__bob_read_session_nucleus
+tools: Bash, Read, Write, Glob, Grep, mcp__hacker-bob__bob_read_session_nucleus
 model: opus
 color: cyan
 ---

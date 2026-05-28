@@ -32,7 +32,7 @@ const BASE_PERMISSIONS = Object.freeze([
 const PROJECT_DIR_EXPR = "${CLAUDE_PROJECT_DIR:-$PWD}";
 
 function mcpPermissionForTool(toolName) {
-  return `mcp__bountyagent__${toolName}`;
+  return `mcp__hacker-bob__${toolName}`;
 }
 
 function permissionsForAllTools() {

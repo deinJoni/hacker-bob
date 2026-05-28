@@ -19,7 +19,7 @@ hacker-bob doctor /path/to/your/project --adapter codex --json
 
 ## MCP Server Is Not Listed
 
-Bob writes a `hacker-bob` server entry into the selected host config. Claude and generic MCP use the project `.mcp.json`; Codex uses `.codex/plugins/hacker-bob/.mcp.json`. v1.x installs may still expose the entry under the legacy `bountyagent` key during the v2.0 → v2.1 deprecation window — both keys are resolved by the runtime. Make sure you installed into the same directory you run the host CLI from:
+Bob writes a `hacker-bob` server entry into the selected host config. Claude and generic MCP use the project `.mcp.json`; Codex uses `.codex/plugins/hacker-bob/.mcp.json`. Existing v1.x installs (which used the legacy `bountyagent` server key) are auto-migrated to `hacker-bob` on next install or update — operator-managed sibling servers and custom permissions are preserved. Make sure you installed into the same directory you run the host CLI from:
 
 ```bash
 npx -y hacker-bob@latest install /path/to/your/project --adapter claude

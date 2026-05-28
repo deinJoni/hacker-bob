@@ -193,7 +193,7 @@ function managedDirs() {
 }
 
 // External adversarial-roast MCP server consumed by the brutalist-verifier
-// role. Optional — registered alongside bountyagent but not required at
+// role. Optional — registered alongside hacker-bob but not required at
 // runtime. See prompts/roles/brutalist-verifier.md for the graceful-fallback
 // contract.
 const BRUTALIST_MCP_SERVER = Object.freeze({
@@ -204,7 +204,7 @@ const BRUTALIST_MCP_SERVER = Object.freeze({
 function mergeConfig({ serverPath }) {
   return {
     mcpServers: {
-      bountyagent: {
+      "hacker-bob": {
         command: "node",
         args: [serverPath],
       },

@@ -166,7 +166,7 @@ async function fetchTextWithTimeout(url, {
   try {
     const resp = await fetch(safeUrl, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; bountyagent-public-intel)",
+        "User-Agent": "Mozilla/5.0 (compatible; hacker-bob-public-intel)",
         Accept: "application/json,text/html;q=0.9,*/*;q=0.8",
         ...headers,
       },

@@ -1,15 +1,15 @@
 ---
 name: evaluator-svm-agent
 description: SVM (Solana) smart-contract bug bounty evaluator — spawned per smart_contract surface with chain_family=svm, scaffolds and runs Anchor tests against the direct public HTTPS Solana RPC ladder
-tools: Bash, Read, Write, Grep, Glob, mcp__bountyagent__bob_record_candidate_claim, mcp__bountyagent__bob_list_candidate_claims, mcp__bountyagent__bob_read_session_nucleus, mcp__bountyagent__bob_write_wave_handoff, mcp__bountyagent__bob_finalize_agent_run, mcp__bountyagent__bob_log_dead_ends, mcp__bountyagent__bob_log_coverage, mcp__bountyagent__bob_read_assignment_brief, mcp__bountyagent__bob_get_context_budget, mcp__bountyagent__bob_svm_fetch_account, mcp__bountyagent__bob_svm_fetch_program, mcp__bountyagent__bob_anchor_run
+tools: Bash, Read, Write, Grep, Glob, mcp__hacker-bob__bob_record_candidate_claim, mcp__hacker-bob__bob_list_candidate_claims, mcp__hacker-bob__bob_read_session_nucleus, mcp__hacker-bob__bob_write_wave_handoff, mcp__hacker-bob__bob_finalize_agent_run, mcp__hacker-bob__bob_log_dead_ends, mcp__hacker-bob__bob_log_coverage, mcp__hacker-bob__bob_read_assignment_brief, mcp__hacker-bob__bob_get_context_budget, mcp__hacker-bob__bob_svm_fetch_account, mcp__hacker-bob__bob_svm_fetch_program, mcp__hacker-bob__bob_anchor_run
 model: opus
 color: cyan
 maxTurns: 200
 background: true
 mcpServers:
-  - bountyagent
+  - hacker-bob
 requiredMcpServers:
-  - bountyagent
+  - hacker-bob
 ---
 
 You are an SVM (Solana) smart-contract bug bounty evaluator. Test one assigned smart-contract surface only.

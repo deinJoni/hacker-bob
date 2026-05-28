@@ -14,8 +14,8 @@ const CODEX_ADAPTER = getAdapter("codex");
 const GENERIC_MCP_ADAPTER = getAdapter("generic-mcp");
 
 test("installer copies a require-able complete MCP runtime", () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-install-"));
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-home-"));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-install-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-home-"));
   const workspace = path.join(tempRoot, "workspace");
   fs.mkdirSync(workspace, { recursive: true });
 
@@ -209,8 +209,8 @@ test("installer copies a require-able complete MCP runtime", () => {
 });
 
 test("doctor accepts legacy-only resources and uninstall removes legacy resource copies", () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-legacy-resources-"));
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-home-"));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-legacy-resources-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-home-"));
   const workspace = path.join(tempRoot, "workspace");
   fs.mkdirSync(workspace, { recursive: true });
 
@@ -262,8 +262,8 @@ test("doctor accepts legacy-only resources and uninstall removes legacy resource
 });
 
 test("installer merges existing MCP/settings config idempotently", () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-install-"));
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-home-"));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-install-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-home-"));
   const workspace = path.join(tempRoot, "workspace");
   fs.mkdirSync(path.join(workspace, ".claude", "knowledge"), { recursive: true });
   fs.mkdirSync(path.join(workspace, ".claude", "bypass-tables"), { recursive: true });
@@ -298,6 +298,7 @@ test("installer merges existing MCP/settings config idempotently", () => {
           "custom-tool",
           "mcp__bountyagent__bob_merge_wave_handoffs",
           "mcp__bountyagent__custom_user_tool",
+          "mcp__hacker-bob__pre_migration_custom",
         ],
       },
       hooks: {
@@ -343,8 +344,9 @@ test("installer merges existing MCP/settings config idempotently", () => {
 
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
     assert.ok(mcp.mcpServers.existing);
-    assert.ok(mcp.mcpServers.bountyagent);
-    assert.equal(Object.keys(mcp.mcpServers).filter((name) => name === "bountyagent").length, 1);
+    // Migration shim rewrites the legacy `bountyagent` key to `hacker-bob`.
+    assert.ok(mcp.mcpServers["hacker-bob"]);
+    assert.ok(!mcp.mcpServers.bountyagent, "migration shim must remove legacy bountyagent server key");
 
     const settings = JSON.parse(fs.readFileSync(path.join(workspace, ".claude", "settings.json"), "utf8"));
     const settingsText = JSON.stringify(settings);
@@ -353,9 +355,15 @@ test("installer merges existing MCP/settings config idempotently", () => {
     assert.equal(settings.customSetting, true);
     assert.equal(settings.permissions.allow.length, new Set(settings.permissions.allow).size);
     assert.ok(settings.permissions.allow.includes("custom-tool"));
-    assert.ok(settings.permissions.allow.includes("mcp__bountyagent__custom_user_tool"));
-    assert.ok(settings.permissions.allow.includes("mcp__bountyagent__bob_http_scan"));
+    // Migration shim rewrites mcp__bountyagent__* permission strings to mcp__hacker-bob__*.
+    assert.ok(settings.permissions.allow.includes("mcp__hacker-bob__custom_user_tool"));
+    assert.ok(!settings.permissions.allow.includes("mcp__bountyagent__custom_user_tool"));
+    assert.ok(settings.permissions.allow.includes("mcp__hacker-bob__bob_http_scan"));
+    // The pre-migration custom permission is idempotently preserved.
+    assert.ok(settings.permissions.allow.includes("mcp__hacker-bob__pre_migration_custom"));
+    // Stale legacy permission strings are dropped (both forms).
     assert.ok(!settings.permissions.allow.includes("mcp__bountyagent__bob_merge_wave_handoffs"));
+    assert.ok(!settings.permissions.allow.includes("mcp__hacker-bob__bob_merge_wave_handoffs"));
     assert.match(settings.statusLine.command, /\$\{CLAUDE_PROJECT_DIR:-\$PWD\}/);
 
     const bashEntry = settings.hooks.PreToolUse.find((entry) => entry.matcher === "Bash");
@@ -366,7 +374,7 @@ test("installer merges existing MCP/settings config idempotently", () => {
       1,
     );
     assert.equal(
-      settings.hooks.PreToolUse.filter((entry) => entry.matcher === "mcp__bountyagent__bob_http_scan").length,
+      settings.hooks.PreToolUse.filter((entry) => entry.matcher === "mcp__hacker-bob__bob_http_scan").length,
       0,
     );
     const stopEntry = settings.hooks.SubagentStop.find((entry) => entry.matcher === "evaluator-agent");
@@ -413,8 +421,8 @@ test("installer merges existing MCP/settings config idempotently", () => {
 });
 
 test("install doctor uninstall dry-run uninstall and reinstall workflow works", () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-lifecycle-"));
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-home-"));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-lifecycle-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-home-"));
   const workspace = path.join(tempRoot, "workspace");
   fs.mkdirSync(workspace, { recursive: true });
 
@@ -468,7 +476,7 @@ test("install doctor uninstall dry-run uninstall and reinstall workflow works", 
 
 test("codex adapter installs direct skills and doctor checks MCP wiring", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-codex-adapter-"));
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-home-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-home-"));
   const workspace = path.join(tempRoot, "workspace");
   const originalCodexHome = process.env.CODEX_HOME;
   fs.mkdirSync(workspace, { recursive: true });
@@ -507,10 +515,11 @@ test("codex adapter installs direct skills and doctor checks MCP wiring", () => 
     assert.ok(fs.existsSync(path.join(workspace, ".agents", "plugins", "marketplace.json")));
 
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".mcp.json"), "utf8"));
-    assert.deepEqual(mcp.mcpServers.bountyagent, {
+    assert.deepEqual(mcp.mcpServers["hacker-bob"], {
       command: "node",
       args: [path.join(workspace, "mcp", "server.js")],
     });
+    assert.ok(!mcp.mcpServers.bountyagent);
 
     const doctor = CODEX_ADAPTER.doctor({ targetAbs: workspace });
     assert.equal(doctor.ok, true);
@@ -552,7 +561,7 @@ test("codex adapter installs direct skills and doctor checks MCP wiring", () => 
 
 test("generic MCP adapter installs only MCP config and prompt docs", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-generic-mcp-adapter-"));
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-home-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-home-"));
   const workspace = path.join(tempRoot, "workspace");
   fs.mkdirSync(workspace, { recursive: true });
 
@@ -581,10 +590,11 @@ test("generic MCP adapter installs only MCP config and prompt docs", () => {
 
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
     assert.ok(mcp.mcpServers.existing);
-    assert.deepEqual(mcp.mcpServers.bountyagent, {
+    assert.deepEqual(mcp.mcpServers["hacker-bob"], {
       command: "node",
       args: [path.join(workspace, "mcp", "server.js")],
     });
+    assert.ok(!mcp.mcpServers.bountyagent);
 
     const doctor = GENERIC_MCP_ADAPTER.doctor({ targetAbs: workspace });
     assert.equal(doctor.ok, true);
@@ -595,9 +605,178 @@ test("generic MCP adapter installs only MCP config and prompt docs", () => {
     assert.ok(!fs.existsSync(path.join(workspace, ".hacker-bob", "generic-mcp", "hacker-bob.md")));
     const after = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
     assert.ok(after.mcpServers.existing);
+    assert.ok(!after.mcpServers["hacker-bob"]);
     assert.ok(!after.mcpServers.bountyagent);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test("migration shim rewrites v1.x bountyagent server key + permission strings to hacker-bob", () => {
+  // The shim in scripts/merge-claude-config.js powers the v2.0.0 rename for
+  // existing installs. This test exercises it directly (unit-level), then
+  // re-runs it on the rewritten output to prove idempotency.
+  const {
+    migrateLegacyMcp,
+    migrateLegacySettings,
+    migrateLegacyServerKey,
+    rewriteLegacyPermissionString,
+  } = require("../scripts/merge-claude-config.js");
+
+  // Sanity: prefix rewriter handles legacy/canonical/unknown strings.
+  assert.equal(
+    rewriteLegacyPermissionString("mcp__bountyagent__bob_http_scan"),
+    "mcp__hacker-bob__bob_http_scan",
+  );
+  assert.equal(
+    rewriteLegacyPermissionString("mcp__hacker-bob__bob_http_scan"),
+    "mcp__hacker-bob__bob_http_scan",
+  );
+  assert.equal(rewriteLegacyPermissionString("custom-tool"), "custom-tool");
+  assert.equal(rewriteLegacyPermissionString(undefined), undefined);
+
+  // Pure .mcp.json migration: legacy key is renamed and operator entries
+  // unrelated to the rename are preserved.
+  const v1Mcp = {
+    mcpServers: {
+      bountyagent: {
+        command: "node",
+        args: ["/legacy/path/mcp/server.js"],
+      },
+      operator: { command: "node", args: ["op.js"] },
+    },
+  };
+  const mcpResult = migrateLegacyMcp(v1Mcp);
+  assert.equal(mcpResult.migrated, true);
+  assert.deepEqual(mcpResult.value.mcpServers["hacker-bob"], {
+    command: "node",
+    args: ["/legacy/path/mcp/server.js"],
+  });
+  assert.ok(!("bountyagent" in mcpResult.value.mcpServers));
+  assert.deepEqual(mcpResult.value.mcpServers.operator, { command: "node", args: ["op.js"] });
+
+  // Idempotency: re-running migration on already-migrated input is a no-op.
+  const idempotentMcp = migrateLegacyMcp(mcpResult.value);
+  assert.equal(idempotentMcp.migrated, false);
+  assert.deepEqual(idempotentMcp.value, mcpResult.value);
+
+  // Both keys present: legacy is dropped, canonical is preserved untouched.
+  const dualKeyMcp = {
+    mcpServers: {
+      bountyagent: { command: "node", args: ["legacy.js"] },
+      "hacker-bob": { command: "node", args: ["canonical.js"] },
+    },
+  };
+  const dualResult = migrateLegacyMcp(dualKeyMcp);
+  assert.equal(dualResult.migrated, true);
+  assert.deepEqual(dualResult.value.mcpServers["hacker-bob"], { command: "node", args: ["canonical.js"] });
+  assert.ok(!("bountyagent" in dualResult.value.mcpServers));
+
+  // Pure settings.json migration: legacy permission strings rewritten, others
+  // preserved.
+  const v1Settings = {
+    permissions: {
+      allow: [
+        "mcp__bountyagent__bob_http_scan",
+        "mcp__bountyagent__custom_user_tool",
+        "Read",
+        "mcp__hacker-bob__pre_migration_custom",
+      ],
+    },
+    customSetting: true,
+  };
+  const settingsResult = migrateLegacySettings(v1Settings);
+  assert.equal(settingsResult.migrated, true);
+  assert.ok(settingsResult.value.permissions.allow.includes("mcp__hacker-bob__bob_http_scan"));
+  assert.ok(settingsResult.value.permissions.allow.includes("mcp__hacker-bob__custom_user_tool"));
+  assert.ok(settingsResult.value.permissions.allow.includes("Read"));
+  // Idempotency: pre-existing canonical permission survives without duplication.
+  assert.ok(settingsResult.value.permissions.allow.includes("mcp__hacker-bob__pre_migration_custom"));
+  assert.equal(
+    settingsResult.value.permissions.allow.length,
+    new Set(settingsResult.value.permissions.allow).size,
+    "migration must dedupe permission strings",
+  );
+  assert.equal(settingsResult.value.customSetting, true, "unrelated settings preserved");
+  assert.ok(!settingsResult.value.permissions.allow.some((p) => p.startsWith("mcp__bountyagent__")));
+
+  // Idempotency: re-migration is a no-op.
+  const idempotentSettings = migrateLegacySettings(settingsResult.value);
+  assert.equal(idempotentSettings.migrated, false);
+  assert.deepEqual(idempotentSettings.value, settingsResult.value);
+
+  // No-op cases.
+  assert.equal(migrateLegacyMcp({}).migrated, false);
+  assert.equal(migrateLegacyMcp({ mcpServers: { other: {} } }).migrated, false);
+  assert.equal(migrateLegacySettings({}).migrated, false);
+  assert.equal(migrateLegacySettings({ permissions: { allow: ["Read"] } }).migrated, false);
+
+  // Combined entry point logs and reports overall migration status.
+  const captured = [];
+  const combined = migrateLegacyServerKey({
+    mcp: v1Mcp,
+    settings: v1Settings,
+    logger: (msg) => captured.push(msg),
+  });
+  assert.equal(combined.migrated, true);
+  assert.equal(captured.length, 1);
+  assert.match(captured[0], /bountyagent\s*->\s*hacker-bob/);
+  assert.match(captured[0], /\.mcp\.json/);
+  assert.match(captured[0], /\.claude\/settings\.json/);
+});
+
+test("merge-claude-config CLI auto-migrates a v1.x .mcp.json + settings.json layout", () => {
+  // Round-trip the migration shim through the CLI entrypoint. This exercises
+  // the same code path install/update uses on existing v1.x workspaces.
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-migration-shim-"));
+  const workspace = path.join(tempRoot, "v1-install");
+  fs.mkdirSync(path.join(workspace, ".claude"), { recursive: true });
+
+  try {
+    const legacyServerPath = path.join(workspace, "mcp", "server.js");
+    fs.writeFileSync(path.join(workspace, ".mcp.json"), `${JSON.stringify({
+      mcpServers: {
+        bountyagent: { command: "node", args: [legacyServerPath] },
+        operatorService: { command: "node", args: ["sidecar.js"] },
+      },
+    }, null, 2)}\n`);
+    fs.writeFileSync(path.join(workspace, ".claude", "settings.json"), `${JSON.stringify({
+      permissions: {
+        allow: [
+          "mcp__bountyagent__bob_http_scan",
+          "mcp__bountyagent__custom_user_tool",
+          "custom-allowlisted",
+        ],
+      },
+      customSetting: true,
+    }, null, 2)}\n`);
+
+    const merge = require("../scripts/merge-claude-config.js");
+    const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
+    const settings = JSON.parse(fs.readFileSync(path.join(workspace, ".claude", "settings.json"), "utf8"));
+    const migrated = merge.migrateLegacyServerKey({ mcp, settings });
+    assert.equal(migrated.migrated, true);
+
+    // The merge step then runs over the migrated config (idempotent for the
+    // rename surfaces).
+    const finalMcp = merge.mergeMcp(migrated.mcp, legacyServerPath);
+    assert.ok(finalMcp.mcpServers["hacker-bob"]);
+    assert.ok(!finalMcp.mcpServers.bountyagent);
+    assert.deepEqual(finalMcp.mcpServers.operatorService, { command: "node", args: ["sidecar.js"] });
+    assert.ok(finalMcp.mcpServers.brutalist);
+
+    const finalSettings = merge.mergeSettings(migrated.settings, {
+      permissions: { allow: ["mcp__hacker-bob__bob_record_candidate_claim"] },
+      hooks: {},
+    });
+    assert.ok(finalSettings.permissions.allow.includes("mcp__hacker-bob__bob_http_scan"));
+    assert.ok(finalSettings.permissions.allow.includes("mcp__hacker-bob__custom_user_tool"));
+    assert.ok(finalSettings.permissions.allow.includes("mcp__hacker-bob__bob_record_candidate_claim"));
+    assert.ok(finalSettings.permissions.allow.includes("custom-allowlisted"));
+    assert.equal(finalSettings.customSetting, true);
+    assert.ok(!finalSettings.permissions.allow.some((p) => p.startsWith("mcp__bountyagent__")));
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 });

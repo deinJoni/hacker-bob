@@ -58,9 +58,10 @@ test("CLI installs into a workspace", () => {
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-export.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "bob", "egress-profiles.json")));
 
-    // .mcp.json must register both bountyagent (required) and brutalist (optional roast layer).
+    // .mcp.json must register both hacker-bob (required) and brutalist (optional roast layer).
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
-    assert.ok(mcp.mcpServers.bountyagent);
+    assert.ok(mcp.mcpServers["hacker-bob"]);
+    assert.ok(!mcp.mcpServers.bountyagent, "v2.0+ installs must not emit the legacy bountyagent server key");
     assert.ok(mcp.mcpServers.brutalist, "Claude install must register the optional brutalist MCP server");
     assert.equal(mcp.mcpServers.brutalist.command, "npx");
     assert.deepEqual(mcp.mcpServers.brutalist.args, ["-y", "@brutalist/mcp@latest"]);
@@ -84,12 +85,12 @@ test("CLI installs and doctors the Codex adapter without Claude files", () => {
     });
 
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".codex-plugin", "plugin.json")));
-    // Plugin .mcp.json must register both bountyagent and the optional brutalist server.
+    // Plugin .mcp.json must register both hacker-bob and the optional brutalist server.
     // The bundled source file ships both; this assertion catches mergeConfig regressions
-    // that would silently overwrite the bundled file with a bountyagent-only template
+    // that would silently overwrite the bundled file with a hacker-bob-only template
     // during install.
     const codexMcp = JSON.parse(fs.readFileSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".mcp.json"), "utf8"));
-    assert.ok(codexMcp.mcpServers.bountyagent, "Codex plugin .mcp.json must keep bountyagent");
+    assert.ok(codexMcp.mcpServers["hacker-bob"], "Codex plugin .mcp.json must keep hacker-bob");
     assert.ok(codexMcp.mcpServers.brutalist, "Codex plugin .mcp.json must register the optional brutalist MCP server post-install");
     assert.deepEqual(codexMcp.mcpServers.brutalist.args, ["-y", "@brutalist/mcp@latest"]);
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-evaluate", "SKILL.md")));
@@ -214,11 +215,12 @@ test("CLI generic MCP adapter install and uninstall preserve unrelated MCP confi
     assert.ok(!fs.existsSync(path.join(workspace, ".claude")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex")));
 
-    // .mcp.json must keep the operator's existing entry, register bountyagent,
+    // .mcp.json must keep the operator's existing entry, register hacker-bob,
     // and additionally register the optional brutalist server.
     const installedMcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
     assert.ok(installedMcp.mcpServers.existing, "generic-mcp install must preserve unrelated MCP servers");
-    assert.ok(installedMcp.mcpServers.bountyagent);
+    assert.ok(installedMcp.mcpServers["hacker-bob"]);
+    assert.ok(!installedMcp.mcpServers.bountyagent);
     assert.ok(installedMcp.mcpServers.brutalist, "generic-mcp install must register the optional brutalist MCP server");
     assert.deepEqual(installedMcp.mcpServers.brutalist.args, ["-y", "@brutalist/mcp@latest"]);
 
@@ -237,6 +239,7 @@ test("CLI generic MCP adapter install and uninstall preserve unrelated MCP confi
 
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
     assert.ok(mcp.mcpServers.existing);
+    assert.ok(!mcp.mcpServers["hacker-bob"]);
     assert.ok(!mcp.mcpServers.bountyagent);
     assert.ok(!mcp.mcpServers.brutalist, "uninstall must also remove the Bob-managed brutalist server");
   } finally {
@@ -300,7 +303,7 @@ test("CLI uninstall of one adapter preserves remaining adapters and shared runti
     assert.ok(fs.existsSync(path.join(workspace, ".hacker-bob", "generic-mcp", "hacker-bob.md")));
     assert.ok(fs.existsSync(path.join(workspace, "mcp", "server.js")));
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
-    assert.ok(mcp.mcpServers.bountyagent);
+    assert.ok(mcp.mcpServers["hacker-bob"]);
     const finalMeta = JSON.parse(fs.readFileSync(path.join(workspace, ".hacker-bob", "install.json"), "utf8"));
     assert.deepEqual(finalMeta.installed_adapters, ["generic-mcp"]);
   } finally {
@@ -337,7 +340,7 @@ test("CLI auto-selects claude (default fallback) on a fresh install with no --ad
   }
 });
 
-test("CLI generic-mcp install writes mcpServers.bountyagent into .mcp.json", () => {
+test("CLI generic-mcp install writes mcpServers['hacker-bob'] into .mcp.json", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-generic-presence-"));
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-home-"));
   const workspace = path.join(tempRoot, "workspace");
@@ -350,12 +353,13 @@ test("CLI generic-mcp install writes mcpServers.bountyagent into .mcp.json", () 
       stdio: "pipe",
     });
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
-    assert.ok(mcp.mcpServers && mcp.mcpServers.bountyagent, "mcpServers.bountyagent should be present after generic-mcp install");
-    assert.equal(mcp.mcpServers.bountyagent.command, "node");
+    assert.ok(mcp.mcpServers && mcp.mcpServers["hacker-bob"], "mcpServers['hacker-bob'] should be present after generic-mcp install");
+    assert.ok(!mcp.mcpServers.bountyagent, "v2.0+ installs must not emit the legacy bountyagent server key");
+    assert.equal(mcp.mcpServers["hacker-bob"].command, "node");
     assert.ok(
-      Array.isArray(mcp.mcpServers.bountyagent.args)
-        && mcp.mcpServers.bountyagent.args.some((arg) => arg.endsWith(path.join("mcp", "server.js"))),
-      `mcpServers.bountyagent.args should reference mcp/server.js; got: ${JSON.stringify(mcp.mcpServers.bountyagent.args)}`,
+      Array.isArray(mcp.mcpServers["hacker-bob"].args)
+        && mcp.mcpServers["hacker-bob"].args.some((arg) => arg.endsWith(path.join("mcp", "server.js"))),
+      `mcpServers['hacker-bob'].args should reference mcp/server.js; got: ${JSON.stringify(mcp.mcpServers["hacker-bob"].args)}`,
     );
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -730,7 +734,7 @@ test("CLI uninstall --yes removes Bob-managed files and preserves unrelated conf
     }, null, 2)}\n`);
     fs.writeFileSync(path.join(workspace, ".claude", "settings.json"), `${JSON.stringify({
       permissions: {
-        allow: ["custom-tool", "mcp__bountyagent__custom_user_tool"],
+        allow: ["custom-tool", "mcp__hacker-bob__custom_user_tool"],
       },
       hooks: {
         PreToolUse: [{
@@ -775,12 +779,14 @@ test("CLI uninstall --yes removes Bob-managed files and preserves unrelated conf
 
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
     assert.ok(mcp.mcpServers.existing);
+    assert.ok(!mcp.mcpServers["hacker-bob"]);
     assert.ok(!mcp.mcpServers.bountyagent);
 
     const settings = JSON.parse(fs.readFileSync(path.join(workspace, ".claude", "settings.json"), "utf8"));
     assert.equal(settings.customSetting, true);
     assert.ok(settings.permissions.allow.includes("custom-tool"));
-    assert.ok(settings.permissions.allow.includes("mcp__bountyagent__custom_user_tool"));
+    assert.ok(settings.permissions.allow.includes("mcp__hacker-bob__custom_user_tool"));
+    assert.ok(!settings.permissions.allow.includes("mcp__hacker-bob__bob_http_scan"));
     assert.ok(!settings.permissions.allow.includes("mcp__bountyagent__bob_http_scan"));
     assert.ok(!settings.statusLine);
     assert.ok(settings.hooks.PreToolUse.some((entry) => (

@@ -5,7 +5,7 @@ Bob adapter.
 
 ## Runtime
 
-The project-local MCP server is `bountyagent`. Treat its tools as the source of
+The project-local MCP server is `hacker-bob`. Treat its tools as the source of
 truth for session state, waves, handoffs, findings, verification, grading,
 telemetry, and report inputs.
 

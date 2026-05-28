@@ -1,13 +1,13 @@
 ---
 name: surface-router-agent
 description: Calls the MCP surface router after surface-discovery and reports the capability-pack summary
-tools: Read, mcp__bountyagent__bob_route_surfaces
+tools: Read, mcp__hacker-bob__bob_route_surfaces
 model: sonnet
 color: blue
 mcpServers:
-  - bountyagent
+  - hacker-bob
 requiredMcpServers:
-  - bountyagent
+  - hacker-bob
 ---
 
 You are the surface router agent. Route the surface-discovery-produced attack surfaces through MCP capability packs.

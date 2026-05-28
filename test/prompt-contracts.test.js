@@ -17,8 +17,8 @@
 //   - Lifecycle FSM derives from LIFECYCLE_STATE_VALUES, never from a literal
 //     phase string.
 //   - Public branding ("Hacker Bob") is asserted against the customer-visible
-//     surfaces; the internal `bountyagent` MCP-permission identifier is
-//     allowed because it is the host-side prefix the registry exports.
+//     surfaces; the internal `hacker-bob` MCP-permission identifier is the
+//     host-side prefix the registry exports.
 //   - Role-bundle contracts assert *exactly-one* claim-recording tool whose
 //     handler validates against the CandidateClaim schema; the tool's
 //     concrete name is incidental.
@@ -150,7 +150,7 @@ function agentToolsList(agentRelPath) {
 
 const MCP_PERMISSION_PREFIX = (() => {
   // Derive the host-side MCP permission prefix from the canonical builder so
-  // the test file makes no assumptions about the literal "bountyagent" string.
+  // the test file makes no assumptions about the literal server key string.
   const sample = TOOLS[0] && TOOLS[0].name;
   assert.ok(sample, "registry must surface at least one primary tool");
   const permission = mcpPermissionForTool(sample);
@@ -217,24 +217,19 @@ function handlerWritesCandidateClaim(toolName) {
 // =============================================================================
 
 test("public-facing surfaces use Hacker Bob branding, not the retired product name", () => {
-  // The retired marketing name is "Bounty Agent" (two words). The internal
-  // permission identifier `bountyagent` is the legitimate host-side MCP server
-  // key and is explicitly allowed. A separate test below guards that the
-  // permission prefix stays registry-derived.
+  // The retired marketing name is "Bounty Agent" (two words). The canonical
+  // host-side MCP server key is `hacker-bob`; the legacy `bountyagent` server
+  // key is auto-migrated on install/update by the merge-claude-config shim.
   const publicFiles = [
     "mcp/server.js",
     "site/index.html",
     "site/src/App.tsx",
   ];
   const retiredNamePattern = new RegExp("\\bBounty " + "Agent\\b|\\bbounty " + "agent\\b", "i");
-  const internalIdentifierPattern = /\bbountyagent\b/;
 
   for (const file of publicFiles) {
     const body = readFile(file);
     assert.doesNotMatch(body, retiredNamePattern, `${file} must use Hacker Bob naming`);
-    // The internal identifier is allowed (it's the MCP server key); this
-    // line documents that distinction rather than asserting it.
-    void internalIdentifierPattern;
   }
 });
 
@@ -547,9 +542,11 @@ test("Codex skills, plugin manifest, and bundled MCP carry portable Bob contract
   assert.doesNotMatch(JSON.stringify(manifest), /TODO/);
 
   const mcp = JSON.parse(readFile("adapters/codex/hacker-bob/.mcp.json"));
-  // The legacy MCP server key is preserved at the .mcp.json layer per Cycle P.1.
+  // The canonical MCP server key is `hacker-bob`. v1.x installs that carry
+  // the legacy `bountyagent` key are auto-migrated by merge-claude-config.
   const serverKeys = Object.keys(mcp.mcpServers);
-  assert.ok(serverKeys.includes("bountyagent") || serverKeys.includes("hacker-bob"));
+  assert.ok(serverKeys.includes("hacker-bob"));
+  assert.ok(!serverKeys.includes("bountyagent"));
 
   // Codex skill bodies must not leak Claude-specific syntax.
   for (const skill of [
@@ -630,7 +627,7 @@ test("surface-discovery agents stay MCP-free except for the governance nucleus r
     const frontmatterMatch = document.match(/^---\n[\s\S]*?\n---\n/);
     const body = frontmatterMatch ? document.slice(frontmatterMatch[0].length) : document;
     assert.doesNotMatch(body, /mcp__/i, `${agent} body should not invoke MCP tools`);
-    const exposures = Array.from((frontmatterMatch ? frontmatterMatch[0] : "").matchAll(/mcp__[A-Za-z0-9_]+/g))
+    const exposures = Array.from((frontmatterMatch ? frontmatterMatch[0] : "").matchAll(/mcp__[A-Za-z0-9_-]+/g))
       .map((m) => m[0]);
     for (const exposure of exposures) {
       assert.equal(

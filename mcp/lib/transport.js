@@ -10,10 +10,10 @@ function createMcpMessageHandler({ tools, executeTool, send }) {
   return async function handleMessage(rpc) {
     switch (rpc.method) {
       case "initialize":
-        // Cycle P.1: the canonical MCP server name is `hacker-bob`. The
-        // `.mcp.json` install layer keeps the `bountyagent` server key as a
-        // backwards-compatible alias so existing sessions still resolve until
-        // the v2.1.0 cleanup release per hypergraph Part IX.
+        // The canonical MCP server name is `hacker-bob`. v1.x installs that
+        // still carry the legacy `bountyagent` server key in their `.mcp.json`
+        // are auto-rewritten on next install/update by the install-time
+        // migration shim. See the host adapters' install scripts.
         send({
           jsonrpc: "2.0",
           id: rpc.id,
