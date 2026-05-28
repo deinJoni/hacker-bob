@@ -111,6 +111,7 @@ test("evaluator brief slice registry is explicit and budgeted per profile", () =
     "payload_hints",
     "knowledge_summary",
     "technique_packs",
+    "cli_tools",
     "traffic_summary",
     "audit_summary",
     "circuit_breaker_summary",

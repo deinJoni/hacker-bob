@@ -77,7 +77,9 @@ const {
 } = require("./cli-tool-packs.js");
 const {
   checkCliToolInstallation,
+  presenceCachePath,
 } = require("./cli-tool-presence.js");
+const fs = require("fs");
 
 // Bypass table tech-to-file map used by evaluator brief generation.
 const BYPASS_TABLE_MAP = {
@@ -153,6 +155,16 @@ const WEB_BRIEF_SLICE_REGISTRY = Object.freeze([
       full_pack_read_limit: context.routeMetadata.context_budget.full_pack_read_limit,
       attempt_log_required: context.routeMetadata.context_budget.attempt_log_required,
     },
+  })),
+  // Plane T cycle T.3 — `cli_tools` lands immediately after `technique_packs`
+  // so the operator reads the conditional toolkit alongside the narrative pack
+  // selection. Slice returns "" when no packs apply; the registry pass deletes
+  // the key so the brief stays absent (not "empty header only").
+  briefSliceEntry("cli_tools", 2048, (context) => renderAvailableCliToolsSectionSync({
+    surface_fingerprint: context.cliToolSurfaceFingerprint,
+    task_lens: context.cliToolTaskLens,
+    observations: context.cliToolObservations,
+    target_domain: context.cliToolTargetDomain,
   })),
   briefSliceEntry("traffic_summary", 4096, (context) => context.trafficSummary),
   briefSliceEntry("audit_summary", 4096, (context) => context.auditSummary),
@@ -414,12 +426,88 @@ function readAssignmentBrief(args) {
 function buildBriefExtrasForProfile(profile, { domain, surface, assignment, routeMetadata }) {
   const registry = briefSliceRegistryForProfile(profile);
   if (registry === WEB_BRIEF_SLICE_REGISTRY) {
-    return buildWebBriefExtras(domain, surface, routeMetadata);
+    return buildWebBriefExtras(domain, surface, routeMetadata, assignment);
   }
   if (registry === SMART_CONTRACT_BRIEF_SLICE_REGISTRY) {
     return buildSmartContractBriefExtras(domain, surface, assignment);
   }
   throw new Error(`Unsupported brief profile: ${profile}`);
+}
+
+// Plane T cycle T.3 — derive the cli-tool surface fingerprint from the
+// assigned surface object. The fingerprint is the input to
+// `selectCliToolPacks`'s `applicable_when` predicates. We hand the predicate
+// the minimum it needs to fire (kind, host, hosts[], session_dir,
+// target_domain) so the cli-tool-pack predicates stay pure functions of
+// observed surface properties (T-R8).
+//
+// Hosts are capped at CLI_TOOL_HOST_PLACEHOLDER_MAX_CHARS before they can
+// land in an invocation_template `<host>` placeholder. Mirrors the endpoint
+// cap below — a 5000-char host string must not echo verbatim into the brief.
+const CLI_TOOL_HOST_PLACEHOLDER_MAX_CHARS = 240;
+
+function capHostForPlaceholder(value) {
+  const text = String(value);
+  return text.length > CLI_TOOL_HOST_PLACEHOLDER_MAX_CHARS
+    ? text.slice(0, CLI_TOOL_HOST_PLACEHOLDER_MAX_CHARS)
+    : text;
+}
+
+function buildCliToolSurfaceFingerprint(surfaceObj, brief_profile, domain) {
+  const fingerprint = {};
+  if (typeof brief_profile === "string") {
+    if (brief_profile === "web") {
+      fingerprint.kind = "web";
+    } else if (brief_profile.startsWith("smart_contract")) {
+      fingerprint.kind = "smart_contract";
+    }
+  }
+  if (surfaceObj && typeof surfaceObj === "object") {
+    if (Array.isArray(surfaceObj.hosts) && surfaceObj.hosts.length > 0) {
+      fingerprint.hosts = surfaceObj.hosts.map(capHostForPlaceholder);
+      fingerprint.host = capHostForPlaceholder(surfaceObj.hosts[0]);
+    }
+    if (Array.isArray(surfaceObj.tech_stack) && surfaceObj.tech_stack.length > 0) {
+      fingerprint.tech_stack = surfaceObj.tech_stack.slice();
+    }
+  }
+  if (typeof domain === "string" && domain) {
+    fingerprint.target_domain = capHostForPlaceholder(domain);
+    if (!fingerprint.host) fingerprint.host = capHostForPlaceholder(domain);
+  }
+  return fingerprint;
+}
+
+// Project the surface object into the observation summary shape the cli-tool
+// pack predicates expect. T.3 fills `routes_count` / `observed_endpoints`
+// from the surface signal; T.5+ will add `items[]` from the frontier
+// observation feed (jwt_observed, etc.). Per T-R8, this projection is a pure
+// function of the surface — no clock, no I/O.
+//
+// Each endpoint is capped at CLI_TOOL_ENDPOINT_PLACEHOLDER_MAX_CHARS before
+// it can land in an invocation_template `<endpoint>` placeholder. Without
+// this cap, a pathological surface (e.g., a 5000-char endpoint string) would
+// echo verbatim into the brief — re-introducing the same unbounded-scalar
+// bloat that `slimSurfaceForBrief` already guards against (T-R1).
+const CLI_TOOL_ENDPOINT_PLACEHOLDER_MAX_CHARS = 240;
+
+function buildCliToolObservationsSummary(surfaceObj) {
+  const summary = {};
+  if (surfaceObj && typeof surfaceObj === "object") {
+    const endpoints = Array.isArray(surfaceObj.endpoints) ? surfaceObj.endpoints.filter((e) => e != null) : [];
+    summary.routes_count = endpoints.length;
+    if (endpoints.length > 0) {
+      summary.observed_endpoints = endpoints.map((endpoint) => {
+        const text = String(endpoint);
+        return text.length > CLI_TOOL_ENDPOINT_PLACEHOLDER_MAX_CHARS
+          ? text.slice(0, CLI_TOOL_ENDPOINT_PLACEHOLDER_MAX_CHARS)
+          : text;
+      });
+    }
+  } else {
+    summary.routes_count = 0;
+  }
+  return summary;
 }
 
 // Web profile carries HTTP-flavored intel: bypass tables for the surface's
@@ -467,7 +555,7 @@ function legacyKnowledgeFromTechniquePacks(selectedResult, selectedTechniquePack
   };
 }
 
-function buildWebBriefExtras(domain, surfaceObj, routeMetadata) {
+function buildWebBriefExtras(domain, surfaceObj, routeMetadata, assignment) {
   const bypassFile = resolveBypassTable(surfaceObj.tech_stack);
   let bypassTable = "";
   try {
@@ -507,6 +595,12 @@ function buildWebBriefExtras(domain, surfaceObj, routeMetadata) {
   const staticScanHints = summarizeStaticScanHints(domain, { surface: surfaceObj });
   const schemaSlice = summarizeSchemaSliceForSurface(domain, surfaceObj);
   const surfaceGraphSlice = summarizeSurfaceGraphForSurface(domain, surfaceObj);
+  // Plane T cycle T.3 — cli-tool render context. Surface fingerprint + task
+  // lens + observations summary feed the conditional pack selection that
+  // lands in the brief immediately after the technique-pack narrative.
+  const cliToolSurfaceFingerprint = buildCliToolSurfaceFingerprint(surfaceObj, routeMetadata.brief_profile, domain);
+  const cliToolTaskLens = assignment && typeof assignment.task_lens === "string" ? assignment.task_lens : null;
+  const cliToolObservations = buildCliToolObservationsSummary(surfaceObj);
   const webBriefContext = {
     bypassTable: bypassTable || null,
     knowledge,
@@ -522,8 +616,19 @@ function buildWebBriefExtras(domain, surfaceObj, routeMetadata) {
     staticScanHints,
     schemaSlice,
     surfaceGraphSlice,
+    cliToolSurfaceFingerprint,
+    cliToolTaskLens,
+    cliToolObservations,
+    cliToolTargetDomain: domain,
   };
-  return buildBriefExtrasFromRegistry(WEB_BRIEF_SLICE_REGISTRY, webBriefContext);
+  const extras = buildBriefExtrasFromRegistry(WEB_BRIEF_SLICE_REGISTRY, webBriefContext);
+  // Per T-R1 "brief inflation": drop `cli_tools` entirely when no packs
+  // apply. An empty header would still cost tokens and confuse the operator
+  // who would scan for invocations under the section.
+  if (!extras.cli_tools) {
+    delete extras.cli_tools;
+  }
+  return extras;
 }
 
 // Smart-contract profile carries on-chain context: the bob-spec status with
@@ -540,22 +645,25 @@ function buildSmartContractBriefExtras(domain, surfaceObj, assignment) {
   return buildBriefExtrasFromRegistry(SMART_CONTRACT_BRIEF_SLICE_REGISTRY, smartContractBriefContext);
 }
 
-// Plane T Cycle T.2 — surface-conditional CLI tool block (scaffold).
+// Plane T Cycle T.3 — surface-conditional CLI tool block, wired into the brief.
 //
 // Returns a markdown section listing the CLI tool packs that apply to a
 // surface + lens + observations triple, ranked by:
-//   score = install_present * 1 + applicable_when_match * 2
-// and capped at 5 (T-P2 "conditional, not totaled"). Packs whose tool is not
-// installed are still scored — they just contribute 0 to the install term.
-// Empty input projection returns "" (no header) so the brief stays clean
-// when nothing applies.
-//
-// TODO(T.3): wire this into the live brief renderer alongside
-// WEB_BRIEF_SLICE_REGISTRY. T.2 only ships the function + unit tests; T.3
-// owns the integration (placement after the technique-pack narrative,
-// telemetry_promotion term, lens-driven suppression hooks).
+//   score = install_present * 1
+//         + applicable_when_match * 2
+//         + telemetry_promotion * 0.5
+// and capped at 5 (T-P2 "conditional, not totaled"). Telemetry promotion is a
+// no-op until T.8 populates pack-telemetry signals; we pass 0 here so the
+// scoring stays deterministic and the cap remains the binding constraint.
+// Packs whose tool is not installed are still scored — they just contribute 0
+// to the install term. Empty projection returns null so the brief renderer can
+// drop the slice entirely (per T-R1: an empty header would still inflate the
+// brief).
 const AVAILABLE_CLI_TOOLS_HEADER = "Available CLI tools for this surface";
 const AVAILABLE_CLI_TOOLS_MAX = 5;
+const TELEMETRY_PROMOTION_WEIGHT = 0.5;
+const APPLICABLE_MATCH_WEIGHT = 2;
+const INSTALL_PRESENT_WEIGHT = 1;
 
 async function loadCliToolInstallStatus(targetDomain, packs) {
   const status = {};
@@ -573,6 +681,116 @@ async function loadCliToolInstallStatus(targetDomain, packs) {
     }
   }
   return status;
+}
+
+// Sync presence read for the brief assembly path. readAssignmentBrief is
+// synchronous and must not shell out — the install-check subprocess fan-out
+// belongs to the async warm-up path (T.2) that populates the cache. Here we
+// only consult what is already on disk; missing/stale entries surface as
+// `{ installed: false }` so the brief stays graceful (T-P3).
+function readCliToolInstallStatusSync(targetDomain) {
+  const status = {};
+  if (typeof targetDomain !== "string" || !targetDomain.trim()) return status;
+  let cache = null;
+  try {
+    const cachePath = presenceCachePath(targetDomain);
+    if (!fs.existsSync(cachePath)) return status;
+    cache = JSON.parse(fs.readFileSync(cachePath, "utf8"));
+  } catch {
+    return status;
+  }
+  const results = cache && typeof cache === "object" && cache.results && typeof cache.results === "object" && !Array.isArray(cache.results)
+    ? cache.results
+    : {};
+  for (const pack of CLI_TOOL_PACKS) {
+    const entry = results[pack.id];
+    if (entry && typeof entry === "object") {
+      status[pack.id] = {
+        installed: Boolean(entry.installed),
+        ...(entry.version ? { version: entry.version } : {}),
+      };
+    } else {
+      status[pack.id] = { installed: false };
+    }
+  }
+  return status;
+}
+
+// Score + render the cli-tool section against a precomputed install status.
+// Shared by the sync brief-assembly path and the async caller that probes
+// install_check live (test/cli-tool-packs.test.js). telemetryPromotionForPack
+// is the T.8 hook; T.3 ships the zero-implementation so the scoring formula
+// is settled now instead of after telemetry lands.
+function scoreAndRenderCliToolPacks({
+  surface_fingerprint,
+  task_lens,
+  observations,
+  target_domain,
+  installStatus,
+  telemetryPromotionForPack,
+}) {
+  const applicable = selectCliToolPacks({
+    surface_fingerprint,
+    task_lens,
+    observations,
+    install_status: installStatus || {},
+  });
+  const applicableIds = new Set(applicable.map((pack) => pack.id));
+  const telemetryFn = typeof telemetryPromotionForPack === "function"
+    ? telemetryPromotionForPack
+    : () => 0;
+  const scored = CLI_TOOL_PACKS
+    .map((pack) => {
+      const installEntry = (installStatus && installStatus[pack.id]) || { installed: false };
+      const installScore = installEntry.installed ? INSTALL_PRESENT_WEIGHT : 0;
+      const applicableScore = applicableIds.has(pack.id) ? APPLICABLE_MATCH_WEIGHT : 0;
+      let telemetryScore = 0;
+      try {
+        const raw = telemetryFn(pack);
+        telemetryScore = Number.isFinite(raw) ? raw * TELEMETRY_PROMOTION_WEIGHT : 0;
+      } catch {
+        telemetryScore = 0;
+      }
+      const score = installScore + applicableScore + telemetryScore;
+      return { pack, score, applicable: applicableIds.has(pack.id), installEntry };
+    })
+    .filter((entry) => entry.applicable)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.pack.id.localeCompare(b.pack.id);
+    })
+    .slice(0, AVAILABLE_CLI_TOOLS_MAX);
+  if (scored.length === 0) return "";
+  const renderContext = buildCliToolRenderContext(surface_fingerprint, observations, target_domain);
+  const lines = [`### ${AVAILABLE_CLI_TOOLS_HEADER}`];
+  for (const entry of scored) {
+    const version = entry.installEntry && entry.installEntry.version ? entry.installEntry.version : null;
+    const versionLabel = version ? ` (v${version})` : "";
+    const invocation = fillInvocationPlaceholders(entry.pack.invocation_template, renderContext);
+    lines.push(`- **${entry.pack.id}**${versionLabel} — ${entry.pack.narrative}`);
+    lines.push(`  \`${invocation}\``);
+  }
+  return lines.join("\n");
+}
+
+// Sync variant used by readAssignmentBrief / WEB_BRIEF_SLICE_REGISTRY. Reads
+// the install-presence cache file directly; never spawns a subprocess.
+function renderAvailableCliToolsSectionSync({
+  surface_fingerprint,
+  task_lens,
+  observations,
+  target_domain,
+} = {}) {
+  const installStatus = readCliToolInstallStatusSync(target_domain);
+  return scoreAndRenderCliToolPacks({
+    surface_fingerprint,
+    task_lens,
+    observations,
+    target_domain,
+    installStatus,
+    // T.8 will replace this with a real `pack-telemetry.js` reader.
+    telemetryPromotionForPack: () => 0,
+  });
 }
 
 function buildCliToolRenderContext(surface_fingerprint, observations, target_domain) {
@@ -609,48 +827,29 @@ async function renderAvailableCliToolsSection({
   observations,
   target_domain,
 } = {}) {
-  const applicable = selectCliToolPacks({
+  const installStatus = await loadCliToolInstallStatus(target_domain, CLI_TOOL_PACKS);
+  return scoreAndRenderCliToolPacks({
     surface_fingerprint,
     task_lens,
     observations,
-    install_status: {},
+    target_domain,
+    installStatus,
+    // T.8 will replace this with a real `pack-telemetry.js` reader.
+    telemetryPromotionForPack: () => 0,
   });
-  const installStatus = await loadCliToolInstallStatus(target_domain, CLI_TOOL_PACKS);
-  const applicableIds = new Set(applicable.map((pack) => pack.id));
-  const scored = CLI_TOOL_PACKS
-    .map((pack) => {
-      const installEntry = installStatus[pack.id] || { installed: false };
-      const installScore = installEntry.installed ? 1 : 0;
-      const applicableScore = applicableIds.has(pack.id) ? 2 : 0;
-      const score = installScore + applicableScore;
-      return { pack, score, applicable: applicableIds.has(pack.id), installEntry };
-    })
-    .filter((entry) => entry.applicable)
-    .sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      return a.pack.id.localeCompare(b.pack.id);
-    })
-    .slice(0, AVAILABLE_CLI_TOOLS_MAX);
-  if (scored.length === 0) return "";
-  const renderContext = buildCliToolRenderContext(surface_fingerprint, observations, target_domain);
-  const lines = [`### ${AVAILABLE_CLI_TOOLS_HEADER}`];
-  for (const entry of scored) {
-    const version = entry.installEntry && entry.installEntry.version ? entry.installEntry.version : null;
-    const versionLabel = version ? ` (v${version})` : "";
-    const invocation = fillInvocationPlaceholders(entry.pack.invocation_template, renderContext);
-    lines.push(`- **${entry.pack.id}**${versionLabel} — ${entry.pack.narrative}`);
-    lines.push(`  \`${invocation}\``);
-  }
-  return lines.join("\n");
 }
 
 module.exports = {
   AVAILABLE_CLI_TOOLS_HEADER,
   AVAILABLE_CLI_TOOLS_MAX,
+  APPLICABLE_MATCH_WEIGHT,
+  INSTALL_PRESENT_WEIGHT,
+  TELEMETRY_PROMOTION_WEIGHT,
   BOB_SPEC_ABSENT_MESSAGE,
   ASSIGNMENT_BRIEF_SLICE_REGISTRY,
   readAssignmentBrief,
   renderAvailableCliToolsSection,
+  renderAvailableCliToolsSectionSync,
   evaluatorKnowledgeCandidatePaths,
   resolveBypassTable,
   resolveEvaluatorKnowledge,

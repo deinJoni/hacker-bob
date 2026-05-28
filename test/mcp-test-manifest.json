@@ -50,5 +50,6 @@
   "test/mcp-test-discovery.test.js",
   "test/browser-driver-tools.test.js",
   "test/cli-tool-packs.test.js",
+  "test/cli-tools-brief-integration.test.js",
   "test/jwt-observation.test.js"
 ]
