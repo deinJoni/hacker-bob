@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Bounty status line — model, context bar, active evaluate status
+// Hacker Bob status line — model, context bar, active evaluate status
 
 const fs = require('fs');
 const path = require('path');

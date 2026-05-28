@@ -122,7 +122,7 @@ test("canonical package lists shipped Claude hooks explicitly", () => {
     "bob-egress.js",
     "bob-export.js",
     "bob-update.js",
-    "bounty-statusline.js",
+    "bob-statusline.js",
     "agent-run-start.js",
     "agent-run-stop.js",
     "session-read-guard.sh",

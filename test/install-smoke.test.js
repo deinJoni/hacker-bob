@@ -125,7 +125,7 @@ test("installer copies a require-able complete MCP runtime", () => {
     assert.equal(installMeta.package_name, "hacker-bob");
     assert.equal(installMeta.install_target, workspace);
 
-    const statuslinePath = path.join(workspace, ".claude", "hooks", "bounty-statusline.js");
+    const statuslinePath = path.join(workspace, ".claude", "hooks", "bob-statusline.js");
     const nestedWorkspaceDir = path.join(workspace, "nested");
     fs.mkdirSync(nestedWorkspaceDir, { recursive: true });
     const runStatusline = () => execFileSync(process.execPath, [statuslinePath], {
@@ -320,7 +320,7 @@ test("installer merges existing MCP/settings config idempotently", () => {
       },
       statusLine: {
         type: "command",
-        command: "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/bounty-statusline.js\"",
+        command: "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/bob-statusline.js\"",
       },
       customSetting: true,
     }, null, 2)}\n`);

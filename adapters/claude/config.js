@@ -195,7 +195,7 @@ function defaultClaudeSettings() {
     },
     statusLine: {
       type: "command",
-      command: `node "${PROJECT_DIR_EXPR}/.claude/hooks/bounty-statusline.js"`,
+      command: `node "${PROJECT_DIR_EXPR}/.claude/hooks/bob-statusline.js"`,
     },
   };
 }
