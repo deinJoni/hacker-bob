@@ -8,7 +8,8 @@ const DEFAULT_MAX_TEXT_CHARS = 4000;
 // label, never the value), and `set_cookie_name` (same) are deliberately
 // allowed. Adding a new suffix here is a deliberate widening — keep the list
 // tight and audit the producer to confirm the field never carries the actual
-// secret bytes (see Plane T-R3, jwt_observed payload).
+// secret bytes (see Plane T-R3, jwt_observed and graphql/openapi schema
+// payloads).
 const SAFE_META_SUFFIXES = [
   "fingerprint",
   "snippet",
@@ -20,15 +21,30 @@ const SAFE_META_SUFFIXES = [
   "hash",
   "sha256",
   "path",
+  "scheme",
+  "schemes",
+  "count",
 ];
 const SAFE_META_SUFFIX_GROUP = SAFE_META_SUFFIXES.join("|");
+
+// Boolean-question prefixes that flip a forbidden segment into a yes/no flag
+// rather than a value carrier. `has_apikey` and `has_oauth` (T.6 openapi
+// schema payload) are typed projections, not secret-bearing fields. The
+// exemption is narrow on purpose — any new boolean prefix here must be a
+// stable typing convention, never a free-form prefix.
+const BOOLEAN_QUESTION_PREFIXES = ["has", "is", "uses", "supports"];
+const BOOLEAN_QUESTION_PREFIX_GROUP = BOOLEAN_QUESTION_PREFIXES.join("|");
 
 // `key_lookbehind` rejects e.g. `id_token` but allows `token_fingerprint`.
 // The pattern fires when a forbidden token (`token`, `cookie`, ...) appears as
 // a `_`/`-` separated segment NOT immediately followed by one of the safe
-// meta-suffix terminators above.
+// meta-suffix terminators above. The leading `(?:^|[_-])` separator is paired
+// with a negative lookbehind that rejects boolean-question prefixes
+// (`has_apikey`, `is_token_revoked` — boolean projections, never secret
+// carriers).
 const SENSITIVE_KEY_RE = new RegExp(
-  "(?:^|[_-])"
+  `(?<!(?:^|[_-])(?:${BOOLEAN_QUESTION_PREFIX_GROUP}))`
+    + "(?:^|[_-])"
     + "(authorization|cookie|set-cookie|password|passwd|secret|token|jwt"
     + "|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token)"
     + `(?:$|[_-](?!(?:${SAFE_META_SUFFIX_GROUP})(?:$|[_-])))`,

@@ -52,5 +52,6 @@
   "test/cli-tool-packs.test.js",
   "test/cli-tools-brief-integration.test.js",
   "test/jwt-observation.test.js",
+  "test/graphql-openapi-observation.test.js",
   "test/browser-behavior-probe-lens.test.js"
 ]

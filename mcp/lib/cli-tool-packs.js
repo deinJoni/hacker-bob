@@ -162,6 +162,52 @@ const SEED_PACKS = [
     applicable_when: ({ surface }) => Boolean(surface && surface.kind === "web"),
     narrative: "Visual reconnaissance — screenshot surface for triage.",
   },
+  // ── Plane T Cycle T.6 — OpenAPI / GraphQL schema-observation packs ──────
+  {
+    id: "schemathesis",
+    install_check: "schemathesis --version",
+    invocation_template: "schemathesis run https://<host>/openapi.json --checks all",
+    applicable_when: ({ observations }) => {
+      const list = observationList(observations);
+      return list.some((o) => o && o.kind === "openapi_schema_observed");
+    },
+    narrative: "OpenAPI fuzz — property-based testing against the spec.",
+  },
+  {
+    id: "graphql-cop",
+    install_check: "graphql-cop --help",
+    invocation_template: "graphql-cop -t https://<host>/graphql",
+    applicable_when: ({ observations }) => {
+      const list = observationList(observations);
+      return list.some((o) => o && o.kind === "graphql_schema_observed");
+    },
+    narrative: "GraphQL security audit — introspection, batching, depth, field suggestions.",
+  },
+  {
+    id: "clairvoyance",
+    install_check: "clairvoyance --help",
+    invocation_template: "clairvoyance -i <wordlist> -o schema.json https://<host>/graphql",
+    applicable_when: ({ observations }) => {
+      const list = observationList(observations);
+      return list.some((o) => (
+        o
+        && o.kind === "graphql_schema_observed"
+        && o.payload
+        && o.payload.has_introspection_disabled === true
+      ));
+    },
+    narrative: "GraphQL schema reconstruction when introspection is locked.",
+  },
+  {
+    id: "graphqlcat",
+    install_check: "graphqlcat --help",
+    invocation_template: "graphqlcat -t https://<host>/graphql -i schema.json",
+    applicable_when: ({ observations }) => {
+      const list = observationList(observations);
+      return list.some((o) => o && o.kind === "graphql_schema_observed");
+    },
+    narrative: "GraphQL recon — type/field enumeration, mutation discovery.",
+  },
 ];
 
 const CLI_TOOL_PACKS = Object.freeze(SEED_PACKS.map(normalizeCliToolPack));

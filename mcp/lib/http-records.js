@@ -1107,6 +1107,367 @@ function recordJwtObservations({
   return emitted;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Plane T Cycle T.6 — GraphQL / OpenAPI schema observation
+//
+// When an HTTP response is ingested we additionally scan for two schema
+// shapes carried in the JSON body:
+//
+//   - GraphQL introspection: any response whose URL pathname matches
+//     `/graphql`, `/api/graphql`, or `/__graphql`, OR any JSON body with a
+//     top-level `data.__schema.types[]` array (canonical introspection
+//     shape returned by `__schema` queries).
+//   - OpenAPI 3.x / Swagger 2.0: JSON body with `openapi: "3.x.x"` or
+//     `swagger: "2.0"` AND a `paths` object containing at least one path.
+//
+// Bodies larger than 1 MB are skipped (the size cap matches the JWT scan).
+// Each detection emits one `observation.recorded` frontier event whose
+// payload carries ONLY a sha256 fingerprint of the canonical schema JSON,
+// plus a small set of summary fields (counts, root type names, security
+// scheme names). The full schema document MUST NOT appear anywhere in the
+// emitted event. The test suite contains a negative regression that scans
+// the emitted JSON for the `types: [...]` array contents and fails if any
+// type's field/value bytes leak.
+//
+// Dedup: in-memory Set keyed by `${surface_id} ${schema_fingerprint}`. The
+// same schema observed twice on the same surface emits one event; the same
+// schema on a different surface emits per surface (parallel to T.5).
+//
+// Pact: T-P4 (observation-trigger architectural pattern). T-R3 (no secret
+// leakage, including no full schema body).
+
+const SCHEMA_BODY_PARSE_MAX_BYTES = 1024 * 1024; // 1 MB — per T.6 spec.
+const GRAPHQL_PATH_RE = /^(?:\/api)?\/__?graphql\/?$|^\/graphql\/?$|^\/api\/graphql\/?$/i;
+const AUTH_DIRECTIVE_RE = /auth|jwt|require_login/i;
+const OPENAPI_VERSION_RE = /^3\.\d+(?:\.\d+)?$/;
+const SWAGGER_VERSION_RE = /^2\.0$/;
+
+const schemaObservationDedupSet = new Set();
+
+function schemaDedupKey(surfaceId, fingerprint) {
+  return `${surfaceId == null ? "" : String(surfaceId)} ${fingerprint}`;
+}
+
+function _resetSchemaObservationDedup() {
+  // Test-only escape hatch. Production code path never calls this.
+  schemaObservationDedupSet.clear();
+}
+
+function canonicalJsonStringify(value) {
+  // Deterministic stringification with sorted object keys. Two payloads with
+  // the same logical content produce the same fingerprint regardless of key
+  // ordering in transit.
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => canonicalJsonStringify(entry)).join(",")}]`;
+  }
+  const keys = Object.keys(value).sort();
+  return `{${keys
+    .map((key) => `${JSON.stringify(key)}:${canonicalJsonStringify(value[key])}`)
+    .join(",")}}`;
+}
+
+function pathnameFromUrl(maybeUrl) {
+  if (typeof maybeUrl !== "string" || !maybeUrl) return null;
+  const parsed = safeUrlObject(maybeUrl);
+  return parsed ? parsed.pathname : null;
+}
+
+function bodyAsText(body) {
+  if (body == null) return null;
+  if (typeof body === "string") return body;
+  if (Buffer.isBuffer(body)) return body.toString("utf8");
+  if (typeof body === "object") {
+    try {
+      return JSON.stringify(body);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function parseSchemaBodyJson(body) {
+  if (body == null) return null;
+  if (typeof body === "object" && !Buffer.isBuffer(body)) {
+    return body;
+  }
+  const text = bodyAsText(body);
+  if (text == null) return null;
+  if (Buffer.byteLength(text, "utf8") > SCHEMA_BODY_PARSE_MAX_BYTES) return null;
+  const parsed = safeParseJson(text);
+  if (parsed == null) return null;
+  if (typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  return parsed;
+}
+
+function looksLikeGraphqlPath(pathname) {
+  if (typeof pathname !== "string" || !pathname) return false;
+  return GRAPHQL_PATH_RE.test(pathname);
+}
+
+function extractGraphqlSchema(parsed) {
+  // Canonical introspection shape: { data: { __schema: { types: [...] } } }.
+  // We require types to be an array, not just present, so we don't fire on
+  // unrelated `data.__schema` keys.
+  if (parsed == null || typeof parsed !== "object") return null;
+  const data = parsed.data;
+  if (data == null || typeof data !== "object" || Array.isArray(data)) return null;
+  const schema = data.__schema;
+  if (schema == null || typeof schema !== "object" || Array.isArray(schema)) return null;
+  if (!Array.isArray(schema.types)) return null;
+  return schema;
+}
+
+function rootTypeName(schema, key) {
+  const entry = schema && typeof schema === "object" ? schema[key] : null;
+  if (entry && typeof entry === "object" && typeof entry.name === "string" && entry.name.trim()) {
+    return entry.name.trim();
+  }
+  return null;
+}
+
+function schemaHasAuthDirective(schema) {
+  // Look for any directive name or any type/field directive matching
+  // /auth|jwt|require_login/i. We never copy the directive arguments — only
+  // a boolean flag escapes into the payload.
+  if (schema == null || typeof schema !== "object") return false;
+  const directives = Array.isArray(schema.directives) ? schema.directives : [];
+  for (const directive of directives) {
+    if (directive && typeof directive === "object"
+      && typeof directive.name === "string"
+      && AUTH_DIRECTIVE_RE.test(directive.name)) {
+      return true;
+    }
+  }
+  const types = Array.isArray(schema.types) ? schema.types : [];
+  for (const type of types) {
+    if (type == null || typeof type !== "object") continue;
+    if (Array.isArray(type.appliedDirectives)) {
+      for (const applied of type.appliedDirectives) {
+        if (applied && typeof applied === "object"
+          && typeof applied.name === "string"
+          && AUTH_DIRECTIVE_RE.test(applied.name)) {
+          return true;
+        }
+      }
+    }
+    const fields = Array.isArray(type.fields) ? type.fields : [];
+    for (const field of fields) {
+      if (field == null || typeof field !== "object") continue;
+      if (!Array.isArray(field.appliedDirectives)) continue;
+      for (const applied of field.appliedDirectives) {
+        if (applied && typeof applied === "object"
+          && typeof applied.name === "string"
+          && AUTH_DIRECTIVE_RE.test(applied.name)) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function detectIntrospectionDisabled(schema) {
+  // Heuristic: introspection responded (we have a __schema object) but the
+  // types array is empty or sparse enough that downstream tools will need
+  // schema-reconstruction. Sparse threshold = fewer than 4 entries (the four
+  // built-in scalars plus root types normally land well above this).
+  if (schema == null || typeof schema !== "object") return false;
+  const types = Array.isArray(schema.types) ? schema.types : [];
+  return types.length < 4;
+}
+
+function buildGraphqlObservationPayload({ schema, requestUrl, pathname }) {
+  // schema_fingerprint is the sha256 of the canonical JSON of the __schema
+  // sub-document. We deliberately fingerprint the schema only — not the
+  // ambient response — so the same schema served twice through different
+  // wrappers fingerprints identically.
+  const canonical = canonicalJsonStringify(schema);
+  return {
+    observation_kind: "graphql_schema_observed",
+    schema_url: requestUrl,
+    endpoint_path: pathname,
+    type_count: Array.isArray(schema.types) ? schema.types.length : 0,
+    query_root: rootTypeName(schema, "queryType"),
+    mutation_root: rootTypeName(schema, "mutationType"),
+    subscription_root: rootTypeName(schema, "subscriptionType"),
+    has_auth_directive: schemaHasAuthDirective(schema),
+    has_introspection_disabled: detectIntrospectionDisabled(schema),
+    schema_fingerprint: sha256Hex(canonical),
+  };
+}
+
+function extractOpenApiSpec(parsed) {
+  // Returns { kind: "openapi" | "swagger", version: string, document } when
+  // the parsed JSON satisfies the OpenAPI / Swagger 2.0 shape AND carries a
+  // paths object with >= 1 entry. Returns null otherwise.
+  if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const paths = parsed.paths;
+  if (paths == null || typeof paths !== "object" || Array.isArray(paths)) return null;
+  const pathKeys = Object.keys(paths).filter((key) => key.startsWith("/"));
+  if (pathKeys.length === 0) return null;
+  if (typeof parsed.openapi === "string" && OPENAPI_VERSION_RE.test(parsed.openapi)) {
+    return { kind: "openapi", version: parsed.openapi, document: parsed };
+  }
+  if (typeof parsed.swagger === "string" && SWAGGER_VERSION_RE.test(parsed.swagger)) {
+    return { kind: "swagger", version: parsed.swagger, document: parsed };
+  }
+  return null;
+}
+
+const OPENAPI_METHODS = ["get", "put", "post", "delete", "patch", "options", "head", "trace"];
+
+function summarizeOpenApiPaths(document) {
+  const paths = document && typeof document.paths === "object" && !Array.isArray(document.paths)
+    ? document.paths
+    : {};
+  const pathKeys = Object.keys(paths).filter((key) => key.startsWith("/"));
+  let methods = 0;
+  for (const key of pathKeys) {
+    const pathItem = paths[key];
+    if (pathItem == null || typeof pathItem !== "object" || Array.isArray(pathItem)) continue;
+    for (const method of OPENAPI_METHODS) {
+      if (pathItem[method] && typeof pathItem[method] === "object") methods += 1;
+    }
+  }
+  return { endpoint_count: pathKeys.length, methods_count: methods };
+}
+
+function collectSecuritySchemeNames(document, kind) {
+  // OpenAPI 3.x: components.securitySchemes. Swagger 2.0: securityDefinitions.
+  // We return only the scheme NAMES (the keys), never the contents — scheme
+  // values can contain `flows.*.tokenUrl` and `name` (header name) fields
+  // that are safe enough on their own but we intentionally don't carry them.
+  if (document == null || typeof document !== "object") {
+    return { names: [], types: [] };
+  }
+  let bucket = null;
+  if (kind === "openapi"
+    && document.components
+    && typeof document.components === "object"
+    && !Array.isArray(document.components)
+    && document.components.securitySchemes
+    && typeof document.components.securitySchemes === "object"
+    && !Array.isArray(document.components.securitySchemes)) {
+    bucket = document.components.securitySchemes;
+  } else if (kind === "swagger"
+    && document.securityDefinitions
+    && typeof document.securityDefinitions === "object"
+    && !Array.isArray(document.securityDefinitions)) {
+    bucket = document.securityDefinitions;
+  }
+  if (bucket == null) return { names: [], types: [] };
+  const names = [];
+  const types = [];
+  for (const key of Object.keys(bucket).sort()) {
+    if (typeof key !== "string" || !key.trim()) continue;
+    names.push(key);
+    const entry = bucket[key];
+    if (entry && typeof entry === "object" && typeof entry.type === "string") {
+      types.push(entry.type.toLowerCase());
+    }
+  }
+  return { names, types };
+}
+
+function buildOpenApiObservationPayload({ spec, requestUrl }) {
+  const { kind, version, document } = spec;
+  const { endpoint_count, methods_count } = summarizeOpenApiPaths(document);
+  const { names: securityNames, types: securityTypes } = collectSecuritySchemeNames(document, kind);
+  const canonical = canonicalJsonStringify(document);
+  return {
+    observation_kind: "openapi_schema_observed",
+    schema_url: requestUrl,
+    spec_version: `${kind} ${version}`,
+    endpoint_count,
+    methods_count,
+    security_schemes: securityNames,
+    has_oauth: securityTypes.includes("oauth2"),
+    has_apikey: securityTypes.includes("apikey"),
+    spec_fingerprint: sha256Hex(canonical),
+  };
+}
+
+function detectSchemas({ request_url = null, response_body = null } = {}) {
+  // Returns a list of "detection" objects: { kind, fingerprint, payload }.
+  // Caller is responsible for dedup + emission.
+  const text = bodyAsText(response_body);
+  if (text == null) return [];
+  if (Buffer.byteLength(text, "utf8") > SCHEMA_BODY_PARSE_MAX_BYTES) return [];
+  const parsed = safeParseJson(text);
+  if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+  const detections = [];
+  const pathname = pathnameFromUrl(request_url);
+  const isGraphqlPath = looksLikeGraphqlPath(pathname);
+  const schema = extractGraphqlSchema(parsed);
+  if (schema && (isGraphqlPath || Array.isArray(schema.types))) {
+    const payload = buildGraphqlObservationPayload({ schema, requestUrl: request_url, pathname });
+    detections.push({
+      observation_kind: "graphql_schema_observed",
+      fingerprint: payload.schema_fingerprint,
+      payload,
+    });
+  }
+  const spec = extractOpenApiSpec(parsed);
+  if (spec) {
+    const payload = buildOpenApiObservationPayload({ spec, requestUrl: request_url });
+    detections.push({
+      observation_kind: "openapi_schema_observed",
+      fingerprint: payload.spec_fingerprint,
+      payload,
+    });
+  }
+  return detections;
+}
+
+function recordSchemaObservations({
+  target_domain,
+  surface_id,
+  request_url = null,
+  response_body = null,
+  source_ref = null,
+} = {}) {
+  // Best-effort, mirrors recordJwtObservations. Returns the list of emitted
+  // event ids so http-scan / tests can introspect.
+  if (target_domain == null) return [];
+  if (surface_id == null) return [];
+  const detections = detectSchemas({ request_url, response_body });
+  if (detections.length === 0) return [];
+  const emitted = [];
+  const seenInThisCall = new Set();
+  for (const detection of detections) {
+    const dedupKey = schemaDedupKey(surface_id, detection.fingerprint);
+    if (schemaObservationDedupSet.has(dedupKey)) continue;
+    if (seenInThisCall.has(dedupKey)) continue;
+    seenInThisCall.add(dedupKey);
+    schemaObservationDedupSet.add(dedupKey);
+    try {
+      const event = appendFrontierEvent({
+        target_domain,
+        kind: "observation.recorded",
+        surface_id,
+        payload: detection.payload,
+        source: {
+          artifact: "http-records.jsonl",
+          ref: source_ref == null ? null : String(source_ref),
+        },
+      });
+      emitted.push(event.event_id);
+      try {
+        scheduleMaterialization(target_domain);
+      } catch {
+        // Materializer scheduling is best-effort.
+      }
+    } catch {
+      // Emit-once-or-not-at-all (mirrors the JWT path).
+    }
+  }
+  return emitted;
+}
+
 function readHttpAudit(args, { readAttackSurfaceStrict = null } = {}) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   const limit = normalizeHttpAuditSummaryLimit(args.limit);
@@ -1135,11 +1496,13 @@ function readHttpAudit(args, { readAttackSurfaceStrict = null } = {}) {
 
 module.exports = {
   _resetJwtObservationDedup,
+  _resetSchemaObservationDedup,
   appendHttpAuditRecord,
   buildCircuitBreakerSummary,
   compactHttpAuditRecord,
   compactTrafficRecord,
   detectJwts,
+  detectSchemas,
   headerNamesFromInput,
   importHttpTraffic,
   isCircuitBreakerFailure,
@@ -1155,6 +1518,7 @@ module.exports = {
   readHttpAuditRecordsFromJsonl,
   readTrafficRecordsFromJsonl,
   recordJwtObservations,
+  recordSchemaObservations,
   summarizeHttpAuditRecords,
   summarizeGeofenceWarnings,
   summarizeTrafficRecords,

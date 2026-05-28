@@ -10,6 +10,7 @@ const {
 const {
   appendHttpAuditRecord,
   recordJwtObservations,
+  recordSchemaObservations,
 } = require("./http-records.js");
 const {
   createProxyAgent,
@@ -281,6 +282,22 @@ async function httpScan(args) {
         });
       } catch {
         // Best-effort, mirrors the importHttpTraffic dual-write pattern.
+      }
+      // Plane T Cycle T.6 — GraphQL / OpenAPI schema observation. Inspect the
+      // JSON body for an introspection result OR an OpenAPI / Swagger spec;
+      // emit one observation.recorded per distinct schema per surface, keyed
+      // by sha256(canonical_json(schema)). The full schema document never
+      // enters the event payload — only the fingerprint + summary fields.
+      try {
+        recordSchemaObservations({
+          target_domain: targetDomain,
+          surface_id: args.surface_id,
+          request_url: finalUrl || url,
+          response_body: analysisBody,
+          source_ref: `${auditTs} ${method} ${auditUrl}`,
+        });
+      } catch {
+        // Best-effort, mirrors the JWT path.
       }
     }
 

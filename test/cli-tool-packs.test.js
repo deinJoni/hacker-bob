@@ -44,8 +44,9 @@ function ids(packs) {
 
 // ── Registry shape ──────────────────────────────────────────────────────────
 
-test("CLI_TOOL_PACKS exposes the eight seed packs in kebab-case", () => {
+test("CLI_TOOL_PACKS exposes the seed packs in kebab-case", () => {
   const expected = [
+    // T.2 seed packs.
     "ffuf",
     "arjun",
     "jwt-tool",
@@ -54,6 +55,11 @@ test("CLI_TOOL_PACKS exposes the eight seed packs in kebab-case", () => {
     "swaks",
     "mailspoof",
     "gowitness",
+    // T.6 schema-observation packs.
+    "schemathesis",
+    "graphql-cop",
+    "clairvoyance",
+    "graphqlcat",
   ];
   assert.equal(CLI_TOOL_PACKS.length, expected.length);
   assert.deepEqual(ids(CLI_TOOL_PACKS).sort(), expected.slice().sort());
