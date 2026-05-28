@@ -47,6 +47,7 @@
   "test/cve-scope-matcher.test.js",
   "test/realization-e2e-smoke.test.js",
   "test/installer-legacy-upgrade.test.js",
+  "test/installer-bounty-tool-rewrite.test.js",
   "test/mcp-test-discovery.test.js",
   "test/browser-driver-tools.test.js",
   "test/cli-tool-packs.test.js",

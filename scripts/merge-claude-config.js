@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const {
   defaultClaudeSettings,
+  permissionsForAllTools,
 } = require("../adapters/claude/config.js");
 const {
   STALE_HOOK_SCRIPT_NAMES,
@@ -50,10 +51,43 @@ const LEGACY_HOOK_COMMAND_REWRITES = Object.freeze([
   Object.freeze({ from: "bounty-statusline.js", to: "bob-statusline.js" }),
 ]);
 
+// Permission-string tool-name rewrites applied to merged `.claude/settings.json`
+// so v1.x installs that allow-listed `mcp__hacker-bob__bounty_*` (the legacy
+// tool-suffix from the pre-P.1 rename generation) get their canonical
+// `mcp__hacker-bob__bob_*` permission on upgrade. Server-key migration is
+// handled separately by `rewriteLegacyPermissionString` (bountyagent ->
+// hacker-bob); this rewrite is layered on top to also normalize the suffix.
+//
+// Excludes the bona-fide P.1 deprecation-shim tool names — those have their
+// own registry modules and route through their own handler with the legacy
+// argument schema; their permission strings must remain `bounty_*`.
+const PRESERVED_BOUNTY_TOOL_NAMES = Object.freeze([
+  "bounty_transition_phase",
+  "bounty_report_written",
+]);
+const LEGACY_TOOL_NAME_PREFIX = "bounty_";
+const CANONICAL_TOOL_NAME_PREFIX = "bob_";
+const HACKER_BOB_BOUNTY_PERMISSION_PATTERN = new RegExp(
+  `^${CANONICAL_PERMISSION_PREFIX.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}${LEGACY_TOOL_NAME_PREFIX}(.+)$`,
+);
+
 function rewriteLegacyPermissionString(value) {
   if (typeof value !== "string") return value;
   if (!value.startsWith(LEGACY_PERMISSION_PREFIX)) return value;
   return `${CANONICAL_PERMISSION_PREFIX}${value.slice(LEGACY_PERMISSION_PREFIX.length)}`;
+}
+
+function rewriteLegacyToolNamePermission(value) {
+  if (typeof value !== "string") return value;
+  const match = HACKER_BOB_BOUNTY_PERMISSION_PATTERN.exec(value);
+  if (!match) return value;
+  const suffix = match[1];
+  const fullToolName = `${LEGACY_TOOL_NAME_PREFIX}${suffix}`;
+  // Bona-fide P.1 shim tools own their own handler and keep the bounty_
+  // prefix in the permission allow-list because the server still dispatches
+  // them under that exact name (they are not aliases of a bob_ primary).
+  if (PRESERVED_BOUNTY_TOOL_NAMES.includes(fullToolName)) return value;
+  return `${CANONICAL_PERMISSION_PREFIX}${CANONICAL_TOOL_NAME_PREFIX}${suffix}`;
 }
 
 function migrateLegacyMcp(existing) {
@@ -93,10 +127,16 @@ function migrateLegacySettings(existing) {
     return { value: existing, migrated: false };
   }
   let touched = false;
+  // Two layered rewrites: first the server-key prefix (bountyagent ->
+  // hacker-bob), then the tool-name suffix (bounty_* -> bob_*) for permissions
+  // that already sit under the canonical server key. The order matters because
+  // the suffix rewrite only fires on strings that already start with the
+  // canonical prefix.
   const rewritten = allow.map((permission) => {
-    const next = rewriteLegacyPermissionString(permission);
-    if (next !== permission) touched = true;
-    return next;
+    const afterServerKey = rewriteLegacyPermissionString(permission);
+    const afterToolName = rewriteLegacyToolNamePermission(afterServerKey);
+    if (afterToolName !== permission) touched = true;
+    return afterToolName;
   });
   if (!touched) return { value: existing, migrated: false };
   // Idempotency: dedupe in case both the legacy and canonical permission
@@ -321,11 +361,25 @@ function mergeSettings(existing, bobSettings) {
     ? next.permissions
     : {};
   const existingAllow = Array.isArray(existingPermissions.allow) ? existingPermissions.allow : [];
+  // Permission allow-list assembly:
+  //   1. Surviving operator entries (after dropping stale globals).
+  //   2. Generated defaults from defaultClaudeSettings() — keeps the source-of-
+  //      truth ordering for tools that satisfy `global_preapproval: true`.
+  //   3. Every canonical primary tool from permissionsForAllTools(), minus the
+  //      stale-global list. On upgrade this guarantees newly-shipped tools
+  //      (e.g. browser-driver + pack telemetry) land in the workspace allow-
+  //      list even when they are not part of the globally-preapproved default
+  //      set, so agents whose brief mentions them can invoke without per-call
+  //      permission churn. Aliases are filtered out by permissionsForAllTools();
+  //      the bona-fide `bounty_transition_phase` and `bounty_report_written`
+  //      shim tools own their own primary registry entries and are surfaced
+  //      here under their canonical (and only) names.
   next.permissions = {
     ...existingPermissions,
     allow: uniqueStrings([
       ...existingAllow.filter((permission) => !STALE_GLOBAL_MCP_PERMISSIONS.includes(permission)),
       ...bobSettings.permissions.allow,
+      ...permissionsForAllTools().filter((permission) => !STALE_GLOBAL_MCP_PERMISSIONS.includes(permission)),
     ]),
   };
 
@@ -392,10 +446,13 @@ if (require.main === module) {
 module.exports = {
   BRUTALIST_MCP_SERVER,
   CANONICAL_SERVER_KEY,
+  CANONICAL_TOOL_NAME_PREFIX,
   LEGACY_HOOK_COMMAND_REWRITES,
   LEGACY_SERVER_KEY,
   LEGACY_PERMISSION_PREFIX,
   CANONICAL_PERMISSION_PREFIX,
+  LEGACY_TOOL_NAME_PREFIX,
+  PRESERVED_BOUNTY_TOOL_NAMES,
   STALE_GLOBAL_MCP_PERMISSIONS,
   STALE_HOOK_SCRIPT_NAMES,
   hookScriptName,
@@ -410,4 +467,5 @@ module.exports = {
   migrateLegacyServerKey,
   rewriteLegacyHookCommand,
   rewriteLegacyPermissionString,
+  rewriteLegacyToolNamePermission,
 };
