@@ -1,6 +1,5 @@
 [
   "test/mcp-server.test.js",
-  "test/finding-contracts.test.js",
   "test/pipeline-events.test.js",
   "test/verification-contracts.test.js",
   "test/session-state-store.test.js",
@@ -21,8 +20,6 @@
   "test/auth-differential.test.js",
   "test/auth-differential-runner.test.js",
   "test/verification-attempt-diff.test.js",
-  "test/findings-index.test.js",
-  "test/priors-slice-brief.test.js",
   "test/surface-graph.test.js",
   "test/surface-graph-builder.test.js",
   "test/surface-graph-slice-brief.test.js",

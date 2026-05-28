@@ -24,14 +24,13 @@ const {
 } = require("../mcp/lib/storage.js");
 const {
   evidencePackPaths,
-  findingsJsonlPath,
   gradeArtifactPaths,
   sessionDir,
   verificationRoundPaths,
 } = require("../mcp/lib/paths.js");
 const {
-  normalizeFindingRecord,
-} = require("../mcp/lib/finding-contracts.js");
+  appendCandidateClaim,
+} = require("../mcp/lib/claims.js");
 const recordFindingTool = require("../mcp/lib/tools/record-candidate-claim.js");
 const {
   writeVerificationRound,
@@ -78,27 +77,24 @@ function recordFindingViaTool(domain, overrides = {}) {
   return JSON.parse(recordFindingTool.handler(args));
 }
 
-function appendFindingJsonlDirect(domain, id, overrides = {}) {
-  // Bypass the dual-write shim so the file mutation post-freeze does not
-  // recreate the claim plane.
+function appendClaimsJsonlDirect(domain, id, overrides = {}) {
+  // Append a CandidateClaim directly so the live ledger drifts past the
+  // freeze. The frozen grade work-set must remain anchored to the freeze.
   fs.mkdirSync(sessionDir(domain), { recursive: true });
-  const record = normalizeFindingRecord({
-    id,
+  return appendCandidateClaim({
     target_domain: domain,
-    title: overrides.title || `Post-freeze finding ${id}`,
+    title: overrides.title || `Post-freeze claim ${id}`,
+    summary: overrides.description || "Mutated after the freeze",
     severity: overrides.severity || "critical",
-    cwe: overrides.cwe || "CWE-639",
-    endpoint: overrides.endpoint || `https://victim.example/api/post-freeze/${id}`,
-    description: overrides.description || "Mutated after the freeze",
-    proof_of_concept: overrides.poc || "POST /api/post-freeze inserted after freeze",
-    response_evidence: overrides.response_evidence || "Post-freeze evidence",
+    status: "candidate",
+    surface_ids: [overrides.surface_id || "surface:post-freeze"],
     impact: overrides.impact || "Should not change grade verdict",
-    validated: true,
-    surface_id: overrides.surface_id || "surface:post-freeze",
-    auth_profile: overrides.auth_profile || "attacker",
-  }, { expectedDomain: domain });
-  appendJsonlLine(findingsJsonlPath(domain), record);
-  return record;
+    evidence_refs: [{
+      kind: "finding",
+      finding_id: id,
+      content_hash: "0".repeat(64),
+    }],
+  });
 }
 
 function verificationResult(findingId = "F-1", overrides = {}) {
@@ -204,7 +200,7 @@ test("grade verdict is bound to the frozen claim batch via claim_freeze_id", () 
   });
 });
 
-test("mutating findings.jsonl after the freeze does NOT change the grade verdict (frozen set authoritative)", () => {
+test("mutating claims.jsonl after the freeze does NOT change the grade verdict (frozen set authoritative)", () => {
   withTempHome(() => {
     const domain = "grade-frozen-stability.example.com";
     seedFinalVerificationFromFrozen(domain);
@@ -219,14 +215,14 @@ test("mutating findings.jsonl after the freeze does NOT change the grade verdict
     const baselineFreezeId = baseline.claim_freeze_id;
     assert.ok(typeof baselineFreezeId === "string" && baselineFreezeId, "baseline must carry claim_freeze_id");
 
-    // Mutate findings.jsonl AFTER the freeze + AFTER the verdict is written.
+    // Mutate claims.jsonl AFTER the freeze + AFTER the verdict is written.
     // The grade work-set is enumerated from the frozen claims[], so a new
-    // critical finding must not change the verdict.
-    appendFindingJsonlDirect(domain, "F-99", { severity: "critical" });
+    // critical claim must not change the verdict.
+    appendClaimsJsonlDirect(domain, "F-99", { severity: "critical" });
 
     // Rewrite the verdict (so we hit the C.6 write-path with the post-mutation
     // disk state). The verdict must still ignore F-99 because the freeze is
-    // the source of the work-set, not findings.jsonl.
+    // the source of the work-set, not claims.jsonl.
     const rewritten = JSON.parse(writeGradeVerdict({
       target_domain: domain,
       verdict: "SUBMIT",

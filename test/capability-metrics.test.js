@@ -44,8 +44,8 @@ test("call_count, success_count, success_rate, avg_latency aggregate per capabil
     event({ tool: "bob_ingest_schema_doc", latency_ms: 100 }),
     event({ tool: "bob_run_doc_delta", latency_ms: 200 }),
     event({ tool: "bob_run_doc_delta", latency_ms: 300, status: "error", ok: false }),
-    event({ tool: "bob_index_candidate_claim", latency_ms: 50 }),
-    event({ tool: "bob_index_candidate_claim", latency_ms: 50 }),
+    event({ tool: "bob_append_chain_node", latency_ms: 50 }),
+    event({ tool: "bob_append_chain_node", latency_ms: 50 }),
   ];
   const result = summarizeCapabilityMetrics(events);
   assert.equal(result.C2_doc_vs_behavior.call_count, 3);
@@ -54,10 +54,10 @@ test("call_count, success_count, success_rate, avg_latency aggregate per capabil
   assert.equal(result.C2_doc_vs_behavior.success_rate, 0.6667);
   assert.equal(result.C2_doc_vs_behavior.avg_latency_ms, 200);
 
-  assert.equal(result.I6_findings_index.call_count, 2);
-  assert.equal(result.I6_findings_index.success_count, 2);
-  assert.equal(result.I6_findings_index.success_rate, 1);
-  assert.equal(result.I6_findings_index.avg_latency_ms, 50);
+  assert.equal(result.I7_chain_state_tree.call_count, 2);
+  assert.equal(result.I7_chain_state_tree.success_count, 2);
+  assert.equal(result.I7_chain_state_tree.success_rate, 1);
+  assert.equal(result.I7_chain_state_tree.avg_latency_ms, 50);
 });
 
 test("blocked_count breaks out from error_count", () => {
@@ -104,10 +104,10 @@ test("events for unrelated tools are ignored", () => {
   const events = [
     event({ tool: "bob_http_scan" }),
     event({ tool: "bob_record_candidate_claim" }),
-    event({ tool: "bob_index_candidate_claim" }),
+    event({ tool: "bob_append_chain_node" }),
   ];
   const result = summarizeCapabilityMetrics(events);
-  assert.equal(result.I6_findings_index.call_count, 1);
+  assert.equal(result.I7_chain_state_tree.call_count, 1);
   assert.equal(result.C2_doc_vs_behavior.call_count, 0);
   assert.equal(result.C4_multi_account_differential.call_count, 0);
 });
@@ -118,12 +118,12 @@ test("malformed events are tolerated", () => {
     "not-an-event",
     {},
     { tool: 123 },
-    { tool: "bob_index_candidate_claim" },
+    { tool: "bob_append_chain_node" },
   ]);
-  assert.equal(result.I6_findings_index.call_count, 1);
+  assert.equal(result.I7_chain_state_tree.call_count, 1);
 });
 
 test("non-array input returns zeroed buckets", () => {
   const result = summarizeCapabilityMetrics(null);
-  assert.equal(result.I6_findings_index.call_count, 0);
+  assert.equal(result.I7_chain_state_tree.call_count, 0);
 });

@@ -35,8 +35,8 @@ const {
 } = require("../surface-leads.js");
 const { readAttackSurfaceStrict } = require("../attack-surface.js");
 const {
-  readFindingsFromJsonl,
-} = require("../findings.js");
+  findingPayloadsFromClaims,
+} = require("../tools/record-candidate-claim.js");
 const {
   ERROR_CODES,
   ToolError,
@@ -187,7 +187,7 @@ function writeWaveHandoff(args) {
     // start_wave); reading attack_surface.json would let an evaluator disable
     // the smart_contract gate via Bash mutation.
     const surfaceType = assignment.surface_type || null;
-    const findingsForRun = readFindingsFromJsonl(domain).filter((finding) => (
+    const findingsForRun = findingPayloadsFromClaims(domain).filter((finding) => (
       finding.wave === wave &&
       finding.agent === agent &&
       finding.surface_id === surfaceId

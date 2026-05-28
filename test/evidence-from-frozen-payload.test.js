@@ -33,12 +33,8 @@ const {
   appendJsonlLine,
 } = require("../mcp/lib/storage.js");
 const {
-  findingsJsonlPath,
   sessionDir,
 } = require("../mcp/lib/paths.js");
-const {
-  normalizeFindingRecord,
-} = require("../mcp/lib/finding-contracts.js");
 const recordFindingTool = require("../mcp/lib/tools/record-candidate-claim.js");
 const {
   resetForTests: resetMaterializationDebounce,
@@ -75,27 +71,25 @@ function recordFindingViaTool(domain, overrides = {}) {
   return JSON.parse(recordFindingTool.handler(args));
 }
 
-function appendFindingJsonlDirect(domain, id, overrides = {}) {
-  // Bypass the dual-write shim so the file mutation post-freeze does not
-  // recreate the claim plane.
+function appendClaimsJsonlDirect(domain, id, overrides = {}) {
+  // Mutate claims.jsonl post-freeze. The frozen evidence work-set is built off
+  // the freeze artifact, so this new claim must not appear in
+  // readFrozenEvidenceFindingIdSet.
   fs.mkdirSync(sessionDir(domain), { recursive: true });
-  const record = normalizeFindingRecord({
-    id,
+  return appendCandidateClaim({
     target_domain: domain,
-    title: overrides.title || `Post-freeze finding ${id}`,
+    title: overrides.title || `Post-freeze claim ${id}`,
+    summary: overrides.description || "Mutated after the freeze",
     severity: overrides.severity || "high",
-    cwe: overrides.cwe || "CWE-639",
-    endpoint: overrides.endpoint || `https://victim.example/api/post-freeze/${id}`,
-    description: overrides.description || "Mutated after the freeze",
-    proof_of_concept: overrides.poc || "POST /api/post-freeze inserted after freeze",
-    response_evidence: overrides.response_evidence || "Post-freeze evidence",
+    status: "candidate",
+    surface_ids: [overrides.surface_id || "surface:post-freeze"],
     impact: overrides.impact || "Should not change evidence completeness",
-    validated: true,
-    surface_id: overrides.surface_id || "surface:post-freeze",
-    auth_profile: overrides.auth_profile || "attacker",
-  }, { expectedDomain: domain });
-  appendJsonlLine(findingsJsonlPath(domain), record);
-  return record;
+    evidence_refs: [{
+      kind: "finding",
+      finding_id: id,
+      content_hash: "0".repeat(64),
+    }],
+  });
 }
 
 test("evidence work-set derives from frozen EvidenceReference set, not live findings.jsonl", () => {
@@ -127,18 +121,19 @@ test("evidence work-set derives from frozen EvidenceReference set, not live find
       assert.ok(beforeIds.has(id), `frozen work-set must contain ${id}`);
     }
 
-    // Add an inline finding directly to findings.jsonl AFTER the freeze. The
-    // dual-write shim is bypassed so claims.jsonl stays at 3 rows.
-    appendFindingJsonlDirect(domain, "F-99");
+    // Append a claim directly to claims.jsonl AFTER the freeze so the live
+    // ledger drifts. The frozen evidence work-set must remain anchored to the
+    // freeze artifact.
+    appendClaimsJsonlDirect(domain, "F-99");
 
     // Post-mutation: the work-set still derives from the freeze, which is
-    // unchanged. The new finding is IGNORED.
+    // unchanged. The new claim is IGNORED.
     const afterIds = readFrozenEvidenceFindingIdSet(domain);
     assert.equal(afterIds.size, 3, "frozen payload is authoritative; live ledger mutation is ignored");
     for (const id of ids) {
       assert.ok(afterIds.has(id));
     }
-    assert.ok(!afterIds.has("F-99"), "post-freeze findings.jsonl row must not appear in the work-set");
+    assert.ok(!afterIds.has("F-99"), "post-freeze claims.jsonl row must not appear in the frozen work-set");
   });
 });
 
@@ -161,7 +156,6 @@ test("iterating frozen evidence refs yields each CandidateClaim's content-hash-b
       assert.equal(typeof entry.ref.finding_id, "string");
       assert.equal(typeof entry.ref.content_hash, "string");
       assert.equal(entry.ref.content_hash.length, 64);
-      assert.equal(entry.ref.artifact_path, "findings.jsonl");
       assert.equal(typeof entry.claim_id, "string");
       assert.equal(entry.ref_key, evidenceReferenceLookupKey(entry.ref));
     }

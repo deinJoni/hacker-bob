@@ -35,8 +35,8 @@ const {
   loadWaveAssignments,
 } = require("./assignments.js");
 const {
-  readFindingsFromJsonl,
-} = require("./finding-store.js");
+  findingPayloadsFromClaims,
+} = require("./tools/record-candidate-claim.js");
 const {
   readHandoffSigningKey,
 } = require("./handoff-signing-key.js");
@@ -288,7 +288,7 @@ function mergeWaveHandoffsInternal(domain, waveNumber) {
   const wafSet = new Set();
   const leadSet = new Set();
 
-  const allFindings = readFindingsFromJsonl(domain);
+  const allFindings = findingPayloadsFromClaims(domain);
   const findingsByRun = new Map();
   const recordedFindingsBySurface = new Map();
   for (const finding of allFindings) {
@@ -492,7 +492,7 @@ function buildWaveHandoffsDocument(domain, waveNumbers) {
   const invalidHandoffs = [];
   const unexpectedHandoffs = [];
 
-  const allFindings = readFindingsFromJsonl(domain);
+  const allFindings = findingPayloadsFromClaims(domain);
   const findingsByRun = new Map();
   for (const finding of allFindings) {
     const runKey = `${finding.wave} ${finding.agent} ${finding.surface_id}`;

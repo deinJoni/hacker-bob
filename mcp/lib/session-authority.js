@@ -69,7 +69,6 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_http_scan: "scoped_http_network",
   bob_import_http_traffic: "scoped_http_network",
   bob_import_static_artifact: "initialized_session_mutation",
-  bob_index_candidate_claim: "initialized_session_mutation",
   bob_ingest_audit_report: "initialized_session_mutation",
   bob_ingest_schema_doc: "initialized_session_mutation",
   bob_init_session: "bootstrap_session",
@@ -83,7 +82,6 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_public_intel: "scoped_http_network",
   bob_query_audit_reports: "initialized_session_read",
   bob_query_chain_tree: "initialized_session_read",
-  bob_query_candidate_claims_index: "mode_dependent_session",
   bob_query_schema_contracts: "initialized_session_read",
   bob_query_surface_graph: "initialized_session_read",
   bob_read_auth_differential_results: "initialized_session_read",
@@ -241,22 +239,6 @@ function classForTool(toolName) {
 }
 
 function modeRule(toolName, args = {}) {
-  if (toolName === "bob_query_candidate_claims_index") {
-    if (args.scope === "cross_target") {
-      return {
-        authority_class: "cross_session_read",
-        target_domain: "ignored",
-        target_url_policy: "index_only_no_target_url_export",
-        authority_source: "cross_session",
-      };
-    }
-    return {
-      authority_class: "initialized_session_read",
-      target_domain: "required",
-      target_url_policy: "validate_session_target_url",
-      authority_source: "session_state",
-    };
-  }
   if (toolName === "bob_get_context_budget") {
     if (args.surface_id != null) {
       return {

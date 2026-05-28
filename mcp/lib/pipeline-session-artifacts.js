@@ -17,9 +17,9 @@ const {
 } = require("./validation.js");
 const {
   chainAttemptsJsonlPath,
+  claimsJsonlPath,
   coverageJsonlPath,
   evidencePackPaths,
-  findingsJsonlPath,
   httpAuditJsonlPath,
   reportMarkdownPath,
   sessionDir,
@@ -59,8 +59,8 @@ const {
   validateSessionAuthorityState,
 } = require("./session-authority.js");
 const {
-  summarizeFindingsFile,
-} = require("./finding-store.js");
+  findingPayloadsFromClaims,
+} = require("./tools/record-candidate-claim.js");
 const {
   listArchivedVerificationAttempts,
   summarizeVerificationRoundStatus,
@@ -318,7 +318,42 @@ function readWaveReadiness(targetDomain, waveNumber, handoffListing = null) {
 }
 
 function summarizeFindingsJsonl(targetDomain) {
-  return summarizeFindingsFile(targetDomain);
+  // Cycle D.2: candidate claims are the authoritative ledger. Findings are
+  // projected from each claim's embedded finding payload, so the summary
+  // counts (by severity, total) read off claims.jsonl rather than the legacy
+  // findings.jsonl artifact.
+  const bySeverity = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  const claimsPath = claimsJsonlPath(targetDomain);
+  let mtime = null;
+  try {
+    mtime = new Date(fs.statSync(claimsPath).mtimeMs).toISOString();
+  } catch {}
+  let total = 0;
+  let exists = false;
+  try {
+    exists = fs.existsSync(claimsPath);
+  } catch {}
+  let error = null;
+  if (exists) {
+    try {
+      for (const finding of findingPayloadsFromClaims(targetDomain)) {
+        total += 1;
+        if (Object.prototype.hasOwnProperty.call(bySeverity, finding.severity)) {
+          bySeverity[finding.severity] += 1;
+        }
+      }
+    } catch (err) {
+      error = err && err.message ? err.message : String(err);
+    }
+  }
+  return {
+    exists,
+    total,
+    by_severity: bySeverity,
+    malformed_lines: 0,
+    error,
+    mtime,
+  };
 }
 
 function summarizeCoverageJsonl(targetDomain) {

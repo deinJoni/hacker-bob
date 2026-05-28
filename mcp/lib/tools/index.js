@@ -20,8 +20,6 @@ const TOOL_MODULES = Object.freeze([
   require("./record-candidate-claim.js"),
   require("./read-candidate-claims.js"),
   require("./list-candidate-claims.js"),
-  require("./index-candidate-claim.js"),
-  require("./query-candidate-claims-index.js"),
   require("./write-chain-attempt.js"),
   require("./read-chain-attempts.js"),
   require("./append-chain-node.js"),

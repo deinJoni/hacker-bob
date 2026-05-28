@@ -45,9 +45,6 @@ const {
   summarizeSchemaSliceForSurface,
 } = require("./schema-contracts-store.js");
 const {
-  summarizePriorFindingsForSurface,
-} = require("./findings-index.js");
-const {
   summarizeSurfaceGraphForSurface,
 } = require("./surface-graph.js");
 const {
@@ -154,7 +151,6 @@ const WEB_BRIEF_SLICE_REGISTRY = Object.freeze([
   briefSliceEntry("intel_hints", 4096, (context) => context.intelHints),
   briefSliceEntry("static_scan_hints", 4096, (context) => context.staticScanHints),
   briefSliceEntry("schema_slice", 8192, (context) => context.schemaSlice),
-  briefSliceEntry("priors_slice", 8192, (context) => context.priorsSlice),
   briefSliceEntry("surface_graph_slice", 8192, (context) => context.surfaceGraphSlice),
   briefSliceEntry("auth_profiles_hint", 512, () => "Call `bob_list_auth_profiles`; pass the chosen profile name as `auth_profile` to `bob_http_scan`."),
 ]);
@@ -162,7 +158,6 @@ const WEB_BRIEF_SLICE_REGISTRY = Object.freeze([
 const SMART_CONTRACT_BRIEF_SLICE_REGISTRY = Object.freeze([
   briefSliceEntry("bob_spec_status", 4096, (context) => context.bobSpecStatus),
   briefSliceEntry("rpc_pool", 4096, (context) => context.rpcPool),
-  briefSliceEntry("priors_slice", 8192, (context) => context.priorsSlice),
   briefSliceEntry("surface_graph_slice", 8192, (context) => context.surfaceGraphSlice),
 ]);
 
@@ -502,7 +497,6 @@ function buildWebBriefExtras(domain, surfaceObj, routeMetadata) {
   const intelHints = summarizePublicIntelForSurface(domain, surfaceObj);
   const staticScanHints = summarizeStaticScanHints(domain, { surface: surfaceObj });
   const schemaSlice = summarizeSchemaSliceForSurface(domain, surfaceObj);
-  const priorsSlice = summarizePriorFindingsForSurface(domain, surfaceObj);
   const surfaceGraphSlice = summarizeSurfaceGraphForSurface(domain, surfaceObj);
   const webBriefContext = {
     bypassTable: bypassTable || null,
@@ -518,7 +512,6 @@ function buildWebBriefExtras(domain, surfaceObj, routeMetadata) {
     intelHints,
     staticScanHints,
     schemaSlice,
-    priorsSlice,
     surfaceGraphSlice,
   };
   return buildBriefExtrasFromRegistry(WEB_BRIEF_SLICE_REGISTRY, webBriefContext);
@@ -533,7 +526,6 @@ function buildSmartContractBriefExtras(domain, surfaceObj, assignment) {
   const smartContractBriefContext = {
     bobSpecStatus: summarizeBobSpecForBrief(loadBobSpec(domain), assignment.surface_id),
     rpcPool: summarizeRpcPoolForBrief(surfaceObj.chain_family, surfaceObj.chain_id),
-    priorsSlice: summarizePriorFindingsForSurface(domain, surfaceObj),
     surfaceGraphSlice: summarizeSurfaceGraphForSurface(domain, surfaceObj),
   };
   return buildBriefExtrasFromRegistry(SMART_CONTRACT_BRIEF_SLICE_REGISTRY, smartContractBriefContext);

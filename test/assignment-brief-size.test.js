@@ -26,9 +26,6 @@ const {
   ingestSchemaDoc,
 } = require("../mcp/lib/schema-contracts-store.js");
 const {
-  indexFinding,
-} = require("../mcp/lib/findings-index.js");
-const {
   appendEdges,
 } = require("../mcp/lib/surface-graph.js");
 
@@ -120,14 +117,12 @@ test("evaluator brief slice registry is explicit and budgeted per profile", () =
     "intel_hints",
     "static_scan_hints",
     "schema_slice",
-    "priors_slice",
     "surface_graph_slice",
     "auth_profiles_hint",
   ]);
   assert.deepEqual(ASSIGNMENT_BRIEF_SLICE_REGISTRY.smart_contract.map((slice) => slice.key), [
     "bob_spec_status",
     "rpc_pool",
-    "priors_slice",
     "surface_graph_slice",
   ]);
   for (const [profile, slices] of Object.entries(ASSIGNMENT_BRIEF_SLICE_REGISTRY)) {
@@ -213,19 +208,6 @@ function seedWebSlices(domain, surfaceId) {
     raw_doc: webOpenApiFixture(),
     source_uri: `https://${domain}/openapi.json`,
   });
-  indexFinding({
-    target_domain: domain,
-    finding: {
-      finding_id: "F-1",
-      title: "IDOR on user profile endpoint",
-      description: "Broken object level authorization on Express user APIs.",
-      severity: "high",
-      attack_class: "idor",
-      endpoint: "/api/users/{id}",
-      tech_stack: ["express", "postgres"],
-    },
-    calibration_label: "real",
-  });
   appendEdges({
     target_domain: domain,
     edges: [
@@ -240,19 +222,6 @@ function seedWebSlices(domain, surfaceId) {
 }
 
 function seedSmartContractSlices(domain, surfaceId) {
-  indexFinding({
-    target_domain: domain,
-    finding: {
-      finding_id: "F-evm-1",
-      title: "Reentrancy in vault withdraw",
-      description: "External call before accounting update in a Solidity vault.",
-      severity: "high",
-      attack_class: "reentrancy",
-      surface_type: "smart_contract",
-      tech_stack: ["solidity", "foundry"],
-    },
-    calibration_label: "real",
-  });
   appendEdges({
     target_domain: domain,
     edges: [
@@ -296,7 +265,6 @@ test("web evaluator brief stays within 30k with representative slice fixtures", 
       block_internal_hosts: false,
     });
     assert.ok(brief.schema_slice && brief.schema_slice.contracts.length > 0);
-    assert.ok(brief.priors_slice && brief.priors_slice.priors.length > 0);
     assert.ok(brief.surface_graph_slice && brief.surface_graph_slice.related_endpoints.length > 0);
   });
 });
@@ -333,7 +301,6 @@ test("smart-contract evaluator brief stays within 30k with representative slice 
     assert.equal(brief.run_context.capability_pack, "smart_contract_evm");
     assert.ok(brief.bob_spec_status);
     assert.ok(Object.prototype.hasOwnProperty.call(brief, "rpc_pool"));
-    assert.ok(brief.priors_slice && brief.priors_slice.priors.length > 0);
     assert.ok(brief.surface_graph_slice && brief.surface_graph_slice.related_endpoints.length > 0);
   });
 });

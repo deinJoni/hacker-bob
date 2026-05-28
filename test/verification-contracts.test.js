@@ -8,9 +8,8 @@ const {
   computeAdjudicationPlanHash,
   hashCanonicalJson,
 } = require("../mcp/lib/verification-contracts.js");
-const {
-  recordFinding,
-} = require("../mcp/lib/finding-store.js");
+const recordCandidateClaimTool = require("../mcp/lib/tools/record-candidate-claim.js");
+const recordFinding = recordCandidateClaimTool.handler;
 const {
   readGradeVerdict,
   writeGradeVerdict,

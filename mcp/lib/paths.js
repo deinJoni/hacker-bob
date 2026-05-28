@@ -93,14 +93,6 @@ function scopeWarningsPath(domain) {
   return path.join(sessionDir(domain), "scope-warnings.log");
 }
 
-function findingsJsonlPath(domain) {
-  return path.join(sessionDir(domain), "findings.jsonl");
-}
-
-function findingsMarkdownPath(domain) {
-  return path.join(sessionDir(domain), "findings.md");
-}
-
 function coverageJsonlPath(domain) {
   return path.join(sessionDir(domain), "coverage.jsonl");
 }
@@ -217,10 +209,6 @@ function authDifferentialResultsPath(domain) {
   return path.join(sessionDir(domain), "auth-differential-results.json");
 }
 
-function findingsIndexJsonlPath(domain) {
-  return path.join(sessionDir(domain), "findings-index.jsonl");
-}
-
 function surfaceGraphJsonlPath(domain) {
   return path.join(sessionDir(domain), "surface-graph.jsonl");
 }
@@ -306,8 +294,6 @@ module.exports = {
   chainAttemptsJsonlPath,
   coverageJsonlPath,
   evidencePackPaths,
-  findingsJsonlPath,
-  findingsMarkdownPath,
   gradeArtifactPaths,
   httpAuditJsonlPath,
   liveDeadEndsJsonlPath,
@@ -336,7 +322,6 @@ module.exports = {
   claimsJsonlPath,
   docDeltaResultsPath,
   frontierEventsJsonlPath,
-  findingsIndexJsonlPath,
   invariantRunsJsonlPath,
   legacySessionsRoot,
   reportSnapshotsJsonlPath,

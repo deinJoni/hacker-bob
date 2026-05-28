@@ -15,10 +15,6 @@ const {
   runAuthDifferential,
 } = require("./auth-differential-runner.js");
 const {
-  indexFinding,
-  queryFindingsForTarget,
-} = require("./findings-index.js");
-const {
   appendEdges,
   queryEdges,
 } = require("./surface-graph.js");
@@ -125,45 +121,6 @@ const FIXTURES = Object.freeze({
           `expected security-class severity tally`,
         );
         return { divergences_total: result.summary.divergences_total };
-      });
-    },
-  },
-  i6_findings_index_top_match: {
-    capability: "I6_findings_index",
-    description: "Indexed IDOR finding must rank highest for an IDOR-flavored query",
-    async run() {
-      return withFixtureDomain("eval-i6-rank", async (domain) => {
-        indexFinding({
-          target_domain: domain,
-          finding: {
-            finding_id: "EVAL-IDOR-1",
-            title: "IDOR allows reading other user data",
-            description: "broken object level authorization on user endpoint",
-            severity: "high",
-            attack_class: "idor",
-          },
-        });
-        indexFinding({
-          target_domain: domain,
-          finding: {
-            finding_id: "EVAL-XSS-1",
-            title: "Reflected XSS in search query",
-            description: "user input rendered without escape",
-            severity: "medium",
-            attack_class: "xss",
-          },
-        });
-        const result = queryFindingsForTarget({
-          target_domain: domain,
-          query_text: "broken object level authorization on user endpoint",
-          top_k: 5,
-        });
-        expect(result.matches.length >= 2, `expected ≥2 matches, got ${result.matches.length}`);
-        expect(
-          result.matches[0].finding_id === "EVAL-IDOR-1",
-          `expected EVAL-IDOR-1 ranked first, got ${result.matches[0].finding_id}`,
-        );
-        return { top_finding: result.matches[0].finding_id };
       });
     },
   },

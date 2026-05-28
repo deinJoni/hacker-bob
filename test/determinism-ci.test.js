@@ -30,9 +30,6 @@ const {
 const {
   buildSurfaceGraph,
 } = require("../mcp/lib/surface-graph-builder.js");
-const {
-  indexFinding,
-} = require("../mcp/lib/findings-index.js");
 
 function uniqueDomain(prefix = "bob-determinism-ci") {
   const suffix = crypto.randomBytes(4).toString("hex");
@@ -174,21 +171,6 @@ async function exerciseDeterministicPipelines(domain) {
     run_id: "det-ci-auth-diff",
   });
 
-  for (let i = 0; i < 3; i++) {
-    indexFinding({
-      target_domain: domain,
-      finding: {
-        finding_id: `DET-CI-F-${i}`,
-        title: `determinism canary finding ${i}`,
-        description: "fixture finding for determinism ci",
-        severity: "high",
-        attack_class: "idor",
-        endpoint: `/fixture/${i}`,
-        tech_stack: ["express"],
-      },
-    });
-  }
-
   writeAttackSurface(domain, FIXTURE_ATTACK_SURFACE);
   buildSurfaceGraph({ target_domain: domain });
 
@@ -231,11 +213,6 @@ function snapshotContentHashSets(domain) {
       readJsonl(path.join(dir, "surface-graph.jsonl"))
         .map((row) => row.edge_hash)
         .filter((hash) => typeof hash === "string"),
-    ),
-    "findings-index.jsonl": new Set(
-      readJsonl(path.join(dir, "findings-index.jsonl"))
-        .map((row) => row.finding_id)
-        .filter((id) => typeof id === "string"),
     ),
   };
 }

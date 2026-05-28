@@ -34,7 +34,6 @@ const {
   TECHNIQUE_SUMMARY_ITEMS_PER_KIND,
 } = require("../mcp/lib/technique-packs.js");
 const egressProfiles = require("../mcp/lib/egress-profiles.js");
-const findingsIndexModule = require("../mcp/lib/findings-index.js");
 const {
   TOOL_HANDLERS,
 } = require("../mcp/lib/dispatch.js");
@@ -129,10 +128,9 @@ const {
   assertSafeDomain,
   attackSurfacePath,
   chainAttemptsJsonlPath,
+  claimsJsonlPath,
   coverageJsonlPath,
   evidencePackPaths,
-  findingsJsonlPath,
-  findingsMarkdownPath,
   gradeArtifactPaths,
   handoffSigningKeyPath,
   httpAuditJsonlPath,
@@ -203,24 +201,38 @@ const {
 const {
   validateScanUrl,
 } = require("../mcp/lib/url-surface.js");
+const recordCandidateClaimTool = require("../mcp/lib/tools/record-candidate-claim.js");
+const listCandidateClaimsTool = require("../mcp/lib/tools/list-candidate-claims.js");
+const readCandidateClaimsTool = require("../mcp/lib/tools/read-candidate-claims.js");
+const { appendCandidateClaim } = require("../mcp/lib/claims.js");
+const recordFinding = recordCandidateClaimTool.handler;
+const listFindings = listCandidateClaimsTool.handler;
+const readFindings = readCandidateClaimsTool.handler;
 const {
-  listFindings,
+  findingPayloadsFromClaims: readFindingsFromJsonl,
+} = require("../mcp/lib/tools/record-candidate-claim.js");
+
+// Cycle D.2: findings.jsonl/findings.md are gone; tests that previously
+// asserted on those paths now operate on claims.jsonl. Provide local aliases so
+// the call sites do not have to know about the renamed artifact.
+const findingsJsonlPath = (domain) => claimsJsonlPath(domain);
+const findingsMarkdownPath = (domain) => path.join(sessionDir(domain), "claims.md");
+const {
   normalizeGradeVerdictDocument,
-  normalizeVerificationRoundDocument,
-  readFindings,
-  readFindingsFromJsonl,
   readGradeVerdict,
-  readVerificationRound,
-  recordFinding,
-  renderFindingMarkdownEntry,
   renderGradeVerdictMarkdown,
-  renderVerificationRoundMarkdown,
-  summarizeFindings,
   writeGradeVerdict,
+} = require("../mcp/lib/grade-verdict-store.js");
+const {
+  normalizeVerificationRoundDocument,
+  readVerificationRound,
+  renderVerificationRoundMarkdown,
   writeVerificationRound,
-} = require("../mcp/lib/findings.js");
+} = require("../mcp/lib/verification-round-store.js");
 const {
   normalizeFindingRecord,
+  renderFindingMarkdownEntry,
+  summarizeFindings,
 } = require("../mcp/lib/finding-contracts.js");
 const {
   normalizeEvidencePacksDocument,
@@ -344,8 +356,6 @@ const EXPECTED_TOOL_NAMES = [
   "bob_record_candidate_claim",
   "bob_read_candidate_claims",
   "bob_list_candidate_claims",
-  "bob_index_candidate_claim",
-  "bob_query_candidate_claims_index",
   "bob_write_chain_attempt",
   "bob_read_chain_attempts",
   "bob_append_chain_node",
@@ -1682,10 +1692,6 @@ test("MCP tool registry exposes capability metadata for metric and eval tools", 
     C4_multi_account_differential: [
       "bob_run_auth_differential",
       "bob_read_auth_differential_results",
-    ],
-    I6_findings_index: [
-      "bob_index_candidate_claim",
-      "bob_query_candidate_claims_index",
     ],
     I7_chain_state_tree: [
       "bob_append_chain_node",
@@ -3163,22 +3169,39 @@ test("pipeline analytics backfills legacy sessions from artifacts without an eve
       waf_blocked_endpoints: [],
       lead_surface_ids: [],
     }, null, 2)}\n`);
-    writeFileAtomic(findingsJsonlPath(domain), `${JSON.stringify({
-      id: "F-1",
+    appendCandidateClaim({
       target_domain: domain,
       title: "Legacy IDOR",
+      summary: "Legacy finding migrated from an older run.",
       severity: "high",
-      cwe: "CWE-639",
-      endpoint: "/api/export",
-      description: "Legacy finding migrated from an older run.",
-      proof_of_concept: "curl https://legacy.example/api/export?account_id=2",
-      response_evidence: "200 OK with redacted account metadata",
+      status: "candidate",
+      surface_ids: ["surface-a"],
       impact: "Cross-account metadata disclosure.",
-      validated: true,
-      wave: "w1",
-      agent: "a1",
-      surface_id: "surface-a",
-    })}\n`);
+      evidence_refs: [{
+        kind: "finding",
+        finding_id: "F-1",
+        content_hash: "0".repeat(64),
+      }],
+      payload: {
+        attack_class: "CWE-639",
+        finding: {
+          id: "F-1",
+          target_domain: domain,
+          title: "Legacy IDOR",
+          severity: "high",
+          cwe: "CWE-639",
+          endpoint: "/api/export",
+          description: "Legacy finding migrated from an older run.",
+          proof_of_concept: "curl https://legacy.example/api/export?account_id=2",
+          response_evidence: "200 OK with redacted account metadata",
+          impact: "Cross-account metadata disclosure.",
+          validated: true,
+          wave: "w1",
+          agent: "a1",
+          surface_id: "surface-a",
+        },
+      },
+    });
     writeFileAtomic(techniqueAttemptsJsonlPath(domain), `${JSON.stringify({
       version: 1,
       ts: "2026-01-01T00:00:00.000Z",
@@ -6447,69 +6470,11 @@ test("bob_record_finding rejects partial or invalid wave metadata and still allo
     }));
     assert.equal(recorded.recorded, true);
 
-    const finding = JSON.parse(fs.readFileSync(findingsJsonlPath(domain), "utf8").trim());
+    const [finding] = readFindingsFromJsonl(domain);
     assert.equal(finding.wave, null);
     assert.equal(finding.agent, null);
     assert.equal(finding.surface_id, null);
     assert.equal(finding.auth_profile, null);
-  });
-});
-
-test("bob_record_finding emits finding_index_failed and keeps recording when indexing fails", () => {
-  withTempHome(() => {
-    const domain = "finding-index-failure.example.com";
-    seedSessionState(domain, {
-      phase: "EVALUATE",
-      evaluation_wave: 1,
-      pending_wave: 1,
-    });
-    seedAttackSurfaces(domain, [{
-      id: "surface-a",
-      surface_type: "api",
-      hosts: [`https://${domain}`],
-    }]);
-    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
-
-    const originalIndexFinding = findingsIndexModule.indexFinding;
-    findingsIndexModule.indexFinding = () => {
-      throw new Error("forced index failure");
-    };
-
-    try {
-      const recorded = JSON.parse(recordFinding({
-        target_domain: domain,
-        title: "Index health finding",
-        severity: "medium",
-        endpoint: "/api/health",
-        description: "The finding index will fail in this test.",
-        proof_of_concept: "poc",
-        validated: true,
-        wave: "w1",
-        agent: "a1",
-        surface_id: "surface-a",
-      }));
-      assert.equal(recorded.recorded, true);
-
-      const eventRead = readPipelineEvents(domain);
-      const failureEvents = eventRead.events.filter((event) => event.type === "finding_index_failed");
-      assert.equal(failureEvents.length, 1);
-      assert.equal(failureEvents[0].source, "bob_record_candidate_claim");
-      assert.equal(failureEvents[0].surface_id, "surface-a");
-      assert.equal(failureEvents[0].status, "medium");
-
-      const analytics = JSON.parse(readPipelineAnalytics({ target_domain: domain, include_events: true }));
-      const bottleneck = analytics.bottlenecks.find((item) => item.code === "finding_index_failed");
-      assert.ok(bottleneck, "finding_index_failed should surface in pipeline analytics");
-      assert.equal(bottleneck.severity, "needs_attention");
-      assert.equal(analytics.sessions[0].health.reasons.includes("finding_index_failed"), true);
-      assert.equal(
-        analytics.events.some((event) => event.type === "finding_index_failed"),
-        true,
-        "finding_index_failed should appear in the analytics event window",
-      );
-    } finally {
-      findingsIndexModule.indexFinding = originalIndexFinding;
-    }
   });
 });
 
@@ -8793,11 +8758,11 @@ test("bob_record_finding appends findings.jsonl and bob_read_findings preserves 
     assert.equal(first.finding_id, "F-1");
     assert.equal(second.finding_id, "F-2");
 
-    const findingsPath = findingsJsonlPath(domain);
-    const jsonlLines = fs.readFileSync(findingsPath, "utf8").trim().split("\n");
+    const claimsPath = claimsJsonlPath(domain);
+    const jsonlLines = fs.readFileSync(claimsPath, "utf8").trim().split("\n");
     assert.equal(jsonlLines.length, 2);
-    assert.equal(JSON.parse(jsonlLines[0]).id, "F-1");
-    assert.equal(JSON.parse(jsonlLines[1]).id, "F-2");
+    assert.equal(JSON.parse(jsonlLines[0]).payload.finding.id, "F-1");
+    assert.equal(JSON.parse(jsonlLines[1]).payload.finding.id, "F-2");
 
     const readResult = JSON.parse(readFindings({ target_domain: domain }));
     assert.match(readResult.findings[0].dedupe_key, /^[a-f0-9]{24}$/);
@@ -8856,18 +8821,6 @@ test("bob_record_finding appends findings.jsonl and bob_read_findings preserves 
         },
       ],
     });
-  });
-});
-
-test("bob_record_finding still writes readable findings.md", () => {
-  withTempHome(() => {
-    const domain = "example.com";
-    seedFinding(domain);
-
-    const markdown = fs.readFileSync(findingsMarkdownPath(domain), "utf8");
-    assert.match(markdown, /## FINDING 1 \(HIGH\): IDOR on account export/);
-    assert.match(markdown, /\*\*ID:\*\* F-1/);
-    assert.match(markdown, /curl https:\/\/example.com\/api\/export\?account_id=2/);
   });
 });
 
@@ -9279,7 +9232,7 @@ test("normalizeAssignmentRouteMetadata throws on smart_contract assignment witho
   assert.equal(webMeta.capability_pack, "web");
 });
 
-test("findings.md mirror surfaces the routed capability pack for triage", () => {
+test("recordFinding stamps the routed capability pack on the embedded claim payload", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedAttackSurfaces(domain, [
@@ -9314,8 +9267,9 @@ test("findings.md mirror surfaces the routed capability pack for triage", () => 
         match_test: "test_reentrancy",
       },
     }));
-    const md = fs.readFileSync(findingsMarkdownPath(domain), "utf8");
-    assert.match(md, /Capability Pack:\*\* smart_contract_evm \(evaluator-evm-agent\)/);
+    const [finding] = readFindingsFromJsonl(domain);
+    assert.equal(finding.capability_pack, "smart_contract_evm");
+    assert.equal(finding.evaluator_agent, "evaluator-evm-agent");
   });
 });
 
@@ -11604,38 +11558,6 @@ test("Move tools register with verifier and evidence role bundles (so balanced/b
   }
 });
 
-test("bob_record_finding tolerates legacy findings.jsonl rows with no surface_type or sc_evidence", () => {
-  withTempHome(() => {
-    const domain = "example.com";
-    const findingsPath = findingsJsonlPath(domain);
-    fs.mkdirSync(path.dirname(findingsPath), { recursive: true });
-    // Hand-write a legacy row representing findings without surface_type.
-    const legacy = {
-      id: "F-1",
-      target_domain: domain,
-      title: "IDOR",
-      severity: "high",
-      cwe: "CWE-639",
-      endpoint: "/api/export",
-      description: "Cross-account PII",
-      proof_of_concept: "curl ...",
-      response_evidence: null,
-      impact: null,
-      validated: true,
-      wave: null,
-      agent: null,
-      surface_id: null,
-      auth_profile: null,
-      dedupe_key: "deadbeef".repeat(3),
-    };
-    fs.writeFileSync(findingsPath, JSON.stringify(legacy) + "\n");
-    const out = JSON.parse(readFindings({ target_domain: domain }));
-    assert.equal(out.findings.length, 1);
-    assert.equal(out.findings[0].surface_type, null);
-    assert.equal(out.findings[0].sc_evidence, null);
-  });
-});
-
 test("bob_record_finding deduplicates exact findings unless force_record is set", () => {
   withTempHome(() => {
     const domain = "example.com";
@@ -11646,35 +11568,20 @@ test("bob_record_finding deduplicates exact findings unless force_record is set"
     assert.equal(duplicate.recorded, false);
     assert.equal(duplicate.duplicate, true);
     assert.equal(duplicate.finding_id, "F-1");
-    assert.equal(fs.readFileSync(findingsJsonlPath(domain), "utf8").trim().split("\n").length, 1);
+    assert.equal(fs.readFileSync(claimsJsonlPath(domain), "utf8").trim().split("\n").length, 1);
 
     const forced = seedFinding(domain, { force_record: true });
     assert.equal(forced.recorded, true);
     assert.equal(forced.finding_id, "F-2");
     assert.equal(forced.force_record, true);
 
-    const records = fs.readFileSync(findingsJsonlPath(domain), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    const records = readFindingsFromJsonl(domain);
     assert.equal(records.length, 2);
     assert.equal(records[1].force_record, true);
     assert.equal(records[0].dedupe_key, records[1].dedupe_key);
   });
 });
 
-test("bob_record_finding returns warning metadata when markdown sync fails after JSONL success", () => {
-  withTempHome(() => {
-    const domain = "example.com";
-    const dir = sessionDir(domain);
-    fs.mkdirSync(path.join(dir, "findings.md"), { recursive: true });
-
-    const result = seedFinding(domain);
-
-    assert.equal(result.recorded, true);
-    assert.equal(result.finding_id, "F-1");
-    assert.ok(result.markdown_sync_error);
-    assert.equal(fs.readFileSync(findingsJsonlPath(domain), "utf8").trim().split("\n").length, 1);
-    assert.ok(fs.statSync(path.join(dir, "findings.md")).isDirectory());
-  });
-});
 
 test("bob_read_findings, bob_list_findings, and bob_wave_status return empty-state results when findings.jsonl is absent", () => {
   withTempHome(() => {
@@ -11721,33 +11628,16 @@ test("bob_read_findings, bob_list_findings, and bob_wave_status return empty-sta
   });
 });
 
-test("malformed findings.jsonl hard-fails bob_read_findings, bob_list_findings, and bob_wave_status", () => {
+test("malformed claims.jsonl hard-fails bob_read_findings, bob_list_findings, and bob_wave_status", () => {
   withTempHome(() => {
     const domain = "example.com";
     const dir = sessionDir(domain);
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(
-      findingsJsonlPath(domain),
-      `${JSON.stringify({
-        id: "F-1",
-        target_domain: domain,
-        title: "Valid first line",
-        severity: "low",
-        cwe: null,
-        endpoint: "/ok",
-        description: "Still valid.",
-        proof_of_concept: "curl https://example.com/ok",
-        response_evidence: null,
-        impact: null,
-        validated: true,
-        wave: null,
-        agent: null,
-      })}\nnot-json\n`,
-    );
+    fs.writeFileSync(claimsJsonlPath(domain), "not-json\n");
 
-    assert.throws(() => readFindings({ target_domain: domain }), /Malformed findings\.jsonl at line 2/);
-    assert.throws(() => listFindings({ target_domain: domain }), /Malformed findings\.jsonl at line 2/);
-    assert.throws(() => waveStatus({ target_domain: domain }), /Malformed findings\.jsonl at line 2/);
+    assert.throws(() => readFindings({ target_domain: domain }), /claims\.jsonl/);
+    assert.throws(() => listFindings({ target_domain: domain }), /claims\.jsonl/);
+    assert.throws(() => waveStatus({ target_domain: domain }), /claims\.jsonl/);
   });
 });
 

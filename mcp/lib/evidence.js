@@ -25,21 +25,12 @@ const {
 const {
   validateNoSensitiveMaterial,
 } = require("./sensitive-material.js");
-// LEGACY: removed in Plane D — Cycle C.5 sources the evidence work-set from
-// the frozen EvidenceReference set on claim-freeze.json rather than the live
-// findings.jsonl ledger. The legacy reader stays imported only as a backstop
-// for sessions whose freeze has no CandidateClaim rows yet.
-const {
-  readFindingIdSet: readCanonicalFindingIdSet,
-} = require("./finding-store.js");
 const {
   readCurrentClaimFreeze,
 } = require("./claim-freeze.js");
-// LEGACY: removed in Plane D — old callers may pass `finding_ids[]` to
-// requireValidEvidencePacksForFinalReportableFindings. The adapter projects
-// the matching claim_ids set so the new pipeline still services them.
 const {
   claimIdSetFromFindingIds,
+  findingIdSetForVerificationContext,
 } = require("./verification-finding-id-adapter.js");
 const {
   normalizeVerificationRoundDocument,
@@ -164,11 +155,7 @@ function readFrozenEvidenceFindingIdSet(domain) {
 function readFindingIdSet(domain) {
   const frozen = readFrozenEvidenceFindingIdSet(domain);
   if (frozen.size > 0) return frozen;
-  // LEGACY: removed in Plane D — fallback to the live ledger when the freeze
-  // carries no CandidateClaim rows (e.g., tests that bypass the dual-write
-  // shim). Once the operator-driven CLAIM_FREEZE transition is the only path
-  // into VERIFY, this fallback can go away.
-  return readCanonicalFindingIdSet(domain);
+  return findingIdSetForVerificationContext({ domain });
 }
 
 function loadFinalVerification(domain, findingIdSet, action = "evidence validation") {

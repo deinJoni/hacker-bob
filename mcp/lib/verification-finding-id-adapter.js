@@ -1,30 +1,31 @@
 "use strict";
 
-// LEGACY: removed in Plane D — finding-id adapter for the verification-plane.
+// Verification finding-id adapter.
 //
-// Cycle C.4 moves verification onto the frozen claim payload. Downstream
-// callers (verification rounds, evidence, grade) still address claim
-// membership by finding_id; this adapter resolves the finding_id set from the
-// best available source:
+// Verification, evidence, and grade rounds still address claim membership by
+// finding_id because the freeze's evidence_refs[] entries continue to carry
+// kind="finding" + finding_id (the stable identifier minted at record time).
+// This adapter resolves the finding_id set from the best available source:
 //
 //   1. The fresh verification snapshot (claim_ids/finding_ids projected from
 //      the claim freeze). Authoritative when an attempt is active.
 //   2. The current claim freeze. Authoritative when no attempt is active yet
 //      but a freeze exists on disk.
-//   3. Live findings.jsonl. Fallback for legacy/pre-claim sessions only.
 //
-// A future Plane D cycle will collapse (1)-(2) once `finding_ids[]` is gone
-// from the snapshot and (3) is impossible (legacy paths deleted).
+// Cycle D.2 removed the legacy findings.jsonl fallback that previously sat
+// behind (2). Pre-claim or empty-freeze sessions now return an empty set; the
+// caller is expected to record at least one CandidateClaim and run a freeze
+// before driving verification.
 
 const {
   readCurrentClaimFreeze,
 } = require("./claim-freeze.js");
 const {
-  readFindingsFromJsonl,
-} = require("./finding-store.js");
-const {
   claimsForFinding,
 } = require("./claim-projections.js");
+const {
+  readCandidateClaims,
+} = require("./claims.js");
 
 function findingIdsFromFreeze(freeze) {
   if (!freeze || !Array.isArray(freeze.claims)) return [];
@@ -49,7 +50,7 @@ function findingIdsFromFreeze(freeze) {
 // Priority:
 //   - snapshot.finding_ids[] (when an attempt is active)
 //   - claim freeze projection (when no attempt is active but freeze exists)
-//   - live findings.jsonl scan (legacy / pre-claim sessions)
+//   - empty set otherwise (pre-claim or empty-freeze sessions)
 //
 // The adapter understands two equivalent inputs: `{snapshot}` (preferred,
 // pass the snapshot returned by `requireFreshVerificationState`) and the older
@@ -68,29 +69,28 @@ function findingIdSetForVerificationContext({ domain, snapshot = null, finding_i
       const projected = findingIdsFromFreeze(freeze);
       if (projected.length > 0) return new Set(projected);
     }
-    // LEGACY: removed in Plane D
-    return new Set(readFindingsFromJsonl(domain).map((finding) => finding.id));
+    // No freeze on disk yet, but callers (legacy v1 verification, tests that
+    // record claims and then drive verification directly) still need to address
+    // claim membership by finding_id. Project the set from the live claim
+    // ledger so the lookup remains topology-consistent without resurrecting a
+    // findings.jsonl reader.
+    const ids = new Set();
+    for (const claim of readCandidateClaims(domain)) {
+      if (!claim || !Array.isArray(claim.evidence_refs)) continue;
+      for (const ref of claim.evidence_refs) {
+        if (ref && typeof ref === "object" && ref.kind === "finding" && typeof ref.finding_id === "string") {
+          ids.add(ref.finding_id);
+        }
+      }
+    }
+    return ids;
   }
   return new Set();
 }
 
-// LEGACY: removed in Plane D — projects the finding_id set from the live
-// findings.jsonl ledger for older sessions whose claim freeze has no
-// CandidateClaim rows yet (e.g., tests/sessions that wrote findings directly
-// via finding-store rather than the dual-write tool). The snapshot builder
-// calls this when both `claims[]` and the projected `finding_ids[]` are
-// empty so verification can still address claim membership.
-function legacyFindingIdSetFromLiveLedger(domain) {
-  if (typeof domain !== "string" || !domain) return [];
-  return readFindingsFromJsonl(domain)
-    .map((finding) => finding.id)
-    .sort((a, b) => a.localeCompare(b));
-}
-
-// LEGACY: removed in Plane D — maps a `finding_ids[]` array supplied by an
-// older caller into the matching `claim_ids[]` set via the claim-projections
-// reverse lookup. Returns the *union* of claims referenced by the listed
-// finding_ids.
+// Maps a `finding_ids[]` array supplied by an older caller into the matching
+// `claim_ids[]` set via the claim-projections reverse lookup. Returns the
+// union of claims referenced by the listed finding_ids.
 function claimIdSetFromFindingIds(domain, findingIds) {
   if (!Array.isArray(findingIds)) return new Set();
   const ids = new Set();
@@ -108,5 +108,4 @@ module.exports = {
   claimIdSetFromFindingIds,
   findingIdSetForVerificationContext,
   findingIdsFromFreeze,
-  legacyFindingIdSetFromLiveLedger,
 };

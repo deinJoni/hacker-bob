@@ -19,8 +19,6 @@ allowed-tools:
   - mcp__bountyagent__bob_read_auth_differential_results
   - mcp__bountyagent__bob_record_candidate_claim
   - mcp__bountyagent__bob_list_candidate_claims
-  - mcp__bountyagent__bob_index_candidate_claim
-  - mcp__bountyagent__bob_query_candidate_claims_index
   - mcp__bountyagent__bob_read_chain_attempts
   - mcp__bountyagent__bob_append_chain_node
   - mcp__bountyagent__bob_query_chain_tree

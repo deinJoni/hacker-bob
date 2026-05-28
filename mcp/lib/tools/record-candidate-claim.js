@@ -1,16 +1,131 @@
 "use strict";
 
-const { recordFinding, readFindingsFromJsonl } = require("../finding-store.js");
-const { appendCandidateClaim } = require("../claims.js");
+const fs = require("fs");
+const { StringDecoder } = require("string_decoder");
+const {
+  assertNonEmptyString,
+  parseAgentId,
+  parseWaveId,
+} = require("../validation.js");
+const {
+  claimsJsonlPath,
+} = require("../paths.js");
+const {
+  withSessionLock,
+} = require("../storage.js");
+const {
+  validateNoSensitiveMaterial,
+} = require("../sensitive-material.js");
+const {
+  validateAssignedWaveAgentSurface,
+} = require("../assignments.js");
+const {
+  safeAppendPipelineEventDirect,
+} = require("../pipeline-events.js");
+const {
+  safeGovernanceContextForDomain,
+} = require("../governance-context.js");
+const {
+  computeFindingDedupeKey,
+  normalizeFindingRecord,
+} = require("../finding-contracts.js");
+const {
+  appendCandidateClaim,
+  readCandidateClaims,
+} = require("../claims.js");
 const { appendFrontierEvent } = require("../frontier-events.js");
 const { scheduleMaterialization } = require("../frontier-materialize-debounce.js");
 const { hashCanonicalJson } = require("../verification-contracts.js");
 
-// C.2 dual-write shim: after recordFinding succeeds, mirror the Finding into a
-// CandidateClaim and emit a claim.candidate.linked frontier event so the claim
-// plane sees the same evidence the legacy findings store does. Best-effort:
-// the Finding remains authoritative; a claim-plane failure must not regress the
-// Finding write.
+// CandidateClaim recording. Every candidate claim lands in claims.jsonl with
+// an embedded finding-shaped payload referenced via evidence_refs[kind="finding"].
+// The finding_id identifier is preserved as the stable handle for verification
+// and grade rounds; it is minted by scanning the existing claims ledger.
+
+const CLAIM_TEXT_LIMITS = Object.freeze({
+  title: 300,
+  cwe: 120,
+  endpoint: 2000,
+  description: 4000,
+  proof_of_concept: 4000,
+  response_evidence: 4000,
+  impact: 4000,
+  auth_profile: 200,
+});
+
+function findingIdNumber(findingId) {
+  const match = typeof findingId === "string" ? findingId.match(/^F-([1-9]\d*)$/) : null;
+  return match ? Number(match[1]) : 0;
+}
+
+function findingEvidenceRefs(claim) {
+  if (!claim || !Array.isArray(claim.evidence_refs)) return [];
+  return claim.evidence_refs.filter((ref) => (
+    ref && typeof ref === "object" && ref.kind === "finding" && typeof ref.finding_id === "string"
+  ));
+}
+
+function scanExistingFindingFootprint(domain) {
+  // The finding-id mint and dedupe-key match are both derived from the live
+  // claims ledger now. A pre-D.2 session whose findings.jsonl already carried
+  // F-N rows continues to influence the mint because the C.2 dual-write
+  // mirrored every finding into a CandidateClaim with the same finding_id.
+  let maxNumber = 0;
+  let total = 0;
+  const dedupeIndex = new Map();
+  for (const claim of readCandidateClaims(domain)) {
+    total += 1;
+    for (const ref of findingEvidenceRefs(claim)) {
+      const n = findingIdNumber(ref.finding_id);
+      if (n > maxNumber) maxNumber = n;
+    }
+    const dedupeKey = claim && claim.payload && typeof claim.payload.dedupe_key === "string"
+      ? claim.payload.dedupe_key
+      : null;
+    if (dedupeKey && !dedupeIndex.has(dedupeKey)) {
+      const findingRefs = findingEvidenceRefs(claim);
+      dedupeIndex.set(dedupeKey, {
+        claim,
+        finding_id: findingRefs.length > 0 ? findingRefs[0].finding_id : null,
+      });
+    }
+  }
+  return { maxNumber, total, dedupeIndex };
+}
+
+function validateClaimForPersistence(finding) {
+  for (const [field, maxTextChars] of Object.entries(CLAIM_TEXT_LIMITS)) {
+    if (finding[field] == null) continue;
+    validateNoSensitiveMaterial(finding[field], field, { maxTextChars });
+  }
+}
+
+function buildFindingPayloadRecord(args, context, findingId) {
+  return normalizeFindingRecord({
+    id: findingId,
+    target_domain: context.domain,
+    title: args.title,
+    severity: args.severity,
+    cwe: args.cwe,
+    endpoint: args.endpoint,
+    description: args.description,
+    proof_of_concept: args.proof_of_concept,
+    response_evidence: args.response_evidence,
+    impact: args.impact,
+    validated: args.validated,
+    wave: context.wave,
+    agent: context.agent,
+    surface_id: context.surfaceId,
+    surface_type: context.surfaceType,
+    capability_pack: context.capabilityPack,
+    evaluator_agent: context.evaluatorAgent,
+    brief_profile: context.briefProfile,
+    sc_evidence: args.sc_evidence,
+    dedupe_key: args.dedupe_key,
+    auth_profile: args.auth_profile,
+    force_record: args.force_record === true,
+  }, { expectedDomain: context.domain });
+}
 
 function deriveSubjectId(finding) {
   if (finding && finding.sc_evidence && typeof finding.sc_evidence.contract_address === "string") {
@@ -34,7 +149,6 @@ function deriveAttackClass(finding) {
 }
 
 function severityForClaim(severity) {
-  // Findings use "info" while claims use "informational"; map otherwise pass through.
   if (severity === "info") return "informational";
   return severity;
 }
@@ -51,6 +165,45 @@ function buildClaimPayloadFromFinding(finding, findingContentHash, args) {
   if (typeof finding.surface_id === "string" && finding.surface_id.trim()) {
     payload.surface_ref = finding.surface_id;
   }
+  // Preserve the legacy dedupe key on the claim payload so subsequent
+  // record-candidate-claim calls can detect duplicates without re-scanning a
+  // separate findings ledger.
+  if (typeof finding.dedupe_key === "string" && finding.dedupe_key) {
+    payload.dedupe_key = finding.dedupe_key;
+  }
+  // Carry the inline finding-shaped payload so consumers that still address
+  // findings by their familiar fields (title, severity, endpoint, description,
+  // proof_of_concept, sc_evidence, wave/agent, capability routing) can read
+  // them directly off the claim without resolving a separate artifact. This is
+  // the post-D.2 replacement for the old findings.jsonl row.
+  const findingPayload = {};
+  for (const key of [
+    "id",
+    "target_domain",
+    "title",
+    "severity",
+    "cwe",
+    "endpoint",
+    "description",
+    "proof_of_concept",
+    "response_evidence",
+    "impact",
+    "validated",
+    "wave",
+    "agent",
+    "surface_id",
+    "surface_type",
+    "capability_pack",
+    "evaluator_agent",
+    "brief_profile",
+    "sc_evidence",
+    "auth_profile",
+    "dedupe_key",
+    "force_record",
+  ]) {
+    if (finding[key] != null) findingPayload[key] = finding[key];
+  }
+  payload.finding = findingPayload;
 
   const claim = {
     target_domain: finding.target_domain,
@@ -65,7 +218,6 @@ function buildClaimPayloadFromFinding(finding, findingContentHash, args) {
       : new Date().toISOString(),
     evidence_refs: [{
       kind: "finding",
-      artifact_path: "findings.jsonl",
       finding_id: finding.id,
       content_hash: findingContentHash,
     }],
@@ -76,31 +228,83 @@ function buildClaimPayloadFromFinding(finding, findingContentHash, args) {
   if (typeof finding.impact === "string" && finding.impact.trim()) {
     claim.impact = finding.impact;
   }
-  if (Object.keys(payload).length > 0) {
-    claim.payload = payload;
-  }
+  claim.payload = payload;
   return claim;
 }
 
-function dualWriteClaimForFinding(args, recordResponseJson) {
-  let response;
-  try {
-    response = JSON.parse(recordResponseJson);
-  } catch {
-    return recordResponseJson;
+function recordCandidateClaimHandler(args) {
+  const domain = assertNonEmptyString(args.target_domain, "target_domain");
+  const hasWave = args.wave != null;
+  const hasAgent = args.agent != null;
+  if (hasWave !== hasAgent) {
+    throw new Error("wave and agent must either both be provided or both be omitted");
   }
-  if (!response || response.recorded !== true || typeof response.finding_id !== "string") {
-    return recordResponseJson;
+
+  let wave = null;
+  let agent = null;
+  let surfaceId = null;
+  let surfaceType = null;
+  let capabilityPack = null;
+  let evaluatorAgent = null;
+  let briefProfile = null;
+  if (hasWave) {
+    wave = parseWaveId(args.wave);
+    agent = parseAgentId(args.agent);
+    surfaceId = assertNonEmptyString(args.surface_id, "surface_id");
+    const assignment = validateAssignedWaveAgentSurface(domain, wave, agent, surfaceId);
+    const rawSurfaceType = assignment && assignment.surface_type ? assignment.surface_type : null;
+    surfaceType = rawSurfaceType === "smart_contract" ? "smart_contract" : "web";
+    capabilityPack = assignment.capability_pack || null;
+    evaluatorAgent = assignment.evaluator_agent || null;
+    briefProfile = assignment.brief_profile || null;
+  } else {
+    surfaceId = args.surface_id == null ? null : assertNonEmptyString(args.surface_id, "surface_id");
+    if (args.sc_evidence != null) {
+      throw new Error("sc_evidence findings must be recorded with wave and agent so the routed capability pack is captured from the assignment");
+    }
+    surfaceType = "web";
+    capabilityPack = "web";
+    evaluatorAgent = "evaluator-agent";
+    briefProfile = "web";
   }
-  const domain = args && typeof args.target_domain === "string" ? args.target_domain : null;
-  if (!domain) return recordResponseJson;
-  try {
-    const findings = readFindingsFromJsonl(domain);
-    const finding = findings.find((entry) => entry && entry.id === response.finding_id);
-    if (!finding) return recordResponseJson;
-    const contentHash = hashCanonicalJson(finding);
-    const claimInput = buildClaimPayloadFromFinding(finding, contentHash, args || {});
+
+  return withSessionLock(domain, () => {
+    const context = {
+      domain,
+      wave,
+      agent,
+      surfaceId,
+      surfaceType,
+      capabilityPack,
+      evaluatorAgent,
+      briefProfile,
+    };
+    const preliminary = buildFindingPayloadRecord(args, context, "F-1");
+    validateClaimForPersistence(preliminary);
+
+    const scan = scanExistingFindingFootprint(domain);
+    const existing = scan.dedupeIndex.get(preliminary.dedupe_key) || null;
+    if (existing && args.force_record !== true) {
+      return JSON.stringify({
+        recorded: false,
+        duplicate: true,
+        finding_id: existing.finding_id,
+        existing_finding_id: existing.finding_id,
+        dedupe_key: preliminary.dedupe_key,
+        total: scan.total,
+        written_jsonl: claimsJsonlPath(domain),
+        claim_id: existing.claim ? existing.claim.claim_id : null,
+      });
+    }
+
+    const counter = scan.maxNumber + 1;
+    const finding = buildFindingPayloadRecord(args, context, `F-${counter}`);
+    validateClaimForPersistence(finding);
+
+    const findingContentHash = hashCanonicalJson(finding);
+    const claimInput = buildClaimPayloadFromFinding(finding, findingContentHash, args || {});
     const claim = appendCandidateClaim(claimInput);
+
     appendFrontierEvent({
       target_domain: domain,
       kind: "claim.candidate.linked",
@@ -114,23 +318,59 @@ function dualWriteClaimForFinding(args, recordResponseJson) {
       source: { artifact: "claims.jsonl", tool: "bob_record_candidate_claim" },
     });
     scheduleMaterialization(domain);
-  } catch {
-    // Claim plane is dual-write best-effort during the deprecation window; the
-    // Finding remains authoritative and the original response must be returned.
-  }
-  return recordResponseJson;
+
+    const response = {
+      recorded: true,
+      finding_id: finding.id,
+      claim_id: claim.claim_id,
+      total: scan.total + 1,
+      finding_sequence: counter,
+      dedupe_key: finding.dedupe_key,
+      written_jsonl: claimsJsonlPath(domain),
+    };
+    if (finding.force_record) {
+      response.force_record = true;
+    }
+
+    const governanceContext = safeGovernanceContextForDomain(domain);
+    safeAppendPipelineEventDirect(domain, "finding_recorded", {
+      wave,
+      agent,
+      surface_id: surfaceId,
+      status: finding.severity,
+      source: "bob_record_candidate_claim",
+      counts: {
+        findings: scan.total + 1,
+        validated: finding.validated ? 1 : 0,
+      },
+    }, governanceContext);
+
+    return JSON.stringify(response);
+  });
 }
 
-function recordFindingHandler(args) {
-  const result = recordFinding(args);
-  return dualWriteClaimForFinding(args, result);
+function findingPayloadsFromClaims(domain) {
+  return readCandidateClaims(domain)
+    .map((claim) => {
+      const payload = claim && claim.payload && typeof claim.payload === "object" ? claim.payload : {};
+      const finding = payload.finding && typeof payload.finding === "object" ? payload.finding : null;
+      if (!finding) return null;
+      try {
+        return normalizeFindingRecord({ ...finding, target_domain: claim.target_domain }, {
+          expectedDomain: domain,
+        });
+      } catch {
+        return null;
+      }
+    })
+    .filter((entry) => entry != null);
 }
 
 module.exports = Object.freeze({
   name: "bob_record_candidate_claim",
   aliases: ["bob_record_finding", "bounty_record_finding"],
   description:
-    "Record a validated candidate claim (legacy finding) to structured disk artifacts. Survives context rotation.",
+    "Record a validated candidate claim to claims.jsonl with an embedded finding-shaped payload, plus a claim.candidate.linked frontier event. Survives context rotation.",
   inputSchema: {
     "type": "object",
     "properties": {
@@ -187,16 +427,16 @@ module.exports = Object.freeze({
       },
       "force_record": {
         "type": "boolean",
-        "description": "Intentionally record a duplicate finding instead of returning the existing finding ID."
+        "description": "Intentionally record a duplicate candidate claim instead of returning the existing finding ID."
       },
       "sc_evidence": {
         "type": "object",
-        "description": "Structured re-run handle for smart-contract findings. Required when the assigned surface is a smart contract; rejected otherwise so the verifier can re-run via bob_foundry_run (EVM) or bob_anchor_run (SVM) with no string-parsing of the prose PoC.",
+        "description": "Structured re-run handle for smart-contract candidate claims. Required when the assigned surface is a smart contract; rejected otherwise so the verifier can re-run via bob_foundry_run (EVM) or bob_anchor_run (SVM) with no string-parsing of the prose PoC.",
         "properties": {
           "chain_family": {
             "type": "string",
             "enum": ["evm", "svm", "aptos", "sui", "substrate", "cosmwasm"],
-            "description": "Discriminator for cross-family validation. Defaults to 'evm' when omitted for back-compat with legacy findings."
+            "description": "Discriminator for cross-family validation. Defaults to 'evm' when omitted for back-compat with legacy candidate claims."
           },
           "chain_id": {
             "oneOf": [
@@ -253,7 +493,7 @@ module.exports = Object.freeze({
       "validated"
     ]
   },
-  handler: recordFindingHandler,
+  handler: recordCandidateClaimHandler,
   role_bundles: ["evaluator-shared", "orchestrator"],
   mutating: true,
   global_preapproval: true,
@@ -261,5 +501,7 @@ module.exports = Object.freeze({
   browser_access: false,
   scope_required: false,
   sensitive_output: false,
-  session_artifacts_written: ["findings.jsonl","findings.md","claims.jsonl","frontier-events.jsonl"],
+  session_artifacts_written: ["claims.jsonl","frontier-events.jsonl"],
+  findingPayloadsFromClaims,
+  computeFindingDedupeKey,
 });

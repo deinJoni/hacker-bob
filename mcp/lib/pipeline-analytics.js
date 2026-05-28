@@ -14,8 +14,7 @@ const {
   assertNonEmptyString,
 } = require("./validation.js");
 const {
-  findingsIndexJsonlPath,
-  findingsJsonlPath,
+  claimsJsonlPath,
   httpAuditJsonlPath,
   pipelineEventsJsonlPath,
   reportMarkdownPath,
@@ -950,9 +949,8 @@ function sessionActivityMtimeMs(targetDomain) {
   const candidates = [
     statePath(targetDomain),
     pipelineEventsJsonlPath(targetDomain),
-    findingsIndexJsonlPath(targetDomain),
     httpAuditJsonlPath(targetDomain),
-    findingsJsonlPath(targetDomain),
+    claimsJsonlPath(targetDomain),
     reportMarkdownPath(targetDomain),
   ];
   let latest = 0;

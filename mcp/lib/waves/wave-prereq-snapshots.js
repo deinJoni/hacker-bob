@@ -11,9 +11,11 @@ const {
   computeFrontierReadiness,
 } = require("../frontier-readiness.js");
 const {
-  readFindingsFromJsonl,
+  findingPayloadsFromClaims,
+} = require("../tools/record-candidate-claim.js");
+const {
   summarizeFindings,
-} = require("../findings.js");
+} = require("../finding-contracts.js");
 const {
   buildCircuitBreakerSummary,
   readHttpAuditRecordsFromJsonl,
@@ -67,7 +69,7 @@ function snapshotPrereqRegistries(domain) {
 
 function waveStatus(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
-  const findings = readFindingsFromJsonl(domain);
+  const findings = findingPayloadsFromClaims(domain);
   const summary = summarizeFindings(findings);
 
   // Compute frontier-readiness analytics for deterministic wave decisions.

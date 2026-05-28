@@ -33,21 +33,12 @@ const {
 const {
   safeGovernanceContextForDomain,
 } = require("./governance-context.js");
-// LEGACY: removed in Plane D — Cycle C.6 sources the grade work-set from the
-// frozen claim batch (claim-freeze.json) rather than the live findings.jsonl
-// ledger. The legacy reader stays imported only as a backstop for sessions
-// whose freeze has no CandidateClaim rows yet.
-const {
-  readFindingIdSet: readCanonicalFindingIdSet,
-} = require("./finding-store.js");
 const {
   readCurrentClaimFreeze,
 } = require("./claim-freeze.js");
-// LEGACY: removed in Plane D — old callers may pass `finding_ids[]` to
-// the grade-verdict store. The adapter resolves the matching claim_ids set so
-// the new pipeline still services them while exercising the legacy contract.
 const {
   claimIdSetFromFindingIds,
+  findingIdSetForVerificationContext,
 } = require("./verification-finding-id-adapter.js");
 const {
   normalizeVerificationRoundDocument,
@@ -78,15 +69,14 @@ function readFrozenGradeFindingIdSet(domain) {
 }
 
 // Resolve the grade work-set's finding_id membership. Frozen claims[] are
-// authoritative; when no freeze exists yet (legacy/pre-claim sessions, tests
-// that bypass the dual-write shim) the live ledger acts as a fallback.
+// authoritative when a freeze exists on disk. Sessions that have recorded
+// claims but not yet materialized a freeze (legacy v1 verification, tests that
+// drive grade directly) fall through to the live claim ledger so the
+// finding_id projection stays consistent without a findings.jsonl reader.
 function readGradeFindingIdSet(domain) {
   const frozen = readFrozenGradeFindingIdSet(domain);
   if (frozen.size > 0) return frozen;
-  // LEGACY: removed in Plane D — fallback to the live ledger when the freeze
-  // carries no CandidateClaim rows. Once CLAIM_FREEZE is the only path into
-  // GRADE, this fallback can go away.
-  return readCanonicalFindingIdSet(domain);
+  return findingIdSetForVerificationContext({ domain });
 }
 
 // LEGACY: removed in Plane D — accepts the older `{ finding_ids: [...] }`

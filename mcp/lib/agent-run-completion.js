@@ -147,8 +147,8 @@ const {
   readCoverageRecordsFromJsonl,
 } = require("./coverage.js");
 const {
-  readFindingsFromJsonl,
-} = require("./findings.js");
+  findingPayloadsFromClaims,
+} = require("./tools/record-candidate-claim.js");
 const {
   readTechniqueAttemptRecordsFromJsonl,
 } = require("./technique-packs.js");
@@ -212,7 +212,7 @@ function summarizeFindingsForRun(marker) {
   if (!marker) return summary;
 
   try {
-    const findings = readFindingsFromJsonl(marker.target_domain);
+    const findings = findingPayloadsFromClaims(marker.target_domain);
     summary.count = findings.filter((finding) => (
       finding.wave === marker.wave &&
       finding.agent === marker.agent &&

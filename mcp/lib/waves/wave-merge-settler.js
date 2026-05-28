@@ -15,9 +15,11 @@ const {
 const { readCoverageRecordsFromJsonl } = require("../coverage.js");
 const { readAttackSurfaceStrict } = require("../attack-surface.js");
 const {
-  readFindingsFromJsonl,
+  findingPayloadsFromClaims,
+} = require("../tools/record-candidate-claim.js");
+const {
   summarizeFindings,
-} = require("../findings.js");
+} = require("../finding-contracts.js");
 const { readScopeExclusions } = require("../scope.js");
 const { scheduleMaterialization } = require("../frontier-materialize-debounce.js");
 const { ERROR_CODES, ToolError } = require("../envelope.js");
@@ -113,7 +115,7 @@ function computeMergeResolution({ domain, state, merge, artifacts, waveNumber })
   });
   const coverageRecords = readCoverageRecordsFromJsonl(domain);
   const requeueSurfaceIds = computeRequeueSurfaceIds(artifacts, merge, coverageRecords);
-  const findings = summarizeFindings(readFindingsFromJsonl(domain));
+  const findings = summarizeFindings(findingPayloadsFromClaims(domain));
   const scopeExclusions = [...state.scope_exclusions];
   pushUnique(scopeExclusions, new Set(scopeExclusions), readScopeExclusions(domain));
 

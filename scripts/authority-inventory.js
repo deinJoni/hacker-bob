@@ -61,7 +61,6 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_http_scan: "scoped_http_network",
   bob_import_http_traffic: "scoped_http_network",
   bob_import_static_artifact: "initialized_session_mutation",
-  bob_index_candidate_claim: "initialized_session_mutation",
   bob_ingest_audit_report: "initialized_session_mutation",
   bob_ingest_schema_doc: "initialized_session_mutation",
   bob_init_session: "bootstrap_session",
@@ -75,7 +74,6 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_public_intel: "scoped_http_network",
   bob_query_audit_reports: "initialized_session_read",
   bob_query_chain_tree: "initialized_session_read",
-  bob_query_candidate_claims_index: "mode_dependent_session",
   bob_query_schema_contracts: "initialized_session_read",
   bob_query_surface_graph: "initialized_session_read",
   bob_read_auth_differential_results: "initialized_session_read",
@@ -178,26 +176,6 @@ const CHAIN_TRANSPORT_OWNER_BY_TOOL = Object.freeze({
 });
 
 const MODE_RULES = Object.freeze({
-  bob_query_candidate_claims_index: Object.freeze([
-    Object.freeze({
-      selector: "scope omitted or scope=target",
-      authority_class: "initialized_session_read",
-      target_domain: "required",
-      target_url_policy: "validate_session_target_url",
-      enforcement: "Require initialized session and target match before querying the target findings index.",
-      test_implication: "Direct tests for target mode require initialized session, missing target rejection, and target mismatch rejection.",
-    }),
-    Object.freeze({
-      selector: "scope=cross_target",
-      authority_class: "cross_session_read",
-      target_domain: "ignored",
-      target_url_policy: "index_only_no_target_url_export",
-      absent_target_category: "bounded_cross_session_enumeration",
-      bounds: "Scans at most 200 recent session indexes; top_k is capped at 50; returns domain_scan_limit/domains_truncated.",
-      enforcement: "Allow bounded recent cross-target findings-index enumeration without session mutation.",
-      test_implication: "Aggregate tests assert bounded enumeration and no state.target_url export.",
-    }),
-  ]),
   bob_get_context_budget: Object.freeze([
     Object.freeze({
       selector: "surface_id omitted",

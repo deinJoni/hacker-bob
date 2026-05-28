@@ -37,11 +37,6 @@ const {
   hashCanonicalJson,
   isPlainObject,
 } = require("./verification-contracts.js");
-// LEGACY: removed in Plane D — finding-store reads remain available for
-// callers that have not migrated to the frozen claim payload.
-const {
-  readFindingsFromJsonl,
-} = require("./finding-store.js");
 const {
   findingIdSetForVerificationContext,
 } = require("./verification-finding-id-adapter.js");

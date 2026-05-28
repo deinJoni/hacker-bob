@@ -33,14 +33,6 @@ const {
 const {
   readSessionStateStrict,
 } = require("./session-state-store.js");
-// LEGACY: removed in Plane D — legacy callers may seed VERIFY without any
-// CandidateClaim rows in the freeze (e.g., tests/sessions that wrote findings
-// directly via finding-store rather than the dual-write tool). The adapter
-// owns the live-ledger fallback so the snapshot builder never reads
-// findings.jsonl directly.
-const {
-  legacyFindingIdSetFromLiveLedger,
-} = require("./verification-finding-id-adapter.js");
 
 const VERIFICATION_SCHEMA_V2 = 2;
 const VERIFICATION_INPUT_CHANGED_MESSAGE = "VERIFY input changed after snapshot; restart VERIFY/adjudication.";
@@ -132,16 +124,7 @@ function buildSnapshotPayload(domain, { attemptId, createdAt, now = null, autoFr
   const claimIds = claims.map((claim) => claim.claim_id).filter((id) => typeof id === "string").sort((a, b) => a.localeCompare(b));
   const clusterIds = clusters.map((cluster) => cluster.cluster_id).filter((id) => typeof id === "string").sort((a, b) => a.localeCompare(b));
   const evidenceRefs = projectEvidenceRefsFromClaims(claims);
-  let findingIds = projectFindingIdsFromClaims(claims);
-  // LEGACY: removed in Plane D — when no CandidateClaim rows exist in the
-  // freeze yet (older sessions, tests that bypass record-finding's dual-write
-  // shim) project finding_ids[] from findings.jsonl so downstream callers that
-  // still address claims by finding_id keep working. The live-ledger fallback
-  // lives in verification-finding-id-adapter.js so the snapshot builder does
-  // not touch findings.jsonl directly.
-  if (findingIds.length === 0 && claims.length === 0) {
-    findingIds = legacyFindingIdSetFromLiveLedger(domain);
-  }
+  const findingIds = projectFindingIdsFromClaims(claims);
   const governance = readGovernanceHashesSafe(domain);
   return {
     version: 1,
@@ -153,9 +136,9 @@ function buildSnapshotPayload(domain, { attemptId, createdAt, now = null, autoFr
     claim_freeze_hash: freeze.freeze_hash,
     claim_ids: claimIds,
     cluster_ids: clusterIds,
-    // LEGACY: removed in Plane D — finding_ids is projected from the frozen
-    // CandidateClaim evidence refs so verification/evidence/grade callers that
-    // still index by finding_id continue to function.
+    // finding_ids is projected from the frozen CandidateClaim evidence refs so
+    // verification/evidence/grade callers that still index by finding_id keep
+    // working.
     finding_ids: findingIds,
     input_hashes: {
       claim_freeze: freeze.freeze_hash,

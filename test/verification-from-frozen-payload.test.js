@@ -31,17 +31,13 @@ const {
 } = require("../mcp/lib/verification-finding-id-adapter.js");
 const {
   claimFreezePath,
-  findingsJsonlPath,
+  claimsJsonlPath,
   sessionDir,
   verificationSnapshotPath,
 } = require("../mcp/lib/paths.js");
 const {
-  appendJsonlLine,
   writeFileAtomic,
 } = require("../mcp/lib/storage.js");
-const {
-  normalizeFindingRecord,
-} = require("../mcp/lib/finding-contracts.js");
 const recordFindingTool = require("../mcp/lib/tools/record-candidate-claim.js");
 const {
   resetForTests: resetMaterializationDebounce,
@@ -78,27 +74,43 @@ function recordFindingViaTool(domain, overrides = {}) {
   return JSON.parse(recordFindingTool.handler(args));
 }
 
-function appendFindingJsonlDirect(domain, id, overrides = {}) {
-  // Bypass the dual-write shim so the file mutation post-freeze does not
-  // recreate the claim plane.
+function appendClaimsJsonlDirect(domain, id, overrides = {}) {
+  // Append a CandidateClaim that the dual-write shim would not have produced,
+  // so the test can mutate the live claim ledger post-freeze and confirm the
+  // snapshot remains anchored to the frozen payload.
   fs.mkdirSync(sessionDir(domain), { recursive: true });
-  const record = normalizeFindingRecord({
-    id,
+  return appendCandidateClaim({
     target_domain: domain,
-    title: overrides.title || `Post-freeze finding ${id}`,
+    title: overrides.title || `Post-freeze claim ${id}`,
+    summary: overrides.description || "Mutated after the freeze",
     severity: overrides.severity || "high",
-    cwe: overrides.cwe || "CWE-639",
-    endpoint: overrides.endpoint || `https://victim.example/api/post-freeze/${id}`,
-    description: overrides.description || "Mutated after the freeze",
-    proof_of_concept: overrides.poc || "POST /api/post-freeze inserted after freeze",
-    response_evidence: overrides.response_evidence || "Post-freeze evidence",
+    status: "candidate",
+    surface_ids: [overrides.surface_id || "surface:post-freeze"],
     impact: overrides.impact || "Should not change verification results",
-    validated: true,
-    surface_id: overrides.surface_id || "surface:post-freeze",
-    auth_profile: overrides.auth_profile || "attacker",
-  }, { expectedDomain: domain });
-  appendJsonlLine(findingsJsonlPath(domain), record);
-  return record;
+    evidence_refs: [{
+      kind: "finding",
+      finding_id: id,
+      content_hash: "0".repeat(64),
+    }],
+    payload: {
+      attack_class: overrides.cwe || "CWE-639",
+      finding: {
+        id,
+        target_domain: domain,
+        title: overrides.title || `Post-freeze claim ${id}`,
+        severity: overrides.severity || "high",
+        cwe: overrides.cwe || "CWE-639",
+        endpoint: overrides.endpoint || `https://victim.example/api/post-freeze/${id}`,
+        description: overrides.description || "Mutated after the freeze",
+        proof_of_concept: overrides.poc || "POST /api/post-freeze inserted after freeze",
+        response_evidence: overrides.response_evidence || "Post-freeze evidence",
+        impact: overrides.impact || "Should not change verification results",
+        validated: true,
+        surface_id: overrides.surface_id || "surface:post-freeze",
+        auth_profile: overrides.auth_profile || "attacker",
+      },
+    },
+  });
 }
 
 test("buildVerificationSnapshot pulls claim and cluster ids straight from the frozen payload", () => {
@@ -148,10 +160,9 @@ test("buildVerificationSnapshot pulls claim and cluster ids straight from the fr
   });
 });
 
-test("mutating findings.jsonl AFTER the freeze leaves the verification snapshot unchanged", () => {
+test("mutating claims.jsonl AFTER the freeze leaves the verification snapshot unchanged", () => {
   withTempHome(() => {
     const domain = "frozen-stability.example.com";
-    // Two pre-freeze findings via dual-write so claims.jsonl has rows.
     recordFindingViaTool(domain, { endpoint: "https://victim.example/api/billing/1" });
     recordFindingViaTool(domain, { endpoint: "https://victim.example/api/billing/2" });
 
@@ -166,24 +177,21 @@ test("mutating findings.jsonl AFTER the freeze leaves the verification snapshot 
       createdAt: "2026-05-27T01:00:05.000Z",
     });
 
-    // Mutate findings.jsonl directly AFTER the freeze, bypassing the
-    // dual-write shim so claims.jsonl stays at two rows. A pre-C.4 snapshot
-    // would have observed the new finding and rebuilt itself accordingly.
-    appendFindingJsonlDirect(domain, "F-99");
+    // Append a CandidateClaim directly to claims.jsonl AFTER the freeze. A
+    // pre-C.4 snapshot would have observed the new claim and rebuilt itself
+    // accordingly; D.2's frozen payload keeps it out.
+    appendClaimsJsonlDirect(domain, "F-99");
 
     const afterSnapshot = buildVerificationSnapshot(domain, {
       attemptId: "attempt-stable-2",
       createdAt: "2026-05-27T01:00:10.000Z",
     });
 
-    // The claim set is unchanged because the freeze is.
     assert.deepEqual(afterSnapshot.claim_ids, beforeSnapshot.claim_ids);
     assert.deepEqual(afterSnapshot.finding_ids, beforeSnapshot.finding_ids);
     assert.equal(afterSnapshot.claim_freeze_id, beforeSnapshot.claim_freeze_id);
     assert.equal(afterSnapshot.claim_freeze_hash, beforeSnapshot.claim_freeze_hash);
     assert.equal(afterSnapshot.input_hashes.claim_freeze, beforeSnapshot.input_hashes.claim_freeze);
-
-    // The mutated finding never appears in the frozen snapshot.
     assert.ok(!afterSnapshot.finding_ids.includes("F-99"));
   });
 });
@@ -263,17 +271,18 @@ test("findingIdSetFromSnapshot and claimIdSetFromSnapshot project from the froze
   });
 });
 
-test("legacy adapter resolves finding_ids via the frozen payload, falling back to live disk when no freeze exists", () => {
+test("verification adapter resolves finding_ids via the frozen payload, falling back to the live claim ledger when no freeze exists", () => {
   withTempHome(() => {
     const domain = "legacy-adapter.example.com";
 
-    // No freeze yet: adapter falls back to findings.jsonl (legacy path).
-    appendFindingJsonlDirect(domain, "F-1");
-    const legacyFromDisk = findingIdSetForVerificationContext({ domain });
-    assert.deepEqual([...legacyFromDisk].sort(), ["F-1"]);
+    // No freeze yet: adapter falls back to the live claim ledger by projecting
+    // finding evidence refs off the recorded CandidateClaims.
+    appendClaimsJsonlDirect(domain, "F-1");
+    const liveProjection = findingIdSetForVerificationContext({ domain });
+    assert.deepEqual([...liveProjection].sort(), ["F-1"]);
 
-    // Once the dual-write shim runs and a freeze is taken, the adapter
-    // resolves the same set via the frozen claim payload.
+    // Once a freeze is taken, the adapter resolves the same set via the
+    // frozen claim payload instead of the live ledger.
     recordFindingViaTool(domain, { endpoint: "https://victim.example/api/billing/post-shim" });
     buildClaimFreeze(domain, { write: true, now: new Date("2026-05-27T01:00:00.000Z") });
     const snapshot = buildVerificationSnapshot(domain, {
@@ -282,8 +291,6 @@ test("legacy adapter resolves finding_ids via the frozen payload, falling back t
     });
     const fromSnapshot = findingIdSetForVerificationContext({ domain, snapshot });
     assert.ok(fromSnapshot.size > 0);
-    // Identity short-circuit when an explicit finding_ids array is passed in
-    // (the older code shape kept for callers mid-migration).
     const fromArray = findingIdSetForVerificationContext({
       domain,
       finding_ids: [...fromSnapshot],
