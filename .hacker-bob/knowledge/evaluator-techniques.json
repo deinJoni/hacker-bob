@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Curated read-only evaluator guidance distilled from claude-bug-bounty methodology, web2 bug classes, advanced techniques, payload notes, and selected wordlist patterns. This file is reference material only; execution remains in hacker-bob MCP tools and agents.",
+  "description": "Curated read-only evaluator guidance covering web2 bug classes, advanced techniques, payload notes, and selected wordlist patterns. Methodology influenced by open-source bug bounty projects including https://github.com/shuvonsec/claude-bug-bounty (MIT); content is original authorship by the Hacker Bob contributors. This file is reference material only; execution remains in hacker-bob MCP tools and agents.",
   "entries": [
     {
       "id": "generic-rest-api",
