@@ -196,11 +196,21 @@ function materializeFrontierDocument(domain, { write = false, now = new Date(), 
     }
 
     if (event.kind === "frontier.enqueued") {
-      const task = normalizeTask(taskInputFromEvent(event), { targetDomain: domain, now: new Date(event.ts) });
-      tasksByKey.set(taskQueueKey(task), task);
-      const surface = ensureSurface(surfacesById, domain, task.surface_id, event.ts);
-      addUnique(surface.task_ids, task.task_id);
-      addUnique(surface.source_event_ids, event.event_id);
+      // frontier.enqueued events from intake (bob_record_surface_leads) do
+      // not carry a surface_id until the lead is promoted via
+      // bob_promote_surface_leads. Skip task materialization for those
+      // intake-only enqueues; the promotion path emits a separate
+      // surface.observed event with the allocated surface_id, and a
+      // subsequent enqueue with surface_ref binds the lead-task to a
+      // promoted surface.
+      const taskInput = taskInputFromEvent(event);
+      if (typeof taskInput.surface_id === "string" && taskInput.surface_id.trim()) {
+        const task = normalizeTask(taskInput, { targetDomain: domain, now: new Date(event.ts) });
+        tasksByKey.set(taskQueueKey(task), task);
+        const surface = ensureSurface(surfacesById, domain, task.surface_id, event.ts);
+        addUnique(surface.task_ids, task.task_id);
+        addUnique(surface.source_event_ids, event.event_id);
+      }
     }
 
     if (event.kind === "blocker.asserted") {

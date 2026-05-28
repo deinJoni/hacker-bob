@@ -29,6 +29,9 @@ const {
   toolTelemetryPath,
   TOOL_TELEMETRY_MAX_RECORDS,
 } = require("../mcp/lib/tool-telemetry.js");
+const {
+  appendFrontierEvent,
+} = require("../mcp/lib/frontier-events.js");
 
 function withTempHome(fn) {
   const previousHome = process.env.HOME;
@@ -184,15 +187,32 @@ test("session artifact analytics preserves artifact summary shape and value sema
     const surfaceFile = attackSurfacePath(domain);
     const assignmentFile = waveAssignmentsPath(domain, 1);
     fs.mkdirSync(dir, { recursive: true });
+    // Cycle D.3: state.explored and state.terminally_blocked are no longer
+    // first-class state fields. Surface closures and blockers are projected
+    // from frontier-events.jsonl via frontier-projections; legacy fields on
+    // disk are silently dropped by the normalizer.
     fs.writeFileSync(stateFile, `${JSON.stringify({
       target: domain,
       target_url: `https://${domain}`,
       phase: "EVALUATE",
       evaluation_wave: 1,
       pending_wave: 1,
-      explored: ["surface-a"],
-      terminally_blocked: [{ surface_id: "surface-b" }],
     }, null, 2)}\n`, "utf8");
+    // Seed the surface-state projection via append-only frontier events.
+    appendFrontierEvent({
+      target_domain: domain,
+      kind: "closure.recorded",
+      surface_id: "surface-a",
+      payload: { surface_fully_explored: true, reason: "seeded_explored" },
+      source: { artifact: "wave-merge", tool: "bob_apply_wave_merge" },
+    });
+    appendFrontierEvent({
+      target_domain: domain,
+      kind: "blocker.asserted",
+      surface_id: "surface-b",
+      payload: { terminally_blocked: true, kind: "auth_missing" },
+      source: { artifact: "wave-merge", tool: "bob_apply_wave_merge" },
+    });
     fs.writeFileSync(surfaceFile, `${JSON.stringify({
       surfaces: [
         { id: "surface-a", priority: "HIGH" },

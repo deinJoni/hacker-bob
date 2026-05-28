@@ -388,14 +388,14 @@ function currentSurfaces(targetDomain) {
   const domain = assertSafeDomain(targetDomain);
   // Parse surface-index.json strictly: a malformed file fails loud. The
   // projection does not silently fall back to attack_surface.json on
-  // corruption in the runtime hot path (F.5 review gate). The legacy
-  // fallback only triggers when surface-index.json is *absent* on disk or
-  // is present-and-parseable but yet carries no surfaces — the latter
-  // happens during the deprecation window when frontier event producers
-  // for the initial agent-written attack_surface.json have not yet been
-  // wired (F.6 closes the remaining producer gap). D.3 removes the
-  // fallback entirely.
+  // corruption in the runtime hot path (F.5 review gate). When the
+  // materialized view is present, it is the authoritative source for the
+  // surfaces it knows about; legacy attack_surface.json entries that the
+  // ledger has not yet observed (e.g., operator-seeded baseline surfaces
+  // during the D.3 deprecation window) are unioned in so promotion paths
+  // that emit surface.observed events do not silently drop the baseline.
   const surfaceIndex = readSurfaceIndexDocument(domain);
+  const legacy = readAttackSurfaceDocumentLegacy(domain);
   if (surfaceIndex && Array.isArray(surfaceIndex.surfaces) && surfaceIndex.surfaces.length > 0) {
     const surfaces = [];
     const seen = new Set();
@@ -405,6 +405,15 @@ function currentSurfaces(targetDomain) {
       if (seen.has(projected.id)) continue;
       seen.add(projected.id);
       surfaces.push(projected);
+    }
+    if (legacy && Array.isArray(legacy.surfaces)) {
+      for (const legacySurface of legacy.surfaces) {
+        if (legacySurface == null || typeof legacySurface !== "object" || Array.isArray(legacySurface)) continue;
+        const legacyId = typeof legacySurface.id === "string" ? legacySurface.id.trim() : "";
+        if (!legacyId || seen.has(legacyId)) continue;
+        seen.add(legacyId);
+        surfaces.push({ ...legacySurface, id: legacyId });
+      }
     }
     return {
       source: "surface_index",
@@ -416,7 +425,6 @@ function currentSurfaces(targetDomain) {
         : null,
     };
   }
-  const legacy = readAttackSurfaceDocumentLegacy(domain);
   if (legacy == null) {
     return {
       source: "missing",

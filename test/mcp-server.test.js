@@ -145,6 +145,7 @@ const {
   staticArtifactPath,
   staticArtifactsJsonlPath,
   staticScanResultsJsonlPath,
+  surfaceIndexPath,
   surfaceLeadsPath,
   surfaceRoutesPath,
   techniqueAttemptsJsonlPath,
@@ -1018,6 +1019,34 @@ function seedSessionState(domain, overrides = {}) {
   delete state.explored;
   delete state.terminally_blocked;
   delete state.lead_surface_ids;
+  // Mirror production wave-merge-settler: each terminally-blocked seed entry
+  // also lands in state.blocked_prereq_history so summarizeBlockedPrereqs
+  // (which now groups history by (kind, identifier_hint) restricted to the
+  // current frontier blocker set) can see the seeded blockers.
+  if (legacyBlockers && legacyBlockers.length > 0) {
+    const seededHistory = Array.isArray(state.blocked_prereq_history)
+      ? state.blocked_prereq_history.slice()
+      : [];
+    for (const entry of legacyBlockers) {
+      if (!entry || typeof entry.surface_id !== "string") continue;
+      const wave = Number.isInteger(entry.blocked_at_wave) && entry.blocked_at_wave >= 1
+        ? entry.blocked_at_wave
+        : 1;
+      const blockers = Array.isArray(entry.blockers) ? entry.blockers : [];
+      for (const blocker of blockers) {
+        if (!blocker || typeof blocker.kind !== "string") continue;
+        const record = {
+          wave,
+          surface_id: entry.surface_id,
+          kind: blocker.kind,
+        };
+        if (blocker.identifier_hint) record.identifier_hint = blocker.identifier_hint;
+        if (blocker.reason) record.reason = blocker.reason;
+        seededHistory.push(record);
+      }
+    }
+    state.blocked_prereq_history = seededHistory;
+  }
   writeFileAtomic(statePath(domain), `${JSON.stringify(state, null, 2)}\n`);
   // Cycle D.1: tests that seed legacy state.json must also produce a session
   // nucleus so bob_advance_session has the lifecycle authority it expects.
@@ -1048,8 +1077,8 @@ function seedSessionState(domain, overrides = {}) {
           egress_profile_identity_hash: state.egress_profile_identity_hash,
           egress_profile_identity_version: state.egress_profile_identity_version,
         },
-        auth_context: null,
-        operator_constraint: null,
+        auth_context: { auth_status: state.auth_status || "pending" },
+        operator_constraint: {},
         lifecycle_state: lifecycleState,
       });
       writeJsonDocument(nucleusPath, nucleus);
@@ -4874,8 +4903,11 @@ test("bob_start_next_wave promotes deep leads, re-ranks, starts a wave, and attr
     assert.equal(result.assignments[0].surface_id, "lead-promoted-admin-api");
     assert.match(result.assignments[0].handoff_token, /^[A-Za-z0-9_-]{32}$/);
 
-    const attackSurface = JSON.parse(fs.readFileSync(attackSurfacePath(domain), "utf8"));
-    assert.ok(attackSurface.surfaces.some((surface) => surface.id === "lead-promoted-admin-api"));
+    // Cycle D.3: promotion writes the new surface to surface-index.json
+    // (materialized from frontier.surface.observed events). attack_surface.json
+    // is no longer mutated by the promotion path.
+    const surfaceIndex = JSON.parse(fs.readFileSync(surfaceIndexPath(domain), "utf8"));
+    assert.ok(surfaceIndex.surfaces.some((surface) => surface.surface_id === "lead-promoted-admin-api"));
     const leads = JSON.parse(readSurfaceLeads({ target_domain: domain, limit: 10 }));
     assert.equal(leads.leads[0].status, "promoted");
 
@@ -5407,8 +5439,11 @@ test("surface leads are compact, promotable, and wave assignable", () => {
     const state = JSON.parse(readStateSummary({ target_domain: domain })).state;
     assert.deepEqual(state.lead_surface_ids, [promotedSurfaceId]);
 
-    const attackSurface = JSON.parse(fs.readFileSync(attackSurfacePath(domain), "utf8"));
-    assert.ok(attackSurface.surfaces.some((surface) => surface.id === promotedSurfaceId));
+    // Cycle D.3: surface-index.json (materialized from frontier.surface.observed
+    // events) is the authoritative surface set after promotion. attack_surface.json
+    // is no longer mutated by the promotion path.
+    const surfaceIndex = JSON.parse(fs.readFileSync(surfaceIndexPath(domain), "utf8"));
+    assert.ok(surfaceIndex.surfaces.some((surface) => surface.surface_id === promotedSurfaceId));
     const started = JSON.parse(startWave({
       target_domain: domain,
       wave_number: 1,
@@ -5458,11 +5493,18 @@ test("explicit medium surface lead promotion stays MEDIUM while becoming wave as
     const state = JSON.parse(readStateSummary({ target_domain: domain })).state;
     assert.deepEqual(state.lead_surface_ids, [promotedSurfaceId]);
 
-    const attackSurface = JSON.parse(fs.readFileSync(attackSurfacePath(domain), "utf8"));
-    const promotedSurface = attackSurface.surfaces.find((surface) => surface.id === promotedSurfaceId);
+    // Cycle D.3: surface-index.json (materialized from frontier events) is the
+    // authoritative surface set after promotion; priority is captured into the
+    // materialized projection. The original lead score persists on
+    // surface-leads.json (the intake projection); ranking is recomputed on read.
+    const surfaceIndex = JSON.parse(fs.readFileSync(surfaceIndexPath(domain), "utf8"));
+    const promotedSurface = surfaceIndex.surfaces.find((surface) => surface.surface_id === promotedSurfaceId);
     assert.ok(promotedSurface);
     assert.equal(promotedSurface.priority, "MEDIUM");
-    assert.equal(promotedSurface.ranking.score, 55);
+    const promotedLead = JSON.parse(readSurfaceLeads({ target_domain: domain, limit: 10 }))
+      .leads.find((lead) => lead.promoted_surface_id === promotedSurfaceId);
+    assert.ok(promotedLead);
+    assert.equal(promotedLead.score, 55);
   });
 });
 
@@ -6383,43 +6425,31 @@ test("bob_clear_terminal_block lets a re-blocked surface start fresh recurrence 
   });
 });
 
-test("bob_apply_wave_merge rejects invalid state invariants and hard-fails on missing or malformed attack_surface.json", () => {
+test("bob_apply_wave_merge rejects invalid lifecycle and wave-number invariants", () => {
   withTempHome(() => {
     const domain = "example.com";
-    // Cycle D.1: phase CHAIN maps to lifecycle OPEN_FRONTIER, so the merge
-    // lifecycle gate is satisfied; the next invariant (missing assignment
-    // file) is what surfaces. Use a VERIFY-equivalent state to exercise the
-    // pure lifecycle gate failure path.
+    // Cycle D.3: wave-merge no longer reads attack_surface.json; the merge
+    // path operates on handoffs + frontier projections, so the legacy
+    // "missing attack_surface.json" hard-fail is replaced by the lifecycle
+    // and pending-wave invariants below.
     seedSessionState(domain, { phase: "VERIFY", pending_wave: 1 });
     assert.throws(
       () => applyWaveMerge({ target_domain: domain, wave_number: 1, force_merge: false }),
       /Wave merge requires lifecycle_state OPEN_FRONTIER/,
     );
 
-    seedSessionState(domain, { phase: "EVALUATE", pending_wave: 1 });
-    seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
-    writeWaveHandoff({
-      target_domain: domain,
-      wave: "w1",
-      agent: "a1",
-      surface_id: "surface-a",
-      surface_status: "complete",
-      summary: "A1 complete.",
-      content: "# A1",
-    });
-
-    // seedAssignments mirrors the production invariant by auto-seeding
-    // attack_surface.json. Remove it to exercise the missing-file path.
-    fs.rmSync(attackSurfacePath(domain), { force: true });
+    // pending_wave must match the requested wave_number.
+    seedSessionState(domain, { phase: "EVALUATE", pending_wave: 2 });
     assert.throws(
       () => applyWaveMerge({ target_domain: domain, wave_number: 1, force_merge: false }),
-      /Missing attack surface JSON:/,
+      /Wave merge requires pending_wave 1, found 2/,
     );
 
-    writeFileAtomic(attackSurfacePath(domain), "{bad json");
+    // No pending wave at all.
+    seedSessionState(domain, { phase: "EVALUATE", pending_wave: null });
     assert.throws(
       () => applyWaveMerge({ target_domain: domain, wave_number: 1, force_merge: false }),
-      /Malformed attack surface JSON:/,
+      /Wave merge requires pending_wave to be set/,
     );
   });
 });
@@ -7372,8 +7402,11 @@ test("tampered tokenized handoff JSON is invalid and cannot complete the surface
     assert.deepEqual(merged.data.merge.invalid_agents, ["a1"]);
     assert.deepEqual(merged.data.merge.completed_surface_ids, []);
     assert.deepEqual(merged.data.merge.requeue_surface_ids, ["surface-a"]);
-    const state = JSON.parse(fs.readFileSync(statePath(domain), "utf8"));
-    assert.deepEqual(state.explored, []);
+    // Cycle D.3: state.explored was deleted; surface closures are now
+    // projected from frontier-events.jsonl. The tampered handoff was
+    // requeued, so no closures should have been recorded.
+    const { currentClosures } = require("../mcp/lib/frontier-projections.js");
+    assert.deepEqual(currentClosures(domain), []);
   });
 });
 
@@ -12998,7 +13031,8 @@ test("verification replay policy events preserve acquired event shape and active
     const rows = readJsonl(pipelineEventsJsonlPath(domain));
     const event = rows.find((row) => row.type === "verification_replay_policy_applied");
     assert.ok(event);
-    assert.equal(event.phase, "VERIFY");
+    // Cycle D.3: pipeline events use lifecycle_state instead of legacy phase.
+    assert.equal(event.lifecycle_state, "VERIFY");
     assert.equal(event.status, "lease_acquired");
     assert.equal(event.source, "bob_http_scan");
     assert.equal(event.verification_attempt_id, replayContext.verification_attempt_id);

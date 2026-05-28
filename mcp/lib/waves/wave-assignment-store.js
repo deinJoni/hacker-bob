@@ -34,6 +34,7 @@ const {
   recordSurfaceLeadsForWaveHandoff,
 } = require("../surface-leads.js");
 const { readAttackSurfaceStrict } = require("../attack-surface.js");
+const { currentSurfaces } = require("../frontier-projections.js");
 const {
   findingPayloadsFromClaims,
 } = require("../tools/record-candidate-claim.js");
@@ -77,7 +78,30 @@ function prepareWaveAssignments({
   if (fs.existsSync(assignmentsPath)) {
     throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Assignment file already exists: ${assignmentsPath}`);
   }
-  const attackSurface = attackSurfaceInfo || readAttackSurfaceStrict(domain);
+  // Surface authority after Cycle D.3: surface-index.json (materialized
+  // from frontier events) is the canonical surface set. currentSurfaces
+  // returns a union view (materialized + legacy attack_surface.json) so
+  // promotion-emitted surface.observed events and operator-seeded
+  // baseline surfaces both reach the wave-start validator.
+  let attackSurface = attackSurfaceInfo;
+  if (!attackSurface) {
+    const projection = currentSurfaces(domain);
+    if (projection.source === "missing") {
+      throw new Error(`Missing attack surface JSON: ${projection.path}`);
+    }
+    const surfaceIdSet = new Set();
+    for (const surface of projection.surfaces || []) {
+      if (surface && typeof surface.id === "string" && surface.id) {
+        surfaceIdSet.add(surface.id);
+      }
+    }
+    attackSurface = {
+      path: projection.path,
+      document: { surfaces: projection.surfaces || [] },
+      surface_ids: Array.from(surfaceIdSet),
+      surface_id_set: surfaceIdSet,
+    };
+  }
   const surfaceTypeById = new Map();
   for (const surface of attackSurface.document.surfaces || []) {
     if (!surface || typeof surface !== "object" || Array.isArray(surface)) continue;

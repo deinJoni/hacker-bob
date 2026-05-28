@@ -298,12 +298,16 @@ function startNextWave(args) {
       } catch {
         schedulerDecision = null;
       }
+      // Drop the explicit attack_surface.json read: prepareWaveAssignments
+      // now resolves surfaces through currentSurfaces (surface-index.json
+      // union with the legacy projection). Passing the strict legacy doc
+      // would hide promoted-lead surfaces that the materializer wrote to
+      // surface-index.json during the deep-mode promotion above.
       const started = startWaveLocked(domain, {
         raw,
         state: planningState,
         waveNumber: plan.wave_number,
         assignments,
-        attackSurfaceInfo: readAttackSurfaceStrict(domain),
         source: "bob_start_next_wave",
         startedBy: "bob_start_next_wave",
         schedulerDecisionId: schedulerDecision ? schedulerDecision.scheduler_decision_id : null,
