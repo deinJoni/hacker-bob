@@ -517,7 +517,7 @@ function printInstallSummary(summary) {
     console.log(`  Generic MCP prompt docs (${summary.genericPromptDocs}) and .mcp.json merged`);
   }
   if (summary.adapterResults.kimi) {
-    console.log(`  Kimi skills (${summary.kimiSkills}) and hooks installed to .kimi/`);
+    console.log(`  Kimi skills (${summary.kimiSkills}) installed to .kimi/`);
     console.log("  Kimi .kimi/mcp.json merged");
     console.log("  .kimi/bob/VERSION and install.json compatibility metadata");
   }

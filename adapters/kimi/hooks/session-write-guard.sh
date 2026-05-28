@@ -12,6 +12,7 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import sys
 
 
@@ -181,6 +182,70 @@ def extract_inline_script_paths(command):
     return targets
 
 
+def check_mutating_path_commands(command):
+    """Block direct shell mutations of MCP-owned session files."""
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError:
+        return
+
+    mutators = {"rm", "unlink", "mv", "cp", "chmod", "chown", "install"}
+    separators = {"|", ";", "&&", "||"}
+
+    def block_mutator(verb, path):
+        blocked = check_file(path)
+        if blocked:
+            block(
+                f"BLOCKED: Bash {verb} on '{blocked}' in session directory. "
+                f"Use the appropriate bountyagent MCP tool instead."
+            )
+
+    for index, token in enumerate(tokens):
+        command_name = pathlib.PurePosixPath(token).name
+
+        if command_name == "sed":
+            args = []
+            for candidate in tokens[index + 1:]:
+                if candidate in separators:
+                    break
+                args.append(candidate)
+            # Only treat sed as a write when -i is present (covers -i, -i.bak, -ibak).
+            if not any(a == "-i" or a.startswith("-i") for a in args):
+                continue
+            for candidate in args:
+                if candidate.startswith("-"):
+                    continue
+                # Skip the sed script expression (s/x/y/, /pattern/d, etc.) — paths only.
+                if not (
+                    candidate.startswith("/")
+                    or candidate.startswith("~")
+                    or candidate.startswith("$")
+                    or "/" in candidate
+                    or candidate.endswith((".json", ".jsonl", ".md", ".txt", ".log"))
+                ):
+                    continue
+                block_mutator("sed -i", candidate)
+            continue
+
+        if command_name == "dd":
+            for candidate in tokens[index + 1:]:
+                if candidate in separators:
+                    break
+                if candidate.startswith("of="):
+                    block_mutator("dd", candidate[3:])
+            continue
+
+        if command_name not in mutators:
+            continue
+
+        for candidate in tokens[index + 1:]:
+            if candidate in separators:
+                break
+            if candidate.startswith("-"):
+                continue
+            block_mutator(command_name, candidate)
+
+
 # Main
 payload = {}
 try:
@@ -206,7 +271,10 @@ command = tool_input.get("command", "")
 if not command:
     raise SystemExit(0)
 
-# Quick gate: skip if no write indicators
+check_mutating_path_commands(command)
+
+# Quick gate: skip the redirect/inline-script extractors if there are no
+# matching write indicators (direct-write verbs are already handled above).
 has_redirects = re.search(r">{1,2}\s|tee\s", command)
 has_open_call = re.search(r"open\s*\(|Path\s*\(", command)
 

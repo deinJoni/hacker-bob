@@ -19,7 +19,7 @@ hacker-bob doctor /path/to/your/project --adapter codex --json
 
 ## MCP Server Is Not Listed
 
-Bob writes a `bountyagent` server entry into the selected host config. Claude and generic MCP use the project `.mcp.json`; Codex uses `.codex/plugins/hacker-bob/.mcp.json`. Make sure you installed into the same directory you run the host CLI from:
+Bob writes a `bountyagent` server entry into the selected host config. Claude and generic MCP use the project `.mcp.json`; Codex uses `.codex/plugins/hacker-bob/.mcp.json`; Kimi uses `.kimi/mcp.json` and reads skills from `.kimi/skills/bob-{hunt,status,debug,update,export,egress}/SKILL.md`. Make sure you installed into the same directory you run the host CLI from:
 
 ```bash
 npx -y hacker-bob@latest install /path/to/your/project --adapter claude

@@ -144,9 +144,7 @@ echo "Syncing repo into $TARGET_ABS with adapter: $ADAPTER"
 echo ""
 
 backup_file "$TARGET_ABS/.mcp.json"
-if adapter_includes "claude"; then
-  backup_file "$CLAUDE_DIR/settings.json"
-fi
+backup_file "$CLAUDE_DIR/settings.json"
 
 "$SCRIPT_DIR/install.sh" "$TARGET_ABS" --adapter "$ADAPTER"
 sync_shared_runtime
@@ -169,14 +167,14 @@ if [[ $RUN_HEALTH_CHECK -eq 1 ]]; then
   echo ""
   echo "Running MCP runtime load check..."
   node -e "const server = require(process.argv[1]); if (!Array.isArray(server.TOOLS) || server.TOOLS.length === 0) process.exit(2)" "$TARGET_ABS/mcp/server.js"
-  if adapter_includes "claude" && command -v claude >/dev/null 2>&1; then
+  if command -v claude >/dev/null 2>&1; then
     echo "Running Claude MCP health check..."
     (
       cd "$TARGET_ABS"
       claude mcp list
     )
-  elif adapter_includes "claude"; then
-    echo "Skipping health check: \`claude\` is not installed."
+  else
+    echo "Skipping Claude MCP health check: \`claude\` is not installed."
   fi
 fi
 

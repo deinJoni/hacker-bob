@@ -24,6 +24,6 @@ kimi --mcp-config-file .kimi/mcp.json
 
 Then run:
 
-```
+```text
 /skill:bob-hunt target.com
 ```

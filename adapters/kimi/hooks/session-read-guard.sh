@@ -89,8 +89,7 @@ READ_COMMANDS = {
 RECURSIVE_READ_COMMANDS = {"grep", "rg"}
 
 
-def resolve_path(raw_path):
-    path_text = str(raw_path).strip().strip("\"'")
+def expand_path_text(path_text):
     env_session = os.environ.get("SESSION", "")
     if env_session:
         path_text = path_text.replace("${SESSION}", env_session).replace("$SESSION", env_session)
@@ -98,7 +97,16 @@ def resolve_path(raw_path):
     path_text = path_text.replace("${HOME}", home).replace("$HOME", home)
     if path_text.startswith("~"):
         path_text = os.path.expanduser(path_text)
-    return pathlib.Path(path_text)
+    return path_text
+
+
+def resolve_path(raw_path, base_dir=None):
+    path_text = expand_path_text(str(raw_path).strip().strip("\"'"))
+    path = pathlib.Path(path_text)
+    if not path.is_absolute():
+        base = pathlib.Path(base_dir) if base_dir is not None else pathlib.Path(os.getcwd())
+        path = base / path
+    return path
 
 
 def is_in_session_dir(resolved):
@@ -109,8 +117,8 @@ def is_in_session_dir(resolved):
         return False
 
 
-def check_file(raw_path, *, block_session_dirs=False):
-    resolved = resolve_path(raw_path)
+def check_file(raw_path, *, block_session_dirs=False, base_dir=None):
+    resolved = resolve_path(raw_path, base_dir=base_dir)
     if not is_in_session_dir(resolved):
         return None
 
@@ -179,18 +187,37 @@ def check_bash_command(command):
         tokens = shlex.split(command, posix=True)
     except ValueError:
         return
-    for index, token in enumerate(tokens):
+    base_dir = os.getcwd()
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
         command_name = pathlib.PurePosixPath(token).name
-        if command_name not in READ_COMMANDS:
+
+        if command_name == "cd":
+            if index + 1 < len(tokens):
+                target_raw = tokens[index + 1]
+                if target_raw not in {"|", ";", "&&", "||"} and not target_raw.startswith("-"):
+                    target = expand_path_text(target_raw.strip().strip("\"'"))
+                    tp = pathlib.Path(target)
+                    if not tp.is_absolute():
+                        tp = pathlib.Path(base_dir) / tp
+                    base_dir = str(tp)
+                index += 2
+                continue
+            index += 1
             continue
-        block_session_dirs = command_name in RECURSIVE_READ_COMMANDS
-        for candidate in tokens[index + 1:]:
-            if candidate in {"|", ";", "&&", "||"}:
-                break
-            for path_candidate in candidate_paths(candidate):
-                blocked = check_file(path_candidate, block_session_dirs=block_session_dirs)
-                if blocked:
-                    block(blocked)
+
+        if command_name in READ_COMMANDS:
+            block_session_dirs = command_name in RECURSIVE_READ_COMMANDS
+            for candidate in tokens[index + 1:]:
+                if candidate in {"|", ";", "&&", "||"}:
+                    break
+                for path_candidate in candidate_paths(candidate):
+                    blocked = check_file(path_candidate, block_session_dirs=block_session_dirs, base_dir=base_dir)
+                    if blocked:
+                        block(blocked)
+
+        index += 1
 
 
 payload = {}
