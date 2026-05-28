@@ -230,6 +230,7 @@ async function startSession({
   targetDomain,
   targetUrl,
   headless = false,
+  recordMode = false,
   sessionsRoot,
   patchrightCheck = isPatchrightAvailable,
 } = {}) {
@@ -261,6 +262,7 @@ async function startSession({
     target_domain: trimmedDomain,
     target_url: targetUrl.trim(),
     headless: headless === true,
+    record_mode: recordMode === true,
     sessions_root: resolvedSessionsRoot,
   };
 
@@ -288,6 +290,7 @@ async function startSession({
     hardTimer: null,
     lastActivity: Date.now(),
     headless: headless === true,
+    recordMode: recordMode === true,
   };
 
   entry.readyPromise = new Promise((resolve, reject) => {
@@ -318,6 +321,7 @@ async function startSession({
     target_url: targetUrl.trim(),
     driver_session_id: readyResult && readyResult.session_id ? readyResult.session_id : sessionId,
     headless: headless === true,
+    record_mode: recordMode === true,
   };
 }
 
@@ -413,6 +417,21 @@ async function closeSession(sessionId, reason = "explicit_close") {
   if (entry.closed) {
     return { closed: true, reason: "already_closed" };
   }
+  // T.7: if record_mode is on, drain any residual capture buffer before we
+  // sever the subprocess. The flush command is best-effort — a failed flush
+  // (subprocess already dying, timeout) still allows the close to proceed.
+  let residualRecorded = [];
+  if (entry.recordMode) {
+    try {
+      const result = await sendCommand(sessionId, "flush_recorded_requests", {}, { timeoutMs: 5_000 });
+      if (result && Array.isArray(result.recorded)) {
+        residualRecorded = result.recorded;
+      }
+    } catch {
+      // Best-effort drain on close. The caller already received earlier
+      // batches via explicit flush_recorded_requests; nothing else to do.
+    }
+  }
   // Send close command; ignore result since driver exits shortly after.
   const payload = JSON.stringify({ command_id: `close-${reason}`, command: "close", args: {} }) + "\n";
   try {
@@ -433,7 +452,7 @@ async function closeSession(sessionId, reason = "explicit_close") {
       // ignore
     }
   }
-  return { closed: true, reason };
+  return { closed: true, reason, recorded: residualRecorded };
 }
 
 function closeAllSessions(reason = "shutdown") {
@@ -451,10 +470,30 @@ function listActiveSessions() {
       target_domain: entry.targetDomain,
       target_url: entry.targetUrl,
       headless: entry.headless,
+      record_mode: entry.recordMode === true,
       last_activity_ms_ago: Date.now() - entry.lastActivity,
     });
   }
   return summary;
+}
+
+// T.7: pull the in-driver buffer of recorded HTTP requests. The driver returns
+// the recorded array and clears its internal buffer atomically; callers that
+// need the records to land in http-records.jsonl must hand the result to the
+// import-http-traffic.js path (which already holds the per-domain session
+// lock — that's the T-R5 guarantee).
+async function flushRecordedRequests(sessionId, { timeoutMs } = {}) {
+  const entry = sessions.get(sessionId);
+  if (!entry || entry.closed) {
+    const err = new Error(`browser_session_not_found: ${sessionId}`);
+    err.code = "browser_session_not_found";
+    throw err;
+  }
+  if (!entry.recordMode) {
+    return { record_mode: false, recorded: [] };
+  }
+  const result = await sendCommand(sessionId, "flush_recorded_requests", {}, timeoutMs ? { timeoutMs } : {});
+  return result || { record_mode: true, recorded: [] };
 }
 
 module.exports = {
@@ -467,6 +506,7 @@ module.exports = {
   activeSessionCountForDomain,
   closeAllSessions,
   closeSession,
+  flushRecordedRequests,
   getSession,
   isPatchrightAvailable,
   listActiveSessions,

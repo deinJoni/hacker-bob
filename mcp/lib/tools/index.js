@@ -123,6 +123,8 @@ const TOOL_MODULES = Object.freeze([
   require("./browser-take-screenshot.js"),
   require("./browser-fill-form.js"),
   require("./browser-session-close.js"),
+  require("./browser-session-start-recording.js"),
+  require("./browser-flush-recorded-requests.js"),
 ]);
 
 module.exports = {

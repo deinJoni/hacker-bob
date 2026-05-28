@@ -437,6 +437,34 @@ function queryKeysFromUrl(urlValue) {
   return Array.from(new Set(Array.from(parsed.searchParams.keys()).filter(Boolean))).sort();
 }
 
+function normalizeSourceMeta(value) {
+  // T.7: optional structured source metadata. For browser_capture this is
+  // { kind: "browser_capture", session_id, [resource_type, frame_url] }; for
+  // other sources callers can attach an arbitrary small object. Keep the
+  // shape narrow: string values only, max ~10 keys, each value <= 200 chars.
+  if (value == null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("source_meta must be an object");
+  }
+  const out = {};
+  let keys = 0;
+  for (const [key, raw] of Object.entries(value)) {
+    if (keys >= 10) break;
+    if (typeof key !== "string" || !key.trim()) continue;
+    if (raw == null) continue;
+    if (typeof raw === "string") {
+      out[key] = raw.length > 200 ? `${raw.slice(0, 200)}…` : raw;
+    } else if (typeof raw === "number" || typeof raw === "boolean") {
+      out[key] = raw;
+    } else {
+      // Skip nested objects/arrays to keep the on-disk shape simple.
+      continue;
+    }
+    keys += 1;
+  }
+  return Object.keys(out).length === 0 ? null : out;
+}
+
 function normalizeTrafficRecord(record, { expectedDomain = null, lineNumber = null } = {}) {
   if (record == null || typeof record !== "object" || Array.isArray(record)) {
     throw new Error(lineNumber == null
@@ -466,6 +494,11 @@ function normalizeTrafficRecord(record, { expectedDomain = null, lineNumber = nu
       header_names: normalizeStringArray(record.header_names, "header_names").map((name) => name.toLowerCase()),
       query_keys: normalizeStringArray(record.query_keys, "query_keys"),
     };
+
+    const sourceMeta = normalizeSourceMeta(record.source_meta);
+    if (sourceMeta) {
+      normalized.source_meta = sourceMeta;
+    }
 
     if (expectedDomain != null && normalized.target_domain !== expectedDomain) {
       throw new Error("target_domain mismatch");
@@ -535,7 +568,7 @@ function normalizeTrafficImportEntries(args) {
   throw new Error("entries must be an array or a HAR object with log.entries");
 }
 
-function normalizeImportedTrafficEntry(entry, index, { targetDomain, source, importedAt, blockInternalHosts = false }) {
+function normalizeImportedTrafficEntry(entry, index, { targetDomain, source, importedAt, blockInternalHosts = false, sourceMeta = null }) {
   if (entry == null || typeof entry !== "object" || Array.isArray(entry)) {
     return { rejected: true, reason: `entries[${index}] must be an object` };
   }
@@ -588,6 +621,15 @@ function normalizeImportedTrafficEntry(entry, index, { targetDomain, source, imp
     !!entry.auth_profile ||
     headerNames.some((name) => ["authorization", "cookie", "x-csrf-token", "x-xsrf-token"].includes(name));
 
+  // Per-entry source metadata wins over the batch default so callers can mix
+  // captures from multiple sessions in one import; the browser flush tool
+  // sets the same session_id on every entry so the per-entry override is a
+  // no-op in that path.
+  const perEntryMeta = entry.source_meta && typeof entry.source_meta === "object" && !Array.isArray(entry.source_meta)
+    ? entry.source_meta
+    : null;
+  const effectiveMeta = perEntryMeta || sourceMeta || null;
+
   return {
     rejected: false,
     record: normalizeTrafficRecord({
@@ -604,6 +646,7 @@ function normalizeImportedTrafficEntry(entry, index, { targetDomain, source, imp
       has_auth: hasAuth,
       header_names: headerNames,
       query_keys: queryKeysFromUrl(url),
+      source_meta: effectiveMeta,
     }, { expectedDomain: targetDomain }),
   };
 }
@@ -659,6 +702,7 @@ function summarizeTrafficRecords(records, { surface = null, limit = TRAFFIC_SUMM
 function importHttpTraffic(args, { rankAttackSurfaces = null } = {}) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   const source = assertRequiredText(args.source, "source");
+  const sourceMeta = args.source_meta == null ? null : normalizeSourceMeta(args.source_meta);
   const internalHostPolicy = blockInternalHostsRequestPolicy(domain, args, {
     allowMissingSession: true,
   });
@@ -676,6 +720,7 @@ function importHttpTraffic(args, { rankAttackSurfaces = null } = {}) {
       source,
       importedAt,
       blockInternalHosts,
+      sourceMeta,
     });
     if (normalized.rejected) {
       rejected.push(normalized.reason);

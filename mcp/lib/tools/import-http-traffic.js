@@ -21,7 +21,12 @@ module.exports = Object.freeze({
       },
       "source": {
         "type": "string",
-        "description": "Traffic source label such as burp, har, browser, proxy, or manual."
+        "description": "Traffic source label such as burp, har, browser, browser_capture, proxy, or manual."
+      },
+      "source_meta": {
+        "type": "object",
+        "description": "Optional structured metadata about the source (e.g., {kind:'browser_capture', session_id:'bs-...'}); flattened to small string/number/bool values per record.",
+        "additionalProperties": true
       },
       "block_internal_hosts": {
         "type": "boolean",

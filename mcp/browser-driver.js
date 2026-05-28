@@ -18,7 +18,15 @@
 // Lifecycle:
 //   - Idle timeout: 5 min (kill if no commands received).
 //   - Hard timeout: 30 min (kill regardless of activity).
-//   - Receiving `close` exits cleanly.
+//   - Receiving `close` exits cleanly. If record_mode was enabled, the
+//     close response carries any remaining buffered requests so the parent
+//     can pipe them through import-http-traffic.js (T.7, T-R5).
+//
+// Init payload (BOB_BROWSER_DRIVER_INIT env var, JSON):
+//   { session_id, target_domain, target_url, headless?, sessions_root?,
+//     record_mode? }. record_mode=true installs a per-page request listener
+//     that buffers http(s) requests; the buffer is flushed via the
+//     `flush_recorded_requests` command and on the final `close`.
 
 "use strict";
 
@@ -131,7 +139,7 @@ function sanitizeDomainForPath(domain) {
 // ── Driver core ──
 
 class BrowserDriver {
-  constructor({ sessionId, targetDomain, targetUrl, headless, sessionsRoot }) {
+  constructor({ sessionId, targetDomain, targetUrl, headless, sessionsRoot, recordMode }) {
     this.sessionId = sessionId;
     this.targetDomain = targetDomain;
     this.targetUrl = targetUrl;
@@ -146,6 +154,11 @@ class BrowserDriver {
     this.idleTimer = null;
     this.hardTimer = null;
     this.closing = false;
+    // T.7 record mode: when enabled, every browser-emitted HTTP(S) request is
+    // captured into recordedRequests for later flushing through
+    // import-http-traffic.js (which holds the session lock — see T-R5).
+    this.recordMode = recordMode === true;
+    this.recordedRequests = [];
   }
 
   async start() {
@@ -244,15 +257,44 @@ class BrowserDriver {
       } catch {
         // ignore — best-effort capture
       }
+      const url = request.url();
+      const method = request.method();
+      const resourceType = request.resourceType();
+      const postData = request.postData() ? truncateForResponse(request.postData(), 8192) : null;
       this.requests.push({
         index: this.requests.length,
-        method: request.method(),
-        url: request.url(),
-        resource_type: request.resourceType(),
+        method,
+        url,
+        resource_type: resourceType,
         headers,
-        post_data: request.postData() ? truncateForResponse(request.postData(), 8192) : null,
+        post_data: postData,
         timestamp: Date.now(),
       });
+      // T.7: record_mode captures the same request shape into a separate
+      // buffer that the parent flushes through import-http-traffic.js. Only
+      // http(s) schemes are captured — data:, blob:, chrome-extension:, ws://
+      // and other non-HTTP transports are excluded because the http-records
+      // ingestion path validates URLs against the scoped HTTP scope checker.
+      if (this.recordMode && /^https?:/i.test(url)) {
+        let frameUrl = null;
+        try {
+          const frame = request.frame();
+          if (frame && typeof frame.url === "function") {
+            frameUrl = frame.url() || null;
+          }
+        } catch {
+          // best-effort — frame URL is informational only
+        }
+        this.recordedRequests.push({
+          method,
+          url,
+          resource_type: resourceType,
+          headers,
+          post_data: postData,
+          frame_url: frameUrl,
+          timestamp: Date.now(),
+        });
+      }
     });
 
     this.page.on("console", (msg) => {
@@ -344,11 +386,29 @@ class BrowserDriver {
         return await this.takeScreenshot(args);
       case "fill_form":
         return await this.fillForm(args);
+      case "flush_recorded_requests":
+        return this.flushRecordedRequests();
       case "close":
-        return { closed: true };
+        // Final close response includes any remaining record-mode buffer so the
+        // parent can ingest it through import-http-traffic.js before the
+        // subprocess exits.
+        return {
+          closed: true,
+          record_mode: this.recordMode === true,
+          recorded: this.recordMode ? this.flushRecordedRequests().recorded : [],
+        };
       default:
         throw new Error(`unknown_command: ${command}`);
     }
+  }
+
+  flushRecordedRequests() {
+    if (!this.recordMode) {
+      return { recorded: [], record_mode: false };
+    }
+    const recorded = this.recordedRequests;
+    this.recordedRequests = [];
+    return { recorded, record_mode: true };
   }
 
   async navigate(args) {
@@ -609,6 +669,7 @@ async function main() {
   const targetDomain = String(initConfig.target_domain || "").trim();
   const targetUrl = String(initConfig.target_url || "").trim();
   const headless = initConfig.headless === true;
+  const recordMode = initConfig.record_mode === true;
   const sessionsRoot = initConfig.sessions_root || path.join(os.homedir(), "hacker-bob-sessions");
 
   if (!targetDomain) {
@@ -636,6 +697,7 @@ async function main() {
     targetUrl,
     headless,
     sessionsRoot,
+    recordMode,
   });
   try {
     await driver.start();

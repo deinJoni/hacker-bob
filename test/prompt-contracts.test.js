@@ -641,6 +641,8 @@ test("surface-discovery agents expose only the governance nucleus read and the b
     "bob_browser_take_screenshot",
     "bob_browser_fill_form",
     "bob_browser_session_close",
+    "bob_browser_session_start_recording",
+    "bob_browser_flush_recorded_requests",
   ]);
   for (const agent of ["surface-discovery-agent", "deep-surface-discovery-agent"]) {
     const document = readFile(`.claude/agents/${agent}.md`);
@@ -898,14 +900,17 @@ test("chain-specific identifiers are not duplicated across registry consumers", 
 });
 
 test("evaluator agents stay under their MCP tool budget", () => {
-  // Cycle T.1 (Plane T) adds 13 bob_browser_* tools to evaluator-shared so
+  // Cycle T.1 (Plane T) added 13 bob_browser_* tools to evaluator-shared so
   // every evaluator role can drive Patchright session-scoped DOM/postMessage/
-  // WebAuthn/OAuth-callback/ServiceWorker enumeration. The browser-driver
-  // family is opaque-context (one verb per command, idle/hard timeouts reap
-  // sessions) so it doesn't compound brief-rendered text; we bump the SC
-  // budget by +13 and the web budget by +13 to keep parity with the role
-  // bundle's actual surface.
-  const EVALUATOR_MCP_TOOL_BUDGET = 30;
+  // WebAuthn/OAuth-callback/ServiceWorker enumeration. Cycle T.7 adds two
+  // more — bob_browser_session_start_recording and
+  // bob_browser_flush_recorded_requests — so the same evaluators can capture
+  // client-side auth flows and pivot via bob_http_scan for mutate-and-replay.
+  // The browser-driver family is opaque-context (one verb per command, idle/
+  // hard timeouts reap sessions) so it doesn't compound brief-rendered text;
+  // budgets are bumped by +2 (SC 30→32, web 32→34) to keep parity with the
+  // role bundle's actual surface.
+  const EVALUATOR_MCP_TOOL_BUDGET = 32;
   const agentNameToRoleId = {};
   for (const [roleId, spec] of Object.entries(CLAUDE_ROLE_SPECS)) {
     if (spec.kind === "agent" && typeof spec.output_path === "string") {
@@ -914,7 +919,7 @@ test("evaluator agents stay under their MCP tool budget", () => {
   }
   for (const pack of Object.values(CAPABILITY_PACKS)) {
     const roleId = agentNameToRoleId[pack.evaluator_agent];
-    const budget = pack.brief_profile === "web" ? 32 : EVALUATOR_MCP_TOOL_BUDGET;
+    const budget = pack.brief_profile === "web" ? 34 : EVALUATOR_MCP_TOOL_BUDGET;
     assert.ok(
       mcpToolNamesForRole(roleId).length <= budget,
       `pack ${pack.id} evaluator over budget (got ${mcpToolNamesForRole(roleId).length}, budget ${budget})`,

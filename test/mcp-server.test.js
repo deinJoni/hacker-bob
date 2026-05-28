@@ -460,6 +460,8 @@ const EXPECTED_TOOL_NAMES = [
   "bob_browser_take_screenshot",
   "bob_browser_fill_form",
   "bob_browser_session_close",
+  "bob_browser_session_start_recording",
+  "bob_browser_flush_recorded_requests",
 ];
 
 function withTempHome(fn) {
