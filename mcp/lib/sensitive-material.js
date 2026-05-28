@@ -2,7 +2,38 @@
 
 const DEFAULT_MAX_TEXT_CHARS = 4000;
 
-const SENSITIVE_KEY_RE = /(?:^|[_-])(authorization|cookie|set-cookie|password|passwd|secret|token|jwt|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token)(?:$|[_-])/i;
+// A small set of safe meta-suffixes that describe a secret without carrying
+// its value. Keys like `token_fingerprint` (a sha256), `token_snippet` (a
+// truncated excerpt with literal "..."), `cookie_name` (just the cookie's
+// label, never the value), and `set_cookie_name` (same) are deliberately
+// allowed. Adding a new suffix here is a deliberate widening — keep the list
+// tight and audit the producer to confirm the field never carries the actual
+// secret bytes (see Plane T-R3, jwt_observed payload).
+const SAFE_META_SUFFIXES = [
+  "fingerprint",
+  "snippet",
+  "location",
+  "name",
+  "label",
+  "kind",
+  "type",
+  "hash",
+  "sha256",
+  "path",
+];
+const SAFE_META_SUFFIX_GROUP = SAFE_META_SUFFIXES.join("|");
+
+// `key_lookbehind` rejects e.g. `id_token` but allows `token_fingerprint`.
+// The pattern fires when a forbidden token (`token`, `cookie`, ...) appears as
+// a `_`/`-` separated segment NOT immediately followed by one of the safe
+// meta-suffix terminators above.
+const SENSITIVE_KEY_RE = new RegExp(
+  "(?:^|[_-])"
+    + "(authorization|cookie|set-cookie|password|passwd|secret|token|jwt"
+    + "|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token)"
+    + `(?:$|[_-](?!(?:${SAFE_META_SUFFIX_GROUP})(?:$|[_-])))`,
+  "i",
+);
 const SENSITIVE_VALUE_RE = Object.freeze([
   /\b(?:authorization|cookie|set-cookie)\s*[:=]/i,
   /\b(?:bearer|basic)\s+[a-z0-9._~+/=-]{8,}/i,

@@ -1,5 +1,6 @@
 "use strict";
 
+const crypto = require("crypto");
 const fs = require("fs");
 const { redactUrlSensitiveValues } = require("../redaction.js");
 const {
@@ -754,6 +755,358 @@ function importHttpTraffic(args, { rankAttackSurfaces = null } = {}) {
   });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Plane T Cycle T.5 — JWT-as-observation-kind
+//
+// When an HTTP response is ingested (after headers/body normalization in
+// http-scan.js), we scan three locations for JWT-shaped tokens and emit one
+// `observation.recorded` frontier event per distinct token. The full token is
+// never written to the event payload — only a sha256 fingerprint, a short
+// snippet (truncated header + payload + signature segments), and a sanitized
+// projection of standard claims. `sub` is hashed (sha256) because it may be a
+// raw user identifier; custom claims are dropped entirely.
+//
+// Dedup: an in-memory Set keyed by `${surface_id} ${token_fingerprint}`.
+// Two scans of the same token under the same surface emit once. Across surfaces
+// the same token emits once per surface (intentional — pack surfacing is per
+// surface, so each surface needs its own jwt_observed event).
+//
+// Pact: T-P4 (observation-trigger architectural pattern). T-R3 (no secret
+// leakage). The test suite contains a negative assertion that scans the emitted
+// event JSON for the full token and fails if it appears.
+
+const JWT_PAYLOAD_BODY_KEY_RE = /^(access_token|id_token|refresh_token|jwt|token)$/i;
+const JWT_BODY_PARSE_MAX_BYTES = 1024 * 1024; // 1 MB — per T.5 spec.
+const JWT_SEGMENT_RE = /^[A-Za-z0-9_-]+$/;
+const JWT_TOKEN_RE = /^eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/;
+
+const jwtObservationDedupSet = new Set();
+
+function jwtDedupKey(surfaceId, fingerprint) {
+  return `${surfaceId == null ? "" : String(surfaceId)} ${fingerprint}`;
+}
+
+function _resetJwtObservationDedup() {
+  // Test-only escape hatch. Production code path never calls this.
+  jwtObservationDedupSet.clear();
+}
+
+function base64UrlDecodeToString(segment) {
+  if (typeof segment !== "string" || !segment || !JWT_SEGMENT_RE.test(segment)) {
+    return null;
+  }
+  try {
+    return Buffer.from(segment, "base64url").toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+function safeParseJson(text) {
+  if (typeof text !== "string" || !text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function looksLikeJwt(value) {
+  return typeof value === "string" && JWT_TOKEN_RE.test(value);
+}
+
+function sha256Hex(value) {
+  return crypto.createHash("sha256").update(String(value), "utf8").digest("hex");
+}
+
+function tokenSnippet(token) {
+  // First 12 chars of header + "..." + first 12 chars of payload + "..." +
+  // first 6 chars of signature. The full token is never reconstructable from
+  // the snippet because each segment is truncated.
+  const parts = String(token).split(".");
+  const head = (parts[0] || "").slice(0, 12);
+  const body = (parts[1] || "").slice(0, 12);
+  const sig = (parts[2] || "").slice(0, 6);
+  return `${head}...${body}...${sig}`;
+}
+
+function parseJwtHeaderAndPayload(token) {
+  // Split, decode header (segment 0) + payload (segment 1). Signature is
+  // never decoded or returned. Returns { header, payload } or null if the
+  // token isn't decodable.
+  if (typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const headerJson = base64UrlDecodeToString(parts[0]);
+  const payloadJson = base64UrlDecodeToString(parts[1]);
+  if (!headerJson || !payloadJson) return null;
+  const header = safeParseJson(headerJson);
+  const payload = safeParseJson(payloadJson);
+  if (header == null || typeof header !== "object" || Array.isArray(header)) return null;
+  if (payload == null || typeof payload !== "object" || Array.isArray(payload)) return null;
+  return { header, payload };
+}
+
+function projectJwtClaims(parsed, token) {
+  const header = parsed && parsed.header ? parsed.header : {};
+  const payload = parsed && parsed.payload ? parsed.payload : {};
+  const headerStr = (key) => (typeof header[key] === "string" && header[key].trim()
+    ? header[key].trim()
+    : null);
+  const payloadStr = (key) => (typeof payload[key] === "string" && payload[key].trim()
+    ? payload[key].trim()
+    : null);
+  const payloadNum = (key) => (Number.isFinite(payload[key]) ? Number(payload[key]) : null);
+  // `aud` may be a string or an array of strings; we project to a stable
+  // string by joining sorted entries. Either way, the raw token never appears.
+  let claimAud = null;
+  if (typeof payload.aud === "string" && payload.aud.trim()) {
+    claimAud = payload.aud.trim();
+  } else if (Array.isArray(payload.aud)) {
+    const items = payload.aud
+      .filter((entry) => typeof entry === "string" && entry.trim())
+      .map((entry) => entry.trim())
+      .sort();
+    if (items.length > 0) claimAud = items.join(",");
+  }
+  // `sub` MUST be hashed — it is frequently a raw user id and leaking it
+  // would violate T-R3.
+  const subRaw = payloadStr("sub");
+  const claimSubHash = subRaw == null ? null : sha256Hex(subRaw);
+  return {
+    header_alg: headerStr("alg"),
+    header_kid: headerStr("kid"),
+    header_typ: headerStr("typ"),
+    claim_iss: payloadStr("iss"),
+    claim_aud: claimAud,
+    claim_sub_hash: claimSubHash,
+    claim_exp: payloadNum("exp"),
+    claim_iat: payloadNum("iat"),
+    claim_nbf: payloadNum("nbf"),
+    token_fingerprint: sha256Hex(token),
+    token_snippet: tokenSnippet(token),
+  };
+}
+
+function headerLookupAll(headers, lowerName) {
+  // Returns array of header values for lowerName. Accepts:
+  //   - WHATWG Headers (has .forEach + .get / .getSetCookie)
+  //   - plain object  { name: string | string[] }
+  if (headers == null) return [];
+  if (typeof headers.forEach === "function" && typeof headers.get === "function") {
+    if (lowerName === "set-cookie" && typeof headers.getSetCookie === "function") {
+      try {
+        const values = headers.getSetCookie();
+        if (Array.isArray(values) && values.length > 0) return values.slice();
+      } catch {
+        // fall through
+      }
+    }
+    const collected = [];
+    headers.forEach((value, name) => {
+      if (typeof name === "string" && name.toLowerCase() === lowerName) {
+        collected.push(value);
+      }
+    });
+    return collected;
+  }
+  if (typeof headers === "object" && !Array.isArray(headers)) {
+    const out = [];
+    for (const key of Object.keys(headers)) {
+      if (typeof key !== "string" || key.toLowerCase() !== lowerName) continue;
+      const value = headers[key];
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          if (typeof item === "string") out.push(item);
+        }
+      } else if (typeof value === "string") {
+        out.push(value);
+      }
+    }
+    return out;
+  }
+  return [];
+}
+
+function detectJwtInAuthorizationHeaders(headers) {
+  const detections = [];
+  const values = headerLookupAll(headers, "authorization");
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    // `Bearer ` is case-insensitive in the scheme name per RFC 7235.
+    const match = value.match(/^\s*bearer\s+(\S+)\s*$/i);
+    if (!match) continue;
+    const token = match[1];
+    if (!looksLikeJwt(token)) continue;
+    detections.push({
+      token,
+      token_location: "authorization_header",
+      cookie_name: null,
+      body_path: null,
+    });
+  }
+  return detections;
+}
+
+function detectJwtInSetCookieHeaders(headers) {
+  const detections = [];
+  const values = headerLookupAll(headers, "set-cookie");
+  for (const value of values) {
+    if (typeof value !== "string" || !value) continue;
+    // Set-Cookie can carry multiple cookies in a single header value when the
+    // upstream stack concatenates them with comma + space. We split cautiously:
+    // split on ", " only when followed by what looks like a cookie name=.
+    const cookies = value.split(/,\s+(?=[A-Za-z0-9!#$%&'*+\-.^_`|~]+=)/);
+    for (const cookie of cookies) {
+      const firstSemi = cookie.indexOf(";");
+      const pair = firstSemi === -1 ? cookie : cookie.slice(0, firstSemi);
+      const eqIdx = pair.indexOf("=");
+      if (eqIdx <= 0) continue;
+      const name = pair.slice(0, eqIdx).trim();
+      const rawValue = pair.slice(eqIdx + 1).trim();
+      // Strip surrounding quotes if present.
+      const tokenValue = rawValue.startsWith('"') && rawValue.endsWith('"')
+        ? rawValue.slice(1, -1)
+        : rawValue;
+      if (!looksLikeJwt(tokenValue)) continue;
+      detections.push({
+        token: tokenValue,
+        token_location: "set_cookie",
+        cookie_name: name,
+        body_path: null,
+      });
+    }
+  }
+  return detections;
+}
+
+function walkBodyForJwt(node, pathStack, detections) {
+  if (node == null) return;
+  if (Array.isArray(node)) {
+    for (let i = 0; i < node.length; i += 1) {
+      pathStack.push(`[${i}]`);
+      walkBodyForJwt(node[i], pathStack, detections);
+      pathStack.pop();
+    }
+    return;
+  }
+  if (typeof node !== "object") return;
+  for (const key of Object.keys(node)) {
+    pathStack.push(`.${key}`);
+    const value = node[key];
+    if (JWT_PAYLOAD_BODY_KEY_RE.test(key) && looksLikeJwt(value)) {
+      detections.push({
+        token: value,
+        token_location: "response_body",
+        cookie_name: null,
+        body_path: `$${pathStack.join("")}`,
+      });
+    }
+    walkBodyForJwt(value, pathStack, detections);
+    pathStack.pop();
+  }
+}
+
+function detectJwtInResponseBody(body) {
+  if (body == null) return [];
+  let text;
+  if (typeof body === "string") {
+    text = body;
+  } else if (Buffer.isBuffer(body)) {
+    text = body.toString("utf8");
+  } else if (typeof body === "object") {
+    // Pre-parsed object — walk it directly without re-encoding.
+    const detections = [];
+    walkBodyForJwt(body, [], detections);
+    return detections;
+  } else {
+    return [];
+  }
+  if (Buffer.byteLength(text, "utf8") > JWT_BODY_PARSE_MAX_BYTES) return [];
+  const parsed = safeParseJson(text);
+  if (parsed == null) return [];
+  if (typeof parsed !== "object") return [];
+  const detections = [];
+  walkBodyForJwt(parsed, [], detections);
+  return detections;
+}
+
+function detectJwts({ response_headers = null, response_body = null } = {}) {
+  return [
+    ...detectJwtInAuthorizationHeaders(response_headers),
+    ...detectJwtInSetCookieHeaders(response_headers),
+    ...detectJwtInResponseBody(response_body),
+  ];
+}
+
+function recordJwtObservations({
+  target_domain,
+  surface_id,
+  response_headers = null,
+  response_body = null,
+  source_ref = null,
+} = {}) {
+  // Best-effort: any failure is silently swallowed (frontier ledger is dual-
+  // write best-effort, per the importHttpTraffic precedent). Returns the list
+  // of emitted event ids so http-scan / tests can introspect.
+  if (target_domain == null) return [];
+  if (surface_id == null) return [];
+  const detections = detectJwts({ response_headers, response_body });
+  if (detections.length === 0) return [];
+  const emitted = [];
+  const seenInThisCall = new Set();
+  for (const detection of detections) {
+    const parsed = parseJwtHeaderAndPayload(detection.token);
+    if (!parsed) continue;
+    const claims = projectJwtClaims(parsed, detection.token);
+    const dedupKey = jwtDedupKey(surface_id, claims.token_fingerprint);
+    if (jwtObservationDedupSet.has(dedupKey)) continue;
+    // Two detections of the same token in the same response (e.g. body has the
+    // same token under both `access_token` and `token`) — emit once.
+    if (seenInThisCall.has(dedupKey)) continue;
+    seenInThisCall.add(dedupKey);
+    jwtObservationDedupSet.add(dedupKey);
+    try {
+      const event = appendFrontierEvent({
+        target_domain,
+        kind: "observation.recorded",
+        surface_id,
+        payload: {
+          observation_kind: "jwt_observed",
+          token_location: detection.token_location,
+          cookie_name: detection.cookie_name,
+          body_path: detection.body_path,
+          header_alg: claims.header_alg,
+          header_kid: claims.header_kid,
+          header_typ: claims.header_typ,
+          claim_iss: claims.claim_iss,
+          claim_aud: claims.claim_aud,
+          claim_sub_hash: claims.claim_sub_hash,
+          claim_exp: claims.claim_exp,
+          claim_iat: claims.claim_iat,
+          claim_nbf: claims.claim_nbf,
+          token_fingerprint: claims.token_fingerprint,
+          token_snippet: claims.token_snippet,
+        },
+        source: {
+          artifact: "http-records.jsonl",
+          ref: source_ref == null ? null : String(source_ref),
+        },
+      });
+      emitted.push(event.event_id);
+      try {
+        scheduleMaterialization(target_domain);
+      } catch {
+        // Materializer scheduling is best-effort.
+      }
+    } catch {
+      // Removing the dedup entry on failure would invite an unbounded retry
+      // loop. We accept "emit-once-or-not-at-all" for this slot.
+    }
+  }
+  return emitted;
+}
+
 function readHttpAudit(args, { readAttackSurfaceStrict = null } = {}) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   const limit = normalizeHttpAuditSummaryLimit(args.limit);
@@ -781,10 +1134,12 @@ function readHttpAudit(args, { readAttackSurfaceStrict = null } = {}) {
 }
 
 module.exports = {
+  _resetJwtObservationDedup,
   appendHttpAuditRecord,
   buildCircuitBreakerSummary,
   compactHttpAuditRecord,
   compactTrafficRecord,
+  detectJwts,
   headerNamesFromInput,
   importHttpTraffic,
   isCircuitBreakerFailure,
@@ -794,10 +1149,12 @@ module.exports = {
   normalizeTrafficImportEntries,
   normalizeHttpAuditSummaryLimit,
   normalizeTrafficRecord,
+  parseJwtHeaderAndPayload,
   queryKeysFromUrl,
   readHttpAudit,
   readHttpAuditRecordsFromJsonl,
   readTrafficRecordsFromJsonl,
+  recordJwtObservations,
   summarizeHttpAuditRecords,
   summarizeGeofenceWarnings,
   summarizeTrafficRecords,

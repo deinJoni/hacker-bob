@@ -7,7 +7,10 @@ const {
   parseAgentId,
   parseWaveId,
 } = require("./validation.js");
-const { appendHttpAuditRecord } = require("./http-records.js");
+const {
+  appendHttpAuditRecord,
+  recordJwtObservations,
+} = require("./http-records.js");
 const {
   createProxyAgent,
 } = require("./egress-profiles.js");
@@ -254,6 +257,7 @@ async function httpScan(args) {
 
     const responseMode = args.response_mode || "full";
     const bodyLimit = args.body_limit || 2000;
+    const auditTs = new Date().toISOString();
     audit({
       status,
       error: null,
@@ -261,6 +265,24 @@ async function httpScan(args) {
       final_url: redactUrlSensitiveValues(finalUrl),
       ...scopeAuditFields(initialScopeDecision),
     });
+    // Plane T Cycle T.5 — JWT-as-observation-kind. Scan response headers + body
+    // for JWT-shaped tokens; emit one observation.recorded per distinct token
+    // for the parent surface. Dedup by (surface_id, token_fingerprint).
+    // The full token never enters the event payload — only a sha256 fingerprint,
+    // a truncated snippet, and a sanitized projection of standard claims.
+    if (args.surface_id) {
+      try {
+        recordJwtObservations({
+          target_domain: targetDomain,
+          surface_id: args.surface_id,
+          response_headers: respHeaders,
+          response_body: analysisBody,
+          source_ref: `${auditTs} ${method} ${auditUrl}`,
+        });
+      } catch {
+        // Best-effort, mirrors the importHttpTraffic dual-write pattern.
+      }
+    }
 
     if (responseMode === "status_only") {
       return JSON.stringify({
