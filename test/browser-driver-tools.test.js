@@ -19,6 +19,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("fs");
 const path = require("path");
 
 const {
@@ -177,11 +178,23 @@ test("expression sandbox rejects WebSocket and EventSource and sendBeacon", asyn
 
 test("shared sandbox helper rejects the forbidden patterns", () => {
   for (const expression of [
+    // Direct network IO from page context.
     "fetch('/x')",
     "new XMLHttpRequest()",
     "navigator.sendBeacon('/x', 'y')",
     "new EventSource('/sse')",
     "new WebSocket('wss://example')",
+    // Top-level navigation writes (agent's only remaining bypass to point the
+    // browser at an off-target page outside of the scope-checked navigate gate).
+    "window.location = 'https://attacker.test'",
+    "window.location='https://attacker.test'",
+    "location.href = 'https://attacker.test'",
+    "location.assign('https://attacker.test')",
+    "location.replace('https://attacker.test')",
+    "document.location = 'https://attacker.test'",
+    "top.location = 'https://attacker.test'",
+    "parent.location = 'https://attacker.test'",
+    "window.open('https://attacker.test')",
   ]) {
     assert.throws(
       () => browserToolsShared.assertExpressionSandbox(expression),
@@ -194,6 +207,37 @@ test("shared sandbox helper rejects the forbidden patterns", () => {
   assert.equal(
     browserToolsShared.assertExpressionSandbox("document.title"),
     "document.title",
+  );
+  // Reading location is allowed; only writes / open() are blocked.
+  assert.equal(
+    browserToolsShared.assertExpressionSandbox("location.pathname"),
+    "location.pathname",
+  );
+  assert.equal(
+    browserToolsShared.assertExpressionSandbox("document.location.host"),
+    "document.location.host",
+  );
+});
+
+test("driver setup does NOT install a network-level scope interceptor", () => {
+  const driverSrc = fs.readFileSync(
+    path.join(__dirname, "..", "mcp", "browser-driver.js"),
+    "utf8",
+  );
+  // Subresource interception was wrong: it broke modern targets that load
+  // anti-bot fingerprint scripts (Kasada), CDN bundles, OAuth callback chains.
+  // Scope is enforced at agent-input gates instead (navigate + evaluate
+  // sandbox). Regress on this and we lose Nike, every Akamai-protected site,
+  // anything with payment iframes.
+  assert.ok(
+    !/context\.route\s*\(\s*["'`]\*\*\/\*["'`]/.test(driverSrc),
+    "browser-driver.js must not install context.route('**/*', ...) — that interceptor aborts page-decided subresource loads (Kasada, CDN bundles, OAuth callbacks).",
+  );
+  // The scope helper still has to be IMPORTED — it gates navigate / session
+  // start. But it must NOT appear inside an attached route handler.
+  assert.ok(
+    /assertSafeResolvedRequestUrl/.test(driverSrc),
+    "browser-driver.js still imports/uses assertSafeResolvedRequestUrl for the navigate + start gates.",
   );
 });
 

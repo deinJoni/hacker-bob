@@ -14,8 +14,22 @@ const browserSessions = require("./browser-sessions.js");
 
 // Defense-in-depth: the wrapper rejects the same forbidden patterns the driver
 // rejects, so we never even spawn the subprocess for an obviously bad expr.
+//
+// Two classes of agent-controlled bypass are blocked:
+//   (1) Direct network IO from page context: XMLHttpRequest, fetch(),
+//       navigator.sendBeacon(), EventSource, WebSocket. Agents should use
+//       bob_http_scan or bob_browser_navigate for HTTP traffic.
+//   (2) Top-level navigation writes: location.href=, location.assign,
+//       location.replace, window.location=, document.location=, window.open,
+//       top.location / parent.location. The agent-controlled navigation gate
+//       is bob_browser_navigate (scope-checked); without these patterns the
+//       evaluate sandbox would let the agent point the browser anywhere.
+//
+// Page-initiated subresource loads (CDN bundles, anti-bot fingerprint scripts,
+// OAuth callbacks the server redirects to, analytics, etc.) are NOT the
+// agent's choice — the page itself wired them in HTML/JS. They run unblocked.
 const FORBIDDEN_EVAL_PATTERN =
-  /XMLHttpRequest|fetch\(|navigator\.sendBeacon|new EventSource|new WebSocket/i;
+  /XMLHttpRequest|fetch\(|navigator\.sendBeacon|new\s+EventSource|new\s+WebSocket|window\.open\(|(?:window|document|top|parent)\.location\s*=|location\.(?:href|assign|replace)/i;
 
 function errorEnvelope(code, message, extra = {}) {
   return {

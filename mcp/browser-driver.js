@@ -52,7 +52,7 @@ const MAX_SNAPSHOT_BYTES = 512 * 1024;
 // and the audit ledger; agents should use bob_http_scan or
 // bob_browser_navigate (both scope-checked) for HTTP traffic.
 const FORBIDDEN_EVAL_PATTERN =
-  /XMLHttpRequest|fetch\(|navigator\.sendBeacon|new EventSource|new WebSocket/i;
+  /XMLHttpRequest|fetch\(|navigator\.sendBeacon|new\s+EventSource|new\s+WebSocket|window\.open\(|(?:window|document|top|parent)\.location\s*=|location\.(?:href|assign|replace)/i;
 
 // ── Helpers ──
 
@@ -225,25 +225,22 @@ class BrowserDriver {
       });
     }
 
-    await this.context.route("**/*", async (route) => {
-      const requestUrl = route.request().url();
-      if (/^wss?:/i.test(requestUrl)) {
-        await route.abort("blockedbyclient");
-        return;
-      }
-      if (!/^https?:/i.test(requestUrl)) {
-        await route.continue();
-        return;
-      }
-      try {
-        await assertSafeResolvedRequestUrl(requestUrl, this.targetDomain, {
-          blockInternalHosts: false,
-        });
-        await route.continue();
-      } catch {
-        await route.abort("blockedbyclient");
-      }
-    });
+    // Subresource interception is intentionally NOT installed here. Modern
+    // web apps depend on hundreds of off-target requests just to render —
+    // anti-bot fingerprint scripts (Kasada, Akamai, PerimeterX), CDN bundles,
+    // analytics, OAuth redirect chains, payment iframes, WebAuthn platform
+    // calls. Blocking page-initiated subresource loads at the network layer
+    // breaks every realistic target.
+    //
+    // The scope boundary is enforced where the AGENT makes a navigation
+    // decision:
+    //   • bob_browser_session_start  → assertSafeResolvedRequestUrl(target_url)
+    //   • bob_browser_navigate       → assertSafeResolvedRequestUrl(url)
+    //   • bob_browser_evaluate       → expression sandbox blocks location/open
+    //                                  writes and direct network IO
+    // Page-initiated requests (subresources, server-driven redirects, JS
+    // navigations the agent didn't author) are observed by attachListeners()
+    // and the record-mode buffer for capture/replay; they are not blocked.
   }
 
   attachListeners() {
