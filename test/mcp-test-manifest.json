@@ -64,5 +64,6 @@
   "test/browser-egress-wiring.test.js",
   "test/pack-telemetry.test.js",
   "test/oss-surfacing.test.js",
-  "test/oss-blocked-harness.test.js"
+  "test/oss-blocked-harness.test.js",
+  "test/oss-evidence-reference.test.js"
 ]

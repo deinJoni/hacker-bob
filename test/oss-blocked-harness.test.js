@@ -153,9 +153,15 @@ test("high-severity native-code claim with repo_file + repo_command_run evidence
           content_hash: "a".repeat(64),
         },
         {
+          // O.8 payload shape: run_id is the natural identity; the four
+          // hashes carry command + capture-file identity. Raw stdout/stderr
+          // never appear in the EvidenceReference itself (O-P7).
           kind: "repo_command_run",
           run_id: "rr-fuzz-001",
-          content_hash: "b".repeat(64),
+          command_hash: "c".repeat(64),
+          exit_code: 0,
+          stdout_hash: "d".repeat(64),
+          stderr_hash: "e".repeat(64),
         },
       ],
     });

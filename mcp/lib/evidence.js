@@ -447,6 +447,15 @@ function assertEvidenceCompletenessForFreeze(domain, { suppliedRefs = null } = {
         // fall through with empty observed set
       }
     }
+    // O.8: fold in code-bound observed refs projected from on-disk
+    // repo-checks.jsonl and repo-runs/<run_id>.stdout. The projection helpers
+    // return only refs whose underlying artifact is present; missing files
+    // surface as `missing` entries via the gate's standard logic.
+    const {
+      projectCodeBoundObservedRefs,
+    } = require("./claim-freeze.js");
+    const codeBoundObservedRefs = projectCodeBoundObservedRefs(normalizedDomain, freeze);
+    for (const ref of codeBoundObservedRefs) observedRefs.push(ref);
   }
   const { assertCompletenessAgainstFreeze } = require("./claim-freeze.js");
   return assertCompletenessAgainstFreeze(freeze, observedRefs);

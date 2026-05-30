@@ -59,6 +59,25 @@ const CLAIM_SEVERITIES = Object.freeze(["critical", "high", "medium", "low", "in
 //     ref?: optional line/anchor pointer into the artifact,
 //     ...kind-specific fields (finding_id, chain_attempt_id, ...)
 //   }
+// Plane O Cycle O.8: code-bound EvidenceReference shapes.
+//
+//   repo_file        : Carries the file_path, the sha256 of the file's full
+//                      bytes (`content_hash`), and an optional `line_range`
+//                      pointer into the file. When the EvidenceReference
+//                      excerpts a specific region, `snippet_hash` is the
+//                      sha256 of that excerpted region's bytes. The raw
+//                      snippet stays in `repo-checks.jsonl` (which is
+//                      read-guard-protected and redacted per O.5/O-P7);
+//                      the EvidenceReference itself never carries excerpted
+//                      content.
+//
+//   repo_command_run : Carries the `run_id` of the bob_repo_docker_run row,
+//                      the sha256 of the command tokens (`command_hash`),
+//                      the integer exit code, and the sha256 of the
+//                      captured stdout/stderr files
+//                      (`stdout_hash`/`stderr_hash`). The raw stdout/stderr
+//                      live on disk under `repo-runs/<run_id>.{stdout,stderr}`
+//                      and are read-guard-protected per O.7.
 const EVIDENCE_REFERENCE_KIND_VALUES = Object.freeze([
   "finding",
   "verification_round",
@@ -66,10 +85,67 @@ const EVIDENCE_REFERENCE_KIND_VALUES = Object.freeze([
   "http_audit",
   "smart_contract_evidence",
   "agent_run",
+  "repo_file",
+  "repo_command_run",
 ]);
 
 function isHex64(value) {
   return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
+}
+
+function assertRepoFileEvidenceShape(ref, fieldName) {
+  // O.8 payload contract — repo_file:
+  //   {kind, file_path, content_hash, line_range?, snippet_hash?, source_run_id?}
+  // file_path + content_hash are the natural identity; snippet_hash is the
+  // sha256 of an excerpted region (raw excerpt itself stays in
+  // repo-checks.jsonl). line_range, when present, is {start_line, end_line}
+  // with 1-based line numbers in non-decreasing order.
+  if (typeof ref.file_path !== "string" || !ref.file_path.trim()) {
+    throw new Error(`${fieldName}.file_path must be a non-empty string for kind="repo_file"`);
+  }
+  if (!isHex64(ref.content_hash)) {
+    throw new Error(`${fieldName}.content_hash must be a 64-hex content digest for kind="repo_file"`);
+  }
+  if (ref.snippet_hash != null && !isHex64(ref.snippet_hash)) {
+    throw new Error(`${fieldName}.snippet_hash must be a 64-hex content digest when present`);
+  }
+  if (ref.line_range != null) {
+    const range = ref.line_range;
+    if (typeof range !== "object" || Array.isArray(range)) {
+      throw new Error(`${fieldName}.line_range must be an object {start_line, end_line} when present`);
+    }
+    if (!Number.isInteger(range.start_line) || range.start_line < 1) {
+      throw new Error(`${fieldName}.line_range.start_line must be a positive integer`);
+    }
+    if (!Number.isInteger(range.end_line) || range.end_line < range.start_line) {
+      throw new Error(`${fieldName}.line_range.end_line must be an integer >= start_line`);
+    }
+  }
+}
+
+function assertRepoCommandRunEvidenceShape(ref, fieldName) {
+  // O.8 payload contract — repo_command_run:
+  //   {kind, run_id, command_hash, exit_code, stdout_hash, stderr_hash, source_run_id?}
+  // run_id is the natural identity (deterministic per repoDockerRun row);
+  // command_hash is the sha256 of the canonicalized command tokens;
+  // exit_code is the integer reported by the runtime (null is allowed for
+  // pre-completion captures, but at append time we require a concrete int
+  // or null); stdout_hash/stderr_hash are the sha256 of the capture files.
+  if (typeof ref.run_id !== "string" || !ref.run_id.trim()) {
+    throw new Error(`${fieldName}.run_id must be a non-empty string for kind="repo_command_run"`);
+  }
+  if (!isHex64(ref.command_hash)) {
+    throw new Error(`${fieldName}.command_hash must be a 64-hex content digest for kind="repo_command_run"`);
+  }
+  if (!isHex64(ref.stdout_hash)) {
+    throw new Error(`${fieldName}.stdout_hash must be a 64-hex content digest for kind="repo_command_run"`);
+  }
+  if (!isHex64(ref.stderr_hash)) {
+    throw new Error(`${fieldName}.stderr_hash must be a 64-hex content digest for kind="repo_command_run"`);
+  }
+  if (ref.exit_code != null && !Number.isInteger(ref.exit_code)) {
+    throw new Error(`${fieldName}.exit_code must be an integer or null for kind="repo_command_run"`);
+  }
 }
 
 function normalizeEvidenceReferenceShape(ref, fieldName = "evidence_refs[]") {
@@ -91,6 +167,14 @@ function normalizeEvidenceReferenceShape(ref, fieldName = "evidence_refs[]") {
   const sourceRunId = ref.source_run_id;
   if (sourceRunId != null && (typeof sourceRunId !== "string" || !sourceRunId.trim())) {
     throw new Error(`${fieldName}.source_run_id must be a non-empty string when present`);
+  }
+  // O.8: kind-specific payload shapes for code-bound evidence. These run
+  // after the common-field checks so the existing kinds keep their
+  // permissive shape and only the two new kinds carry mandatory fields.
+  if (kind === "repo_file") {
+    assertRepoFileEvidenceShape(ref, fieldName);
+  } else if (kind === "repo_command_run") {
+    assertRepoCommandRunEvidenceShape(ref, fieldName);
   }
   return ref;
 }
@@ -127,6 +211,16 @@ function evidenceReferenceLookupKey(ref) {
   }
   if (kind === "agent_run" && typeof ref.agent_run_id === "string") {
     return `${kind}:${ref.agent_run_id}`;
+  }
+  // O.8 code-bound kinds. repo_file's identity is the (file_path, content_hash)
+  // pair so two refs against the same content at different excerpt windows
+  // still collapse to one frozen-set entry; repo_command_run's identity is the
+  // run_id, which is unique per repoDockerRun row.
+  if (kind === "repo_file" && typeof ref.file_path === "string" && typeof ref.content_hash === "string") {
+    return `repo_file:${ref.file_path}:${ref.content_hash}`;
+  }
+  if (kind === "repo_command_run" && typeof ref.run_id === "string") {
+    return `repo_command_run:${ref.run_id}`;
   }
   return `${kind}:${ref.artifact_path || ""}:${ref.content_hash || ""}`;
 }
