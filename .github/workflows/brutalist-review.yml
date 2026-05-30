@@ -1,0 +1,51 @@
+name: Brutalist Review
+
+# Multi-CLI adversarial code review on every PR, posted as inline comments.
+# Powered by ejmockler/brutalist-mcp (pinned to v1.14.1).
+#
+# Critics: claude + codex + agy (Antigravity). Hard requirement is the
+# ANTHROPIC_OAUTH_TOKEN secret (claude). CODEX_AUTH (codex) and
+# AGY_OAUTH_TOKEN (agy) are optional — a critic whose auth secret is
+# absent is skipped with a warning rather than failing the run.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read          # actions/checkout
+  pull-requests: write    # post the review
+
+jobs:
+  brutalist:
+    runs-on: ubuntu-latest
+    # Skip drafts and PRs from forks: forks can't read the OAuth secrets,
+    # so the preflight would fail noisily.
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Install CLI critics
+        # claude + brutalist-mcp are hard preflight requirements; codex and
+        # agy are soft critics (warn if their auth secret is missing).
+        run: |
+          npm install -g @brutalist/mcp@1.14.1 \
+                         @anthropic-ai/claude-code \
+                         @openai/codex
+          # agy (Antigravity) installs to ~/.local/bin/agy; put it on PATH.
+          curl -fsSL https://antigravity.google/cli/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Brutalist review
+        uses: ejmockler/brutalist-mcp/packages/github-action@v1.14.1
+        with:
+          github-token: ${{ github.token }}
+          anthropic-oauth-token: ${{ secrets.ANTHROPIC_OAUTH_TOKEN }}
+          codex-auth: ${{ secrets.CODEX_AUTH }}
+          agy-oauth-token: ${{ secrets.AGY_OAUTH_TOKEN }}
+          minimum-severity: medium
