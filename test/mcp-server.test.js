@@ -375,6 +375,7 @@ const EXPECTED_TOOL_NAMES = [
   "bob_init_session",
   "bob_init_repo_session",
   "bob_repo_inventory",
+  "bob_repo_prepare_env",
   "bob_read_session_state",
   "bob_read_session_nucleus",
   "bob_advance_session",

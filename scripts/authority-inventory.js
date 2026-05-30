@@ -126,6 +126,7 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_record_candidate_claim: "initialized_session_mutation",
   bob_record_surface_leads: "initialized_session_mutation",
   bob_repo_inventory: "initialized_session_mutation",
+  bob_repo_prepare_env: "initialized_session_mutation",
   bounty_report_written: "initialized_session_mutation",
   bob_route_surfaces: "initialized_session_mutation",
   bob_run_auth_differential: "scoped_http_network",

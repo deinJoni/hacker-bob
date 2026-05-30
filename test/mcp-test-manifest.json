@@ -6,6 +6,7 @@
   "test/governance-contracts.test.js",
   "test/repo-target-binding.test.js",
   "test/repo-inventory.test.js",
+  "test/repo-env.test.js",
   "test/wave-handoff-contracts.test.js",
   "test/wave-handoff-store.test.js",
   "test/wave-planner.test.js",

@@ -715,8 +715,9 @@ test("orchestrator skill stays bounded and reflects the lifecycle topology", () 
   // Cycle O.1 added bob_init_repo_session to the orchestrator bundle, which
   // appends one line to the auto-generated allowed-tools block in SKILL.md.
   // Cycle O.2 added bob_repo_inventory to the same bundle (+1 line).
+  // Cycle O.3 added bob_repo_prepare_env (+1 line).
   // Cycle O.9 may bump the cap further when the OSS branch lands.
-  assert.ok(lines <= 322, `bob-evaluate skill is ${lines} lines (cap 322)`);
+  assert.ok(lines <= 323, `bob-evaluate skill is ${lines} lines (cap 323)`);
   const skill = readFile(".claude/skills/bob-evaluate/SKILL.md");
   assert.match(
     skill,

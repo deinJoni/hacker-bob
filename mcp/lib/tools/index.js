@@ -38,6 +38,7 @@ const TOOL_MODULES = Object.freeze([
   require("./init-session.js"),
   require("./init-repo-session.js"),
   require("./repo-inventory.js"),
+  require("./repo-prepare-env.js"),
   require("./read-session-state.js"),
   require("./read-session-nucleus.js"),
   require("./advance-session.js"),
