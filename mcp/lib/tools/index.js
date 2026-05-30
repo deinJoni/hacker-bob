@@ -37,6 +37,7 @@ const TOOL_MODULES = Object.freeze([
   require("./read-grade-verdict.js"),
   require("./init-session.js"),
   require("./init-repo-session.js"),
+  require("./repo-inventory.js"),
   require("./read-session-state.js"),
   require("./read-session-nucleus.js"),
   require("./advance-session.js"),

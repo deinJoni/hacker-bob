@@ -284,6 +284,13 @@ function reportMarkdownPath(domain) {
   return path.join(sessionDir(domain), "report.md");
 }
 
+// Cycle O.2: repo-inventory.json is materialized by bob_repo_inventory.
+// Lives alongside attack_surface.json so the same target_domain key
+// addresses both web and OSS surface-axis projections.
+function repoInventoryPath(domain) {
+  return path.join(sessionDir(domain), "repo-inventory.json");
+}
+
 module.exports = {
   TELEMETRY_DIR_NAME,
   TELEMETRY_TOOL_INVOCATIONS_FILE_NAME,
@@ -301,6 +308,7 @@ module.exports = {
   publicIntelPath,
   queuePolicyPath,
   reportMarkdownPath,
+  repoInventoryPath,
   scopeWarningsPath,
   sessionDir,
   sessionEventsJsonlPath,
