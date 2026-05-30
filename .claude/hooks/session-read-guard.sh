@@ -54,6 +54,14 @@ BLOCKED_EXACT = {
     "report.md",
     "chains.md",
     ".handoff-signing-key.json",
+    # Plane O O.7: OSS-target artifacts. Raw stdout/stderr from sandboxed
+    # docker runs and inventory/env documents may carry secret-shaped tokens
+    # from build output. Force agents through MCP readers.
+    "repo-checks.jsonl",
+    "repo-command-runs.jsonl",
+    "repo-env.json",
+    "Dockerfile.bob",
+    "repo-inventory.json",
 }
 
 ALLOWED_EXACT = {
@@ -65,6 +73,10 @@ ALLOWED_EXACT = {
 
 BLOCKED_DIRS = {
     "static-imports",
+    # Plane O O.7: raw docker-run stdout/stderr (`repo-runs/`) and any
+    # in-container scratch space (`repo-work/`) must stay opaque to agents.
+    "repo-runs",
+    "repo-work",
 }
 
 BLOCKED_PATTERNS = [

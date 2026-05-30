@@ -77,6 +77,10 @@ module.exports = Object.freeze({
                 "symbolic_solver",
                 "mock_dependency",
                 "external_api",
+                "docker_unavailable",
+                "sanitizer_unavailable",
+                "static_analyzer_unavailable",
+                "cve_feed_stale",
                 "other"
               ]
             },

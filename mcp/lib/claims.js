@@ -28,6 +28,13 @@ const {
 const {
   normalizeTaskLens,
 } = require("./task-lenses.js");
+const {
+  ERROR_CODES,
+  ToolError,
+} = require("./envelope.js");
+const {
+  readFrontierEvents,
+} = require("./frontier-events.js");
 
 const CLAIM_VERSION = 1;
 const CLAIMS_MAX_RECORDS = 20000;
@@ -197,8 +204,86 @@ function normalizeCandidateClaim(input, { targetDomain = null, now = new Date() 
   }, "claim_hash");
 }
 
+// Plane O O-P4 enforcement (cycle O.7). When a CandidateClaim is high/critical
+// AND its implicated code surface(s) are native (C/C++/Rust-unsafe/asm) AND
+// no evidence_ref carries `kind: "repo_command_run"`, the claim is a
+// static-only native-code finding — which the realization pact forbids,
+// because native-code corruption claims demand at least one live execution
+// (sanitizer/fuzzer/debugger) to be credible. The validator reads frontier
+// events to resolve each surface_id's kind (`code_module`) and language.
+// Non-repo sessions and surfaces whose code_module language isn't native short-
+// circuit; the rule only fires when all three conditions align.
+const O_P4_NATIVE_LANGUAGES = Object.freeze(new Set(["c", "cpp", "rust-unsafe", "asm"]));
+const O_P4_TRIGGERING_SEVERITIES = Object.freeze(new Set(["high", "critical"]));
+
+function claimSurfaceLanguageMap(domain, surfaceIds) {
+  // Returns surfaceId -> { kind, language } for surfaces that appear as
+  // `surface.observed` events. Missing or unreadable frontier ledger collapses
+  // to an empty map (non-repo sessions don't have a repo inventory to read).
+  const result = new Map();
+  if (!Array.isArray(surfaceIds) || surfaceIds.length === 0) return result;
+  let events;
+  try {
+    events = readFrontierEvents(domain);
+  } catch {
+    return result;
+  }
+  const wanted = new Set(surfaceIds);
+  for (const event of events) {
+    if (!event || event.kind !== "surface.observed") continue;
+    if (typeof event.surface_id !== "string" || !wanted.has(event.surface_id)) continue;
+    const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+      ? event.payload
+      : {};
+    const surfaceKind = typeof payload.kind === "string" ? payload.kind.trim() : "";
+    const language = typeof payload.language === "string" ? payload.language.trim().toLowerCase() : "";
+    if (!surfaceKind && !language) continue;
+    const existing = result.get(event.surface_id) || {};
+    // Later observations win — the materializer treats surface.observed as
+    // last-writer-wins for scalar fields.
+    result.set(event.surface_id, {
+      kind: surfaceKind || existing.kind || null,
+      language: language || existing.language || null,
+    });
+  }
+  return result;
+}
+
+function assertNotStaticOnlyNativeHighSeverity(claim) {
+  if (!O_P4_TRIGGERING_SEVERITIES.has(claim.severity)) return;
+  const surfaceIds = Array.isArray(claim.surface_ids) ? claim.surface_ids : [];
+  if (surfaceIds.length === 0) return;
+  const surfaceInfo = claimSurfaceLanguageMap(claim.target_domain, surfaceIds);
+  const nativeSurfaces = [];
+  for (const surfaceId of surfaceIds) {
+    const info = surfaceInfo.get(surfaceId);
+    if (!info) continue;
+    if (info.kind !== "code_module") continue;
+    if (!info.language || !O_P4_NATIVE_LANGUAGES.has(info.language)) continue;
+    nativeSurfaces.push({ surface_id: surfaceId, language: info.language });
+  }
+  if (nativeSurfaces.length === 0) return;
+  const evidenceRefs = Array.isArray(claim.evidence_refs) ? claim.evidence_refs : [];
+  const hasRepoCommandRun = evidenceRefs.some((ref) => ref && ref.kind === "repo_command_run");
+  if (hasRepoCommandRun) return;
+  throw new ToolError(
+    ERROR_CODES.INVALID_ARGUMENTS,
+    "high/critical native-code claims must include at least one evidence_refs[] entry with kind: \"repo_command_run\"; static-only claims (repo_file / source review) cannot stand alone for C/C++/Rust-unsafe/asm at this severity.",
+    {
+      code: "O_P4_static_only_native_code_high_severity",
+      severity: claim.severity,
+      native_surfaces: nativeSurfaces,
+    },
+  );
+}
+
 function appendCandidateClaim(input, options = {}) {
   const claim = normalizeCandidateClaim(input, options);
+  // O-P4 validator runs before the JSONL append so a rejected claim leaves
+  // claims.jsonl untouched. Wave-handoff / blocked-harness consistency is the
+  // sibling gate on the handoff path; the claim path owns the native-code
+  // severity gate.
+  assertNotStaticOnlyNativeHighSeverity(claim);
   return withSessionLock(claim.target_domain, () => {
     appendJsonlLine(claimsJsonlPath(claim.target_domain), claim, {
       maxRecords: options.maxRecords == null ? CLAIMS_MAX_RECORDS : options.maxRecords,
@@ -222,7 +307,11 @@ module.exports = {
   CLAIM_STATUSES,
   CLAIM_VERSION,
   EVIDENCE_REFERENCE_KIND_VALUES,
+  O_P4_NATIVE_LANGUAGES,
+  O_P4_TRIGGERING_SEVERITIES,
   appendCandidateClaim,
+  assertNotStaticOnlyNativeHighSeverity,
+  claimSurfaceLanguageMap,
   evidenceReferenceLookupKey,
   generatedClaimId,
   normalizeCandidateClaim,

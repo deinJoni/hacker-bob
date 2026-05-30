@@ -232,6 +232,10 @@ const BLOCKED_HARNESS_KIND_VALUES = Object.freeze([
   "symbolic_solver",
   "mock_dependency",
   "external_api",
+  "docker_unavailable",
+  "sanitizer_unavailable",
+  "static_analyzer_unavailable",
+  "cve_feed_stale",
   "other",
 ]);
 
@@ -420,9 +424,19 @@ function normalizeBypassAttempts(value, { findingIds = null } = {}) {
 
 function assertBlockedHarnessConsistency(surfaceStatus, blockedHarnessRuns) {
   if (surfaceStatus === "complete" && blockedHarnessRuns.length > 0) {
+    // Plane O O.7: the gate must surface a stable, machine-checkable code so
+    // operators and reviewers can detect "surface marked complete despite
+    // blocked harnesses" without string-matching the message. The structured
+    // `details.code` reaches the MCP envelope as
+    // `{error: {code: "surface_complete_with_blocked_harness", ...}}`.
     throw new ToolError(
       ERROR_CODES.INVALID_ARGUMENTS,
       "surface_status cannot be 'complete' when blocked_harness_runs is non-empty; set surface_status to 'partial' or resolve the blocked harnesses first",
+      {
+        code: "surface_complete_with_blocked_harness",
+        surface_status: surfaceStatus,
+        blocked_harness_kinds: blockedHarnessRuns.map((entry) => entry.kind),
+      },
     );
   }
 }
