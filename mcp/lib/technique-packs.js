@@ -60,6 +60,108 @@ const EVALUATOR_KNOWLEDGE_DEFAULT_ID = "generic-rest-api";
 const EVALUATOR_KNOWLEDGE_MAX_ENTRIES = 4;
 const EVALUATOR_KNOWLEDGE_MAX_CHARS = 4500;
 const TECHNIQUE_PACK_ID_RE = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/;
+
+// ── Plane O Cycle O.6 — OSS technique-pack content ──────────────────────────
+// Seven OSS technique packs with hunting vocabulary carried in `summary`
+// content (per Reviewer D's carry-back: heuristics live in pack content, not
+// role-prompt prose). Each pack declares `lens_affinity` so future brief
+// renderers can foreground packs for the matching OSS task lens.
+//
+// These packs do NOT flow through `getCapabilityPack(capability_pack)` — the
+// "oss" capability_pack is not registered yet (cycle O.9 wires the orchestrator
+// branch and any registry entries it needs). Instead they live as JS-defined
+// records exposed via the OSS_TECHNIQUE_PACKS export so the brief renderer
+// (under the `profile: "oss"` slice registry) and tests can read them
+// directly.
+//
+// Spec wording was deliberate: native-code pack carries the FULL MVP bug-class
+// vocabulary in its `summary` so tests can grep for "bounds checks" /
+// "double-free" / "use-after-free" against pack content without needing the
+// vocabulary to be hard-coded in evaluator-techniques.json.
+const OSS_TECHNIQUE_PACKS = Object.freeze([
+  Object.freeze({
+    id: "oss_dependency",
+    title: "OSS dependency triage",
+    lens_affinity: Object.freeze(["taint_trace"]),
+    summary: "Lockfile drift, vendored fork without security backports, manifest-declared vs resolved version, transitive dependency with known CVE reaching app code via call graph.",
+  }),
+  Object.freeze({
+    id: "oss_native_code",
+    title: "OSS native-code vulnerabilities",
+    lens_affinity: Object.freeze(["taint_trace", "fuzz_run"]),
+    summary: "bounds checks, integer truncation, signed/unsigned conversion, allocation-size math, NUL/path handling, state-machine confusion, lifetime/ownership mistakes, double-free/use-after-free, attacker-controlled network/file input reaching parser sites. For NFS/XDR/protocol projects: map data path from packet/file/API input to exact parser or state transition before recording; name file, function/symbol, controlling fields, impact if malformed.",
+  }),
+  Object.freeze({
+    id: "oss_api_schema",
+    title: "OSS API schema enforcement",
+    lens_affinity: Object.freeze(["code_surface_scout", "taint_trace"]),
+    summary: "OpenAPI/GraphQL schema in repo, server-side enforcement gaps vs declared schema, type-confusion via inheritance or polymorphism in handlers.",
+  }),
+  Object.freeze({
+    id: "oss_authz",
+    title: "OSS authorization gaps",
+    lens_affinity: Object.freeze(["taint_trace"]),
+    summary: "Decorator/middleware auth that's bypassable, role-check happens only in one of two callers, server-trusted client claims, IDOR in handlers.",
+  }),
+  Object.freeze({
+    id: "oss_ci_cd",
+    title: "OSS CI/CD pipeline review",
+    lens_affinity: Object.freeze(["code_surface_scout"]),
+    summary: "Workflow secrets via pull_request_target, malicious test runners on PR, GITHUB_TOKEN over-permissioning, third-party action without SHA pin.",
+  }),
+  Object.freeze({
+    id: "oss_secrets_config",
+    title: "OSS committed secrets and config misuse",
+    lens_affinity: Object.freeze(["code_surface_scout"]),
+    summary: "Committed credentials, weak crypto defaults, debug flags committed, .env in tree, history-purged secrets still recoverable.",
+  }),
+  Object.freeze({
+    id: "oss_docs_behavior",
+    title: "OSS docs-vs-behavior divergence",
+    lens_affinity: Object.freeze(["code_surface_scout"]),
+    summary: "Docs claim X but code does Y — rate-limit docs vs enforced limit, auth docs vs hard-coded admin email check.",
+  }),
+]);
+
+// Technique-pack id alias map. MVP wisdom about id-typo recovery: the MVP
+// branch shipped packs under longer descriptive ids (e.g.
+// `oss-native-code-c-parser-review`) and operators / docs reference them by
+// those legacy ids. The alias map resolves a legacy id to the canonical id.
+// Aliases also cover dash-vs-underscore variants and the human-friendly
+// hyphenated form some docs use.
+const OSS_TECHNIQUE_PACK_ID_ALIASES = Object.freeze({
+  "oss-native-code-c-parser-review": "oss_native_code",
+  "oss-native-code-protocol-memory": "oss_native_code",
+  "oss-native-code": "oss_native_code",
+  "oss-dependency": "oss_dependency",
+  "oss-api-schema": "oss_api_schema",
+  "oss-authz": "oss_authz",
+  "oss-ci-cd": "oss_ci_cd",
+  "oss-secrets-config": "oss_secrets_config",
+  "oss-docs-behavior": "oss_docs_behavior",
+});
+
+function resolveOssTechniquePackId(packId) {
+  if (typeof packId !== "string") return null;
+  const trimmed = packId.trim();
+  if (!trimmed) return null;
+  // Direct hit first (canonical id).
+  if (OSS_TECHNIQUE_PACKS.some((pack) => pack.id === trimmed)) {
+    return trimmed;
+  }
+  // Alias hit.
+  const aliased = OSS_TECHNIQUE_PACK_ID_ALIASES[trimmed];
+  if (aliased && OSS_TECHNIQUE_PACKS.some((pack) => pack.id === aliased)) {
+    return aliased;
+  }
+  return null;
+}
+
+function findOssTechniquePack(packId) {
+  const resolvedId = resolveOssTechniquePackId(packId);
+  if (resolvedId == null) return null;
+  return OSS_TECHNIQUE_PACKS.find((pack) => pack.id === resolvedId) || null;
+}
 const DEFAULT_SUMMARY_ESTIMATED_TOKENS = 500;
 const DEFAULT_FULL_ESTIMATED_TOKENS = 1500;
 const TECHNIQUE_SUMMARY_ITEMS_PER_KIND = 4;
@@ -1136,4 +1238,9 @@ module.exports = {
   assertTechniquePackMatchesCapability,
   summarizeTechniqueAttempt,
   techniquePackSummary,
+  // Cycle O.6 — OSS technique-pack content + id alias map.
+  OSS_TECHNIQUE_PACKS,
+  OSS_TECHNIQUE_PACK_ID_ALIASES,
+  findOssTechniquePack,
+  resolveOssTechniquePackId,
 };

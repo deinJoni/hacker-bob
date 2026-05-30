@@ -208,6 +208,70 @@ const SEED_PACKS = [
     },
     narrative: "GraphQL recon — type/field enumeration, mutation discovery.",
   },
+  // ── Plane O Cycle O.6 — OSS surfacing CLI tool packs (5 initial seed) ────
+  // Per Reviewer B: 5 seeds (semgrep, trivy, cargo-audit, npm-audit,
+  // pip-audit). Deferred: codeql, bandit, gosec, syft, grype,
+  // radare2/binwalk/ghidra — added when operator demand justifies.
+  //
+  // `semgrep` and `trivy` apply to every OSS surface (surface.kind === "repo"
+  // OR any observation present); the per-ecosystem audit tools fire on
+  // matching dependency_observed events.
+  {
+    id: "semgrep",
+    install_check: "semgrep --version",
+    invocation_template: "semgrep --config auto /src",
+    applicable_when: ({ surface }) => Boolean(surface && surface.kind === "repo"),
+    narrative: "Static analysis — auto-config rulepack scan over /src for bug-class hints.",
+  },
+  {
+    id: "trivy",
+    install_check: "trivy --version",
+    invocation_template: "trivy fs --scanners vuln,secret,misconfig /src",
+    applicable_when: ({ surface }) => Boolean(surface && surface.kind === "repo"),
+    narrative: "Repo scanner — vulnerabilities, leaked secrets, misconfigurations in /src.",
+  },
+  {
+    id: "cargo-audit",
+    install_check: "cargo audit --version",
+    invocation_template: "cargo audit",
+    applicable_when: ({ observations }) => {
+      const list = observationList(observations);
+      return list.some((o) => {
+        if (!o) return false;
+        const payload = o.payload && typeof o.payload === "object" ? o.payload : o;
+        return o.kind === "dependency_observed" && payload && payload.ecosystem === "cargo";
+      });
+    },
+    narrative: "Rust dep audit — runs against Cargo.lock for known CVE advisories.",
+  },
+  {
+    id: "npm-audit",
+    install_check: "npm --version",
+    invocation_template: "npm audit --json",
+    applicable_when: ({ observations }) => {
+      const list = observationList(observations);
+      return list.some((o) => {
+        if (!o) return false;
+        const payload = o.payload && typeof o.payload === "object" ? o.payload : o;
+        return o.kind === "dependency_observed" && payload && payload.ecosystem === "npm";
+      });
+    },
+    narrative: "Node dep audit — surfaces known CVE advisories from npm package metadata.",
+  },
+  {
+    id: "pip-audit",
+    install_check: "pip-audit --version",
+    invocation_template: "pip-audit",
+    applicable_when: ({ observations }) => {
+      const list = observationList(observations);
+      return list.some((o) => {
+        if (!o) return false;
+        const payload = o.payload && typeof o.payload === "object" ? o.payload : o;
+        return o.kind === "dependency_observed" && payload && payload.ecosystem === "pypi";
+      });
+    },
+    narrative: "Python dep audit — checks installed pypi dists against advisory database.",
+  },
 ];
 
 const CLI_TOOL_PACKS = Object.freeze(SEED_PACKS.map(normalizeCliToolPack));

@@ -60,6 +60,12 @@ test("CLI_TOOL_PACKS exposes the seed packs in kebab-case", () => {
     "graphql-cop",
     "clairvoyance",
     "graphqlcat",
+    // O.6 OSS-surfacing packs.
+    "semgrep",
+    "trivy",
+    "cargo-audit",
+    "npm-audit",
+    "pip-audit",
   ];
   assert.equal(CLI_TOOL_PACKS.length, expected.length);
   assert.deepEqual(ids(CLI_TOOL_PACKS).sort(), expected.slice().sort());

@@ -284,9 +284,77 @@ const SMART_CONTRACT_BRIEF_SLICE_REGISTRY = Object.freeze([
   briefSliceEntry("surface_graph_slice", 8192, (context) => context.surfaceGraphSlice),
 ]);
 
+// ── Plane O Cycle O.6 — OSS brief slice registry ─────────────────────────────
+// `profile: "oss"` is a distinct slice registry per O-D8 (cleaner than folding
+// into `web`; matches the precedent that each surface family owns its slice
+// registry). Slices included:
+//   governance, goal_orientation, repo_workflow, code_surface_pack,
+//   technique_packs, cli_tools, recap_and_handoff
+//
+// `repo_workflow` leads the brief under ANY of the three OSS lenses
+// (code_surface_scout, taint_trace, fuzz_run) and SUPPRESSES the curl-shaped
+// HTTP playbook (mirroring T.4's `browser_workflow` pattern: an explicit
+// stanza names the tools to use and de-emphasizes the alternate playbook).
+//
+// Cycle O.9 will wire the orchestrator OSS branch + brief dispatch; this
+// cycle defines the registry and the slice content so the lens-aware brief
+// dispatch is ready when O.9 lands.
+const OSS_LENSES = Object.freeze(["code_surface_scout", "taint_trace", "fuzz_run"]);
+
+function isOssLens(value) {
+  return typeof value === "string" && OSS_LENSES.includes(value);
+}
+
+const REPO_WORKFLOW_TEXT = [
+  "## Repo-bound surfaces",
+  "This wave is assigned an OSS task lens. Lead with the repo-bound workflow",
+  "rather than curl-shaped HTTP probes. The repo target is a locally-checked-",
+  "out codebase; all probes stay inside the bound repo or its sandboxed",
+  "/work area inside docker.",
+  "",
+  "OSS workflow tools:",
+  "1. `bob_repo_inventory({ target_domain })` — enumerate code modules,",
+  "   manifests, dependency declarations, CI configs, entry points, native",
+  "   build files. Emits surface.observed events the materializer consumes.",
+  "2. `bob_repo_check({ target_domain, file_path, pattern?, regex? })` —",
+  "   read-only file probe with secret redaction at the write boundary. Use",
+  "   for unsafe-sink hunting, config-misuse hunting, docs-vs-behavior diffs.",
+  "3. `bob_repo_docker_run({ target_domain, command, allow_network?: false })`",
+  "   — sandboxed execution (cap-drop ALL, no-new-privileges, --user 1000:1000,",
+  "   --network none default). Use for fuzz / sanitizer / build runs.",
+  "4. Static analyzers via cli_tools: semgrep, trivy, cargo-audit, npm-audit,",
+  "   pip-audit. Each pack lists the install_check + invocation template.",
+  "",
+  "The curl-shaped HTTP playbook (`bob_http_scan`, ffuf-style content",
+  "discovery, param fuzzing) is de-emphasized under OSS lenses — repo-bound",
+  "sessions do not own the deployed instance unless an operator explicitly",
+  "opts a `target_url` companion (O-P2 / O-P6).",
+].join("\n");
+
+const OSS_BRIEF_SLICE_REGISTRY = Object.freeze([
+  // `repo_workflow` leads when the active task lens is one of the OSS lenses.
+  // Returns "" for other lenses; the registry assembly pass drops empty-string
+  // slices so the brief stays absent rather than carrying an empty header.
+  briefSliceEntry("repo_workflow", 2048, (context) => (
+    isOssLens(context.taskLens) ? REPO_WORKFLOW_TEXT : ""
+  )),
+  briefSliceEntry("governance", 1024, (context) => context.governance),
+  briefSliceEntry("goal_orientation", 1024, (context) => context.goalOrientation),
+  briefSliceEntry("code_surface_pack", 4096, (context) => context.codeSurfacePack),
+  briefSliceEntry("technique_packs", 8192, (context) => context.ossTechniquePacks),
+  briefSliceEntry("cli_tools", 2048, (context) => renderAvailableCliToolsSectionSync({
+    surface_fingerprint: context.cliToolSurfaceFingerprint,
+    task_lens: context.cliToolTaskLens,
+    observations: context.cliToolObservations,
+    target_domain: context.cliToolTargetDomain,
+  })),
+  briefSliceEntry("recap_and_handoff", 2048, (context) => context.recapAndHandoff),
+]);
+
 const ASSIGNMENT_BRIEF_SLICE_REGISTRY = Object.freeze({
   web: WEB_BRIEF_SLICE_REGISTRY,
   smart_contract: SMART_CONTRACT_BRIEF_SLICE_REGISTRY,
+  oss: OSS_BRIEF_SLICE_REGISTRY,
 });
 
 function briefSliceRegistryForProfile(profile) {
@@ -295,6 +363,9 @@ function briefSliceRegistryForProfile(profile) {
   }
   if (typeof profile === "string" && profile.startsWith("smart_contract_")) {
     return SMART_CONTRACT_BRIEF_SLICE_REGISTRY;
+  }
+  if (profile === "oss") {
+    return OSS_BRIEF_SLICE_REGISTRY;
   }
   return null;
 }
@@ -1005,4 +1076,10 @@ module.exports = {
   resolveBypassTable,
   resolveEvaluatorKnowledge,
   slimSurfaceForBrief,
+  // Plane O cycle O.6 — OSS brief slice registry + repo_workflow stanza.
+  OSS_BRIEF_SLICE_REGISTRY,
+  OSS_LENSES,
+  REPO_WORKFLOW_TEXT,
+  briefSliceRegistryForProfile,
+  isOssLens,
 };

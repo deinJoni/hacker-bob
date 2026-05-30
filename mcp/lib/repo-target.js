@@ -1331,6 +1331,234 @@ function repoCheck({
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Cycle O.6 — OSS observation kinds.
+//
+// These are `kind` VALUES inside `observation.recorded` payloads — NOT new
+// top-level FRONTIER_EVENT_KINDS. Producers stamp them on
+// `payload.observation_kind` (matching the T.5 jwt_observed precedent).
+// Pack-surfacing predicates (cli-tool-packs.js applicable_when) read the
+// observation list and fire on these kind values.
+//
+// Per O-P7 every payload must pass `validateNoSensitiveMaterial`. The
+// recorder builds the payload, validates it, then appends a `surface.observed`
+// or `observation.recorded` event with the appropriate observation_kind
+// stamped on `payload`.
+//
+// NO raw secret values. config_misuse_observed carries `value_hash` (sha256)
+// not the raw value; dependency_observed carries only `known_cve_ids[]` plus
+// metadata (no advisory body); unsafe_sink_observed carries only the symbol
+// name + sink classification (no code snippet); crash_observed carries an
+// `asan_report_hash` (sha256) not the raw report.
+
+const OSS_OBSERVATION_KIND_VALUES = Object.freeze([
+  "dependency_observed",
+  "unsafe_sink_observed",
+  "crash_observed",
+  "config_misuse_observed",
+]);
+
+function isOssObservationKind(value) {
+  return typeof value === "string" && OSS_OBSERVATION_KIND_VALUES.includes(value);
+}
+
+// Field-shape validators per observation kind. Each returns the normalized
+// payload (after a deep-clone-and-validate pass) or throws a structured
+// ToolError when the shape is wrong. The validator does NOT enrich the
+// payload — producers are responsible for providing every required field.
+
+function assertNonEmptyStringField(value, fieldName) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `${fieldName} must be a non-empty string`,
+    );
+  }
+  return value.trim();
+}
+
+function assertOptionalStringField(value, fieldName) {
+  if (value == null) return null;
+  return assertNonEmptyStringField(value, fieldName);
+}
+
+function assertOptionalIntegerField(value, fieldName) {
+  if (value == null) return null;
+  if (!Number.isInteger(value)) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `${fieldName} must be an integer`,
+    );
+  }
+  return value;
+}
+
+function assertOptionalStringArray(value, fieldName) {
+  if (value == null) return null;
+  if (!Array.isArray(value)) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `${fieldName} must be a string array`,
+    );
+  }
+  const out = [];
+  for (let i = 0; i < value.length; i += 1) {
+    const entry = value[i];
+    if (typeof entry !== "string" || !entry.trim()) {
+      throw new ToolError(
+        ERROR_CODES.INVALID_ARGUMENTS,
+        `${fieldName}[${i}] must be a non-empty string`,
+      );
+    }
+    out.push(entry.trim());
+  }
+  return out;
+}
+
+function assertBooleanField(value, fieldName) {
+  if (typeof value !== "boolean") {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `${fieldName} must be a boolean`,
+    );
+  }
+  return value;
+}
+
+function buildDependencyObservedPayload(input) {
+  const payload = {
+    observation_kind: "dependency_observed",
+    ecosystem: assertNonEmptyStringField(input.ecosystem, "ecosystem"),
+    package: assertNonEmptyStringField(input.package, "package"),
+    version: assertNonEmptyStringField(input.version, "version"),
+    manifest_path: assertNonEmptyStringField(input.manifest_path, "manifest_path"),
+    has_lockfile: assertBooleanField(input.has_lockfile, "has_lockfile"),
+  };
+  const cveIds = assertOptionalStringArray(input.known_cve_ids, "known_cve_ids");
+  if (cveIds && cveIds.length > 0) {
+    payload.known_cve_ids = cveIds;
+  }
+  validateNoSensitiveMaterial(payload, "oss_observation.dependency_observed");
+  return payload;
+}
+
+function buildUnsafeSinkObservedPayload(input) {
+  const payload = {
+    observation_kind: "unsafe_sink_observed",
+    file_path: assertNonEmptyStringField(input.file_path, "file_path"),
+    symbol: assertNonEmptyStringField(input.symbol, "symbol"),
+    sink_kind: assertNonEmptyStringField(input.sink_kind, "sink_kind"),
+    language: assertNonEmptyStringField(input.language, "language"),
+  };
+  validateNoSensitiveMaterial(payload, "oss_observation.unsafe_sink_observed");
+  return payload;
+}
+
+function buildCrashObservedPayload(input) {
+  const payload = {
+    observation_kind: "crash_observed",
+    harness: assertNonEmptyStringField(input.harness, "harness"),
+    exit_code: assertOptionalIntegerField(input.exit_code, "exit_code"),
+    asan_report_hash: assertNonEmptyStringField(input.asan_report_hash, "asan_report_hash"),
+  };
+  if (payload.exit_code == null) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "exit_code is required for crash_observed",
+    );
+  }
+  const filePath = assertOptionalStringField(input.file_path, "file_path");
+  if (filePath) payload.file_path = filePath;
+  const signal = assertOptionalStringField(input.signal, "signal");
+  if (signal) payload.signal = signal;
+  validateNoSensitiveMaterial(payload, "oss_observation.crash_observed");
+  return payload;
+}
+
+function buildConfigMisuseObservedPayload(input) {
+  // `key` carries the config key name (not the secret value); `value_hash` is
+  // a sha256 of the value bytes so downstream can dedupe / fingerprint without
+  // ever persisting the raw value. The sensitive-material guard will reject
+  // payloads where `key` matches the SENSITIVE_KEY_RE pattern unless the
+  // suffix is safe; producers SHOULD pass a safe-shaped key like
+  // `config_misuse_key` and stash the raw key in a separate field — but here
+  // we accept the raw config key because operators expect to see
+  // "TLS_CIPHER_LIST" or "debug_mode" verbatim. The guard runs against the
+  // OUTER payload object's keys, not on the string value held in `key`.
+  const payload = {
+    observation_kind: "config_misuse_observed",
+    file_path: assertNonEmptyStringField(input.file_path, "file_path"),
+    key: assertNonEmptyStringField(input.key, "key"),
+    value_hash: assertNonEmptyStringField(input.value_hash, "value_hash"),
+    misuse_class: assertNonEmptyStringField(input.misuse_class, "misuse_class"),
+  };
+  validateNoSensitiveMaterial(payload, "oss_observation.config_misuse_observed");
+  return payload;
+}
+
+const OSS_OBSERVATION_BUILDERS = Object.freeze({
+  dependency_observed: buildDependencyObservedPayload,
+  unsafe_sink_observed: buildUnsafeSinkObservedPayload,
+  crash_observed: buildCrashObservedPayload,
+  config_misuse_observed: buildConfigMisuseObservedPayload,
+});
+
+function buildOssObservationPayload(kind, input) {
+  const builder = OSS_OBSERVATION_BUILDERS[kind];
+  if (!builder) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `Unknown OSS observation kind: ${kind}`,
+    );
+  }
+  if (input == null || typeof input !== "object" || Array.isArray(input)) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `OSS observation payload for ${kind} must be a plain object`,
+    );
+  }
+  return builder(input);
+}
+
+// Emit an `observation.recorded` frontier event carrying an OSS observation
+// payload. Producers (static analyzers via bob_repo_check, fuzz runs via
+// bob_repo_docker_run, dependency walkers via bob_repo_inventory follow-ups)
+// call this with the kind + structured payload.
+function recordOssObservation({
+  target_domain: targetDomain,
+  surface_id: surfaceId,
+  observation_kind: observationKind,
+  payload,
+  source_ref: sourceRef = null,
+} = {}) {
+  const domain = assertSafeDomain(targetDomain);
+  const sid = assertNonEmptyStringField(surfaceId, "surface_id");
+  const kind = assertNonEmptyStringField(observationKind, "observation_kind");
+  if (!isOssObservationKind(kind)) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `observation_kind must be one of ${OSS_OBSERVATION_KIND_VALUES.join(", ")}`,
+    );
+  }
+  const builtPayload = buildOssObservationPayload(kind, payload);
+  const event = appendFrontierEvent({
+    target_domain: domain,
+    kind: "observation.recorded",
+    surface_id: sid,
+    payload: builtPayload,
+    source: {
+      artifact: "repo-inventory.json",
+      ref: sourceRef == null ? null : String(sourceRef),
+    },
+  });
+  try {
+    scheduleMaterialization(domain);
+  } catch {
+    // Best-effort: the next producer event will trigger materialization.
+  }
+  return event;
+}
+
 module.exports = {
   deriveRepoTargetDomain,
   deriveRepoHashFromPath,
@@ -1346,6 +1574,12 @@ module.exports = {
   RepoTooLargeError,
   safeBasename,
   sha8,
+  // Cycle O.6 OSS observation kinds.
+  OSS_OBSERVATION_KIND_VALUES,
+  OSS_OBSERVATION_BUILDERS,
+  isOssObservationKind,
+  buildOssObservationPayload,
+  recordOssObservation,
 };
 
 // Quieter shadow imports kept for parity with other session-init paths.
