@@ -716,8 +716,11 @@ test("orchestrator skill stays bounded and reflects the lifecycle topology", () 
   // appends one line to the auto-generated allowed-tools block in SKILL.md.
   // Cycle O.2 added bob_repo_inventory to the same bundle (+1 line).
   // Cycle O.3 added bob_repo_prepare_env (+1 line).
-  // Cycle O.9 may bump the cap further when the OSS branch lands.
-  assert.ok(lines <= 323, `bob-evaluate skill is ${lines} lines (cap 323)`);
+  // Cycle O.9 wired the orchestrator OSS branch + re-entry reconciliation
+  // contract; the role narrative grew by ~30 lines to cover argument parsing,
+  // target-axis branching, OSS lenses, the SETUP repo-mode sub-flow, and the
+  // explicit O-P8 contract. Cap bumped from 323 → 360.
+  assert.ok(lines <= 360, `bob-evaluate skill is ${lines} lines (cap 360)`);
   const skill = readFile(".claude/skills/bob-evaluate/SKILL.md");
   assert.match(
     skill,

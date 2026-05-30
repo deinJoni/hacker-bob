@@ -65,5 +65,6 @@
   "test/pack-telemetry.test.js",
   "test/oss-surfacing.test.js",
   "test/oss-blocked-harness.test.js",
-  "test/oss-evidence-reference.test.js"
+  "test/oss-evidence-reference.test.js",
+  "test/orchestrator-oss-branch.test.js"
 ]
