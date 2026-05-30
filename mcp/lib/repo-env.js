@@ -45,6 +45,9 @@ const {
 } = require("./validation.js");
 const {
   assertSafeDomain,
+  repoCommandRunsJsonlPath,
+  repoRunsDir,
+  repoWorkDir,
   sessionDir,
 } = require("./paths.js");
 const {
@@ -56,6 +59,7 @@ const {
   hashDocumentExcluding,
 } = require("./fabric-common.js");
 const {
+  appendJsonlLine,
   withSessionLock,
 } = require("./storage.js");
 const {
@@ -702,12 +706,627 @@ async function prepareRepoEnv({
   };
 }
 
+// =====================================================================
+// Cycle O.4 — sandboxed docker execution via bob_repo_docker_run
+// =====================================================================
+//
+// `repoDockerRun` is the OSS-axis evaluator entrypoint that runs an
+// operator-vetted command inside the per-session image built in O.3.
+//
+// Plane O invariants enforced here:
+//
+//   O-P3  Every constructed argv carries the FULL sandbox flag set:
+//         --cap-drop ALL, --security-opt no-new-privileges,
+//         --user 1000:1000, --cpus 2, --memory 4g, --pids-limit 1024,
+//         --read-only-tmpfs, --tmpfs /tmp:size=512m, and
+//         --network none by default (or --network bridge when the
+//         operator explicitly sets allow_network: true). Tests assert
+//         each flag individually so a regression that drops one shows
+//         up as a single specific failure.
+//
+//   O-D6  Refuses to run when image_tag doesn't match the session's
+//         derived tag (computed from the SessionNucleus-pinned
+//         repo_hash). This blocks an evaluator from sneaking a
+//         cross-session image into the run path.
+//
+//   O-P7  Persistence routes the JSONL entry through
+//         validateNoSensitiveMaterial. The JSONL NEVER carries raw
+//         stdout/stderr — only the path + sha256 of the capture file.
+//         Raw stdout/stderr files in repo-runs/ are protected by
+//         session-read-guard.sh extensions in O.7.
+//
+//   O.4-§9 Allowed role-bundles: evaluator-shared, verifier, evidence.
+//         The orchestrator dispatches; it does NOT execute docker.
+//
+// Defaults: dry_run: true, allow_network: false,
+// repo_mount_mode: "read_only", timeout_ms: 300_000 (max 600_000).
+//
+// Dry-run shape: still validates inputs, constructs the argv, records
+// {dry_run: true, planned_argv, ...} to repo-command-runs.jsonl, and
+// returns the run plan. No docker invocation, no capture files.
+
+const REPO_DOCKER_RUN_VERSION = 1;
+const REPO_DOCKER_RUN_DEFAULT_TIMEOUT_MS = 300_000;
+const REPO_DOCKER_RUN_MAX_TIMEOUT_MS = 600_000;
+const REPO_DOCKER_RUN_MAX_OUTPUT_BYTES = 16 * 1024 * 1024; // 16 MB per stream
+const REPO_DOCKER_RUN_MAX_COMMAND_TOKENS = 64;
+const REPO_DOCKER_RUN_MAX_TOKEN_LENGTH = 2048;
+const REPO_MOUNT_MODE_VALUES = Object.freeze(["read_only", "read_write"]);
+const REPO_DOCKER_RUN_DNS = "1.1.1.1";
+const REPO_DOCKER_RUN_PROXY_ARG = Object.freeze({
+  http: "HTTP_PROXY",
+  https: "HTTPS_PROXY",
+  no: "NO_PROXY",
+});
+
+function sha256Hex(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function generateRunId() {
+  // 8-hex prefix from the ISO timestamp keeps run ids loosely
+  // chronological (helps when scanning repo-runs/ by name) without
+  // depending on a global counter that would need locking.
+  const stamp = Date.now().toString(16).padStart(12, "0");
+  const noise = crypto.randomBytes(4).toString("hex");
+  return `run-${stamp}-${noise}`;
+}
+
+function assertCommandArray(command) {
+  if (!Array.isArray(command) || command.length === 0) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "command must be a non-empty array of string tokens",
+    );
+  }
+  if (command.length > REPO_DOCKER_RUN_MAX_COMMAND_TOKENS) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `command must have at most ${REPO_DOCKER_RUN_MAX_COMMAND_TOKENS} tokens`,
+    );
+  }
+  const normalized = [];
+  for (let i = 0; i < command.length; i++) {
+    const raw = command[i];
+    if (typeof raw !== "string" || raw.length === 0) {
+      throw new ToolError(
+        ERROR_CODES.INVALID_ARGUMENTS,
+        `command[${i}] must be a non-empty string`,
+      );
+    }
+    if (raw.length > REPO_DOCKER_RUN_MAX_TOKEN_LENGTH) {
+      throw new ToolError(
+        ERROR_CODES.INVALID_ARGUMENTS,
+        `command[${i}] must be at most ${REPO_DOCKER_RUN_MAX_TOKEN_LENGTH} characters`,
+      );
+    }
+    normalized.push(raw);
+  }
+  return normalized;
+}
+
+// Build the docker run argv. Each O-P3 sandbox flag is emitted in
+// fixed order so the test suite can assert per-flag presence by
+// indexOf. The function is pure (no I/O) so tests exercise it
+// directly without a temp session.
+function buildDockerRunArgv({
+  repoRoot,
+  workDir,
+  imageTag,
+  command,
+  allowNetwork,
+  repoMountMode,
+  egressProfile,
+}) {
+  if (!repoRoot || !workDir || !imageTag || !Array.isArray(command) || command.length === 0) {
+    throw new Error("buildDockerRunArgv requires repoRoot, workDir, imageTag, command");
+  }
+  const args = ["run", "--rm"];
+  // Network: --network none by default. When allow_network is true we
+  // attach the standard bridge network and pin DNS to 1.1.1.1 so the
+  // host's resolver (which may carry secret tokens via /etc/hosts
+  // shadowing or local stub resolvers) is bypassed.
+  args.push("--network", allowNetwork ? "bridge" : "none");
+  if (allowNetwork) {
+    args.push("--dns", REPO_DOCKER_RUN_DNS);
+  }
+  // O-P3 mandatory sandbox flags — order is the doc's order so reviewers
+  // can scan the argv and the spec block side-by-side.
+  args.push("--cap-drop", "ALL");
+  args.push("--security-opt", "no-new-privileges");
+  args.push("--user", "1000:1000");
+  args.push("--cpus", "2");
+  args.push("--memory", "4g");
+  args.push("--pids-limit", "1024");
+  args.push("--read-only-tmpfs");
+  args.push("--tmpfs", "/tmp:size=512m");
+  // Mounts: /src is the bound repo (read-only by default), /work is
+  // session-scoped writable space for build artefacts.
+  const mountSuffix = repoMountMode === "read_write" ? "rw" : "ro";
+  args.push("-v", `${repoRoot}:/src:${mountSuffix}`);
+  args.push("-v", `${workDir}:/work:rw`);
+  // Proxy: --env (run-time), NEVER ENV in the image. Skipping these
+  // when allow_network=false keeps the offline path airtight.
+  if (allowNetwork) {
+    const proxyUrl = egressProfile && egressProfile.proxy_url
+      ? egressProfile.proxy_url
+      : null;
+    if (proxyUrl) {
+      args.push("--env", `${REPO_DOCKER_RUN_PROXY_ARG.http}=${proxyUrl}`);
+      args.push("--env", `${REPO_DOCKER_RUN_PROXY_ARG.https}=${proxyUrl}`);
+    }
+  }
+  args.push(imageTag);
+  for (const token of command) {
+    args.push(token);
+  }
+  return {
+    command: "docker",
+    args,
+    env: {},
+  };
+}
+
+// Default spawn-based runtime. The runtime contract is:
+//   await runtime.run({command, args, timeout_ms, stdoutPath, stderrPath})
+// returns {exit_code, signal, duration_ms, timed_out, stdout_bytes,
+//          stderr_bytes, stdout_truncated, stderr_truncated}.
+//
+// Stdout/stderr are streamed to disk (capped at 16 MB each) — never
+// held in process memory. Tests inject a stub so they can assert the
+// constructed argv and synthesize an exit code without actually
+// invoking docker.
+function defaultDockerRuntime() {
+  return {
+    async run({ command, args, timeoutMs, stdoutPath, stderrPath }) {
+      const { spawn } = require("child_process");
+      return new Promise((resolve, reject) => {
+        let child;
+        try {
+          child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+        } catch (error) {
+          reject(error);
+          return;
+        }
+        const stdoutFd = fs.openSync(stdoutPath, "w");
+        const stderrFd = fs.openSync(stderrPath, "w");
+        let stdoutBytes = 0;
+        let stderrBytes = 0;
+        let stdoutTruncated = false;
+        let stderrTruncated = false;
+        let timedOut = false;
+        const startedAt = Date.now();
+        const timer = setTimeout(() => {
+          timedOut = true;
+          try { child.kill("SIGTERM"); } catch {}
+          setTimeout(() => {
+            try { child.kill("SIGKILL"); } catch {}
+          }, 5000);
+        }, timeoutMs);
+        child.stdout.on("data", (chunk) => {
+          const remaining = REPO_DOCKER_RUN_MAX_OUTPUT_BYTES - stdoutBytes;
+          if (remaining > 0) {
+            const slice = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
+            fs.writeSync(stdoutFd, slice, 0, slice.length);
+          } else {
+            stdoutTruncated = true;
+          }
+          stdoutBytes += chunk.length;
+          if (stdoutBytes > REPO_DOCKER_RUN_MAX_OUTPUT_BYTES) stdoutTruncated = true;
+        });
+        child.stderr.on("data", (chunk) => {
+          const remaining = REPO_DOCKER_RUN_MAX_OUTPUT_BYTES - stderrBytes;
+          if (remaining > 0) {
+            const slice = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
+            fs.writeSync(stderrFd, slice, 0, slice.length);
+          } else {
+            stderrTruncated = true;
+          }
+          stderrBytes += chunk.length;
+          if (stderrBytes > REPO_DOCKER_RUN_MAX_OUTPUT_BYTES) stderrTruncated = true;
+        });
+        child.on("error", (error) => {
+          clearTimeout(timer);
+          try { fs.closeSync(stdoutFd); } catch {}
+          try { fs.closeSync(stderrFd); } catch {}
+          reject(error);
+        });
+        child.on("close", (code, signal) => {
+          clearTimeout(timer);
+          try { fs.closeSync(stdoutFd); } catch {}
+          try { fs.closeSync(stderrFd); } catch {}
+          resolve({
+            exit_code: code,
+            signal,
+            duration_ms: Date.now() - startedAt,
+            timed_out: timedOut,
+            stdout_bytes: stdoutBytes,
+            stderr_bytes: stderrBytes,
+            stdout_truncated: stdoutTruncated,
+            stderr_truncated: stderrTruncated,
+          });
+        });
+      });
+    },
+    async execFile(command, args, options = {}) {
+      // Used for `docker --version` probes. The default falls through to
+      // the same execFilePromise used by prepareRepoEnv.
+      return execFilePromise(command, args, options);
+    },
+  };
+}
+
+async function dockerCliAvailable(runtime) {
+  const runner = runtime && typeof runtime.execFile === "function"
+    ? runtime.execFile
+    : execFilePromise;
+  try {
+    await runner("docker", ["--version"], { timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Hash the stdout/stderr file for use in the JSONL row. The hash is
+// what callers verify against the EvidenceReference in O.8.
+function hashFile(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const data = fs.readFileSync(filePath);
+    return sha256Hex(data);
+  } catch {
+    return null;
+  }
+}
+
+// Normalize replay_context. Operators pass {wave, agent, surface_id?, ...}
+// so we can correlate runs back to their evaluator dispatch. The shape
+// must not carry secrets (sensitive-material scan catches that).
+function normalizeReplayContext(value) {
+  if (value == null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "replay_context must be an object when provided",
+    );
+  }
+  const allowedKeys = new Set([
+    "wave",
+    "agent",
+    "surface_id",
+    "task_lens",
+    "technique_pack_id",
+    "purpose",
+    "operator_note",
+  ]);
+  const out = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (!allowedKeys.has(key)) continue;
+    if (raw == null) continue;
+    if (typeof raw === "number") {
+      out[key] = raw;
+      continue;
+    }
+    if (typeof raw === "string") {
+      const trimmed = raw.trim();
+      if (trimmed.length > 256) {
+        throw new ToolError(
+          ERROR_CODES.INVALID_ARGUMENTS,
+          `replay_context.${key} must be at most 256 characters`,
+        );
+      }
+      if (trimmed) out[key] = trimmed;
+      continue;
+    }
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `replay_context.${key} must be a string or number`,
+    );
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+async function repoDockerRun({
+  target_domain: targetDomain,
+  command,
+  dry_run: dryRun = true,
+  allow_network: allowNetwork = false,
+  repo_mount_mode: repoMountMode = "read_only",
+  image_tag: imageTagOverride = null,
+  timeout_ms: timeoutMsOverride = null,
+  replay_context: replayContextRaw = null,
+  blocked_harness_run_id: blockedHarnessRunIdRaw = null,
+  egress_profile: egressProfileNameOverride = null,
+  runtime = null,
+} = {}) {
+  const domain = assertSafeDomain(targetDomain);
+  const repoSession = readRepoSession(domain);
+  const repoRoot = repoSession.target_repo.root_path;
+  if (!fs.existsSync(repoRoot) || !fs.statSync(repoRoot).isDirectory()) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `bound repo path is no longer a directory: ${repoRoot}`,
+      { repo_error_code: "repo_path_not_directory" },
+    );
+  }
+
+  const normalizedCommand = assertCommandArray(command);
+  const normalizedDryRun = dryRun == null ? true : assertBoolean(dryRun, "dry_run");
+  const normalizedAllowNetwork = allowNetwork == null ? false : assertBoolean(allowNetwork, "allow_network");
+  const normalizedMountMode = assertEnumValue(
+    repoMountMode == null ? "read_only" : repoMountMode,
+    REPO_MOUNT_MODE_VALUES,
+    "repo_mount_mode",
+  );
+  const normalizedTimeoutMs = timeoutMsOverride == null
+    ? REPO_DOCKER_RUN_DEFAULT_TIMEOUT_MS
+    : assertInteger(timeoutMsOverride, "timeout_ms", {
+      min: 1000,
+      max: REPO_DOCKER_RUN_MAX_TIMEOUT_MS,
+    });
+  const normalizedReplayContext = normalizeReplayContext(replayContextRaw);
+  const normalizedBlockedHarnessRunId = blockedHarnessRunIdRaw == null
+    ? null
+    : assertNonEmptyString(blockedHarnessRunIdRaw, "blocked_harness_run_id");
+
+  // Image tag is bound to the session's pinned repo_hash. An explicit
+  // override is allowed but only when it matches the derived tag — O-D6
+  // refuses cross-session images so we never accidentally run a poisoned
+  // layer from a previous session.
+  const expectedImageTag = buildImageTag(domain, repoSession.repo_hash);
+  let imageTag = expectedImageTag;
+  if (imageTagOverride != null) {
+    const provided = assertNonEmptyString(imageTagOverride, "image_tag");
+    if (provided !== expectedImageTag) {
+      throw new ToolError(
+        ERROR_CODES.INVALID_ARGUMENTS,
+        `image_tag does not match the session's derived tag; got ${provided}, expected ${expectedImageTag}`,
+        {
+          repo_error_code: "image_tag_mismatch",
+          provided_image_tag: provided,
+          expected_image_tag: expectedImageTag,
+          violated_invariant: "O-D6",
+        },
+      );
+    }
+    imageTag = provided;
+  }
+
+  // Resolve egress profile if the operator opened the network. We
+  // surface the profile summary in the JSONL row for provenance and
+  // thread the proxy_url into the run-time --env flags.
+  let egressProfileResolved = null;
+  try {
+    const { state } = readSessionStateStrict(domain);
+    const profileName = egressProfileNameOverride || state.egress_profile || "default";
+    egressProfileResolved = resolveEgressProfile(profileName);
+  } catch (error) {
+    if (normalizedAllowNetwork) {
+      throw new ToolError(
+        ERROR_CODES.INVALID_ARGUMENTS,
+        `failed to resolve egress profile for repo docker run: ${error.message || error}`,
+        { repo_error_code: "egress_profile_unresolved" },
+      );
+    }
+  }
+  const egressProfileSummary = egressProfileResolved
+    ? {
+        name: egressProfileResolved.name,
+        region: egressProfileResolved.region,
+        proxy_configured: egressProfileResolved.proxy_configured,
+        proxy_url_redacted: egressProfileResolved.proxy_url_redacted,
+        egress_profile_identity_hash: egressProfileResolved.egress_profile_identity_hash,
+      }
+    : null;
+
+  // Build the argv deterministically before any I/O so dry-run and
+  // live-run paths share the exact same flags.
+  const workDir = repoWorkDir(domain);
+  const argv = buildDockerRunArgv({
+    repoRoot,
+    workDir,
+    imageTag,
+    command: normalizedCommand,
+    allowNetwork: normalizedAllowNetwork,
+    repoMountMode: normalizedMountMode,
+    egressProfile: egressProfileResolved,
+  });
+  const commandHash = sha256Hex(JSON.stringify(normalizedCommand));
+  const argvHash = sha256Hex(JSON.stringify(argv.args));
+  const runId = generateRunId();
+  const runsDir = repoRunsDir(domain);
+  const stdoutPath = path.join(runsDir, `${runId}.stdout`);
+  const stderrPath = path.join(runsDir, `${runId}.stderr`);
+  const startedAt = new Date().toISOString();
+
+  // Network mode is the value we'd hand to docker --network. We capture
+  // it in the JSONL row so a reviewer can confirm the mode at-a-glance.
+  const networkMode = normalizedAllowNetwork ? "bridge" : "none";
+
+  // Phase 1: persist the plan. dry_run records a plan row and returns.
+  if (normalizedDryRun) {
+    const planRow = {
+      version: REPO_DOCKER_RUN_VERSION,
+      run_id: runId,
+      target_domain: domain,
+      dry_run: true,
+      command_hash: commandHash,
+      argv_hash: argvHash,
+      network_mode: networkMode,
+      mount_mode: normalizedMountMode,
+      image_tag: imageTag,
+      timeout_ms: normalizedTimeoutMs,
+      planned_at: startedAt,
+      planned_argv: argv.args,
+      egress_profile: egressProfileSummary,
+    };
+    if (normalizedReplayContext) planRow.replay_context = normalizedReplayContext;
+    if (normalizedBlockedHarnessRunId) planRow.blocked_harness_run_id = normalizedBlockedHarnessRunId;
+    // O-P7: scrub-validate before persistence. planned_argv carries the
+    // command tokens; if a future caller smuggles a token like
+    // "Authorization: Bearer ..." the validator catches it.
+    validateNoSensitiveMaterial(planRow, "repo_command_runs");
+    withSessionLock(domain, () => {
+      fs.mkdirSync(runsDir, { recursive: true });
+      fs.mkdirSync(workDir, { recursive: true });
+      appendJsonlLine(repoCommandRunsJsonlPath(domain), planRow);
+    });
+    return {
+      created: true,
+      target_domain: domain,
+      run_id: runId,
+      dry_run: true,
+      image_tag: imageTag,
+      network_mode: networkMode,
+      mount_mode: normalizedMountMode,
+      command_hash: commandHash,
+      argv_hash: argvHash,
+      planned_argv: argv.args,
+      stdout_path: null,
+      stderr_path: null,
+      stdout_hash: null,
+      stderr_hash: null,
+      exit_code: null,
+      duration_ms: null,
+      timed_out: false,
+      egress_profile: egressProfileSummary,
+      replay_context: normalizedReplayContext,
+      blocked_harness_run_id: normalizedBlockedHarnessRunId,
+    };
+  }
+
+  // Live mode: ensure docker is available, prepare capture files, exec
+  // via the runtime, hash the captures, then persist the JSONL row.
+  const runtimeImpl = runtime || defaultDockerRuntime();
+  const dockerAvailable = await dockerCliAvailable(runtimeImpl);
+  if (!dockerAvailable) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "docker is not installed or not in PATH; rerun with dry_run: true",
+      { repo_error_code: "docker_unavailable" },
+    );
+  }
+  withSessionLock(domain, () => {
+    fs.mkdirSync(runsDir, { recursive: true });
+    fs.mkdirSync(workDir, { recursive: true });
+    // Touch the capture files so the runtime always writes to a path
+    // owned by the session (avoids races where a stub runtime returns
+    // without creating the file).
+    fs.writeFileSync(stdoutPath, "");
+    fs.writeFileSync(stderrPath, "");
+  });
+  let runResult;
+  try {
+    runResult = await runtimeImpl.run({
+      command: argv.command,
+      args: argv.args,
+      timeoutMs: normalizedTimeoutMs,
+      stdoutPath,
+      stderrPath,
+    });
+  } catch (error) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `docker run failed to start: ${error.message || error}`,
+      { repo_error_code: "docker_run_spawn_failed", run_id: runId },
+    );
+  }
+  if (!runResult || typeof runResult !== "object") {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "runtime.run must return a result object",
+      { repo_error_code: "docker_run_runtime_invalid" },
+    );
+  }
+  const exitCode = typeof runResult.exit_code === "number" ? runResult.exit_code : null;
+  const signal = typeof runResult.signal === "string" ? runResult.signal : null;
+  const durationMs = typeof runResult.duration_ms === "number" ? runResult.duration_ms : null;
+  const timedOut = runResult.timed_out === true;
+  const stdoutBytes = typeof runResult.stdout_bytes === "number" ? runResult.stdout_bytes : 0;
+  const stderrBytes = typeof runResult.stderr_bytes === "number" ? runResult.stderr_bytes : 0;
+  const stdoutTruncated = runResult.stdout_truncated === true;
+  const stderrTruncated = runResult.stderr_truncated === true;
+  const stdoutHash = hashFile(stdoutPath);
+  const stderrHash = hashFile(stderrPath);
+  const completedAt = new Date().toISOString();
+
+  const liveRow = {
+    version: REPO_DOCKER_RUN_VERSION,
+    run_id: runId,
+    target_domain: domain,
+    dry_run: false,
+    command_hash: commandHash,
+    argv_hash: argvHash,
+    network_mode: networkMode,
+    mount_mode: normalizedMountMode,
+    image_tag: imageTag,
+    timeout_ms: normalizedTimeoutMs,
+    started_at: startedAt,
+    completed_at: completedAt,
+    exit_code: exitCode,
+    signal,
+    duration_ms: durationMs,
+    timed_out: timedOut,
+    stdout_path: stdoutPath,
+    stderr_path: stderrPath,
+    stdout_bytes: stdoutBytes,
+    stderr_bytes: stderrBytes,
+    stdout_truncated: stdoutTruncated,
+    stderr_truncated: stderrTruncated,
+    stdout_hash: stdoutHash,
+    stderr_hash: stderrHash,
+    egress_profile: egressProfileSummary,
+  };
+  if (normalizedReplayContext) liveRow.replay_context = normalizedReplayContext;
+  if (normalizedBlockedHarnessRunId) liveRow.blocked_harness_run_id = normalizedBlockedHarnessRunId;
+  // O-P7: pre-flight before persistence. The validator catches both the
+  // forbidden key shape (e.g. a stray "authorization" sub-field) and
+  // value shape (e.g. a JWT-shaped path). Raw stdout/stderr never lands
+  // here — only the path + hash — so the regression is purely guarding
+  // against future producer slips.
+  validateNoSensitiveMaterial(liveRow, "repo_command_runs");
+  withSessionLock(domain, () => {
+    appendJsonlLine(repoCommandRunsJsonlPath(domain), liveRow);
+  });
+
+  return {
+    created: true,
+    target_domain: domain,
+    run_id: runId,
+    dry_run: false,
+    image_tag: imageTag,
+    network_mode: networkMode,
+    mount_mode: normalizedMountMode,
+    command_hash: commandHash,
+    argv_hash: argvHash,
+    planned_argv: argv.args,
+    stdout_path: stdoutPath,
+    stderr_path: stderrPath,
+    stdout_hash: stdoutHash,
+    stderr_hash: stderrHash,
+    stdout_bytes: stdoutBytes,
+    stderr_bytes: stderrBytes,
+    stdout_truncated: stdoutTruncated,
+    stderr_truncated: stderrTruncated,
+    exit_code: exitCode,
+    signal,
+    duration_ms: durationMs,
+    timed_out: timedOut,
+    egress_profile: egressProfileSummary,
+    replay_context: normalizedReplayContext,
+    blocked_harness_run_id: normalizedBlockedHarnessRunId,
+  };
+}
+
 module.exports = {
   // Public API
   prepareRepoEnv,
+  repoDockerRun,
   // Helpers exposed for cross-module reuse / tests
   buildDockerfileBob,
   buildDockerBuildArgv,
+  buildDockerRunArgv,
   buildImageTag,
   detectLanguageProfile,
   recommendedCommandsFor,
@@ -719,7 +1338,12 @@ module.exports = {
   DEFAULT_DOCKER_BUILD_TIMEOUT_MS,
   MAX_DOCKER_BUILD_TIMEOUT_MS,
   RECOMMENDED_COMMAND_ROLES,
+  REPO_DOCKER_RUN_DEFAULT_TIMEOUT_MS,
+  REPO_DOCKER_RUN_MAX_OUTPUT_BYTES,
+  REPO_DOCKER_RUN_MAX_TIMEOUT_MS,
+  REPO_DOCKER_RUN_VERSION,
   REPO_ENV_VERSION,
+  REPO_MOUNT_MODE_VALUES,
   C_DEFAULT_APT_PACKAGES,
   NFS_EXTRA_APT_PACKAGES,
   ENV_SECRET_LEAK_RE,

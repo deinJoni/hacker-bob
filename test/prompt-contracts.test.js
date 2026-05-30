@@ -911,11 +911,13 @@ test("evaluator agents stay under their MCP tool budget", () => {
   // more — bob_browser_session_start_recording and
   // bob_browser_flush_recorded_requests — so the same evaluators can capture
   // client-side auth flows and pivot via bob_http_scan for mutate-and-replay.
+  // Cycle O.4 (Plane O) adds bob_repo_docker_run to evaluator-shared so the
+  // OSS axis can drive sandboxed docker runs from the same evaluator agent.
   // The browser-driver family is opaque-context (one verb per command, idle/
   // hard timeouts reap sessions) so it doesn't compound brief-rendered text;
-  // budgets are bumped by +2 (SC 30→32, web 32→34) to keep parity with the
-  // role bundle's actual surface.
-  const EVALUATOR_MCP_TOOL_BUDGET = 32;
+  // budgets stay bumped (SC 30→33, web 32→35) to keep parity with the role
+  // bundle's actual surface.
+  const EVALUATOR_MCP_TOOL_BUDGET = 33;
   const agentNameToRoleId = {};
   for (const [roleId, spec] of Object.entries(CLAUDE_ROLE_SPECS)) {
     if (spec.kind === "agent" && typeof spec.output_path === "string") {
@@ -924,7 +926,7 @@ test("evaluator agents stay under their MCP tool budget", () => {
   }
   for (const pack of Object.values(CAPABILITY_PACKS)) {
     const roleId = agentNameToRoleId[pack.evaluator_agent];
-    const budget = pack.brief_profile === "web" ? 34 : EVALUATOR_MCP_TOOL_BUDGET;
+    const budget = pack.brief_profile === "web" ? 35 : EVALUATOR_MCP_TOOL_BUDGET;
     assert.ok(
       mcpToolNamesForRole(roleId).length <= budget,
       `pack ${pack.id} evaluator over budget (got ${mcpToolNamesForRole(roleId).length}, budget ${budget})`,
@@ -939,9 +941,17 @@ test("evaluator agents stay under their MCP tool budget", () => {
 test("verifier role bundle exposes the documented mutating set and no orchestration mutators", () => {
   const verifierTools = toolNamesForRoleBundle("verifier");
   const mutating = verifierTools.filter((name) => TOOL_MANIFEST[name].mutating);
+  // Cycle O.4 (Plane O) adds bob_repo_docker_run to the verifier bundle so
+  // verifiers can replay sandboxed docker runs against bound repo sessions
+  // without escalating to a claim-writing tool.
   assert.deepEqual(
     mutating.sort(),
-    ["bob_evm_fetch_source", "bob_http_scan", "bob_write_verification_round"].sort(),
+    [
+      "bob_evm_fetch_source",
+      "bob_http_scan",
+      "bob_repo_docker_run",
+      "bob_write_verification_round",
+    ].sort(),
   );
   const forbidden = [
     "bob_record_candidate_claim",

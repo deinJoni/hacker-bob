@@ -291,6 +291,27 @@ function repoInventoryPath(domain) {
   return path.join(sessionDir(domain), "repo-inventory.json");
 }
 
+// Cycle O.4: repo-command-runs.jsonl is the append-only run ledger for
+// bob_repo_docker_run. Each entry carries the run id, command hash, exit
+// code, duration, network/mount/image identity, and the on-disk paths to
+// stdout/stderr capture files. NEVER carries raw stdout/stderr content.
+function repoCommandRunsJsonlPath(domain) {
+  return path.join(sessionDir(domain), "repo-command-runs.jsonl");
+}
+
+// Cycle O.4: repo-runs/<run_id>.{stdout,stderr} are the bounded (16 MB
+// each) capture files for each docker run. Lives under sessionDir so
+// session-read-guard.sh can extend BLOCKED_DIRS to it in cycle O.7.
+function repoRunsDir(domain) {
+  return path.join(sessionDir(domain), "repo-runs");
+}
+
+// Cycle O.4: per-session writable area mounted at /work inside the
+// container. Stays out of /src (read-only mount of the bound repo).
+function repoWorkDir(domain) {
+  return path.join(sessionDir(domain), "repo-work");
+}
+
 module.exports = {
   TELEMETRY_DIR_NAME,
   TELEMETRY_TOOL_INVOCATIONS_FILE_NAME,
@@ -308,7 +329,10 @@ module.exports = {
   publicIntelPath,
   queuePolicyPath,
   reportMarkdownPath,
+  repoCommandRunsJsonlPath,
   repoInventoryPath,
+  repoRunsDir,
+  repoWorkDir,
   scopeWarningsPath,
   sessionDir,
   sessionEventsJsonlPath,
