@@ -1,6 +1,21 @@
 "use strict";
 
 const { initSession } = require("../session-state.js");
+const { ERROR_CODES, ToolError } = require("../envelope.js");
+
+// Cycle O.1: web-mode init_session refuses target_repo with a structured
+// pointer to bob_init_repo_session. Cross-mode sessions are opt-in via a
+// separate companion-binding tool (out of scope for O.1).
+function handler(args) {
+  if (args && args.target_repo != null) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "bob_init_session is the web-mode entrypoint; call bob_init_repo_session to bind a repo target",
+      { redirect_to_tool: "bob_init_repo_session" },
+    );
+  }
+  return initSession(args);
+}
 
 module.exports = Object.freeze({
   name: "bob_init_session",
@@ -43,7 +58,7 @@ module.exports = Object.freeze({
       "target_url"
     ]
   },
-  handler: initSession,
+  handler,
   role_bundles: ["orchestrator"],
   mutating: true,
   global_preapproval: false,

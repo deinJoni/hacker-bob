@@ -87,6 +87,7 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_ingest_audit_report: "initialized_session_mutation",
   bob_ingest_schema_doc: "initialized_session_mutation",
   bob_init_session: "bootstrap_session",
+  bob_init_repo_session: "bootstrap_session",
   bob_list_auth_profiles: "initialized_session_read",
   bob_list_candidate_claims: "initialized_session_read",
   bob_log_coverage: "initialized_session_mutation",
@@ -205,6 +206,18 @@ const SHADOW_MISSING_SESSION_CLASSES = new Set([
 ]);
 
 let shadowWarningEmitted = false;
+
+// Cycle O.1: REPO_TARGET_DOMAIN_PATTERN identifies the synthetic
+// `repo-<safeName>-<sha8>` slug minted by initRepoSession. This is the
+// hook the bootstrap rule uses to skip DNS validation (assertHttpScopeDomain
+// rejects non-public-suffix domains) and accept target_repo in place of
+// target_url. The pattern is intentionally narrow: `repo-` prefix, any
+// safe-domain content, terminating in an 8-hex realpath digest.
+const REPO_TARGET_DOMAIN_PATTERN = /^repo-[A-Za-z0-9][A-Za-z0-9._-]*-[0-9a-f]{8}$/;
+
+function isRepoTargetDomain(value) {
+  return typeof value === "string" && REPO_TARGET_DOMAIN_PATTERN.test(value);
+}
 
 function hasOwn(value, key) {
   return Object.prototype.hasOwnProperty.call(value, key);
@@ -510,6 +523,15 @@ function normalizeArgumentTarget(rule, args) {
       match: false,
     });
   }
+  // Cycle O.1: repo-shaped target_domain (repo-<name>-<sha8>) bypasses
+  // assertHttpScopeDomain (which rejects non-public-suffix hosts). The
+  // pattern guard prevents a maliciously-crafted target_domain from
+  // smuggling repo treatment for a domain that is actually a URL.
+  if (REPO_TARGET_DOMAIN_PATTERN.test(args.target_domain.trim())) {
+    const trimmed = args.target_domain.trim();
+    args.target_domain = trimmed;
+    return trimmed;
+  }
   try {
     const normalized = assertHttpScopeDomain(args.target_domain);
     args.target_domain = normalized;
@@ -589,53 +611,93 @@ function readRawAuthorityState(authorityTargetDomain, rule, args) {
     });
   }
 
-  let rawTarget;
-  try {
-    rawTarget = assertHttpScopeDomain(raw.target);
-  } catch {
-    throw blockedDecision(rule, args, {
-      errorCode: "malformed_state",
-      envelopeCode: ERROR_CODES.STATE_CONFLICT,
-      message: `Session authority target is malformed for ${authorityTargetDomain}`,
-      authorityTargetDomain,
-      sessionPresent: true,
-      match: false,
-    });
-  }
+  // Cycle O.1: repo sessions use the synthetic repo-<name>-<sha8> slug.
+  // assertHttpScopeDomain rejects non-public-suffix hosts, so for repo
+  // sessions we validate target identity directly: raw.target must match
+  // the authority domain and be a well-formed repo slug. target_url is
+  // null for repo sessions; we replace the URL drift check with a
+  // target_repo presence check.
+  const isRepoAuthority = isRepoTargetDomain(authorityTargetDomain);
+  if (isRepoAuthority) {
+    if (raw.target !== authorityTargetDomain || !isRepoTargetDomain(raw.target)) {
+      throw blockedDecision(rule, args, {
+        errorCode: "raw_target_drift",
+        envelopeCode: ERROR_CODES.SCOPE_BLOCKED,
+        message: `Session authority target drift for ${authorityTargetDomain}`,
+        authorityTargetDomain,
+        sessionPresent: true,
+        match: false,
+      });
+    }
+    if (!hasOwn(raw, "target_repo") || raw.target_repo == null || typeof raw.target_repo !== "object") {
+      throw blockedDecision(rule, args, {
+        errorCode: "legacy_security_field_missing",
+        envelopeCode: ERROR_CODES.STATE_CONFLICT,
+        message: "session authority field is missing: target_repo",
+        authorityTargetDomain,
+        sessionPresent: true,
+        match: true,
+      });
+    }
+    if (!hasOwn(raw, "repo_hash") || typeof raw.repo_hash !== "string" || !/^[0-9a-f]{8,64}$/i.test(raw.repo_hash)) {
+      throw blockedDecision(rule, args, {
+        errorCode: "legacy_security_field_missing",
+        envelopeCode: ERROR_CODES.STATE_CONFLICT,
+        message: "session authority field is missing: repo_hash",
+        authorityTargetDomain,
+        sessionPresent: true,
+        match: true,
+      });
+    }
+  } else {
+    let rawTarget;
+    try {
+      rawTarget = assertHttpScopeDomain(raw.target);
+    } catch {
+      throw blockedDecision(rule, args, {
+        errorCode: "malformed_state",
+        envelopeCode: ERROR_CODES.STATE_CONFLICT,
+        message: `Session authority target is malformed for ${authorityTargetDomain}`,
+        authorityTargetDomain,
+        sessionPresent: true,
+        match: false,
+      });
+    }
 
-  if (rawTarget !== authorityTargetDomain) {
-    throw blockedDecision(rule, args, {
-      errorCode: "raw_target_drift",
-      envelopeCode: ERROR_CODES.SCOPE_BLOCKED,
-      message: `Session authority target drift for ${authorityTargetDomain}`,
-      authorityTargetDomain,
-      sessionPresent: true,
-      match: false,
-    });
-  }
+    if (rawTarget !== authorityTargetDomain) {
+      throw blockedDecision(rule, args, {
+        errorCode: "raw_target_drift",
+        envelopeCode: ERROR_CODES.SCOPE_BLOCKED,
+        message: `Session authority target drift for ${authorityTargetDomain}`,
+        authorityTargetDomain,
+        sessionPresent: true,
+        match: false,
+      });
+    }
 
-  if (!hasOwn(raw, "target_url") || typeof raw.target_url !== "string" || !raw.target_url.trim()) {
-    throw blockedDecision(rule, args, {
-      errorCode: "legacy_security_field_missing",
-      envelopeCode: ERROR_CODES.STATE_CONFLICT,
-      message: "session authority field is missing: target_url",
-      authorityTargetDomain,
-      sessionPresent: true,
-      match: true,
-    });
-  }
+    if (!hasOwn(raw, "target_url") || typeof raw.target_url !== "string" || !raw.target_url.trim()) {
+      throw blockedDecision(rule, args, {
+        errorCode: "legacy_security_field_missing",
+        envelopeCode: ERROR_CODES.STATE_CONFLICT,
+        message: "session authority field is missing: target_url",
+        authorityTargetDomain,
+        sessionPresent: true,
+        match: true,
+      });
+    }
 
-  try {
-    validateHttpScanScope(raw.target_url, authorityTargetDomain);
-  } catch {
-    throw blockedDecision(rule, args, {
-      errorCode: "target_url_drift",
-      envelopeCode: ERROR_CODES.SCOPE_BLOCKED,
-      message: `Session authority target_url drift for ${authorityTargetDomain}`,
-      authorityTargetDomain,
-      sessionPresent: true,
-      match: true,
-    });
+    try {
+      validateHttpScanScope(raw.target_url, authorityTargetDomain);
+    } catch {
+      throw blockedDecision(rule, args, {
+        errorCode: "target_url_drift",
+        envelopeCode: ERROR_CODES.SCOPE_BLOCKED,
+        message: `Session authority target_url drift for ${authorityTargetDomain}`,
+        authorityTargetDomain,
+        sessionPresent: true,
+        match: true,
+      });
+    }
   }
 
   assertLegacyFailClosedFields(raw, rule, args, authorityTargetDomain);
@@ -656,9 +718,80 @@ function readRawAuthorityState(authorityTargetDomain, rule, args) {
   return raw;
 }
 
+function normalizeRepoBootstrapTarget(rule, args) {
+  if (!targetDomainPresent(args)) {
+    throw blockedDecision(rule, args, {
+      errorCode: "normalization_failed",
+      envelopeCode: ERROR_CODES.INVALID_ARGUMENTS,
+      message: "target_domain is required for session authority",
+      sessionPresent: null,
+      match: false,
+    });
+  }
+  if (!isRepoTargetDomain(args.target_domain)) {
+    throw blockedDecision(rule, args, {
+      errorCode: "normalization_failed",
+      envelopeCode: ERROR_CODES.INVALID_ARGUMENTS,
+      message: `target_domain must match repo session pattern repo-<name>-<sha8>; got ${args.target_domain}`,
+      sessionPresent: false,
+      match: false,
+    });
+  }
+  return args.target_domain;
+}
+
 function authorizeBootstrap(rule, args) {
+  // Cycle O.1: bootstrap accepts either target_url (web sessions) or
+  // repo_path / target_repo (OSS sessions). Exactly one must be present.
+  // The repo path skips DNS validation because the target_domain is a
+  // synthetic repo slug (validated by REPO_TARGET_DOMAIN_PATTERN).
+  const hasRepoPath = args && typeof args.repo_path === "string" && args.repo_path.trim().length > 0;
+  const hasRepo = (args && args.target_repo != null) || hasRepoPath;
+  const hasUrl = args && typeof args.target_url === "string" && args.target_url.trim().length > 0;
+  if (hasRepo && hasUrl) {
+    throw blockedDecision(rule, args, {
+      errorCode: "normalization_failed",
+      envelopeCode: ERROR_CODES.INVALID_ARGUMENTS,
+      message: "bootstrap accepts exactly one of target_url or target_repo, not both",
+      sessionPresent: false,
+      match: false,
+    });
+  }
+  if (hasRepo) {
+    // bob_init_repo_session lets the caller omit target_domain — the slug
+    // is derived from the absolute repo path so reopening the same
+    // checkout from any working directory routes to the same session.
+    if (!targetDomainPresent(args) && hasRepoPath) {
+      try {
+        const { deriveRepoTargetDomain } = require("./repo-target.js");
+        const {
+          assertRepoRootPath,
+        } = require("./governance-contracts.js");
+        const canonicalRoot = assertRepoRootPath(args.repo_path, "repo_path");
+        args.target_domain = deriveRepoTargetDomain(canonicalRoot);
+      } catch (error) {
+        const code = error && error.code === "repo_path_not_found" ? "repo_path_not_found"
+          : error && error.code === "repo_path_not_directory" ? "repo_path_not_directory"
+          : "normalization_failed";
+        throw blockedDecision(rule, args, {
+          errorCode: code,
+          envelopeCode: ERROR_CODES.INVALID_ARGUMENTS,
+          message: error.message || String(error),
+          sessionPresent: false,
+          match: false,
+        });
+      }
+    }
+    const authorityTargetDomain = normalizeRepoBootstrapTarget(rule, args);
+    return allowedDecision(rule, args, {
+      authorityTargetDomain,
+      source: "bootstrap",
+      sessionPresent: false,
+      match: true,
+    });
+  }
   const authorityTargetDomain = normalizeArgumentTarget(rule, args);
-  if (typeof args.target_url !== "string" || !args.target_url.trim()) {
+  if (!hasUrl) {
     throw blockedDecision(rule, args, {
       errorCode: "normalization_failed",
       envelopeCode: ERROR_CODES.INVALID_ARGUMENTS,
@@ -820,9 +953,11 @@ module.exports = {
   EXPLICIT_AUTHORITY_CLASS_BY_TOOL,
   LEGACY_DEFAULTABLE_FIELDS,
   LEGACY_FAIL_CLOSED_FIELDS,
+  REPO_TARGET_DOMAIN_PATTERN,
   authorizeToolCall,
   baseRuleForTool,
   classForTool,
+  isRepoTargetDomain,
   normalizeAuthorityTelemetry,
   scopedUrlDriftError,
   validateSessionAuthorityState,

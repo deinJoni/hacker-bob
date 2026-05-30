@@ -4,6 +4,7 @@
   "test/verification-contracts.test.js",
   "test/session-state-store.test.js",
   "test/governance-contracts.test.js",
+  "test/repo-target-binding.test.js",
   "test/wave-handoff-contracts.test.js",
   "test/wave-handoff-store.test.js",
   "test/wave-planner.test.js",

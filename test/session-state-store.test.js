@@ -1487,6 +1487,10 @@ test("session-state store write callers keep explicit lock boundaries", () => {
     /after import/,
   );
   const directStoreWriterLockChecks = [
+    // Cycle O.1: repo-target.initRepoSession is the bootstrap path for
+    // OSS-axis sessions and writes state.json under its own withSessionLock,
+    // mirroring the contract for session-state.initSession.
+    { relativePath: "mcp/lib/repo-target.js", functionName: "initRepoSession", callCount: 1 },
     { relativePath: "mcp/lib/session-state.js", functionName: "advanceSession", callCount: 2 },
     { relativePath: "mcp/lib/session-state.js", functionName: "assertSessionEgressIdentity", callCount: 1 },
     { relativePath: "mcp/lib/session-state.js", functionName: "clearOperatorNote", callCount: 1 },

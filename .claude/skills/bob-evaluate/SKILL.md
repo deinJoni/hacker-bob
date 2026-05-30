@@ -31,6 +31,7 @@ allowed-tools:
   - mcp__hacker-bob__bob_read_evidence_packs
   - mcp__hacker-bob__bob_read_grade_verdict
   - mcp__hacker-bob__bob_init_session
+  - mcp__hacker-bob__bob_init_repo_session
   - mcp__hacker-bob__bob_read_session_state
   - mcp__hacker-bob__bob_read_session_nucleus
   - mcp__hacker-bob__bob_advance_session

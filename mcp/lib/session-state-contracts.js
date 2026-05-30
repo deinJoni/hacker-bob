@@ -105,6 +105,42 @@ function assertOperatorNote(value, fieldName = "operator_note") {
   return validateOperatorNoteText(assertNonEmptyString(value, fieldName), fieldName);
 }
 
+// Cycle O.1: SHAPE-only validator for the persisted target_repo object.
+// The strict version (with realpath + isDirectory checks) lives in
+// governance-contracts.assertRepoRootPath / normalizeTargetRepo and is
+// the bootstrap path; this version is reused by readers (state.json
+// reload, nucleus rehydration) where the disk path may have moved
+// since session init. session-state-contracts intentionally avoids fs
+// and governance-contracts imports to keep its require-graph cycle-free
+// (see test "session-state contract and store keep forbidden import
+// boundaries").
+function normalizeTargetRepoShape(value, fieldName = "target_repo") {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${fieldName} must be an object`);
+  }
+  const rootPath = assertNonEmptyString(value.root_path, `${fieldName}.root_path`);
+  validateNoSensitiveMaterial(rootPath, `${fieldName}.root_path`, { maxTextChars: 4096 });
+  const result = { root_path: rootPath };
+  if (value.source_url != null) {
+    const sourceUrl = assertNonEmptyString(value.source_url, `${fieldName}.source_url`);
+    validateNoSensitiveMaterial(sourceUrl, `${fieldName}.source_url`, { maxTextChars: 2048 });
+    result.source_url = sourceUrl;
+  }
+  if (value.branch != null) {
+    const branch = assertNonEmptyString(value.branch, `${fieldName}.branch`);
+    validateNoSensitiveMaterial(branch, `${fieldName}.branch`, { maxTextChars: 256 });
+    result.branch = branch;
+  }
+  if (value.commit != null) {
+    const commit = assertNonEmptyString(value.commit, `${fieldName}.commit`);
+    if (!/^[0-9a-f]{7,64}$/i.test(commit)) {
+      throw new Error(`${fieldName}.commit must be a 7-64 character hex commit id`);
+    }
+    result.commit = commit.toLowerCase();
+  }
+  return result;
+}
+
 function normalizeEgressIdentitySource(value, fieldName = "egress_profile_identity_source") {
   if (value == null) {
     return {
@@ -333,6 +369,8 @@ function buildInitialSessionState(domain, targetUrl, {
   blockInternalHosts = null,
   allowInternalHosts = null,
   blockInternalHostsPolicy = null,
+  targetRepo = null,
+  repoHash = null,
 } = {}) {
   const egressFields = egressProfileStateFields(egressProfile);
   const internalHostPolicy = blockInternalHostsPolicy
@@ -343,9 +381,15 @@ function buildInitialSessionState(domain, targetUrl, {
       allowInternalHosts,
       legacyDefault: false,
     });
+  // Cycle O.1: repo sessions write target_repo + repo_hash; URL sessions
+  // leave them null. The mutually-exclusive contract is enforced by the
+  // governance scope policy and normalizeSessionStateDocument; this helper
+  // is just the document constructor.
   return {
     target: domain,
     target_url: targetUrl,
+    target_repo: targetRepo,
+    repo_hash: repoHash,
     deep_mode: deepMode,
     ...internalHostPolicy,
     lifecycle_state: "SETUP",
@@ -491,8 +535,18 @@ function normalizeBlockedPrereqHistory(value, fieldName = "blocked_prereq_histor
 }
 
 function publicSessionState(state) {
+  // Cycle O.1: target_repo and repo_hash are only meaningful for repo
+  // sessions; for URL sessions they are null. Omit them from the public
+  // projection so the historical URL-session shape stays byte-stable for
+  // downstream consumers that deep-equal it. composeSessionStateDocument
+  // still merges the raw document, so repo sessions write target_repo
+  // through buildInitialSessionState -> writeSessionStateDocument.
   return SESSION_PUBLIC_STATE_FIELDS.reduce((result, field) => {
-    result[field] = state[field];
+    const value = state[field];
+    if ((field === "target_repo" || field === "repo_hash") && value == null) {
+      return result;
+    }
+    result[field] = value;
     return result;
   }, {});
 }
@@ -584,9 +638,41 @@ function normalizeSessionStateDocument(document, requestedDomain) {
     ? document.phase
     : deriveLegacyPhaseFromLifecycleState(resolvedLifecycleState);
 
+  // Cycle O.1: repo sessions persist target_repo instead of target_url.
+  // Validate exactly one shape is present. URL sessions retain the
+  // original strict shape (target_url required, target_repo absent).
+  // Repo sessions require target_repo + repo_hash and forbid target_url.
+  // We intentionally validate target_repo SHAPE only here — realpath /
+  // directory checks happen at session bootstrap (initRepoSession) and
+  // would force this module to depend on fs / governance-contracts,
+  // breaking the no-cycle, no-fs contract documented for session-state-
+  // contracts.
+  const hasUrlField = document.target_url != null;
+  const hasRepoField = document.target_repo != null;
+  if (!hasUrlField && !hasRepoField) {
+    throw new Error("session state requires exactly one of target_url or target_repo");
+  }
+  if (hasUrlField && hasRepoField) {
+    throw new Error("session state must carry exactly one of target_url or target_repo, not both");
+  }
+  let normalizedTargetUrl = null;
+  let normalizedTargetRepo = null;
+  let normalizedRepoHash = null;
+  if (hasUrlField) {
+    normalizedTargetUrl = assertNonEmptyString(document.target_url, "target_url");
+  } else {
+    normalizedTargetRepo = normalizeTargetRepoShape(document.target_repo);
+    if (typeof document.repo_hash !== "string" || !/^[0-9a-f]{8,64}$/i.test(document.repo_hash)) {
+      throw new Error("repo_hash is required (8-64 hex characters) for repo sessions");
+    }
+    normalizedRepoHash = document.repo_hash.toLowerCase();
+  }
+
   const normalized = {
     target: requestedDomain,
-    target_url: assertNonEmptyString(document.target_url, "target_url"),
+    target_url: normalizedTargetUrl,
+    target_repo: normalizedTargetRepo,
+    repo_hash: normalizedRepoHash,
     deep_mode: document.deep_mode == null
       ? false
       : assertBoolean(document.deep_mode, "deep_mode"),
@@ -693,6 +779,7 @@ module.exports = {
   egressProfileStateFields,
   LIFECYCLE_STATE_TO_LEGACY_PHASE,
   normalizeSessionStateDocument,
+  normalizeTargetRepoShape,
   publicSessionState,
   terminallyBlockedSurfaceIds,
 };

@@ -96,6 +96,11 @@ const SESSION_LOCK_STALE_MS = 300_000;
 const SESSION_PUBLIC_STATE_FIELDS = [
   "target",
   "target_url",
+  // Cycle O.1: repo sessions persist target_repo + repo_hash alongside the
+  // (nullable) target_url. URL sessions leave these null; the lifecycle
+  // contracts treat repo and url targets as mutually exclusive bindings.
+  "target_repo",
+  "repo_hash",
   "deep_mode",
   "checkpoint_mode",
   "block_internal_hosts",
