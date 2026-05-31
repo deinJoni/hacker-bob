@@ -79,6 +79,26 @@ const ROLE_DEFINITIONS = Object.freeze({
       }),
     ]),
   ),
+  // Plane X Cycle X.10 — generic TaskGraph evaluator shell. UNION of the
+  // shared evaluator + web + every chain-specific evaluator bundle so a
+  // single agent shell can execute Transition and Hypothesis nodes that
+  // span arbitrary tool combinations not knowable at build time. Per X-P7
+  // this is an ergonomics trade (preventive→detective control swap):
+  // mechanical verifier (X.6) catches out-of-band tool invocations via
+  // the `tool_constraint_violation` failure_reason emitted from
+  // bob_finalize_node when agent_output.tool_invocations[] contains a
+  // tool outside the dispatched node's allowed_tools_for_node[] set.
+  "evaluator-spawn": Object.freeze({
+    id: "evaluator-spawn",
+    family: "evaluator",
+    prompt_body: path.join(ROLE_PROMPT_DIR, "evaluator-spawn.md"),
+    mcp_role_bundles: Object.freeze([
+      "evaluator-shared",
+      "evaluator-spawn",
+      "evaluator-web",
+      ...evaluatorRoleSpecs().flatMap((role) => role.role_bundles.filter((b) => b !== "evaluator-shared")),
+    ]),
+  }),
   chain: Object.freeze({
     id: "chain",
     prompt_body: path.join(ROLE_PROMPT_DIR, "chain.md"),

@@ -59,6 +59,9 @@ const {
   derivePackForNode,
 } = require("../capability-pack-derivation.js");
 const {
+  familyTagForCapabilityPackId,
+} = require("../capability-packs.js");
+const {
   scheduleMaterialization,
 } = require("../frontier-materialize-debounce.js");
 const {
@@ -109,6 +112,63 @@ const PRIOR_ATTEMPT_CAP = 3;
 // enough to surface every adjacent hypothesis in a typical run and small
 // enough to never dominate the brief.
 const ADJACENT_HYPOTHESES_CAP = 8;
+
+// Plane X Cycle X.10 — generic agent shell + family-tagged labels.
+//
+// SPAWN_SUBAGENT_TYPE is the Claude/Codex subagent name dispatched by
+// bob_prepare_node. Per X-D6 the generic shell handles every TaskGraph
+// node kind via the union of evaluator-family bundles; the agent's
+// per-node constraint is the brief's allowed_tools_for_node[] not the
+// frontmatter (an ergonomics trade per X-P7, mechanically enforced at
+// finalize via the X.6 verifier's tool_constraint_violation check).
+const SPAWN_SUBAGENT_TYPE = "evaluator-spawn";
+
+// Derive the family tag for a derived capability pack: e.g.
+// "smart_contract_evm" → "evm", "web" → "web". Returns null when the
+// pack id has no mapped family. Surfaced inside the spawn description
+// (e.g., evaluator-spawn[web|evm] for a web↔EVM transition) so operator
+// status reads make the stack mix visible at a glance (X.10 Do step 4).
+function computeFamilyTag(pack) {
+  if (!pack || !pack.brief_emphasis) return null;
+  const emphasis = pack.brief_emphasis;
+  // Transition nodes carry `endpoint_capability_packs[]`; Surface nodes
+  // carry a single `capability_pack`; Hypothesis nodes derive their packs
+  // from the Contract's production_paths and surface them in
+  // `capability_pack_ids[]`. Honor whichever shape is present.
+  const packIds = new Set();
+  if (Array.isArray(emphasis.endpoint_capability_packs)) {
+    for (const id of emphasis.endpoint_capability_packs) {
+      if (typeof id === "string" && id.length > 0) packIds.add(id);
+    }
+  }
+  if (Array.isArray(emphasis.capability_pack_ids)) {
+    for (const id of emphasis.capability_pack_ids) {
+      if (typeof id === "string" && id.length > 0) packIds.add(id);
+    }
+  }
+  if (typeof emphasis.capability_pack === "string" && emphasis.capability_pack.length > 0) {
+    packIds.add(emphasis.capability_pack);
+  }
+  const tags = new Set();
+  for (const packId of packIds) {
+    const tag = familyTagForCapabilityPackId(packId);
+    if (typeof tag === "string" && tag.length > 0) tags.add(tag);
+  }
+  if (tags.size === 0) return null;
+  return Array.from(tags).sort().join("|");
+}
+
+// Render the family-tagged spawn description per X.10 Do step 4:
+//   "execute node <id> — evaluator-spawn[<family-tag>]"
+// The bracketed tag MAY be empty (omitted entirely) when the dispatched
+// node has no resolved capability_pack — operator status surfaces should
+// still render a stable label.
+function renderSpawnDescription(nodeId, familyTag) {
+  if (familyTag && familyTag.length > 0) {
+    return `execute node ${nodeId} — ${SPAWN_SUBAGENT_TYPE}[${familyTag}]`;
+  }
+  return `execute node ${nodeId} — ${SPAWN_SUBAGENT_TYPE}`;
+}
 
 function structuredError(code, message, details) {
   const err = new Error(`${code}: ${message}`);
@@ -388,6 +448,8 @@ function buildBriefContext({
   pack,
   graphContext,
   graphContextHash,
+  familyTag,
+  spawnDescription,
 }) {
   const surfaces = Array.isArray(dispatchedNode.surface_refs)
     ? dispatchedNode.surface_refs.slice().sort()
@@ -401,6 +463,7 @@ function buildBriefContext({
       "X-P1: TaskGraph is the dispatch authority for Transition + Hypothesis nodes.",
       "X-P2: Every node carries a Contract before dispatch.",
       "X-P3: Mechanical verifier runs FIRST; LLM adjudication runs ONLY if mechanical passes.",
+      "X-P7: evaluator-spawn shell is an ergonomics trade — preventive control is replaced with the X.6 verifier's detective check on agent_output.tool_invocations[].",
       "X-P9: Brief renderers inline DISTILLED SUMMARIES. Bodies are pull-only via bob_resolve_body.",
     ],
   };
@@ -417,6 +480,15 @@ function buildBriefContext({
     materialized_at: document.materialized_at,
     ts_first: dispatchedNode.ts_first,
     ts_last: dispatchedNode.ts_last,
+    // Plane X Cycle X.10 — family-tagged spawn label. Surfaces the union
+    // of endpoint capability_pack chain families (e.g., "web|evm" for a
+    // web↔EVM transition) so operator status reads make the stack mix
+    // visible. The orchestrator MUST spawn the generic shell with
+    // `subagent_type: "evaluator-spawn"` and a description matching the
+    // `spawn_description` field below.
+    family_tag: familyTag,
+    spawn_subagent_type: SPAWN_SUBAGENT_TYPE,
+    spawn_description: spawnDescription,
   };
 
   // Inline the full Contract — already distilled per X-D4 + X-P9.
@@ -430,12 +502,18 @@ function buildBriefContext({
   } : null;
 
   const allowedToolsForNode = {
-    constraint: "The mechanical verifier (X.6) records a tool_constraint_violation when a tool outside this set is invoked. The finalize call WILL reject if any out-of-band tool appears in agent_output.tool_invocations.",
+    // X.10 Do step 2 + step 5: the brief carries the honest X-P7 framing,
+    // and bob_finalize_node emits failure_reason.reason
+    // "tool_constraint_violation" when agent_output.tool_invocations[]
+    // names a tool outside this set. The shell carries the UNION of
+    // evaluator-family tools at frontmatter time (ergonomics trade); the
+    // per-spawn constraint is enforced detectively at finalize.
+    constraint: "The mechanical verifier (X.6) records a tool_constraint_violation when a tool outside this set is invoked. bob_finalize_node WILL emit node.transitioned executed → failed with failure_reason.reason=\"tool_constraint_violation\" if agent_output.tool_invocations[] names any tool outside allowed_tools. The evaluator-spawn shell carries the union of evaluator-family tools at frontmatter time (X-P7 ergonomics trade); your per-spawn constraint is this allowed_tools[] array.",
     allowed_tools: pack.allowed_tools_for_node.slice().sort(),
     positive_example: pack.allowed_tools_for_node.length > 0
       ? `INVOKE: ${pack.allowed_tools_for_node[0]}`
       : "INVOKE: <see allowed_tools>",
-    negative_example: "REFUSED: any tool not in allowed_tools (e.g., bob_init_session — orchestrator-only)",
+    negative_example: "REFUSED: any tool not in allowed_tools (e.g., bob_init_session — orchestrator-only) → finalize emits tool_constraint_violation.",
   };
 
   // recommended_reads slice: pull the distilled summary for each artifact_ref
@@ -488,6 +566,16 @@ function buildBriefContext({
     contract_hash: contract ? contract.contract_hash : null,
     graph_context_hash: graphContextHash,
     drift_check: "Call bob_read_task_graph mid-run; if the live graph_context_hash differs from this brief's, re-prepare before continuing.",
+    // Plane X Cycle X.10 — spawn directive. Orchestrator dispatches the
+    // generic evaluator-spawn shell with this exact subagent_type and
+    // description; the family_tag makes the stack mix visible at a
+    // glance in operator status reads.
+    spawn_directive: {
+      subagent_type: SPAWN_SUBAGENT_TYPE,
+      description: spawnDescription,
+      family_tag: familyTag,
+      framing: "X-P7 ergonomics trade: this shell carries the union of evaluator-family tools at frontmatter time. The per-spawn constraint is the brief's allowed_tools_for_node[] (enforced detectively at finalize via the X.6 tool_constraint_violation check).",
+    },
   };
 
   return {
@@ -559,6 +647,14 @@ function handler(args) {
     attached.contract,
   );
 
+  // Plane X Cycle X.10 — family-tagged spawn label. Derives from the
+  // pack's brief_emphasis (endpoint packs for transitions, single pack
+  // for surfaces, Contract-derived packs for hypotheses); UNKNOWN packs
+  // resolve to a null tag so the rendered description omits the
+  // brackets rather than emitting "evaluator-spawn[]".
+  const familyTag = computeFamilyTag(pack);
+  const spawnDescription = renderSpawnDescription(nodeId, familyTag);
+
   // Assemble the brief.
   const briefContext = buildBriefContext({
     targetDomain: domain,
@@ -568,6 +664,8 @@ function handler(args) {
     pack,
     graphContext,
     graphContextHash,
+    familyTag,
+    spawnDescription,
   });
   const briefExtras = renderNodeBriefExtras(briefContext);
   const brief = {
@@ -642,6 +740,12 @@ function handler(args) {
     allowed_tools_for_node: pack.allowed_tools_for_node.slice().sort(),
     recommended_reads_for_node: pack.recommended_reads_for_node.slice(),
     technique_pack_ids: pack.technique_packs.map((p) => p.id),
+    // Plane X Cycle X.10 — orchestrator spawns the generic
+    // evaluator-spawn shell with the labelled description so operator
+    // status surfaces render the bracketed family tag.
+    spawn_subagent_type: SPAWN_SUBAGENT_TYPE,
+    family_tag: familyTag,
+    spawn_description: spawnDescription,
     brief,
     event_id: event.event_id,
     event_hash: event.event_hash,
@@ -683,7 +787,12 @@ module.exports = Object.freeze({
     required: ["target_domain", "node_id"],
   },
   handler,
-  role_bundles: ["orchestrator"],
+  // orchestrator + graph-scheduler are the dispatch authorities. The
+  // `evaluator-spawn` bundle (Plane X Cycle X.10) gets the tool too as
+  // read-only-of-own-context: the agent shell may call bob_prepare_node
+  // to re-read its own dispatched brief or detect graph drift; it must
+  // not dispatch new nodes. The orchestrator owns dispatch.
+  role_bundles: ["orchestrator", "evaluator-spawn"],
   mutating: true,
   global_preapproval: false,
   network_access: false,

@@ -25,6 +25,7 @@ const CROSS_CUTTING_ROLE_BUNDLES = Object.freeze([
   "evidence",
   "grader",
   "evaluator-shared",
+  "evaluator-spawn",
   "evaluator-web",
   "orchestrator",
   "reporter",

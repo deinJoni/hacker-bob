@@ -222,6 +222,25 @@ const CLAUDE_ROLE_SPECS = Object.freeze({
       }),
     ]),
   ),
+  // Plane X Cycle X.10 — generic TaskGraph evaluator shell. Union of the
+  // shared evaluator + web + every chain-specific evaluator bundle plus
+  // bob_resolve_body (already in evaluator-shared) and the dispatch tools
+  // bob_prepare_node + bob_finalize_node (read-only of own context per
+  // X.10 step 1; the actual dispatch authority is the orchestrator). The
+  // honest X-P7 framing lives in prompts/roles/evaluator-spawn.md.
+  "evaluator-spawn": Object.freeze({
+    role_id: "evaluator-spawn",
+    kind: "agent",
+    output_path: path.join(".claude", "agents", "evaluator-spawn.md"),
+    name: "evaluator-spawn",
+    description: "Generic TaskGraph evaluator shell — executes Transition and Hypothesis nodes the orchestrator dispatched via bob_prepare_node. Carries the union of evaluator-family tools; the dispatched brief's allowed_tools_for_node[] is the per-spawn constraint enforced by the X.6 mechanical verifier on bob_finalize_node.",
+    model: "opus",
+    color: "yellow",
+    max_turns: 200,
+    background: true,
+    mcp_server: true,
+    local_tools: Object.freeze(["Bash", "Read", "Write", "Grep", "Glob"]),
+  }),
   chain: Object.freeze({
     role_id: "chain",
     kind: "agent",

@@ -39,6 +39,18 @@ const CODEX_ROLE_SPECS = Object.freeze({
       }),
     ]),
   ),
+  // Plane X Cycle X.10 — generic TaskGraph evaluator shell. Spawned by
+  // the orchestrator via bob_prepare_node when graph-scheduled dispatch
+  // hands off a Transition or Hypothesis node. The bob_agent_id_source
+  // is the node_id returned by bob_prepare_node (the wave-scheduler's
+  // assignment id is not used here — graph dispatch carries its own
+  // node_id and prep_token).
+  "evaluator-spawn": Object.freeze({
+    bob_role: "evaluator-spawn",
+    agent_type: "worker",
+    lifecycle: "async_wave",
+    bob_agent_id_source: "bob_prepare_node result.data.node_id",
+  }),
   chain: Object.freeze({
     bob_role: "chain-builder",
     agent_type: "worker",

@@ -38,6 +38,10 @@ const CODEX_CROSS_CUTTING_ROLE_IDS = Object.freeze([
 const CODEX_WORKER_CONTRACT_ROLE_IDS = Object.freeze([
   ...CODEX_CROSS_CUTTING_ROLE_IDS.slice(0, 4),
   ...evaluatorRoleSpecs().map((role) => role.role_id),
+  // Plane X Cycle X.10 — generic TaskGraph evaluator shell appended
+  // after the per-chain evaluator contracts so the appendix groups all
+  // evaluator family contracts together before the cross-cutting roles.
+  "evaluator-spawn",
   ...CODEX_CROSS_CUTTING_ROLE_IDS.slice(4),
 ]);
 

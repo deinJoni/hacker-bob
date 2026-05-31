@@ -57,6 +57,13 @@ const {
 const {
   isPlainObject,
 } = require("../verification-contracts.js");
+const {
+  buildOneHopGraphContext,
+  derivePackForNode,
+} = require("../capability-pack-derivation.js");
+const {
+  readSurfaceRoutesStrict,
+} = require("../surface-router.js");
 
 // Adjudication chain shape per X-D9: severity_floor → rounds. The X.8
 // finalize emits the chain REQUEST shape into the verification round
@@ -74,6 +81,69 @@ function structuredError(code, message, details) {
   err.code = code;
   if (details) err.details = details;
   return err;
+}
+
+// Helper shared with bob_prepare_node for the surface metadata used in
+// pack derivation. Inlined here (rather than imported) because the
+// surface-router strict read is sensitive to absent route files and we
+// must not regress finalize on a missing routes shape.
+function safeSurfaceRouteMap(targetDomain) {
+  let result;
+  try {
+    result = readSurfaceRoutesStrict(targetDomain);
+  } catch {
+    return {};
+  }
+  const map = {};
+  const doc = result && result.document;
+  if (!doc || !Array.isArray(doc.routes)) return map;
+  for (const route of doc.routes) {
+    if (!route || typeof route !== "object") continue;
+    const surfaceId = typeof route.surface_id === "string" ? route.surface_id : null;
+    if (!surfaceId) continue;
+    map[surfaceId] = {
+      id: surfaceId,
+      surface_type: route.surface_type || null,
+      chain_family: route.chain_family || null,
+      capability_pack: route.capability_pack || null,
+      brief_profile: route.brief_profile || null,
+    };
+  }
+  return map;
+}
+
+// Plane X Cycle X.10 — tool_constraint_violation detective control.
+//
+// The X-P7 ergonomics trade replaces the static per-stack frontmatter
+// allow-list with the brief's per-node allowed_tools_for_node[]. The
+// evaluator-spawn shell carries the UNION of evaluator-family tools at
+// frontmatter time; this finalize-time check is the enforcement edge:
+// when agent_output.tool_invocations[] names any tool outside the
+// dispatched node's allowed set, emit node.transitioned executed →
+// failed with structured failure_reason.reason = "tool_constraint_violation"
+// AND a list of the offending tools so the next prepare-node call's
+// prior_attempt slice surfaces them.
+//
+// Pack derivation is pure (X-P4): re-deriving the pack at finalize
+// using the same node + same graph context + same contract returns
+// the same allowed_tools_for_node[] that prepare-node emitted into the
+// brief. No need to round-trip the set through the prep_token.
+function checkToolConstraintViolation(agentOutput, allowedToolsForNode) {
+  const allowed = new Set(allowedToolsForNode);
+  const violations = [];
+  const invocations = Array.isArray(agentOutput && agentOutput.tool_invocations)
+    ? agentOutput.tool_invocations
+    : [];
+  for (let i = 0; i < invocations.length; i += 1) {
+    const entry = invocations[i];
+    if (!isPlainObject(entry)) continue;
+    const tool = typeof entry.tool === "string" ? entry.tool : null;
+    if (!tool) continue;
+    if (!allowed.has(tool)) {
+      violations.push({ index: i, tool });
+    }
+  }
+  return violations;
 }
 
 function findNodeInDocument(document, nodeId) {
@@ -225,6 +295,59 @@ function handler(args) {
       to_state: "failed",
       mechanical_verdict: null,
       failure_reason: failureReason,
+      executed_event_id: executedEvent.event_id,
+      failed_event_id: failedEvent.event_id,
+    });
+  }
+
+  // Plane X Cycle X.10 — tool_constraint_violation detective control.
+  // Re-derive the pack (pure per X-P4) so we have the exact
+  // allowed_tools_for_node[] the brief carried. If any tool invocation
+  // names a tool outside the set, emit executed → failed BEFORE running
+  // the mechanical verifier so the failure_reason is unambiguous and
+  // the next prepare-node call's prior_attempt slice surfaces the
+  // violation. Note: we re-materialize only the ≤1-hop graph context
+  // (not the full live graph) so the derivation matches what was
+  // bound into the prep_token.
+  const surfaceMetadataById = safeSurfaceRouteMap(domain);
+  const finalizeGraphContext = buildOneHopGraphContext(document, nodeId, surfaceMetadataById);
+  const finalizePack = derivePackForNode(
+    finalizedNode,
+    finalizeGraphContext,
+    [],
+    attached.contract,
+  );
+  const toolViolations = checkToolConstraintViolation(
+    agentOutput,
+    finalizePack.allowed_tools_for_node,
+  );
+  if (toolViolations.length > 0) {
+    const failureReason = {
+      reason: "tool_constraint_violation",
+      violations: toolViolations,
+      allowed_tools: finalizePack.allowed_tools_for_node.slice().sort(),
+      detail: "agent_output.tool_invocations[] named one or more tools outside allowed_tools_for_node[]; the evaluator-spawn shell carries the union of evaluator-family tools at frontmatter time (X-P7 ergonomics trade) and the per-node allow-list is enforced detectively at finalize. Refine the Contract or re-spawn within the constraint.",
+    };
+    const failedEvent = appendNodeTransition({
+      target_domain: domain,
+      node_id: nodeId,
+      from_state: "executed",
+      to_state: "failed",
+      contract_hash: attached.contract.contract_hash,
+      failure_reason: failureReason,
+      ts: input.ts,
+      source: { tool: "bob_finalize_node" },
+      actor: input.actor,
+    });
+    try { scheduleMaterialization(domain); } catch {}
+    return JSON.stringify({
+      version: 1,
+      target_domain: domain,
+      node_id: nodeId,
+      to_state: "failed",
+      mechanical_verdict: null,
+      failure_reason: failureReason,
+      contract_hash: attached.contract.contract_hash,
       executed_event_id: executedEvent.event_id,
       failed_event_id: failedEvent.event_id,
     });
@@ -392,7 +515,12 @@ module.exports = Object.freeze({
     required: ["target_domain", "node_id", "prep_token", "agent_output"],
   },
   handler,
-  role_bundles: ["orchestrator"],
+  // orchestrator + graph-scheduler are the dispatch authorities. The
+  // `evaluator-spawn` bundle (Plane X Cycle X.10) gets the tool too as
+  // read-only-of-own-context per the X-P7 ergonomics trade — the
+  // generic agent shell carries it for self-awareness; orchestrator
+  // owns the actual finalize call against external state.
+  role_bundles: ["orchestrator", "evaluator-spawn"],
   mutating: true,
   global_preapproval: false,
   network_access: false,

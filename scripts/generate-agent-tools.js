@@ -39,6 +39,23 @@ const AGENT_TOOL_SPECS = Object.freeze({
     roleBundles: ["evaluator-shared", "evaluator-web"],
     extras: ["Bash", "Read", "Grep", "Glob"],
   },
+  // Plane X Cycle X.10 — generic TaskGraph evaluator shell. Rendered via
+  // CLAUDE_ROLE_SPECS (role-id-based path) so the tools line stays in
+  // lockstep with role-model.js's mcp_role_bundles union.
+  "evaluator-spawn.md": {
+    roleId: "evaluator-spawn",
+    roleBundles: [
+      "evaluator-shared",
+      "evaluator-spawn",
+      "evaluator-web",
+      "evaluator-evm",
+      "evaluator-svm",
+      "evaluator-move",
+      "evaluator-substrate",
+      "evaluator-cosmwasm",
+    ],
+    extras: ["Bash", "Read", "Write", "Grep", "Glob"],
+  },
   "brutalist-verifier.md": {
     roleId: "brutalist-verifier",
     roleBundles: ["verifier"],

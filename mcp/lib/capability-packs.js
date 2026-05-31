@@ -431,6 +431,25 @@ function evaluatorAgentNamesForCapabilityPacks() {
   ));
 }
 
+// Plane X Cycle X.10 — family tag for evaluator-spawn descriptions.
+// Returns the short chain-family identifier for a capability pack id
+// (e.g., "web" → "web", "smart_contract_evm" → "evm",
+// "smart_contract_aptos" → "aptos"). Used by bob_prepare_node to mint
+// the family-tagged spawn label (e.g., evaluator-spawn[web|evm] for a
+// web↔EVM transition node). Returns null for unknown pack ids so the
+// caller can decide whether to omit the tag.
+function familyTagForCapabilityPackId(packId) {
+  const pack = getCapabilityPack(packId);
+  if (!pack || !pack.spawn) return null;
+  // Web pack has spawn.profile = "web" without a chain_family field;
+  // SC packs carry spawn.chain_family directly.
+  if (pack.spawn.profile === "web") return "web";
+  if (typeof pack.spawn.chain_family === "string" && pack.spawn.chain_family.length > 0) {
+    return pack.spawn.chain_family;
+  }
+  return null;
+}
+
 // Spawn-template iteration helper consumed by Claude/Codex
 // orchestrator-skill renderers.
 function smartContractCapabilityPacks() {
@@ -680,6 +699,7 @@ module.exports = {
   evaluatorAgentNamesForCapabilityPacks,
   evaluatorRoleSpec,
   evaluatorRoleSpecs,
+  familyTagForCapabilityPackId,
   normalizeAssignmentRouteMetadata,
   normalizeContextBudget,
   normalizeSurfaceType,
