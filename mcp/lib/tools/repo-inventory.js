@@ -14,7 +14,7 @@ module.exports = Object.freeze({
       },
       "repo_path": {
         "type": "string",
-        "description": "Optional override. Defaults to state.repo.root_path."
+        "description": "Optional assertion. When provided, it must match state.repo.root_path."
       }
     },
     "required": [

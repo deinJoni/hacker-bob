@@ -192,6 +192,41 @@ test("repo session inventory emits OSS surfaces and routes to OSS packs", () => 
   assert.equal(check.check.reason, "pattern_found");
 }));
 
+test("repo inventory stays bound to the initialized repo root", () => withTempHome((home) => {
+  const repo = path.join(home, "sample-project");
+  const otherRepo = path.join(home, "other-project");
+  fs.mkdirSync(repo, { recursive: true });
+  fs.mkdirSync(otherRepo, { recursive: true });
+  writeFile(repo, "package.json", JSON.stringify({ name: "sample-project" }, null, 2));
+  writeFile(otherRepo, "package.json", JSON.stringify({ name: "other-project" }, null, 2));
+
+  const init = JSON.parse(initRepoSession({ repo_path: repo, target_domain: "repo-sample-project" }));
+  const inventory = JSON.parse(buildRepoInventory({ target_domain: init.target_domain, repo_path: repo }));
+  assert.equal(inventory.target_domain, init.target_domain);
+
+  assert.throws(
+    () => buildRepoInventory({ target_domain: init.target_domain, repo_path: otherRepo }),
+    /repo_path must match the initialized repo session root/,
+  );
+}));
+
+test("repo check returns structured invalid_regex instead of throwing", () => withTempHome((home) => {
+  const repo = path.join(home, "regex-project");
+  fs.mkdirSync(repo, { recursive: true });
+  writeFile(repo, "package.json", JSON.stringify({ name: "regex-project" }, null, 2));
+
+  const init = JSON.parse(initRepoSession({ repo_path: repo, target_domain: "repo-regex-project" }));
+  const check = JSON.parse(repoCheck({
+    target_domain: init.target_domain,
+    file_path: "package.json",
+    pattern: "[",
+    regex: true,
+  }));
+  assert.equal(check.check.ok, false);
+  assert.equal(check.check.reason, "invalid_regex");
+  assert.deepEqual(check.check.matches, []);
+}));
+
 test("reachability classifier stamps a MEDIUM ceiling and down-ranks a local-only native parser", () => withTempHome((home) => {
   const repo = path.join(home, "local-parser");
   fs.mkdirSync(repo, { recursive: true });

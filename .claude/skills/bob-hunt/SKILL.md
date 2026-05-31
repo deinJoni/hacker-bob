@@ -329,7 +329,7 @@ Spawn:
 ```
 Agent(subagent_type: "grader", name: "grader", prompt: "Domain: [domain]. Session: ~/bounty-agent-sessions/[domain]. Call bounty_read_findings, bounty_read_chain_attempts, bounty_read_verification_round({ target_domain: '[domain]', round: 'final' }), and bounty_read_evidence_packs, score survivors, then write only through bounty_write_grade_verdict.")
 ```
-Read `bounty_read_grade_verdict.data`. On `SUBMIT` or `SKIP`, transition to REPORT. On `HOLD`, transition to HUNT, include feedback in a targeted wave, and re-run CHAIN before VERIFY; escalate if `hold_count >= 2`.
+Read `bounty_read_grade_verdict({ target_domain })` after the grader stops; if it errors or has no verdict, retry the read once, then report a blocker and stop without REPORT if the second read still fails. On `SUBMIT` or `SKIP`, transition to REPORT. On `HOLD`, transition to HUNT, include feedback in a targeted wave, and re-run CHAIN before VERIFY; escalate if `hold_count >= 2`.
 
 ## PHASE 7: REPORT
 Spawn:

@@ -176,7 +176,7 @@ After the evidence agent completes, validate with `bounty_read_verification_cont
 ## PHASE 6: GRADE
 Spawn:
 {{SPAWN_GRADER_AGENT}}
-Read `bounty_read_grade_verdict.data`. On `SUBMIT` or `SKIP`, transition to REPORT. On `HOLD`, transition to HUNT, include feedback in a targeted wave, and re-run CHAIN before VERIFY; escalate if `hold_count >= 2`.
+Read `bounty_read_grade_verdict({ target_domain })` after the grader stops; if it errors or has no verdict, retry the read once, then report a blocker and stop without REPORT if the second read still fails. On `SUBMIT` or `SKIP`, transition to REPORT. On `HOLD`, transition to HUNT, include feedback in a targeted wave, and re-run CHAIN before VERIFY; escalate if `hold_count >= 2`.
 
 ## PHASE 7: REPORT
 Spawn:

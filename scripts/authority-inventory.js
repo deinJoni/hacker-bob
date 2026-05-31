@@ -64,6 +64,7 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bounty_index_finding: "initialized_session_mutation",
   bounty_ingest_audit_report: "initialized_session_mutation",
   bounty_ingest_schema_doc: "initialized_session_mutation",
+  bounty_init_repo_session: "global_preapproval",
   bounty_init_session: "bootstrap_session",
   bounty_list_auth_profiles: "initialized_session_read",
   bounty_list_findings: "initialized_session_read",
@@ -103,6 +104,10 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bounty_record_finding: "initialized_session_mutation",
   bounty_record_surface_leads: "initialized_session_mutation",
   bounty_report_written: "initialized_session_mutation",
+  bounty_repo_check: "initialized_session_mutation",
+  bounty_repo_docker_run: "initialized_session_mutation",
+  bounty_repo_inventory: "initialized_session_mutation",
+  bounty_repo_prepare_env: "initialized_session_mutation",
   bounty_route_surfaces: "initialized_session_mutation",
   bounty_run_auth_differential: "scoped_http_network",
   bounty_run_doc_delta: "scoped_http_network",
@@ -140,10 +145,15 @@ const ABSENT_TARGET_CATEGORY_BY_TOOL = Object.freeze({
   bounty_read_capability_playbook: "registry_capability_introspection",
   bounty_suggest_invariants: "local_static_inspection_no_session_write",
   bounty_temp_email: "explicit_no_session_global_network_side_effect",
+  bounty_init_repo_session: "repo_session_bootstrap_local_filesystem",
   bounty_evm_call: "explicit_no_session_global_network_read_n2_006_evm",
   bounty_evm_storage_read: "explicit_no_session_global_network_read_n2_006_evm",
   bounty_evm_role_table: "explicit_no_session_global_network_read_n2_006_evm",
 });
+
+const OPTIONAL_TARGET_DOMAIN_WITHOUT_MODE_RULES = new Set([
+  "bounty_init_repo_session",
+]);
 
 const CHAIN_TRANSPORT_OWNER_BY_TOOL = Object.freeze({
   bounty_evm_call: "N2-006 EVM no-target RPC transport",
@@ -479,7 +489,12 @@ function validateExplicitAuthorityMap(registryTools) {
   }
 
   for (const tool of registryTools) {
-    if (hasTargetDomain(tool) && !requiresTargetDomain(tool) && !Object.prototype.hasOwnProperty.call(MODE_RULES, tool.name)) {
+    if (
+      hasTargetDomain(tool) &&
+      !requiresTargetDomain(tool) &&
+      !Object.prototype.hasOwnProperty.call(MODE_RULES, tool.name) &&
+      !OPTIONAL_TARGET_DOMAIN_WITHOUT_MODE_RULES.has(tool.name)
+    ) {
       throw new Error(`optional target_domain tool lacks mode rules: ${tool.name}`);
     }
   }
@@ -640,8 +655,12 @@ function buildRows() {
       throw new Error(`missing handler path for ${tool.name}`);
     }
     if (authorityClass === "global_preapproval") {
-      if (hasTargetDomain(tool) || tool.scope_required || tool.global_preapproval !== true) {
+      const repoBootstrap = tool.name === "bounty_init_repo_session";
+      if (!repoBootstrap && (hasTargetDomain(tool) || tool.scope_required || tool.global_preapproval !== true)) {
         throw new Error(`global_preapproval class invariant failed for ${tool.name}`);
+      }
+      if (repoBootstrap && (!tool.mutating || tool.network_access || tool.browser_access || tool.scope_required)) {
+        throw new Error(`repo bootstrap global_preapproval invariant failed for ${tool.name}`);
       }
     }
     if (authorityClass === "global_read" && (tool.mutating || tool.network_access || tool.browser_access)) {

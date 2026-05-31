@@ -584,7 +584,13 @@ function buildRepoInventory(args) {
   if (state.target_kind !== "repo" || !state.repo || !state.repo.root_path) {
     throw new Error("bounty_repo_inventory requires a repo session initialized by bounty_init_repo_session");
   }
-  const repoPath = normalizeRepoPath(args.repo_path || state.repo.root_path);
+  const repoPath = normalizeRepoPath(state.repo.root_path);
+  if (args.repo_path != null) {
+    const requestedRepoPath = normalizeRepoPath(args.repo_path);
+    if (requestedRepoPath !== repoPath) {
+      throw new Error("repo_path must match the initialized repo session root");
+    }
+  }
   const files = walkRepoFiles(repoPath);
   const manifests = files.filter((file) => MANIFEST_NAMES.has(path.basename(file)));
   const packageManifests = manifests
@@ -871,21 +877,28 @@ function repoCheck(args) {
       if (text == null) {
         record.reason = "file_unreadable_or_too_large";
       } else {
-        const matcher = regex
-          ? new RegExp(pattern, "g")
-          : new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
-        const lines = text.split(/\r?\n/);
-        for (let index = 0; index < lines.length && record.matches.length < MAX_MATCHES; index += 1) {
-          matcher.lastIndex = 0;
-          if (matcher.test(lines[index])) {
-            record.matches.push({
-              line: index + 1,
-              excerpt: lines[index].trim().slice(0, 240),
-            });
-          }
+        let matcher;
+        try {
+          matcher = regex
+            ? new RegExp(pattern, "g")
+            : new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
+        } catch {
+          record.reason = "invalid_regex";
         }
-        record.ok = record.matches.length > 0;
-        record.reason = record.ok ? "pattern_found" : "pattern_not_found";
+        if (matcher) {
+          const lines = text.split(/\r?\n/);
+          for (let index = 0; index < lines.length && record.matches.length < MAX_MATCHES; index += 1) {
+            matcher.lastIndex = 0;
+            if (matcher.test(lines[index])) {
+              record.matches.push({
+                line: index + 1,
+                excerpt: lines[index].trim().slice(0, 240),
+              });
+            }
+          }
+          record.ok = record.matches.length > 0;
+          record.reason = record.ok ? "pattern_found" : "pattern_not_found";
+        }
       }
     }
   }

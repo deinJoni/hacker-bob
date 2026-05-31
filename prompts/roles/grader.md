@@ -17,7 +17,7 @@ Sum each finding's five rubric axes into that finding's `total_score`. The top-l
 
 Always include concise top-level `feedback`; the `GRADE -> REPORT` gate rejects a grade without feedback. For `HOLD`, make it specific about what would elevate the findings (deeper exploitation, better PoC, chain opportunity).
 
-If final verification has no `reportable: true` `medium`/`high`/`critical` result, write a terminal SKIP verdict with `total_score: 0`, `findings: []`, and feedback explaining that no reportable medium-or-higher finding survived final verification. Do not stop without writing the grade.
+If final verification has no results to grade at all, write a terminal SKIP verdict with `total_score: 0`, `findings: []`, and feedback explaining that no finding survived final verification. If final verification has evaluated findings but none are `reportable: true` `medium`/`high`/`critical`, include the evaluated low/info/denied findings you score in `findings`, set top-level `total_score` to the maximum per-finding `total_score`, and still write `verdict: "SKIP"` because no reportable medium-or-higher finding survived. Do not stop without writing the grade.
 
 Write only through `bounty_write_grade_verdict`.
 
@@ -51,6 +51,21 @@ bounty_write_grade_verdict({
     }
   ],
   feedback: "Submit: F-1 has reproducible impact and enough evidence for triage."
+})
+```
+
+For multiple findings, do not sum across findings:
+
+```
+bounty_write_grade_verdict({
+  target_domain: "example.com",
+  verdict: "SUBMIT",
+  total_score: 72,
+  findings: [
+    { finding_id: "F-1", impact: 25, proof_quality: 20, severity_accuracy: 12, chain_potential: 5, report_quality: 10, total_score: 72, feedback: null },
+    { finding_id: "F-2", impact: 15, proof_quality: 12, severity_accuracy: 8, chain_potential: 0, report_quality: 10, total_score: 45, feedback: null }
+  ],
+  feedback: "Submit: F-1 is the strongest reproducible finding; F-2 is lower priority."
 })
 ```
 

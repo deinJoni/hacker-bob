@@ -3415,7 +3415,11 @@ test("pipeline analytics flags delayed wave reconciliation after all hunters sto
     assert.equal(bottleneck.severity, "needs_attention");
     assert.equal(bottleneck.evidence[0].waves[0].wave_number, 1);
     assert.equal(bottleneck.evidence[0].waves[0].delay_ms, 29 * 60 * 1000);
-    assert.match(analytics.next_actions[0].action, /resume flow after hunter completion/);
+    const delayedReconciliationAction = analytics.next_actions.find(
+      (item) => /resume flow after hunter completion/.test(item.action),
+    );
+    assert.ok(delayedReconciliationAction, "expected delayed wave reconciliation next action");
+    assert.match(delayedReconciliationAction.action, /resume flow after hunter completion/);
   });
 });
 
@@ -3585,7 +3589,7 @@ test("pipeline analytics suppresses targetless missing-marker hunter noise after
     for (const ts of ["2026-04-24T00:00:00.000Z", "2026-04-24T00:01:00.000Z"]) {
       appendAgentRunTelemetryEvent(buildAgentRunTelemetryEvent({
         status: "blocked",
-        blockCode: "missing_marker",
+        block_code: "missing_marker",
         now: new Date(ts),
       }));
     }

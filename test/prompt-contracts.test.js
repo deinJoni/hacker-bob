@@ -906,8 +906,10 @@ test("bob-hunt closes no-finding verification through SKIP grade and report", ()
 
   assert.doesNotMatch(orchestrator, /If no result has `reportable: true`, report `No reportable vulnerabilities`[\s\S]{0,80}stop/);
   assert.match(orchestrator, /no result has `reportable: true`[\s\S]*continue through GRADE and REPORT/);
+  assert.match(orchestrator, /retry the read once[\s\S]*stop without REPORT/);
   assert.match(orchestrator, /On `SUBMIT` or `SKIP`, transition to REPORT/);
-  assert.match(grader, /terminal SKIP verdict with `total_score: 0`, `findings: \[\]`/);
+  assert.match(grader, /no results to grade[\s\S]*`total_score: 0`, `findings: \[\]`/);
+  assert.match(grader, /evaluated findings but none are `reportable: true` `medium`\/`high`\/`critical`[\s\S]*maximum per-finding/);
   assert.match(reporter, /no-findings closeout/);
 });
 
