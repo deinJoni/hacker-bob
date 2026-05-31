@@ -90,12 +90,20 @@ const HUNTER_BRIEF_SURFACE_ARRAY_LIMITS = Object.freeze({
   high_value_flows: 20,
   evidence: 25,
   fork_rpc_pool: 6,
+  // Recently-patched security fixes whose sibling/adjacent code paths the
+  // patch may not have covered — the incomplete-fix residual hunting seed.
+  residual_hunt_targets: 20,
 });
 const HUNTER_BRIEF_SURFACE_SCALAR_LIMITS = Object.freeze({
   id: 120,
   priority: 40,
   original_priority: 40,
   surface_type: 80,
+  // Reachability/ceiling triage — tells the native hunter whether this surface
+  // is AV:N (CRITICAL-capable) or AV:L (MEDIUM-realistic) so it pursues the
+  // write/UAF/RCE primitive on network-reachable surfaces.
+  attack_vector: 40,
+  severity_ceiling: 40,
   chain_family: 40,
   chain_id: 20,
   // Per-chain harness paths. Each smart-contract hunter prompt expects a

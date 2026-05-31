@@ -174,6 +174,107 @@ test("repo session inventory emits OSS surfaces and routes to OSS packs", () => 
   assert.equal(check.check.reason, "pattern_found");
 }));
 
+test("reachability classifier stamps a MEDIUM ceiling and down-ranks a local-only native parser", () => withTempHome((home) => {
+  const repo = path.join(home, "local-parser");
+  fs.mkdirSync(repo, { recursive: true });
+  writeFile(repo, "CMakeLists.txt", "cmake_minimum_required(VERSION 3.22)\nproject(local_parser C)\n");
+  writeFile(repo, "src/decode.c", "int decode(const unsigned char *buf, int len){ return len > 0 ? buf[0] : 0; }\n");
+
+  const init = JSON.parse(initRepoSession({ repo_path: repo, target_domain: "repo-local-parser" }));
+  const inventory = JSON.parse(buildRepoInventory({ target_domain: init.target_domain }));
+  assert.equal(inventory.reachability.network_reachable, false);
+  assert.equal(inventory.reachability.max_credible_severity_ceiling, "medium");
+
+  const surfaces = JSON.parse(fs.readFileSync(attackSurfacePath(init.target_domain), "utf8")).surfaces;
+  const native = surfaces.find((surface) => surface.id === "OSS-NATIVE-CODE");
+  assert.ok(native, "expected OSS-NATIVE-CODE surface");
+  assert.equal(native.network_reachable, false);
+  assert.equal(native.attack_vector, "local");
+  assert.equal(native.severity_ceiling, "medium");
+  assert.equal(native.priority, "MEDIUM");
+  assert.equal(native.ranking.score, 55);
+}));
+
+test("reachability classifier promotes a network-reachable native daemon to a CRITICAL ceiling", () => withTempHome((home) => {
+  const repo = path.join(home, "net-daemon");
+  fs.mkdirSync(repo, { recursive: true });
+  writeFile(repo, "CMakeLists.txt", "cmake_minimum_required(VERSION 3.22)\nproject(net_daemon C)\n");
+  writeFile(repo, "daemon/server.c", [
+    "#include <sys/socket.h>",
+    "#include <netinet/in.h>",
+    "int serve(void){",
+    "  int fd = socket(AF_INET, SOCK_STREAM, 0);",
+    "  struct sockaddr_in a; a.sin_addr.s_addr = INADDR_ANY;",
+    "  listen(fd, 16);",
+    "  return fd;",
+    "}",
+    "",
+  ].join("\n"));
+  writeFile(repo, "src/proto.c", "int parse(const char *b, int n){ return n > 0 ? b[0] : 0; }\n");
+
+  const init = JSON.parse(initRepoSession({ repo_path: repo, target_domain: "repo-net-daemon" }));
+  const inventory = JSON.parse(buildRepoInventory({ target_domain: init.target_domain }));
+  assert.equal(inventory.reachability.network_reachable, true);
+  assert.equal(inventory.reachability.max_credible_severity_ceiling, "critical");
+  assert.ok(inventory.reachability.network_reachable_surface_ids.includes("OSS-NATIVE-CODE"));
+
+  const surfaces = JSON.parse(fs.readFileSync(attackSurfacePath(init.target_domain), "utf8")).surfaces;
+  const native = surfaces.find((surface) => surface.id === "OSS-NATIVE-CODE");
+  assert.equal(native.network_reachable, true);
+  assert.equal(native.attack_vector, "network");
+  assert.equal(native.severity_ceiling, "critical");
+  assert.equal(native.priority, "HIGH");
+}));
+
+test("project metadata files (AUTHORS) do not create a false OSS-AUTHZ surface", () => withTempHome((home) => {
+  const repo = path.join(home, "authors-only");
+  fs.mkdirSync(repo, { recursive: true });
+  writeFile(repo, "package.json", JSON.stringify({ name: "authors-only" }, null, 2));
+  writeFile(repo, "AUTHORS.md", "# Authors\n- Jane Doe\n");
+
+  const init = JSON.parse(initRepoSession({ repo_path: repo, target_domain: "repo-authors-only" }));
+  const inventory = JSON.parse(buildRepoInventory({ target_domain: init.target_domain }));
+  assert.ok(!inventory.surface_ids.includes("OSS-AUTHZ"), "AUTHORS must not trigger OSS-AUTHZ");
+}));
+
+test("residual hunting seeds recently-patched security fixes onto the native surface", () => withTempHome((home) => {
+  const repo = path.join(home, "residual-parser");
+  fs.mkdirSync(repo, { recursive: true });
+  writeFile(repo, "CMakeLists.txt", "cmake_minimum_required(VERSION 3.22)\nproject(residual C)\n");
+  writeFile(repo, "src/decode.c", "int decode(const unsigned char *b, int n){ return n > 0 ? b[0] : 0; }\n");
+  writeFile(repo, "CHANGELOG.md", [
+    "# Changelog",
+    "",
+    "## 2.4.4",
+    "- Fix heap buffer overflow in decode_chunk() when len is attacker-controlled (CVE-2026-12345)",
+    "- Improve documentation wording",
+    "",
+    "## 2.4.3",
+    "- Minor performance refactor",
+    "",
+  ].join("\n"));
+
+  const init = JSON.parse(initRepoSession({ repo_path: repo, target_domain: "repo-residual-parser" }));
+  const inventory = JSON.parse(buildRepoInventory({ target_domain: init.target_domain }));
+  assert.ok(inventory.counts.residual_hunt_targets >= 1, "expected at least one residual target");
+  assert.ok(
+    inventory.residual_hunt_targets.some((target) => /CVE-2026-12345|decode_chunk|overflow/i.test(target)),
+    "residual targets must capture the patched security fix",
+  );
+  // A non-security changelog line must not be picked up as a residual lead.
+  assert.ok(
+    !inventory.residual_hunt_targets.some((target) => /performance refactor/i.test(target)),
+    "non-security changelog lines must be ignored",
+  );
+
+  const surfaces = JSON.parse(fs.readFileSync(attackSurfacePath(init.target_domain), "utf8")).surfaces;
+  const native = surfaces.find((surface) => surface.id === "OSS-NATIVE-CODE");
+  assert.ok(
+    Array.isArray(native.residual_hunt_targets) && native.residual_hunt_targets.length >= 1,
+    "native surface must carry residual_hunt_targets for the hunter brief",
+  );
+}));
+
 test("repo Docker environment plan and dry-run command stay session-scoped", () => withTempHome(async (home) => {
   const repo = path.join(home, "libnfs-like");
   fs.mkdirSync(repo, { recursive: true });
@@ -207,6 +308,7 @@ test("repo Docker environment plan and dry-run command stay session-scoped", () 
   assert.match(dockerfile, /FROM ubuntu:24\.04/);
   assert.match(dockerfile, /cmake/);
   assert.match(dockerfile, /libkrb5-dev/);
+  assert.ok(!dockerfile.includes("libpcap-dev"), "libnfs-like project must not pull libpcap-dev");
   assert.ok(env.env.recommended_commands.some((command) => command.id === "cmake-build-test"));
 
   const run = JSON.parse(await repoDockerRun({

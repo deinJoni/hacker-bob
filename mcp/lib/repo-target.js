@@ -3,6 +3,7 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { execFileSync } = require("child_process");
 const {
   assertNonEmptyString,
   assertBoolean,
@@ -93,6 +94,189 @@ const NATIVE_CODE_EXTENSIONS = new Set([
 ]);
 
 const NATIVE_BUILD_FILE_RE = /(^|\/)(CMakeLists\.txt|Makefile|Makefile\.am|configure|configure\.ac|configure\.in|meson\.build|meson_options\.txt|SConstruct|SConscript)$/;
+
+// --- Reachability + severity-ceiling classification ----------------------
+// A memory-safety bug's realistic severity ceiling is set by HOW attacker
+// input reaches it. A network-reachable listener (daemon/server/RPC) feeding a
+// parser is AV:N (CRITICAL-capable); a pure local-file parser library is AV:L
+// (MEDIUM-realistic). Bob historically stamped every native surface a flat
+// HIGH, so a .dwg reader looked identical to an NFS daemon and the planner
+// burned its top slot proving an OOB-read that could only ever grade MEDIUM.
+// These helpers stamp each surface with network_reachable / attack_vector /
+// severity_ceiling so routing and the operator can triage the ceiling up front.
+// Socket/RPC/TLS call signals. Bare `bind`/`accept`/`recv` are intentionally
+// excluded — they collide with std::bind, visitor.accept, etc. The tokens in
+// NETWORK_TOKEN_RE carry the socket-setup confidence instead.
+const NETWORK_CONTENT_RE = /\b(socket|listen|accept4|recvfrom|recvmsg|WSAStartup|getaddrinfo|svc_run|svc_register|svc_create|xdr_[a-z]|clnt_create|rpcb_set|MHD_start_daemon|evhttp_|uv_tcp_|SSL_accept|gnutls_handshake|bindresvport)\s*\(/;
+const NETWORK_TOKEN_RE = /\b(INADDR_ANY|SOCK_STREAM|SOCK_DGRAM|AF_INET6?|sockaddr_in6?|htons|in_port_t)\b/;
+const SERVICE_UNIT_RE = /(^|\/)[^/]+\.(service|socket)$/;
+const SERVER_PATH_RE = /(^|\/)(daemon|daemons|server|servers|httpd|net|rpc|proto|protocol|listener|ipc)\//i;
+const SERVER_FILE_RE = /(^|\/)[^/]*(server|daemon|listener|socket|httpd|rpcsvc)[^/]*\.(c|cc|cpp|cxx|h|hpp)$/i;
+const ENTRYPOINT_FILE_RE = /(^|\/)(main|app|service|net|socket|server|daemon|rpc|http|listen)\w*\.(c|cc|cpp|cxx)$/i;
+const DOCKERFILE_RE = /(^|\/)Dockerfile([.-][\w.-]+)?$/;
+const NETWORK_SCAN_LIMIT = 50;
+const NETWORK_FALLBACK_LIMIT = 80;
+
+const CEILING_RANK = Object.freeze({ critical: 4, high: 3, medium: 2, low: 1, none: 0 });
+
+function maxCeiling(a, b) {
+  return (CEILING_RANK[b] || 0) > (CEILING_RANK[a] || 0) ? b : a;
+}
+
+// Stamp the realistic severity ceiling for a surface given its reachability.
+// Ceiling is the best credible case for that surface class; the verifier/grader
+// still set the actual severity from proven impact.
+function severityCeilingForSurface(surfaceType, networkReachable) {
+  switch (surfaceType) {
+    case "oss_native_code":
+      return networkReachable ? "critical" : "medium";
+    case "oss_api_schema":
+    case "oss_authz":
+      return networkReachable ? "high" : "medium";
+    case "oss_dependency":
+    case "oss_ci_cd":
+      // Supply-chain (release-pipeline MITM / workflow injection) is real but
+      // realistically grades MEDIUM in the corpus (libarchive, exiv2) and is
+      // gated on a maintainer/release action — keep it medium so it does not
+      // mask a memory-safety target's true (capped) ceiling in the warning.
+      return "medium";
+    case "oss_secrets_config":
+      return "medium";
+    case "oss_docs_behavior":
+      return "low";
+    default:
+      return "medium";
+  }
+}
+
+function attackVectorForSurface(surfaceType, networkReachable) {
+  if (surfaceType === "oss_dependency" || surfaceType === "oss_ci_cd") return "supply_chain";
+  if (surfaceType === "oss_native_code" || surfaceType === "oss_api_schema" || surfaceType === "oss_authz") {
+    return networkReachable ? "network" : "local";
+  }
+  return "local";
+}
+
+// Scan a repo for evidence of an in-process network listener that could feed
+// attacker-controlled input into a parser. Bounded I/O: priority files first
+// (path/name suggests a server), then a capped fallback sweep of native files.
+function detectNetworkReachability(repoPath, files) {
+  const signals = [];
+  const nativeFiles = files.filter((file) => NATIVE_CODE_EXTENSIONS.has(path.extname(file).toLowerCase()));
+  for (const file of files) {
+    if (SERVICE_UNIT_RE.test(file)) signals.push(`systemd_unit:${file}`);
+  }
+  const priority = nativeFiles.filter((file) => SERVER_PATH_RE.test(file) || SERVER_FILE_RE.test(file));
+  for (const file of priority) signals.push(`server_path:${file}`);
+  const dockerfiles = files.filter((file) => DOCKERFILE_RE.test(file));
+  const scanList = Array.from(new Set([
+    ...priority,
+    ...nativeFiles.filter((file) => ENTRYPOINT_FILE_RE.test(file)),
+    ...dockerfiles,
+  ])).slice(0, NETWORK_SCAN_LIMIT);
+  let netHit = false;
+  for (const file of scanList) {
+    const text = safeReadText(repoPath, file, 150000);
+    if (!text) continue;
+    if (DOCKERFILE_RE.test(file)) {
+      if (/\bEXPOSE\s+\d/.test(text)) { signals.push(`expose:${file}`); netHit = true; }
+      continue;
+    }
+    if (NETWORK_CONTENT_RE.test(text) || NETWORK_TOKEN_RE.test(text)) {
+      signals.push(`net_call:${file}`);
+      netHit = true;
+      if (signals.length >= 14) break;
+    }
+  }
+  if (!netHit) {
+    for (const file of nativeFiles.slice(0, NETWORK_FALLBACK_LIMIT)) {
+      const text = safeReadText(repoPath, file, 150000);
+      if (!text) continue;
+      if (NETWORK_CONTENT_RE.test(text)) { signals.push(`net_call:${file}`); netHit = true; break; }
+    }
+  }
+  return {
+    network_reachable: netHit || signals.some((s) => s.startsWith("systemd_unit:")),
+    signals: Array.from(new Set(signals)).slice(0, 14),
+  };
+}
+
+// --- Incomplete-fix residual hunting seed ---------------------------------
+// The highest-yield HIGH method in Bob's corpus (netatalk's 2 HIGH) is finding
+// the sibling/adjacent code paths a recent security patch did NOT cover. Mine
+// the repo's own recent history + changelog for security fixes and hand the
+// hunter concrete recently-patched anchors to sibling-hunt. Output is an array
+// of concise STRINGS (the brief caps array items via String()).
+const SECURITY_KEYWORD_RE = /\b(CVE-\d{4}-\d+|GHSA-[\w-]+|overflow|out[- ]of[- ]bounds|\bOOB\b|use[- ]after[- ]free|\bUAF\b|double[- ]free|buffer overrun|heap corruption|integer (?:overflow|underflow)|bounds[- ]check|sanitiz(?:e|er)|memory safety|security (?:fix|issue)|vulnerabilit|null (?:deref|pointer)|segfault|infinite loop|denial of service|\bDoS\b|malformed|crafted)/i;
+const RESIDUAL_DOC_NAMES = new Set([
+  "CHANGELOG.md", "CHANGELOG", "ChangeLog", "CHANGES", "CHANGES.md",
+  "NEWS", "NEWS.md", "SECURITY.md", "RELEASE_NOTES.md", "HISTORY.md",
+]);
+const RESIDUAL_GIT_TIMEOUT_MS = 15000;
+const RESIDUAL_MAX_TARGETS = 18;
+
+function extractResidualFromDocs(repoPath, files) {
+  const leads = [];
+  const docCandidates = files.filter((file) => RESIDUAL_DOC_NAMES.has(path.basename(file)));
+  for (const file of docCandidates.slice(0, 6)) {
+    const text = safeReadText(repoPath, file, 200000);
+    if (!text) continue;
+    const lines = text.split(/\r?\n/);
+    for (let i = 0; i < lines.length && leads.length < 12; i += 1) {
+      const line = lines[i].trim().replace(/^[-*#\s]+/, "");
+      if (line.length < 8) continue;
+      if (SECURITY_KEYWORD_RE.test(line)) {
+        leads.push(`changelog:${path.basename(file)}: ${line.slice(0, 200)}`);
+      }
+    }
+  }
+  return leads;
+}
+
+function extractResidualFromGit(repoPath, nativeSourceFiles) {
+  if (!fs.existsSync(path.join(repoPath, ".git"))) return [];
+  const dirs = Array.from(new Set(
+    nativeSourceFiles.map((file) => (file.includes("/") ? file.slice(0, file.indexOf("/")) : ".")),
+  )).filter(Boolean).slice(0, 12);
+  let out = "";
+  try {
+    out = execFileSync("git", [
+      "-C", repoPath, "log", "--no-merges",
+      "--since=9 months ago", "--max-count=600",
+      "--pretty=format:%h%x1f%s",
+      "--", ...(dirs.length ? dirs : ["."]),
+    ], {
+      encoding: "utf8",
+      timeout: RESIDUAL_GIT_TIMEOUT_MS,
+      maxBuffer: 8 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return [];
+  }
+  const leads = [];
+  for (const line of out.split(/\r?\n/)) {
+    if (!line) continue;
+    const sep = line.indexOf("\x1f");
+    if (sep < 0) continue;
+    const hash = line.slice(0, sep);
+    const subject = line.slice(sep + 1);
+    if (subject && SECURITY_KEYWORD_RE.test(subject)) {
+      leads.push(`git:${hash}: ${subject.slice(0, 200)}`);
+      if (leads.length >= 15) break;
+    }
+  }
+  return leads;
+}
+
+// Recently-patched security anchors (git commits first — most precise — then
+// changelog lines). The hunter sibling-hunts these: same struct, adjacent
+// count/length field, parallel branch the patch did not bound.
+function extractResidualHuntTargets(repoPath, files, nativeSourceFiles) {
+  const gitLeads = extractResidualFromGit(repoPath, nativeSourceFiles);
+  const docLeads = extractResidualFromDocs(repoPath, files);
+  return Array.from(new Set([...gitLeads, ...docLeads])).slice(0, RESIDUAL_MAX_TARGETS);
+}
 
 function shortHash(value) {
   return crypto.createHash("sha256").update(String(value)).digest("hex").slice(0, 12);
@@ -265,8 +449,14 @@ function hasAny(files, predicate) {
   return files.filter(predicate).slice(0, 120);
 }
 
-function makeSurface({ id, title, surfaceType, priority, files, techStack, bugHints, flows, evidence, params = [] }) {
-  return {
+function makeSurface({
+  id, title, surfaceType, priority, files, techStack, bugHints, flows, evidence,
+  params = [], networkReachable = false, attackVector = null, severityCeiling = null,
+  residualHuntTargets = null,
+}) {
+  const ceiling = severityCeiling || severityCeilingForSurface(surfaceType, networkReachable);
+  const vector = attackVector || attackVectorForSurface(surfaceType, networkReachable);
+  const surface = {
     id,
     name: title,
     hosts: ["repo://local"],
@@ -276,6 +466,9 @@ function makeSurface({ id, title, surfaceType, priority, files, techStack, bugHi
     nuclei_hits: [],
     priority,
     surface_type: surfaceType,
+    network_reachable: networkReachable,
+    attack_vector: vector,
+    severity_ceiling: ceiling,
     bug_class_hints: bugHints,
     high_value_flows: flows,
     evidence,
@@ -283,9 +476,13 @@ function makeSurface({ id, title, surfaceType, priority, files, techStack, bugHi
       version: 1,
       score: priority === "HIGH" ? 80 : priority === "MEDIUM" ? 55 : 30,
       priority,
-      reasons: [`repo_surface:${surfaceType}`, `files:${files.length}`],
+      reasons: [`repo_surface:${surfaceType}`, `files:${files.length}`, `ceiling:${ceiling}`, `vector:${vector}`],
     },
   };
+  if (Array.isArray(residualHuntTargets) && residualHuntTargets.length > 0) {
+    surface.residual_hunt_targets = residualHuntTargets.slice(0, 20);
+  }
+  return surface;
 }
 
 function buildRepoInventory(args) {
@@ -313,7 +510,11 @@ function buildRepoInventory(args) {
     /openapi|swagger|schema\.graphql|graphql/i.test(file) ||
     /(^|\/)(pages|app)\/api\//.test(file)
   ));
-  const authFiles = hasAny(files, (file) => /auth|jwt|oauth|session|middleware|permission|policy|guard|rbac|acl/i.test(file));
+  const authFiles = hasAny(files, (file) => (
+    /auth|jwt|oauth|session|middleware|permission|policy|guard|rbac|acl/i.test(file) &&
+    // Project-metadata files match /auth/ ("AUTHORS") but are not auth code.
+    !/(^|\/)(AUTHORS|CONTRIBUTORS|MAINTAINERS|CODEOWNERS)(\.[\w-]+)?$/i.test(file)
+  ));
   const ciFiles = hasAny(files, (file) => (
     file.startsWith(".github/workflows/") ||
     file === ".gitlab-ci.yml" ||
@@ -328,6 +529,13 @@ function buildRepoInventory(args) {
   ));
   const docFiles = hasAny(files, (file) => DOC_NAMES.has(file) || file.startsWith("docs/") && /\.md$/i.test(file));
   const envKeyHints = collectEnvKeyHints(repoPath, files);
+  const reach = detectNetworkReachability(repoPath, files);
+  // Auth/authz guarding a network API is itself network-reachable even when the
+  // listener is in a sibling component the content scan did not sample.
+  const authNetworkReachable = reach.network_reachable || apiFiles.length > 0;
+  const residualHuntTargets = nativeSourceFiles.length > 0
+    ? extractResidualHuntTargets(repoPath, files, nativeSourceFiles)
+    : [];
 
   const surfaces = [];
   if (manifests.length > 0) {
@@ -349,7 +557,13 @@ function buildRepoInventory(args) {
       id: "OSS-NATIVE-CODE",
       title: "Native code parser, protocol, and memory-safety review",
       surfaceType: "oss_native_code",
-      priority: "HIGH",
+      // Reachability sets the ceiling: a network-fed parser (AV:N) is
+      // CRITICAL-capable and stays top priority; a pure local-file parser
+      // library (AV:L) is MEDIUM-realistic and is down-ranked so it does not
+      // crowd out a genuine daemon/server surface.
+      priority: reach.network_reachable ? "HIGH" : "MEDIUM",
+      networkReachable: reach.network_reachable,
+      residualHuntTargets,
       files: nativeFiles,
       techStack,
       bugHints: [
@@ -373,6 +587,7 @@ function buildRepoInventory(args) {
       title: "API routes and schemas",
       surfaceType: "oss_api_schema",
       priority: "HIGH",
+      networkReachable: true,
       files: apiFiles,
       techStack,
       bugHints: ["idor", "authz", "ssrf", "injection", "graphql"],
@@ -386,6 +601,7 @@ function buildRepoInventory(args) {
       title: "Authentication and authorization code",
       surfaceType: "oss_authz",
       priority: "HIGH",
+      networkReachable: authNetworkReachable,
       files: authFiles,
       techStack,
       bugHints: ["authz", "jwt_oauth", "session_fixation", "privilege_escalation"],
@@ -432,11 +648,30 @@ function buildRepoInventory(args) {
     evidence: docFiles.length > 0 ? [`${docFiles.length} docs files`] : ["No common security/README docs found"],
   }));
 
+  const reachabilitySummary = {
+    max_credible_severity_ceiling: surfaces.reduce(
+      (acc, surface) => maxCeiling(acc, surface.severity_ceiling || "none"),
+      "none",
+    ),
+    network_reachable: surfaces.some((surface) => surface.network_reachable),
+    network_reachable_surface_ids: surfaces
+      .filter((surface) => surface.network_reachable)
+      .map((surface) => surface.id),
+    surface_ceilings: surfaces.map((surface) => ({
+      id: surface.id,
+      severity_ceiling: surface.severity_ceiling,
+      attack_vector: surface.attack_vector,
+      network_reachable: surface.network_reachable,
+    })),
+    signals: reach.signals,
+  };
+
   const inventory = {
     version: REPO_INVENTORY_VERSION,
     target_domain: domain,
     repo_path: repoPath,
     generated_at: new Date().toISOString(),
+    reachability: reachabilitySummary,
     counts: {
       files: files.length,
       manifests: manifests.length,
@@ -444,6 +679,7 @@ function buildRepoInventory(args) {
       package_manifests: packageManifests.length,
       native_source_files: nativeSourceFiles.length,
       native_build_files: nativeBuildFiles.length,
+      residual_hunt_targets: residualHuntTargets.length,
       surfaces: surfaces.length,
     },
     tech_stack: techStack,
@@ -458,11 +694,13 @@ function buildRepoInventory(args) {
     config_files: configFiles,
     doc_files: docFiles,
     env_key_hints: envKeyHints,
+    residual_hunt_targets: residualHuntTargets,
   };
   const attackSurface = {
     domain,
     target_kind: "repo",
     repo_path: repoPath,
+    reachability: reachabilitySummary,
     surfaces,
   };
 
@@ -476,6 +714,8 @@ function buildRepoInventory(args) {
       attack_surface_path: attackSurfacePath(domain),
       counts: inventory.counts,
       surface_ids: surfaces.map((surface) => surface.id),
+      reachability: reachabilitySummary,
+      residual_hunt_targets: residualHuntTargets,
     }, null, 2);
   });
 }
