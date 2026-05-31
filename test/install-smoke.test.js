@@ -539,6 +539,28 @@ test("codex adapter installs direct skills and doctor checks MCP wiring", () => 
     assert.equal(freshness.detail.stale.some((item) => item.skill === "bob-oss" && item.reason === "content_mismatch"), true);
     assert.equal(freshness.detail.reinstall, "node bin/hacker-bob.js install . --adapter codex");
 
+    const readErrorPath = path.join(tempHome, ".codex", "skills", "bob-status", "SKILL.md");
+    const originalReadFileSync = fs.readFileSync;
+    try {
+      fs.readFileSync = function patchedReadFileSync(filePath, ...args) {
+        if (path.resolve(String(filePath)) === path.resolve(readErrorPath)) {
+          throw new Error("simulated read failure");
+        }
+        return originalReadFileSync.call(this, filePath, ...args);
+      };
+      const readErrorFreshness = CODEX_ADAPTER.directSkillFreshness(workspace);
+      assert.equal(
+        readErrorFreshness.stale.some((item) => (
+          item.skill === "bob-status" &&
+          item.reason === "read_error" &&
+          /simulated read failure/.test(item.error)
+        )),
+        true,
+      );
+    } finally {
+      fs.readFileSync = originalReadFileSync;
+    }
+
     const dryRun = CODEX_ADAPTER.uninstall({ sourceRoot: ROOT, targetAbs: workspace, dryRun: true });
     assert.equal(dryRun.dry_run, true);
     assert.ok(dryRun.actions.some((action) => action.path === path.join(tempHome, ".codex", "skills", "bob-hunt", "SKILL.md")));

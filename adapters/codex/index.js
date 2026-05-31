@@ -376,14 +376,23 @@ function directSkillFreshness(sourceRoot, home = codexHome()) {
       continue;
     }
     if (!fileExists(installed)) continue;
-    const sourceText = fs.readFileSync(source, "utf8");
-    const installedText = fs.readFileSync(installed, "utf8");
-    if (sourceText !== installedText) {
+    try {
+      const sourceText = fs.readFileSync(source, "utf8");
+      const installedText = fs.readFileSync(installed, "utf8");
+      if (sourceText === installedText) continue;
       result.stale.push({
         skill: spec.name,
         reason: "content_mismatch",
         source,
         installed,
+      });
+    } catch (error) {
+      result.stale.push({
+        skill: spec.name,
+        reason: "read_error",
+        source,
+        installed,
+        error: error && error.message ? error.message : String(error),
       });
     }
   }

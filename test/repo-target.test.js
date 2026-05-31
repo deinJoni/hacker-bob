@@ -419,6 +419,33 @@ test("high severity OSS native findings require matching non-dry-run repo replay
   assert.equal(findings[0].repro_command, "/work/repro.sh");
 }));
 
+test("OSS dynamic-proof gate fails closed on oversized repo command run logs", () => withTempHome((home) => {
+  const context = createNativeRepoSession(home, "repo-oversized-run-log");
+  appendRepoDockerRun(context.targetDomain, "/work/repro.sh");
+  const runLogPath = repoCommandRunsJsonlPath(context.targetDomain);
+  const originalStatSync = fs.statSync;
+  try {
+    fs.statSync = function patchedStatSync(filePath, ...args) {
+      const stats = originalStatSync.call(this, filePath, ...args);
+      if (path.resolve(String(filePath)) !== path.resolve(runLogPath)) {
+        return stats;
+      }
+      return Object.create(stats, {
+        size: {
+          value: 17 * 1024 * 1024,
+          enumerable: true,
+        },
+      });
+    };
+    assert.throws(
+      () => recordFinding(nativeFindingInput(context)),
+      /repo-command-runs\.jsonl exceeds read cap/,
+    );
+  } finally {
+    fs.statSync = originalStatSync;
+  }
+}));
+
 test("OSS hunters cannot finalize complete surfaces with zero coverage and zero findings", () => withTempHome((home) => {
   const context = createNativeRepoSession(home, "repo-native-coverage-test");
 

@@ -15,6 +15,7 @@ const {
 const {
   appendJsonlLine,
   appendMarkdownMirror,
+  DEFAULT_ARTIFACT_READ_MAX_BYTES,
   withSessionLock,
 } = require("./storage.js");
 const {
@@ -74,6 +75,13 @@ function repoRunCommandVariants(command) {
 function readRepoCommandRunRecords(domain) {
   const filePath = repoCommandRunsJsonlPath(domain);
   if (!fs.existsSync(filePath)) return [];
+  const stats = fs.statSync(filePath);
+  if (stats.size > DEFAULT_ARTIFACT_READ_MAX_BYTES) {
+    throw new ToolError(
+      ERROR_CODES.STATE_CONFLICT,
+      `repo-command-runs.jsonl exceeds read cap of ${DEFAULT_ARTIFACT_READ_MAX_BYTES} bytes: ${filePath}`,
+    );
+  }
   const rows = [];
   const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
   for (const line of lines) {
@@ -105,10 +113,11 @@ function assertOssDynamicProofRequirement({ domain, capabilityPack, severity, re
   if (validated !== true) return;
   if (capabilityPack !== "oss_native_code") return;
   if (!["critical", "high"].includes(severity)) return;
+  const commandRunsPath = repoCommandRunsJsonlPath(domain);
   if (!reproCommand) {
     throw new ToolError(
       ERROR_CODES.INVALID_ARGUMENTS,
-      "high/critical oss_native_code findings require repro_command backed by a non-dry-run bounty_repo_docker_run; mark the surface partial with blocked_harness_runs if replay cannot run",
+      `high/critical oss_native_code findings require repro_command backed by a non-dry-run bounty_repo_docker_run; checked ${commandRunsPath}; mark the surface partial with blocked_harness_runs if replay cannot run`,
     );
   }
   const matchingRun = readRepoCommandRunRecords(domain)
@@ -116,7 +125,7 @@ function assertOssDynamicProofRequirement({ domain, capabilityPack, severity, re
   if (!matchingRun) {
     throw new ToolError(
       ERROR_CODES.INVALID_ARGUMENTS,
-      "high/critical oss_native_code findings require a matching non-dry-run bounty_repo_docker_run entry before recording; static repo checks alone are insufficient for CVE-style native-code claims",
+      `high/critical oss_native_code findings require a matching non-dry-run bounty_repo_docker_run entry before recording; checked ${commandRunsPath}; static repo checks alone are insufficient for CVE-style native-code claims`,
     );
   }
 }
