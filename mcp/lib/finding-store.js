@@ -100,7 +100,13 @@ function repoRunMatchesReproCommand(record, reproCommand) {
   if (!repro) return false;
   if (!record || record.dry_run === true) return false;
   if (record.runner !== "docker") return false;
-  if (record.status === "dry_run" || record.status === "docker_unavailable" || record.timed_out === true) {
+  if (record.timed_out === true || record.spawn_error) return false;
+  if (record.status === "ok") {
+    if (record.exit_code !== 0) return false;
+  } else if (record.status === "failed") {
+    if (!Number.isInteger(record.exit_code)) return false;
+    if ([125, 126, 127].includes(record.exit_code)) return false;
+  } else {
     return false;
   }
   return repoRunCommandVariants(record.command).some((variant) => {

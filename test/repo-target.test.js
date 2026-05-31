@@ -109,7 +109,8 @@ function appendRepoDockerRun(domain, command, overrides = {}) {
     runner: "docker",
     run_id: "run-test",
     dry_run: false,
-    status: "failed",
+    status: "ok",
+    exit_code: 0,
     command,
     timed_out: false,
     ...overrides,
@@ -417,6 +418,47 @@ test("high severity OSS native findings require matching non-dry-run repo replay
   assert.equal(findings[0].severity, "high");
   assert.equal(findings[0].capability_pack, "oss_native_code");
   assert.equal(findings[0].repro_command, "/work/repro.sh");
+}));
+
+test("OSS dynamic-proof gate rejects Docker startup failure as proof", () => withTempHome((home) => {
+  const context = createNativeRepoSession(home, "repo-docker-startup-failure");
+  appendRepoDockerRun(context.targetDomain, ["sh", "-lc", "/work/repro.sh"], {
+    status: "failed",
+    exit_code: 125,
+  });
+
+  assert.throws(
+    () => recordFinding(nativeFindingInput(context)),
+    /matching non-dry-run bounty_repo_docker_run entry before recording/,
+  );
+}));
+
+test("OSS dynamic-proof gate rejects container command-start failures as proof", () => withTempHome((home) => {
+  for (const exitCode of [126, 127]) {
+    const context = createNativeRepoSession(home, `repo-command-start-${exitCode}`);
+    appendRepoDockerRun(context.targetDomain, ["sh", "-lc", "/work/repro.sh"], {
+      status: "failed",
+      exit_code: exitCode,
+    });
+
+    assert.throws(
+      () => recordFinding(nativeFindingInput(context)),
+      /matching non-dry-run bounty_repo_docker_run entry before recording/,
+    );
+  }
+}));
+
+test("OSS dynamic-proof gate accepts intentional crash and test-failure exits as proof", () => withTempHome((home) => {
+  for (const exitCode of [139, 1]) {
+    const context = createNativeRepoSession(home, `repo-intentional-failure-${exitCode}`);
+    appendRepoDockerRun(context.targetDomain, ["sh", "-lc", "/work/repro.sh"], {
+      status: "failed",
+      exit_code: exitCode,
+    });
+
+    const recorded = JSON.parse(recordFinding(nativeFindingInput(context)));
+    assert.equal(recorded.recorded, true);
+  }
 }));
 
 test("OSS dynamic-proof gate fails closed on oversized repo command run logs", () => withTempHome((home) => {
