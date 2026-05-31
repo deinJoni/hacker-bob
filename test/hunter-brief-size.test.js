@@ -302,6 +302,55 @@ test("web hunter brief stays within 30k with representative slice fixtures", () 
   });
 });
 
+test("hunter brief drops sensitive surface field-name segments", () => {
+  withTempHome(() => {
+    const domain = uniqueDomain("brief-sensitive-fields");
+    const surfaceId = "web-api";
+    const rawSecret = "bob-brief-raw-secret-should-not-leak";
+    seedSessionState(domain);
+    seedAttackSurface(domain, [{
+      id: surfaceId,
+      surface_type: "api",
+      hosts: [`https://api.${domain}`],
+      title: "API surface",
+      endpoints: ["/api/users"],
+      leaked_secrets: [rawSecret],
+      secret_markers: [`marker:${rawSecret}`],
+      session_cookie: `session=${rawSecret}`,
+      authorization_header: `Bearer ${rawSecret}`,
+      csrf_token: rawSecret,
+      apiKey: rawSecret,
+      "private-key": rawSecret,
+      credentials_file: rawSecret,
+      reachability_confidence: "high",
+      network_reachable_anchors: ["daemon/server.c"],
+    }]);
+    startSingleSurfaceWave(domain, surfaceId);
+
+    const brief = JSON.parse(readHunterBrief({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      block_internal_hosts: false,
+    }));
+    for (const field of [
+      "leaked_secrets",
+      "secret_markers",
+      "session_cookie",
+      "authorization_header",
+      "csrf_token",
+      "apiKey",
+      "private-key",
+      "credentials_file",
+    ]) {
+      assert.equal(Object.prototype.hasOwnProperty.call(brief.surface, field), false, `${field} leaked into brief.surface`);
+    }
+    assert.equal(brief.surface.reachability_confidence, "high");
+    assert.deepEqual(brief.surface.network_reachable_anchors, ["daemon/server.c"]);
+    assert.equal(JSON.stringify(brief).includes(rawSecret), false);
+  });
+});
+
 test("smart-contract hunter brief stays within 30k with representative slice fixtures", () => {
   withTempHome(() => {
     const domain = uniqueDomain("brief-sc");
@@ -365,17 +414,40 @@ test("slimSurfaceForBrief forwards unknown surface fields by default and drops d
   // Copy-by-default: a brand-new surface field (in no *_LIMITS map) must reach the
   // hunter automatically — the inversion of the closed whitelist that silently
   // dropped network_reachable. Secrets/raw bodies and nested objects stay out.
-  const slim = slimSurfaceForBrief({
+  const result = slimSurfaceForBrief({
     id: "OSS-NATIVE-CODE",
     reachability_confidence: "high",                          // new unknown scalar
+    network_reachable_anchors: Array.from({ length: 15 }, (_, index) => `daemon/server-${index}.c`),
+    local_only_candidate_dirs: ["src/parsers", "tools/fixtures"],
+    residual_hunt_targets: Array.from({ length: 25 }, (_, index) => `fix-${index}`),
     network_entrypoints: ["daemon/server.c", "rpc/stub.c"],   // new unknown array
     cookies: "session=secret",                                // denylisted
+    leaked_secrets: ["secret"],                                // segment-denylisted
+    secret_markers: ["secret"],                                // segment-denylisted
+    session_cookie: "secret",                                  // segment-denylisted
+    authorization_header: "secret",                            // segment-denylisted
+    csrf_token: "secret",                                      // segment-denylisted
+    apiKey: "secret",                                          // camelCase api-key denylist
+    "private-key": "secret",                                   // adjacent private-key denylist
     auth: { token: "t" },                                     // denylisted
     nested_obj: { a: 1 },                                     // non-ranking object → skipped
-  }).surface;
+  });
+  const { surface: slim, surface_limits: limits } = result;
   assert.equal(slim.reachability_confidence, "high");
+  assert.equal(slim.network_reachable_anchors.length, 12);
+  assert.equal(limits.network_reachable_anchors.omitted, 3);
+  assert.deepEqual(slim.local_only_candidate_dirs, ["src/parsers", "tools/fixtures"]);
+  assert.equal(slim.residual_hunt_targets.length, 20);
+  assert.equal(limits.residual_hunt_targets.omitted, 5);
   assert.deepEqual(slim.network_entrypoints, ["daemon/server.c", "rpc/stub.c"]);
   assert.equal(slim.cookies, undefined);
+  assert.equal(slim.leaked_secrets, undefined);
+  assert.equal(slim.secret_markers, undefined);
+  assert.equal(slim.session_cookie, undefined);
+  assert.equal(slim.authorization_header, undefined);
+  assert.equal(slim.csrf_token, undefined);
+  assert.equal(slim.apiKey, undefined);
+  assert.equal(slim["private-key"], undefined);
   assert.equal(slim.auth, undefined);
   assert.equal(slim.nested_obj, undefined);
 

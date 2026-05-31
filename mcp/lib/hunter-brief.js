@@ -136,12 +136,29 @@ const HUNTER_BRIEF_SURFACE_SCALAR_LIMITS = Object.freeze({
 // secrets and bulky raw bodies that must never travel in a brief.
 const HUNTER_BRIEF_SURFACE_DEFAULT_SCALAR_CAP = 200;
 const HUNTER_BRIEF_SURFACE_DEFAULT_ARRAY_LIMIT = 12;
-const HUNTER_BRIEF_SURFACE_FIELD_DROP = Object.freeze(new Set([
+const HUNTER_BRIEF_SURFACE_FIELD_DROP_EXACT = Object.freeze(new Set([
   "ranking",          // slimmed separately via slimRankingForBrief
   "raw", "raw_body", "request_body", "response_body", "body",
   "headers", "cookies", "set_cookie",
   "auth", "credentials", "secret", "secrets", "token", "tokens",
   "api_key", "apikey", "private_key", "password",
+]));
+const HUNTER_BRIEF_SURFACE_SENSITIVE_FIELD_SEGMENTS = Object.freeze(new Set([
+  "auth",
+  "authorization",
+  "cookie",
+  "cookies",
+  "credential",
+  "credentials",
+  "password",
+  "passwords",
+  "secret",
+  "secrets",
+  "session",
+  "sessions",
+  "token",
+  "tokens",
+  "apikey",
 ]));
 const HUNTER_BRIEF_ARRAY_ITEM_MAX_CHARS = 500;
 const HUNTER_BRIEF_RANKING_REASON_LIMIT = 10;
@@ -230,6 +247,36 @@ function isBriefScalar(value) {
   return value == null || ["string", "number", "boolean"].includes(typeof value);
 }
 
+function surfaceFieldNameSegments(field) {
+  return String(field)
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+function hasAdjacentSegments(segments, first, second) {
+  for (let i = 0; i < segments.length - 1; i += 1) {
+    if (segments[i] === first && segments[i + 1] === second) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function shouldDropSurfaceFieldForBrief(field) {
+  const normalizedField = String(field).toLowerCase();
+  if (HUNTER_BRIEF_SURFACE_FIELD_DROP_EXACT.has(normalizedField)) return true;
+
+  const segments = surfaceFieldNameSegments(field);
+  if (segments.some((segment) => HUNTER_BRIEF_SURFACE_SENSITIVE_FIELD_SEGMENTS.has(segment))) {
+    return true;
+  }
+  return hasAdjacentSegments(segments, "api", "key")
+    || hasAdjacentSegments(segments, "private", "key");
+}
+
 function capStringValue(value, maxChars) {
   if (typeof value !== "string" || value.length <= maxChars) {
     return { value, truncated: false, total_chars: typeof value === "string" ? value.length : null };
@@ -305,6 +352,7 @@ function slimSurfaceForBrief(surface) {
 
   for (const [field, maxChars] of Object.entries(HUNTER_BRIEF_SURFACE_SCALAR_LIMITS)) {
     handled.add(field);
+    if (shouldDropSurfaceFieldForBrief(field)) continue;
     const value = source[field];
     if (!isBriefScalar(value) || value == null) continue;
     copyScalar(field, value, maxChars);
@@ -317,6 +365,7 @@ function slimSurfaceForBrief(surface) {
 
   for (const [field, limit] of Object.entries(HUNTER_BRIEF_SURFACE_ARRAY_LIMITS)) {
     handled.add(field);
+    if (shouldDropSurfaceFieldForBrief(field)) continue;
     const capped = cappedSurfaceArray(source[field], limit);
     slimSurface[field] = capped.values;
     surfaceLimits[field] = capped.limits;
@@ -326,7 +375,7 @@ function slimSurfaceForBrief(surface) {
   // the hunter, so a new triage field in makeSurface is never silently dropped.
   // Only the denylist blocks a field; nested objects are skipped (flat briefs).
   for (const [field, value] of Object.entries(source)) {
-    if (handled.has(field) || HUNTER_BRIEF_SURFACE_FIELD_DROP.has(field)) continue;
+    if (handled.has(field) || shouldDropSurfaceFieldForBrief(field)) continue;
     if (isBriefScalar(value)) {
       if (value == null) continue;
       copyScalar(field, value, HUNTER_BRIEF_SURFACE_DEFAULT_SCALAR_CAP);
