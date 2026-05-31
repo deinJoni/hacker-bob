@@ -1,7 +1,7 @@
 name: Brutalist Review
 
 # Multi-CLI adversarial code review on every PR, posted as inline comments.
-# Powered by ejmockler/brutalist-mcp (pinned to v1.14.4).
+# Powered by ejmockler/brutalist-mcp (pinned to v1.14.5).
 #
 # Critics: claude + codex + agy (Antigravity). Hard requirement is the
 # ANTHROPIC_OAUTH_TOKEN secret (claude). CODEX_AUTH (codex) and
@@ -34,7 +34,7 @@ jobs:
         # claude + brutalist-mcp are hard preflight requirements; codex and
         # agy are soft critics (warn if their auth secret is missing).
         run: |
-          npm install -g @brutalist/mcp@1.14.4 \
+          npm install -g @brutalist/mcp@1.14.5 \
                          @anthropic-ai/claude-code \
                          @openai/codex
           # agy (Antigravity) installs to ~/.local/bin/agy; put it on PATH.
@@ -42,7 +42,7 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Brutalist review
-        uses: ejmockler/brutalist-mcp/packages/github-action@v1.14.4
+        uses: ejmockler/brutalist-mcp/packages/github-action@v1.14.5
         env:
           # Per-critic spawn cap (brutalist-mcp). Real since v1.14.3.
           # Tightened to 90s: the trace showed 3 parallel roasts (9 critic
