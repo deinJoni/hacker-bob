@@ -1,7 +1,7 @@
 name: Brutalist Review
 
 # Multi-CLI adversarial code review on every PR, posted as inline comments.
-# Powered by ejmockler/brutalist-mcp (pinned to v1.14.3).
+# Powered by ejmockler/brutalist-mcp (pinned to v1.14.4).
 #
 # Critics: claude + codex + agy (Antigravity). Hard requirement is the
 # ANTHROPIC_OAUTH_TOKEN secret (claude). CODEX_AUTH (codex) and
@@ -34,7 +34,7 @@ jobs:
         # claude + brutalist-mcp are hard preflight requirements; codex and
         # agy are soft critics (warn if their auth secret is missing).
         run: |
-          npm install -g @brutalist/mcp@1.14.3 \
+          npm install -g @brutalist/mcp@1.14.4 \
                          @anthropic-ai/claude-code \
                          @openai/codex
           # agy (Antigravity) installs to ~/.local/bin/agy; put it on PATH.
@@ -42,15 +42,15 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Brutalist review
-        uses: ejmockler/brutalist-mcp/packages/github-action@v1.14.3
+        uses: ejmockler/brutalist-mcp/packages/github-action@v1.14.4
         env:
-          # Backstop only. v1.14.2's agy adapter scopes/anchors agy on diff
-          # reviews so it converges in ~15-50s instead of running out the
-          # 30-min orchestrator budget. This per-critic spawn cap (default
-          # 1800000ms = 30min = the orchestrator budget) stays as defense in
-          # depth: if any critic stalls, it's killed and the review still
-          # posts from the others (executeMultiCLI uses allSettled).
+          # Per-critic spawn cap (brutalist-mcp). Real since v1.14.3.
           BRUTALIST_TIMEOUT: "180000"
+          # DIAGNOSTIC (v1.14.4): trace each orchestrator-brain SDK message
+          # to stderr (which roast call, timings, where it hangs) and cap the
+          # orchestrator wall-clock low so a stall fails in 12 min, not 30.
+          BRUTALIST_ORCHESTRATOR_TRACE: "1"
+          BRUTALIST_ORCHESTRATOR_TIMEOUT_MS: "720000"
         with:
           github-token: ${{ github.token }}
           anthropic-oauth-token: ${{ secrets.ANTHROPIC_OAUTH_TOKEN }}
