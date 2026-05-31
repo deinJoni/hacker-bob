@@ -10,7 +10,10 @@ const {
   authDifferentialResultsPath,
   sessionDir,
 } = require("./paths.js");
-const { hashCanonicalJson } = require("./verification.js");
+const {
+  readFileUtf8,
+} = require("./storage.js");
+const { hashCanonicalJson } = require("./verification-contracts.js");
 
 const DEFAULT_ENDPOINT_LIMIT = 200;
 
@@ -86,7 +89,7 @@ function persistResults(domain, payload) {
 function readResults(domain) {
   const filePath = authDifferentialResultsPath(domain);
   if (!fs.existsSync(filePath)) return null;
-  const raw = fs.readFileSync(filePath, "utf8");
+  const raw = readFileUtf8(filePath, { label: "auth-differential-results.json" });
   try {
     return JSON.parse(raw);
   } catch (err) {

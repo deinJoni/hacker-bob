@@ -6,6 +6,9 @@ const path = require("path");
 const {
   defaultClaudeSettings,
 } = require("../adapters/claude/config.js");
+const {
+  STALE_HOOK_SCRIPT_NAMES,
+} = require("./lib/package-policy.js");
 
 function readJsonIfExists(filePath, fallback) {
   if (!fs.existsSync(filePath)) return fallback;
@@ -24,7 +27,6 @@ function uniqueStrings(values) {
 const STALE_GLOBAL_MCP_PERMISSIONS = Object.freeze([
   "mcp__bountyagent__bounty_merge_wave_handoffs",
 ]);
-
 function hookKey(hook) {
   return JSON.stringify({
     type: hook && hook.type,
@@ -38,13 +40,21 @@ function hookScriptName(command) {
   return match ? match[1] : null;
 }
 
+function isStaleHook(hook) {
+  const scriptName = hookScriptName(hook && hook.command);
+  return !!scriptName && STALE_HOOK_SCRIPT_NAMES.includes(scriptName);
+}
+
 function mergeHookEntries(existingHooks, bobHooks) {
   const byMatcher = new Map();
   for (const entry of [...(Array.isArray(existingHooks) ? existingHooks : [])]) {
     if (!entry || typeof entry.matcher !== "string") continue;
+    const existingEntryHooks = Array.isArray(entry.hooks) ? entry.hooks : [];
+    const hooks = existingEntryHooks.filter((hook) => !isStaleHook(hook));
+    if (existingEntryHooks.length > 0 && hooks.length === 0) continue;
     byMatcher.set(entry.matcher, {
       ...entry,
-      hooks: Array.isArray(entry.hooks) ? entry.hooks.slice() : [],
+      hooks,
     });
   }
 
@@ -154,6 +164,7 @@ if (require.main === module) {
 module.exports = {
   BRUTALIST_MCP_SERVER,
   STALE_GLOBAL_MCP_PERMISSIONS,
+  STALE_HOOK_SCRIPT_NAMES,
   hookScriptName,
   mergeMcp,
   mergeHookEntries,

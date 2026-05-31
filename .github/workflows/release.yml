@@ -36,6 +36,9 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      - name: Dependency freshness
+        run: npm run release:check:dependencies
+
       - name: Publish canonical package
         run: |
           VERSION="$(node -p "require('./package.json').version")"

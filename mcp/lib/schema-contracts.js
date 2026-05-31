@@ -1,6 +1,6 @@
 "use strict";
 
-const { hashCanonicalJson } = require("./verification.js");
+const { hashCanonicalJson } = require("./verification-contracts.js");
 const { parseGraphqlSdl, looksLikeGraphqlSdl } = require("./graphql-sdl-parser.js");
 const { parsePostmanCollection, looksLikePostmanCollection } = require("./postman-parser.js");
 

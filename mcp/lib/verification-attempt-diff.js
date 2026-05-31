@@ -10,6 +10,7 @@ const {
   verificationRoundPaths,
   verificationSnapshotPath,
 } = require("./paths.js");
+const { readJsonFile } = require("./storage.js");
 const { VERIFICATION_ROUND_VALUES } = require("./constants.js");
 
 const ATTEMPT_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
@@ -17,7 +18,7 @@ const ATTEMPT_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 function safeReadJson(filePath) {
   try {
     if (!fs.existsSync(filePath)) return null;
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return readJsonFile(filePath, { label: path.basename(filePath) });
   } catch (_err) {
     return null;
   }

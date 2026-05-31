@@ -17,7 +17,7 @@ module.exports = Object.freeze({
       follow_redirects: { type: "boolean" },
       block_internal_hosts: {
         type: "boolean",
-        description: "When true, block localhost, private/link-local IP ranges, .internal/.local names, cloud metadata hosts, and public hostnames that resolve to those addresses. Defaults to false so Bob can follow any user-authorized chain.",
+        description: "When true, block localhost, private/link-local IP ranges, .internal/.local names, cloud metadata hosts, and public hostnames that resolve to those addresses on direct egress. When omitted, Bob uses the session's persisted effective policy: normal/yolo/legacy false, paranoid true unless allow_internal_hosts was set at init. Proxy-backed egress rejects this mode because Bob cannot verify proxy-side DNS/routing.",
       },
       timeout_ms: { type: "number" },
       auth_profile: { type: "string" },
@@ -49,5 +49,4 @@ module.exports = Object.freeze({
   scope_required: true,
   sensitive_output: true,
   session_artifacts_written: ["http-audit.jsonl"],
-  hook_required: true,
 });

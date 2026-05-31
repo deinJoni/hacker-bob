@@ -28,6 +28,7 @@ const {
 const {
   appendJsonlLine,
   appendJsonlLines,
+  readFileUtf8,
   withSessionLock,
 } = require("./storage.js");
 const {
@@ -38,6 +39,12 @@ const {
   validateScanUrl,
   hostnameFromUrl,
 } = require("./url-surface.js");
+const {
+  blockInternalHostsPolicyFields,
+} = require("./session-state-contracts.js");
+const {
+  blockInternalHostsRequestPolicy,
+} = require("./session-state-store.js");
 
 function normalizeHttpAuditRecord(record, { expectedDomain = null, lineNumber = null } = {}) {
   if (record == null || typeof record !== "object" || Array.isArray(record)) {
@@ -65,11 +72,33 @@ function normalizeHttpAuditRecord(record, { expectedDomain = null, lineNumber = 
       agent: record.agent == null ? null : parseAgentId(record.agent),
       surface_id: normalizeOptionalText(record.surface_id, "surface_id"),
       auth_profile: normalizeOptionalText(record.auth_profile, "auth_profile"),
+      checkpoint_mode: normalizeOptionalText(record.checkpoint_mode, "checkpoint_mode"),
+      block_internal_hosts: record.block_internal_hosts == null
+        ? false
+        : assertBoolean(record.block_internal_hosts, "block_internal_hosts"),
+      block_internal_hosts_source: normalizeOptionalText(
+        record.block_internal_hosts_source,
+        "block_internal_hosts_source",
+      ),
       egress_profile: normalizeOptionalText(record.egress_profile, "egress_profile") || "default",
       egress_region: normalizeOptionalText(record.egress_region, "egress_region"),
+      proxy_configured: record.proxy_configured == null
+        ? false
+        : assertBoolean(record.proxy_configured, "proxy_configured"),
+      egress_profile_identity_hash: normalizeOptionalText(
+        record.egress_profile_identity_hash,
+        "egress_profile_identity_hash",
+      ),
+      egress_profile_identity_version: record.egress_profile_identity_version == null
+        ? null
+        : assertInteger(record.egress_profile_identity_version, "egress_profile_identity_version", { min: 1 }),
       status: normalizeOptionalInteger(record.status, "status", { min: 100, max: 599 }),
       error: normalizeOptionalText(record.error, "error"),
       scope_decision: assertRequiredText(record.scope_decision, "scope_decision"),
+      registrable_domain: normalizeOptionalText(record.registrable_domain, "registrable_domain"),
+      public_suffix: normalizeOptionalText(record.public_suffix, "public_suffix"),
+      public_suffix_source: normalizeOptionalText(record.public_suffix_source, "public_suffix_source"),
+      psl_overlay_file: normalizeOptionalText(record.psl_overlay_file, "psl_overlay_file"),
       duration_ms: normalizeOptionalInteger(record.duration_ms, "duration_ms", { min: 0 }),
       final_url: record.final_url == null ? null : redactUrlSensitiveValues(record.final_url),
     };
@@ -94,7 +123,7 @@ function readHttpAuditRecordsFromJsonl(domain) {
     return [];
   }
 
-  const content = fs.readFileSync(filePath, "utf8");
+  const content = readFileUtf8(filePath, { label: "http-audit.jsonl" });
   if (!content.trim()) {
     return [];
   }
@@ -138,8 +167,20 @@ function compactHttpAuditRecord(record) {
   };
   if (record.error) item.error = record.error;
   if (record.auth_profile) item.auth_profile = record.auth_profile;
+  if (record.checkpoint_mode) item.checkpoint_mode = record.checkpoint_mode;
+  item.block_internal_hosts = record.block_internal_hosts === true;
+  if (record.block_internal_hosts_source) {
+    item.block_internal_hosts_source = record.block_internal_hosts_source;
+  }
   if (record.egress_profile) item.egress_profile = record.egress_profile;
   if (record.egress_region) item.egress_region = record.egress_region;
+  if (record.egress_profile_identity_hash) {
+    item.egress_profile_identity_hash = record.egress_profile_identity_hash;
+  }
+  if (record.public_suffix_source) item.public_suffix_source = record.public_suffix_source;
+  if (record.public_suffix) item.public_suffix = record.public_suffix;
+  if (record.registrable_domain) item.registrable_domain = record.registrable_domain;
+  if (record.psl_overlay_file) item.psl_overlay_file = record.psl_overlay_file;
   if (record.wave || record.agent) item.wave_agent = `${record.wave || "?"}/${record.agent || "?"}`;
   if (record.surface_id) item.surface_id = record.surface_id;
   return item;
@@ -155,14 +196,40 @@ function isNetworkUnreachableRecord(record) {
 function summarizeEgressProfiles(records) {
   const byProfile = {};
   const byRegion = {};
+  const byIdentityHash = {};
+  let unbound = 0;
+  const identities = new Map();
   for (const record of records) {
     const profile = record.egress_profile || "default";
     byProfile[profile] = (byProfile[profile] || 0) + 1;
     if (record.egress_region) {
       byRegion[record.egress_region] = (byRegion[record.egress_region] || 0) + 1;
     }
+    if (record.egress_profile_identity_hash) {
+      byIdentityHash[record.egress_profile_identity_hash] = (
+        byIdentityHash[record.egress_profile_identity_hash] || 0
+      ) + 1;
+      if (!identities.has(record.egress_profile_identity_hash)) {
+        identities.set(record.egress_profile_identity_hash, {
+          egress_profile_identity_hash: record.egress_profile_identity_hash,
+          egress_profile_identity_version: record.egress_profile_identity_version,
+          egress_profile: profile,
+          egress_region: record.egress_region || null,
+          proxy_configured: record.proxy_configured === true,
+        });
+      }
+    } else {
+      unbound += 1;
+    }
   }
-  return { by_profile: byProfile, by_region: byRegion };
+  return {
+    by_profile: byProfile,
+    by_region: byRegion,
+    by_identity_hash: byIdentityHash,
+    unbound,
+    identities: Array.from(identities.values())
+      .sort((a, b) => a.egress_profile.localeCompare(b.egress_profile)),
+  };
 }
 
 function summarizeGeofenceWarnings(records, targetDomain, { threshold = CIRCUIT_BREAKER_THRESHOLD } = {}) {
@@ -218,10 +285,18 @@ function summarizeHttpAuditRecords(records, { surface = null, limit = HTTP_AUDIT
   let errorCount = 0;
   let blockedByScope = 0;
   let networkUnreachable = 0;
+  let internalHostBlocking = 0;
+  const internalHostBlockingBySource = {};
   for (const record of filteredRecords) {
     if (record.error) errorCount += 1;
     if (record.scope_decision === "blocked") blockedByScope += 1;
     if (isNetworkUnreachableRecord(record)) networkUnreachable += 1;
+    if (record.block_internal_hosts === true) internalHostBlocking += 1;
+    if (record.block_internal_hosts_source) {
+      internalHostBlockingBySource[record.block_internal_hosts_source] = (
+        internalHostBlockingBySource[record.block_internal_hosts_source] || 0
+      ) + 1;
+    }
     if (record.status == null) {
       byStatusClass.other += 1;
       continue;
@@ -234,7 +309,7 @@ function summarizeHttpAuditRecords(records, { surface = null, limit = HTTP_AUDIT
     }
   }
 
-  return {
+  const summary = {
     total: filteredRecords.length,
     shown: shownRecords.length,
     omitted: Math.max(0, filteredRecords.length - shownRecords.length),
@@ -250,6 +325,14 @@ function summarizeHttpAuditRecords(records, { surface = null, limit = HTTP_AUDIT
     ),
     recent: shownRecords.map(compactHttpAuditRecord),
   };
+  if (filteredRecords.length > 0) {
+    summary.block_internal_hosts = {
+      true: internalHostBlocking,
+      false: Math.max(0, filteredRecords.length - internalHostBlocking),
+      by_source: internalHostBlockingBySource,
+    };
+  }
+  return summary;
 }
 
 function normalizeHttpAuditSummaryLimit(value) {
@@ -396,7 +479,7 @@ function readTrafficRecordsFromJsonl(domain) {
     return [];
   }
 
-  const content = fs.readFileSync(filePath, "utf8");
+  const content = readFileUtf8(filePath, { label: "traffic.jsonl" });
   if (!content.trim()) {
     return [];
   }
@@ -569,7 +652,11 @@ function summarizeTrafficRecords(records, { surface = null, limit = TRAFFIC_SUMM
 function importHttpTraffic(args, { rankAttackSurfaces = null } = {}) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   const source = assertRequiredText(args.source, "source");
-  const blockInternalHosts = args.block_internal_hosts === true;
+  const internalHostPolicy = blockInternalHostsRequestPolicy(domain, args, {
+    allowMissingSession: true,
+  });
+  const internalHostContext = blockInternalHostsPolicyFields(internalHostPolicy);
+  const blockInternalHosts = internalHostPolicy.block_internal_hosts === true;
   const inputEntries = normalizeTrafficImportEntries(args);
   const entries = inputEntries.slice(0, TRAFFIC_IMPORT_MAX_ENTRIES);
   const importedAt = new Date().toISOString();
@@ -625,6 +712,7 @@ function importHttpTraffic(args, { rankAttackSurfaces = null } = {}) {
       rejected_reasons: rejected.slice(0, 20),
       capped_input: Math.max(0, inputEntries.length - entries.length),
       traffic_path: logPath,
+      ...internalHostContext,
     });
   });
 }

@@ -6,26 +6,44 @@ const path = require("path");
 
 const {
   attackSurfacePath,
-  buildRepoInventory,
-  finalizeHunterRun,
-  initRepoSession,
-  logCoverage,
-  logTechniqueAttempt,
-  prepareRepoEnv,
-  readFindings,
-  readSessionState,
-  recordFinding,
   repoCommandRunsJsonlPath,
-  repoCheck,
   repoDockerfilePath,
-  repoDockerRun,
   repoEnvPath,
-  routeSurfaces,
-  startNextWave,
   surfaceRoutesPath,
+} = require("../mcp/lib/paths.js");
+const {
+  buildRepoInventory,
+  initRepoSession,
+  repoCheck,
+} = require("../mcp/lib/repo-target.js");
+const {
+  prepareRepoEnv,
+  repoDockerRun,
+} = require("../mcp/lib/repo-env.js");
+const {
+  finalizeHunterRun,
+} = require("../mcp/lib/hunter-completion.js");
+const {
+  logCoverage,
+} = require("../mcp/lib/coverage.js");
+const {
+  logTechniqueAttempt,
+} = require("../mcp/lib/technique-packs.js");
+const {
+  readFindings,
+  recordFinding,
+} = require("../mcp/lib/finding-store.js");
+const {
+  routeSurfaces,
+} = require("../mcp/lib/surface-router.js");
+const {
+  readSessionState,
   transitionPhase,
+} = require("../mcp/lib/session-state.js");
+const {
+  startNextWave,
   writeWaveHandoff,
-} = require("../mcp/server.js");
+} = require("../mcp/lib/waves.js");
 
 function withTempHome(fn) {
   const previousHome = process.env.HOME;

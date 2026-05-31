@@ -5,11 +5,23 @@ const crypto = require("crypto");
 const os = require("os");
 const path = require("path");
 const {
-  redactUrlSensitiveValues,
-} = require("../redaction.js");
-const {
   bobVersion,
 } = require("./runtime-resources.js");
+const {
+  appendJsonlLine,
+  readFileUtf8,
+} = require("./storage.js");
+const {
+  statePath,
+} = require("./paths.js");
+const {
+  assertHttpScopeDomain,
+} = require("./scope.js");
+const {
+  AUTHORITY_CLASSES,
+  normalizeAuthorityTelemetry,
+  validateSessionAuthorityState,
+} = require("./session-authority.js");
 
 const TOOL_TELEMETRY_VERSION = 1;
 const AGENT_RUN_TELEMETRY_VERSION = 1;
@@ -21,9 +33,40 @@ const SAFE_LABEL_MAX_CHARS = 200;
 const SAFE_PATH_MAX_CHARS = 1000;
 const DEFAULT_RECENT_FAILURE_LIMIT = 10;
 const MAX_RECENT_FAILURE_LIMIT = 100;
+const TOOL_TELEMETRY_MAX_RECORDS = 5000;
+const AGENT_RUN_TELEMETRY_MAX_RECORDS = 5000;
+const INVALID_FILTER_VALUE = Symbol("invalid-filter-value");
 
 const SENSITIVE_MESSAGE_RE = /\b(?:authorization|bearer|cookie|set-cookie|password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token)\b/i;
 const URL_RE = /\bhttps?:\/\/[^\s"'<>]+/gi;
+const ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+const VERSION_LABEL_RE = /^[0-9A-Za-z][0-9A-Za-z._+-]{0,79}$/;
+const AUTHORITY_CLASS_VALUES = new Set(AUTHORITY_CLASSES);
+const AUTHORITY_MODE_VALUES = new Set(["enforce", "shadow"]);
+const AUTHORITY_SOURCE_VALUES = new Set([
+  "bootstrap",
+  "session_state",
+  "global",
+  "optional_absent",
+  "cross_session",
+  "legacy_normalized",
+  "preapproval_global",
+  "recorded_replay",
+]);
+const AUTHORITY_RESULT_VALUES = new Set(["allowed", "blocked", "shadow_blocked", "not_applicable"]);
+const AUTHORITY_ERROR_CODE_VALUES = new Set([
+  "none",
+  "normalization_failed",
+  "no_session",
+  "malformed_state",
+  "raw_target_drift",
+  "target_url_drift",
+  "scoped_url_drift",
+  "legacy_security_field_missing",
+  "class_missing",
+  "shadow_not_allowed",
+  "replay_authority_drift",
+]);
 
 function telemetryEnabled(env = process.env) {
   return env.BOUNTY_TELEMETRY !== "0";
@@ -44,6 +87,78 @@ function agentRunTelemetryPath(env = process.env) {
   return path.join(telemetryDir(env), AGENT_RUNS_FILE_NAME);
 }
 
+function safeTelemetryPath(filePath) {
+  const name = path.basename(String(filePath || ""));
+  if (name === TOOL_EVENTS_FILE_NAME || name === AGENT_RUNS_FILE_NAME) {
+    return `[telemetry-dir]/${name}`;
+  }
+  return "[telemetry-dir]";
+}
+
+function safeTranscriptPath(value) {
+  return capString(value, SAFE_PATH_MAX_CHARS) ? "[transcript-path]" : null;
+}
+
+function safeTelemetryLabel(value, maxChars = SAFE_LABEL_MAX_CHARS) {
+  const text = capString(value, maxChars);
+  if (!text) return null;
+  if (/[:/?#@\\]/.test(text)) return null;
+  const redacted = redactSensitiveFragments(redactUrlsInText(text));
+  if (redacted !== text) return null;
+  if (SENSITIVE_MESSAGE_RE.test(text)) return null;
+  return text;
+}
+
+function safeIdentityHash(value) {
+  const text = capString(value, 128);
+  return /^[a-f0-9]{64}$/i.test(text) ? text.toLowerCase() : null;
+}
+
+function safeTimestamp(value) {
+  const text = capString(value, 40);
+  if (!text || !ISO_TIMESTAMP_RE.test(text)) return null;
+  return Number.isNaN(Date.parse(text)) ? null : text;
+}
+
+function safeVersionLabel(value) {
+  const text = safeTelemetryLabel(value, 80);
+  return text && VERSION_LABEL_RE.test(text) ? text : null;
+}
+
+function safeAuthorityVersion(value) {
+  if (value == null) return "legacy";
+  if (Number.isInteger(value) && value > 0 && value <= 1000) return value;
+  return null;
+}
+
+function safeEnumLabel(value, allowedValues, maxChars = SAFE_LABEL_MAX_CHARS) {
+  const text = safeTelemetryLabel(value, maxChars);
+  return text && allowedValues.has(text) ? text : null;
+}
+
+function hasFilterValue(value) {
+  return value != null && String(value).trim() !== "";
+}
+
+function safeFilterLabel(value, maxChars = SAFE_LABEL_MAX_CHARS) {
+  if (!hasFilterValue(value)) return null;
+  return safeTelemetryLabel(value, maxChars) || INVALID_FILTER_VALUE;
+}
+
+function safeTargetDomainFilter(value) {
+  if (!hasFilterValue(value)) return null;
+  return capDomain(value) || INVALID_FILTER_VALUE;
+}
+
+function publicFilterValue(value) {
+  return value === INVALID_FILTER_VALUE ? null : value;
+}
+
+function matchesFilterValue(eventValue, filterValue) {
+  if (filterValue === INVALID_FILTER_VALUE) return false;
+  return !filterValue || eventValue === filterValue;
+}
+
 function agentRunSidecarPath(runId, env = process.env) {
   return path.join(telemetryDir(env), "runs", `${runId}.json`);
 }
@@ -53,6 +168,15 @@ function capString(value, maxChars = SAFE_LABEL_MAX_CHARS) {
   const text = String(value).replace(/[\r\n\t]+/g, " ").trim();
   if (!text) return null;
   return text.length > maxChars ? text.slice(0, maxChars) : text;
+}
+
+function capDomain(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    return capString(assertHttpScopeDomain(value), SAFE_LABEL_MAX_CHARS);
+  } catch {
+    return null;
+  }
 }
 
 function buildRunId(event) {
@@ -81,14 +205,14 @@ function extractSafeContext(args) {
     };
   }
 
-  const wave = capString(args.wave) ||
+  const wave = safeTelemetryLabel(args.wave, 40) ||
     (Number.isInteger(args.wave_number) && args.wave_number > 0 ? `w${args.wave_number}` : null);
 
   return {
-    target_domain: capString(args.target_domain),
+    target_domain: capDomain(args.target_domain),
     wave,
-    agent: capString(args.agent),
-    surface_id: capString(args.surface_id),
+    agent: safeTelemetryLabel(args.agent, 40),
+    surface_id: safeTelemetryLabel(args.surface_id),
   };
 }
 
@@ -105,19 +229,105 @@ function registryMetadata(tool) {
     session_artifacts_written: Array.isArray(tool.session_artifacts_written)
       ? tool.session_artifacts_written.slice()
       : [],
-    hook_required: !!tool.hook_required,
   };
 }
 
+function pickEgressTelemetryFields(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const fields = {};
+  for (const [field, maxChars] of [
+    ["egress_profile", 80],
+    ["egress_region", 80],
+  ]) {
+    const safe = safeTelemetryLabel(value[field], maxChars);
+    if (safe) fields[field] = safe;
+  }
+  const identityHash = safeIdentityHash(value.egress_profile_identity_hash);
+  if (identityHash) fields.egress_profile_identity_hash = identityHash;
+  if (typeof value.proxy_configured === "boolean") {
+    fields.proxy_configured = value.proxy_configured;
+  }
+  if (
+    Number.isInteger(value.egress_profile_identity_version) &&
+    value.egress_profile_identity_version > 0
+  ) {
+    fields.egress_profile_identity_version = value.egress_profile_identity_version;
+  }
+  return fields;
+}
+
+function hasEgressIdentity(fields) {
+  return !!(
+    fields &&
+    (fields.egress_profile ||
+      fields.egress_region ||
+      fields.egress_profile_identity_hash ||
+      typeof fields.proxy_configured === "boolean" ||
+      Number.isInteger(fields.egress_profile_identity_version))
+  );
+}
+
+function readSessionEgressTelemetryFields(targetDomain, { validateAuthority = false } = {}) {
+  const domain = capDomain(targetDomain);
+  if (!domain) return {};
+  try {
+    if (validateAuthority) {
+      validateSessionAuthorityState(domain);
+    }
+    const filePath = statePath(domain);
+    if (!fs.existsSync(filePath)) return {};
+    return pickEgressTelemetryFields(JSON.parse(fs.readFileSync(filePath, "utf8")));
+  } catch {
+    return {};
+  }
+}
+
+function egressTelemetryFieldsFromEnvelope(envelope) {
+  const root = envelope && envelope.ok === true ? envelope.data : null;
+  const rootFields = pickEgressTelemetryFields(root);
+  if (hasEgressIdentity(rootFields)) return rootFields;
+
+  const stateFields = pickEgressTelemetryFields(root && root.state);
+  if (hasEgressIdentity(stateFields)) return stateFields;
+
+  const details = envelope && envelope.ok === false && envelope.error
+    ? envelope.error.details
+    : null;
+  if (!details || typeof details !== "object" || Array.isArray(details)) return {};
+
+  const directFields = pickEgressTelemetryFields(details);
+  if (hasEgressIdentity(directFields)) return directFields;
+
+  const expectedFields = pickEgressTelemetryFields(details.expected);
+  if (hasEgressIdentity(expectedFields)) return expectedFields;
+
+  const requestedFields = pickEgressTelemetryFields(details.requested);
+  if (hasEgressIdentity(requestedFields)) return requestedFields;
+
+  return {};
+}
+
+function shouldReadSessionEgressTelemetry(authority) {
+  return !!(
+    authority &&
+    authority.authority_result === "allowed" &&
+    authority.authority_error_code === "none"
+  );
+}
+
 function redactUrlsInText(text) {
-  return text.replace(URL_RE, (url) => redactUrlSensitiveValues(url));
+  return text.replace(URL_RE, "[url]");
+}
+
+function redactSessionPaths(text) {
+  return text.replace(/(?:~|\/[^\s"'<>)]*)\/bounty-agent-sessions\/[^\s"'<>)]*/g, "[session-path]");
 }
 
 function redactSensitiveFragments(text) {
   return text
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 REDACTED")
     .replace(
-      /\b(authorization|cookie|set-cookie|password|passwd|secret|token|session|credential|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token)\b\s*[:=]\s*("[^"]*"|'[^']*'|[^\s,;)]+)/gi,
+      /\b(authorization|cookie|set-cookie|password|passwd|secret|token|session|credential|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|handoff[_-]?token)\b\s*[:=]\s*("[^"]*"|'[^']*'|[^\s,;)]+)/gi,
       "$1=REDACTED",
     );
 }
@@ -129,7 +339,7 @@ function safeErrorMessage(message, { errorCode = null, registry = null } = {}) {
 
   let text = capString(message, ERROR_MESSAGE_MAX_CHARS);
   if (!text) return null;
-  text = redactSensitiveFragments(redactUrlsInText(text));
+  text = redactSessionPaths(redactSensitiveFragments(redactUrlsInText(text)));
 
   if (SENSITIVE_MESSAGE_RE.test(text)) {
     return null;
@@ -138,10 +348,10 @@ function safeErrorMessage(message, { errorCode = null, registry = null } = {}) {
 }
 
 function currentBobVersion(value = null, env = process.env) {
-  const explicit = capString(value, 80);
+  const explicit = safeVersionLabel(value);
   if (explicit) return explicit;
   try {
-    return capString(bobVersion(env), 80);
+    return safeVersionLabel(bobVersion(env));
   } catch {
     return null;
   }
@@ -153,6 +363,7 @@ function buildToolTelemetryEvent({
   args,
   envelope,
   elapsedMs,
+  authority = null,
   bob_version: bobVersionInput = null,
   now = new Date(),
 }) {
@@ -161,11 +372,18 @@ function buildToolTelemetryEvent({
     ? capString(envelope.error.code, 80)
     : null;
   const context = extractSafeContext(args);
+  const authorityTelemetry = normalizeAuthorityTelemetry(authority);
+  const egressFields = {
+    ...egressTelemetryFieldsFromEnvelope(envelope),
+    ...(shouldReadSessionEgressTelemetry(authorityTelemetry)
+      ? readSessionEgressTelemetryFields(context.target_domain, { validateAuthority: true })
+      : {}),
+  };
   const event = {
     version: TOOL_TELEMETRY_VERSION,
     bob_version: currentBobVersion(bobVersionInput),
     ts: now.toISOString(),
-    tool: capString(toolName, 120) || "<unknown>",
+    tool: safeTelemetryLabel(toolName, 120) || "<unknown>",
     ok: !!(envelope && envelope.ok === true),
     elapsed_ms: Number.isFinite(elapsedMs) ? Math.max(0, Math.round(elapsedMs)) : 0,
     error_code: errorCode,
@@ -173,8 +391,12 @@ function buildToolTelemetryEvent({
     wave: context.wave,
     agent: context.agent,
     surface_id: context.surface_id,
+    ...egressFields,
     registry,
   };
+  if (authorityTelemetry) {
+    event.authority = authorityTelemetry;
+  }
 
   if (!event.ok) {
     const errorMessage = safeErrorMessage(envelope && envelope.error && envelope.error.message, {
@@ -192,8 +414,7 @@ function buildToolTelemetryEvent({
 function appendToolTelemetryEvent(event, { env = process.env } = {}) {
   if (!telemetryEnabled(env)) return false;
   const filePath = toolTelemetryPath(env);
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.appendFileSync(filePath, `${JSON.stringify(event)}\n`, "utf8");
+  appendJsonlLine(filePath, event, { maxRecords: TOOL_TELEMETRY_MAX_RECORDS });
   return true;
 }
 
@@ -220,8 +441,8 @@ function normalizeAgentRunHandoff(handoff) {
   return {
     present: value.present == null ? null : value.present === true,
     valid: value.valid == null ? null : value.valid === true,
-    provenance: capString(value.provenance, 80),
-    surface_status: capString(value.surface_status, 80),
+    provenance: safeTelemetryLabel(value.provenance, 80),
+    surface_status: safeTelemetryLabel(value.surface_status, 80),
     summary_present: value.summary_present == null ? null : value.summary_present === true,
     chain_notes_count: chainNotesCount,
   };
@@ -237,7 +458,7 @@ function normalizeAgentRunCoverage(coverage) {
   let computedTotal = 0;
 
   for (const [status, count] of Object.entries(byStatusInput)) {
-    const safeStatus = capString(status, 80);
+    const safeStatus = safeTelemetryLabel(status, 80);
     if (!safeStatus || !Number.isFinite(count)) continue;
     const safeCount = Math.max(0, Math.trunc(count));
     byStatus[safeStatus] = safeCount;
@@ -286,18 +507,18 @@ function buildAgentRunTelemetryEvent({
     bob_version: currentBobVersion(bobVersionInput),
     ts: now.toISOString(),
     run_id: null,
-    run_type: capString(normalizedRunType, 80) || "hunter",
+    run_type: safeTelemetryLabel(normalizedRunType, 80) || "hunter",
     status: status === "allowed" ? "allowed" : "blocked",
-    block_code: status === "allowed" ? null : capString(normalizedBlockCode, 120),
-    target_domain: capString(targetDomain),
-    wave: capString(wave, 40),
-    agent: capString(agent, 40),
-    surface_id: capString(surfaceId),
+    block_code: status === "allowed" ? null : safeTelemetryLabel(normalizedBlockCode, 120),
+    target_domain: capDomain(targetDomain),
+    wave: safeTelemetryLabel(wave, 40),
+    agent: safeTelemetryLabel(agent, 40),
+    surface_id: safeTelemetryLabel(surfaceId),
     transcript_path: capString(transcriptPath, SAFE_PATH_MAX_CHARS),
     handoff: normalizeAgentRunHandoff(handoff),
     coverage: normalizeAgentRunCoverage(coverage),
     findings: normalizeAgentRunFindings(findings),
-    telemetry_source: capString(telemetrySource, 120) || "hunter-subagent-stop",
+    telemetry_source: safeTelemetryLabel(telemetrySource, 120) || "hunter-subagent-stop",
   };
   event.run_id = buildRunId(event);
   return event;
@@ -306,8 +527,7 @@ function buildAgentRunTelemetryEvent({
 function appendAgentRunTelemetryEvent(event, { env = process.env } = {}) {
   if (!telemetryEnabled(env)) return false;
   const filePath = agentRunTelemetryPath(env);
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.appendFileSync(filePath, `${JSON.stringify(event)}\n`, "utf8");
+  appendJsonlLine(filePath, event, { maxRecords: AGENT_RUN_TELEMETRY_MAX_RECORDS });
 
   const sidecarPath = agentRunSidecarPath(event.run_id, env);
   fs.mkdirSync(path.dirname(sidecarPath), { recursive: true });
@@ -335,30 +555,76 @@ function normalizeRecentFailureLimit(limit) {
   return Math.max(1, Math.min(MAX_RECENT_FAILURE_LIMIT, Math.trunc(limit)));
 }
 
+function normalizeAuthorityForSummary(authority) {
+  if (!authority || typeof authority !== "object" || Array.isArray(authority)) return null;
+  const authorityVersion = safeAuthorityVersion(authority.authority_version);
+  const authorityClass = safeEnumLabel(authority.authority_class, AUTHORITY_CLASS_VALUES, 80);
+  const authorityMode = safeEnumLabel(authority.authority_mode, AUTHORITY_MODE_VALUES, 40);
+  const authoritySource = safeEnumLabel(authority.authority_source, AUTHORITY_SOURCE_VALUES, 80);
+  const authorityResult = safeEnumLabel(authority.authority_result, AUTHORITY_RESULT_VALUES, 40);
+  const authorityErrorCode = safeEnumLabel(
+    authority.authority_error_code,
+    AUTHORITY_ERROR_CODE_VALUES,
+    80,
+  );
+  const authorityBlockReason = safeEnumLabel(
+    authority.authority_block_reason,
+    AUTHORITY_ERROR_CODE_VALUES,
+    80,
+  ) || authorityErrorCode;
+  if (
+    !authorityVersion ||
+    !authorityClass ||
+    !authorityMode ||
+    !authoritySource ||
+    !authorityResult ||
+    !authorityErrorCode
+  ) {
+    return null;
+  }
+  return {
+    authority_version: authorityVersion,
+    authority_class: authorityClass,
+    authority_mode: authorityMode,
+    authority_source: authoritySource,
+    authority_result: authorityResult,
+    authority_error_code: authorityErrorCode,
+    authority_block_reason: authorityBlockReason,
+    authority_shadowed: authority.authority_shadowed === true,
+  };
+}
+
 function isPlainEvent(event) {
   return event && typeof event === "object" && !Array.isArray(event) && event.version === TOOL_TELEMETRY_VERSION;
 }
 
 function normalizeEventForSummary(event) {
+  const errorCode = safeTelemetryLabel(event.error_code, 80);
   return {
-    ts: capString(event.ts, 40),
-    bob_version: capString(event.bob_version, 80),
-    tool: capString(event.tool, 120) || "<unknown>",
+    ts: safeTimestamp(event.ts),
+    bob_version: safeVersionLabel(event.bob_version),
+    tool: safeTelemetryLabel(event.tool, 120) || "<unknown>",
     ok: event.ok === true,
     elapsed_ms: Number.isFinite(event.elapsed_ms) ? Math.max(0, Math.round(event.elapsed_ms)) : 0,
-    error_code: capString(event.error_code, 80),
-    error_message: capString(event.error_message, ERROR_MESSAGE_MAX_CHARS),
-    target_domain: capString(event.target_domain),
-    wave: capString(event.wave),
-    agent: capString(event.agent),
-    surface_id: capString(event.surface_id),
+    error_code: errorCode,
+    error_message: safeErrorMessage(event.error_message, {
+      errorCode,
+      registry: event.registry && typeof event.registry === "object" && !Array.isArray(event.registry)
+        ? { sensitive_output: event.registry.sensitive_output === true }
+        : null,
+    }),
+    target_domain: capDomain(event.target_domain),
+    wave: safeTelemetryLabel(event.wave, 40),
+    agent: safeTelemetryLabel(event.agent, 40),
+    surface_id: safeTelemetryLabel(event.surface_id),
+    ...pickEgressTelemetryFields(event),
+    authority: normalizeAuthorityForSummary(event.authority),
   };
 }
 
 function eventMatchesFilters(event, filters) {
-  if (filters.tool && event.tool !== filters.tool) return false;
-  if (filters.target_domain && event.target_domain !== filters.target_domain) return false;
-  return true;
+  return matchesFilterValue(event.tool, filters.tool) &&
+    matchesFilterValue(event.target_domain, filters.target_domain);
 }
 
 function isPlainAgentRunEvent(event) {
@@ -375,42 +641,41 @@ function isPlainAgentRunEvent(event) {
 
 function normalizeAgentRunEventForSummary(event) {
   return {
-    ts: capString(event.ts, 40),
-    bob_version: capString(event.bob_version, 80),
-    run_id: capString(event.run_id, 80),
-    run_type: capString(event.run_type, 80) || "hunter",
+    ts: safeTimestamp(event.ts),
+    bob_version: safeVersionLabel(event.bob_version),
+    run_id: safeTelemetryLabel(event.run_id, 80),
+    run_type: safeTelemetryLabel(event.run_type, 80) || "hunter",
     status: event.status === "allowed" ? "allowed" : "blocked",
-    block_code: capString(event.block_code, 120),
-    target_domain: capString(event.target_domain),
-    wave: capString(event.wave, 40),
-    agent: capString(event.agent, 40),
-    surface_id: capString(event.surface_id),
-    transcript_path: capString(event.transcript_path, SAFE_PATH_MAX_CHARS),
+    block_code: safeTelemetryLabel(event.block_code, 120),
+    target_domain: capDomain(event.target_domain),
+    wave: safeTelemetryLabel(event.wave, 40),
+    agent: safeTelemetryLabel(event.agent, 40),
+    surface_id: safeTelemetryLabel(event.surface_id),
+    transcript_path: safeTranscriptPath(event.transcript_path),
     handoff: normalizeAgentRunHandoff(event.handoff),
     coverage: normalizeAgentRunCoverage(event.coverage),
     findings: normalizeAgentRunFindings(event.findings),
-    telemetry_source: capString(event.telemetry_source, 120),
+    telemetry_source: safeTelemetryLabel(event.telemetry_source, 120),
   };
 }
 
 function agentRunMatchesFilters(event, filters) {
-  if (filters.target_domain && event.target_domain !== filters.target_domain) return false;
-  if (filters.agent_run_type && event.run_type !== filters.agent_run_type) return false;
-  if (filters.wave && event.wave !== filters.wave) return false;
-  if (filters.agent && event.agent !== filters.agent) return false;
-  if (filters.surface_id && event.surface_id !== filters.surface_id) return false;
-  return true;
+  return matchesFilterValue(event.target_domain, filters.target_domain) &&
+    matchesFilterValue(event.run_type, filters.agent_run_type) &&
+    matchesFilterValue(event.wave, filters.wave) &&
+    matchesFilterValue(event.agent, filters.agent) &&
+    matchesFilterValue(event.surface_id, filters.surface_id);
 }
 
 function readToolTelemetryEvents({ target_domain: targetDomain, tool, env = process.env } = {}) {
   const filePath = toolTelemetryPath(env);
   const filters = {
-    target_domain: capString(targetDomain),
-    tool: capString(tool, 120),
+    target_domain: safeTargetDomainFilter(targetDomain),
+    tool: safeFilterLabel(tool, 120),
   };
   const result = {
     enabled: telemetryEnabled(env),
-    telemetry_path: filePath,
+    telemetry_path: safeTelemetryPath(filePath),
     events: [],
     malformed_lines: 0,
   };
@@ -419,7 +684,7 @@ function readToolTelemetryEvents({ target_domain: targetDomain, tool, env = proc
     return result;
   }
 
-  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+  const lines = readFileUtf8(filePath, { label: TOOL_EVENTS_FILE_NAME }).split(/\r?\n/);
   for (const line of lines) {
     if (!line.trim()) continue;
     let parsed;
@@ -452,15 +717,15 @@ function readAgentRunTelemetryEvents({
 } = {}) {
   const filePath = agentRunTelemetryPath(env);
   const filters = {
-    target_domain: capString(targetDomain),
-    agent_run_type: capString(agentRunType, 80),
-    wave: capString(wave, 40),
-    agent: capString(agent, 40),
-    surface_id: capString(surfaceId),
+    target_domain: safeTargetDomainFilter(targetDomain),
+    agent_run_type: safeFilterLabel(agentRunType, 80),
+    wave: safeFilterLabel(wave, 40),
+    agent: safeFilterLabel(agent, 40),
+    surface_id: safeFilterLabel(surfaceId),
   };
   const result = {
     enabled: telemetryEnabled(env),
-    telemetry_path: filePath,
+    telemetry_path: safeTelemetryPath(filePath),
     events: [],
     malformed_lines: 0,
   };
@@ -469,7 +734,7 @@ function readAgentRunTelemetryEvents({
     return result;
   }
 
-  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+  const lines = readFileUtf8(filePath, { label: AGENT_RUNS_FILE_NAME }).split(/\r?\n/);
   for (const line of lines) {
     if (!line.trim()) continue;
     let parsed;
@@ -514,11 +779,42 @@ function slimEvent(event) {
     wave: event.wave,
     agent: event.agent,
     surface_id: event.surface_id,
+    ...pickEgressTelemetryFields(event),
   };
+  if (event.authority) {
+    result.authority = event.authority;
+  }
   if (event.error_message) {
     result.error_message = event.error_message;
   }
   return result;
+}
+
+function incrementBucket(bucket, key) {
+  const safeKey = capString(key, 120) || "unknown";
+  bucket[safeKey] = (bucket[safeKey] || 0) + 1;
+}
+
+function summarizeAuthority(events) {
+  const summary = {
+    total_events: 0,
+    by_version: {},
+    by_class: {},
+    by_result: {},
+    by_error_code: {},
+  };
+
+  for (const event of events) {
+    const authority = event.authority;
+    if (!authority) continue;
+    summary.total_events += 1;
+    incrementBucket(summary.by_version, authority.authority_version);
+    incrementBucket(summary.by_class, authority.authority_class);
+    incrementBucket(summary.by_result, authority.authority_result);
+    incrementBucket(summary.by_error_code, authority.authority_error_code);
+  }
+
+  return summary;
 }
 
 function summarizeEventGroup(toolName, events, limit) {
@@ -546,6 +842,7 @@ function summarizeEventGroup(toolName, events, limit) {
       p95: percentile(elapsedValues, 95),
     },
     error_codes,
+    authority: summarizeAuthority(events),
     last_call: calls ? slimEvent(events[events.length - 1]) : null,
     recent_failures: failureEvents.slice(-limit).reverse().map(slimEvent),
   };
@@ -567,6 +864,7 @@ function summarizeToolTelemetryEvents(events, { limit = DEFAULT_RECENT_FAILURE_L
 
   return {
     observed_bob_versions: observedBobVersions(events),
+    authority: summarizeAuthority(events),
     totals: summarizeEventGroup("all", events, recentFailureLimit),
     tools,
     recent_failures: events.filter((event) => !event.ok).slice(-recentFailureLimit).reverse().map(slimEvent),
@@ -585,7 +883,7 @@ function slimAgentRunEvent(event) {
     wave: event.wave,
     agent: event.agent,
     surface_id: event.surface_id,
-    transcript_path: event.transcript_path,
+    transcript_path: safeTranscriptPath(event.transcript_path),
     handoff: event.handoff,
     coverage: event.coverage,
     findings: event.findings,
@@ -618,7 +916,7 @@ function summarizeAgentRunTelemetryEvents(events, {
     bob_version: currentBobVersion(null, env),
     observed_bob_versions: observedBobVersions(events),
     enabled: readResult ? readResult.enabled : telemetryEnabled(),
-    telemetry_path: readResult ? readResult.telemetry_path : agentRunTelemetryPath(),
+    telemetry_path: readResult ? readResult.telemetry_path : safeTelemetryPath(agentRunTelemetryPath()),
     filters,
     total_runs: events.length,
     malformed_lines: readResult ? readResult.malformed_lines : 0,
@@ -651,8 +949,8 @@ function readToolTelemetry(args = {}, { env = process.env } = {}) {
     enabled: readResult.enabled,
     telemetry_path: readResult.telemetry_path,
     filters: {
-      target_domain: capString(args.target_domain),
-      tool: capString(args.tool, 120),
+      target_domain: publicFilterValue(safeTargetDomainFilter(args.target_domain)),
+      tool: publicFilterValue(safeFilterLabel(args.tool, 120)),
       limit,
     },
     total_events: readResult.events.length,
@@ -662,11 +960,11 @@ function readToolTelemetry(args = {}, { env = process.env } = {}) {
 
   if (args.include_agent_runs === true) {
     const agentRunFilters = {
-      target_domain: capString(args.target_domain),
-      agent_run_type: capString(args.agent_run_type, 80),
-      wave: capString(args.wave, 40),
-      agent: capString(args.agent, 40),
-      surface_id: capString(args.surface_id),
+      target_domain: publicFilterValue(safeTargetDomainFilter(args.target_domain)),
+      agent_run_type: publicFilterValue(safeFilterLabel(args.agent_run_type, 80)),
+      wave: publicFilterValue(safeFilterLabel(args.wave, 40)),
+      agent: publicFilterValue(safeFilterLabel(args.agent, 40)),
+      surface_id: publicFilterValue(safeFilterLabel(args.surface_id)),
       limit,
     };
     const agentRunReadResult = readAgentRunTelemetryEvents({
@@ -692,14 +990,17 @@ function observedBobVersions(events) {
   return Array.from(new Set(
     events
       .map((event) => capString(event.bob_version, 80))
+      .map((version) => safeVersionLabel(version))
       .filter(Boolean),
   )).sort();
 }
 
 module.exports = {
   AGENT_RUNS_FILE_NAME,
+  AGENT_RUN_TELEMETRY_MAX_RECORDS,
   AGENT_RUN_TELEMETRY_VERSION,
   TOOL_EVENTS_FILE_NAME,
+  TOOL_TELEMETRY_MAX_RECORDS,
   TOOL_TELEMETRY_VERSION,
   agentRunSidecarPath,
   agentRunTelemetryPath,

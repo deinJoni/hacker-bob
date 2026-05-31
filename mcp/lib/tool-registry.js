@@ -25,6 +25,9 @@ const VALID_ROLE_BUNDLES = Object.freeze([
   ...chainSpecificHunterBundles(),
 ]);
 const CAPABILITY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const REMOVED_TOOL_FIELDS = Object.freeze([
+  ["hook", "required"].join("_"),
+]);
 const REQUIRED_FIELDS = Object.freeze([
   "name",
   "description",
@@ -38,7 +41,6 @@ const REQUIRED_FIELDS = Object.freeze([
   "scope_required",
   "sensitive_output",
   "session_artifacts_written",
-  "hook_required",
 ]);
 
 function assertBooleanField(entry, field) {
@@ -62,6 +64,30 @@ function assertStringArrayField(entry, field, { allowEmpty = true, validValues =
   }
 }
 
+function cloneJsonCompatible(value) {
+  if (Array.isArray(value)) {
+    return value.map(cloneJsonCompatible);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, cloneJsonCompatible(child)]));
+  }
+  return value;
+}
+
+function deepFreeze(value) {
+  if (!value || typeof value !== "object" || Object.isFrozen(value)) {
+    return value;
+  }
+  for (const child of Object.values(value)) {
+    deepFreeze(child);
+  }
+  return Object.freeze(value);
+}
+
+function frozenStringArray(value) {
+  return Object.freeze(value.slice());
+}
+
 function normalizeCapabilityId(entry) {
   if (!Object.prototype.hasOwnProperty.call(entry, "capability_id")) {
     return null;
@@ -72,9 +98,33 @@ function normalizeCapabilityId(entry) {
   return entry.capability_id;
 }
 
+function normalizeScopeUrlFields(entry) {
+  if (!Object.prototype.hasOwnProperty.call(entry, "scope_url_fields")) {
+    return [];
+  }
+  assertStringArrayField(entry, "scope_url_fields");
+  const properties = entry.inputSchema && entry.inputSchema.properties && typeof entry.inputSchema.properties === "object"
+    ? entry.inputSchema.properties
+    : {};
+  for (const field of entry.scope_url_fields) {
+    if (!Object.prototype.hasOwnProperty.call(properties, field)) {
+      throw new Error(`tool registry entry for ${entry.name} has unknown scope_url_fields item ${field}`);
+    }
+  }
+  if (entry.scope_url_fields.length > 0 && entry.scope_required !== true) {
+    throw new Error(`tool registry entry for ${entry.name} declares scope_url_fields without scope_required`);
+  }
+  return Object.freeze(entry.scope_url_fields.slice());
+}
+
 function defineTool(entry) {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
     throw new Error("tool registry entry must be an object");
+  }
+  for (const field of REMOVED_TOOL_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(entry, field)) {
+      throw new Error(`tool registry entry for ${entry.name || "<unknown>"} declares removed hook authority metadata`);
+    }
   }
   for (const field of REQUIRED_FIELDS) {
     if (!Object.prototype.hasOwnProperty.call(entry, field)) {
@@ -101,10 +151,13 @@ function defineTool(entry) {
   assertBooleanField(entry, "scope_required");
   assertBooleanField(entry, "sensitive_output");
   assertStringArrayField(entry, "session_artifacts_written");
-  assertBooleanField(entry, "hook_required");
   return Object.freeze({
     ...entry,
+    inputSchema: deepFreeze(cloneJsonCompatible(entry.inputSchema)),
+    role_bundles: frozenStringArray(entry.role_bundles),
+    session_artifacts_written: frozenStringArray(entry.session_artifacts_written),
     capability_id: normalizeCapabilityId(entry),
+    scope_url_fields: normalizeScopeUrlFields(entry),
   });
 }
 
@@ -138,16 +191,16 @@ const TOOLS = Object.freeze(TOOL_REGISTRY.map((tool) => Object.freeze({
 
 const TOOL_MANIFEST = Object.freeze(TOOL_REGISTRY.reduce((manifest, tool) => {
   manifest[tool.name] = Object.freeze({
-    role_bundles: tool.role_bundles.slice(),
+    role_bundles: frozenStringArray(tool.role_bundles),
     mutating: tool.mutating,
     global_preapproval: tool.global_preapproval,
     network_access: tool.network_access,
     browser_access: tool.browser_access,
     scope_required: tool.scope_required,
     sensitive_output: tool.sensitive_output,
-    session_artifacts_written: tool.session_artifacts_written.slice(),
-    hook_required: tool.hook_required,
+    session_artifacts_written: frozenStringArray(tool.session_artifacts_written),
     capability_id: tool.capability_id,
+    scope_url_fields: frozenStringArray(tool.scope_url_fields),
   });
   return manifest;
 }, {}));

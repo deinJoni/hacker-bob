@@ -2,7 +2,7 @@
 // Auto-signup script — Patchright (stealth Playwright fork) + CapSolver CAPTCHA integration
 // Called by bounty_auto_signup MCP tool via child_process.execFile
 //
-// Input:  JSON config as first CLI argument
+// Input:  JSON config on stdin
 // Output: JSON result on stdout
 // Errors: JSON { error: "..." } on stdout, exit 0 (caller reads stdout)
 //
@@ -16,9 +16,13 @@
 
 "use strict";
 
+const fs = require("fs");
 const CAPTCHA_POLL_INTERVAL_MS = 3000;
 const CAPTCHA_POLL_MAX_MS = 60000;
 const AUTH_EVIDENCE_KEY_RE = /(sid|session|auth|token|jwt|access|refresh)/i;
+const {
+  assertSafeResolvedRequestUrl,
+} = require("./lib/safe-fetch.js");
 
 // ── Helpers ──
 
@@ -536,14 +540,44 @@ async function extractAuth(context) {
   return { cookies: cookieObj, local_storage: localStorage, session_storage: sessionStorage, headers };
 }
 
+async function installScopedRequestGuard(context, targetDomain, blockInternalHosts) {
+  if (typeof context.routeWebSocket === "function") {
+    await context.routeWebSocket("**/*", (socketRoute) => {
+      if (socketRoute && typeof socketRoute.close === "function") {
+        socketRoute.close();
+      }
+    });
+  }
+
+  await context.route("**/*", async (route) => {
+    const requestUrl = route.request().url();
+    if (/^wss?:/i.test(requestUrl)) {
+      await route.abort("blockedbyclient");
+      return;
+    }
+    if (!/^https?:/i.test(requestUrl)) {
+      await route.continue();
+      return;
+    }
+
+    try {
+      await assertSafeResolvedRequestUrl(requestUrl, targetDomain, { blockInternalHosts });
+      await route.continue();
+    } catch {
+      await route.abort("blockedbyclient");
+    }
+  });
+}
+
 // ── Main ──
 
 async function main() {
   let config;
   try {
-    config = JSON.parse(process.argv[2] || "{}");
+    const rawConfig = (process.stdin.isTTY ? "{}" : fs.readFileSync(0, "utf8")) || "{}";
+    config = JSON.parse(rawConfig);
   } catch (err) {
-    output({ error: `Invalid JSON config: ${err.message}` });
+    return output({ error: `Invalid JSON config: ${err.message}` });
   }
 
   const {
@@ -559,24 +593,31 @@ async function main() {
     block_internal_hosts = false,
   } = config;
 
-  if (!signup_url) output({ error: "signup_url is required" });
-  if (!target_domain) output({ error: "target_domain is required" });
-  if (!email) output({ error: "email is required" });
-  if (!password) output({ error: "password is required" });
+  if (!signup_url) return output({ error: "signup_url is required" });
+  if (!target_domain) return output({ error: "target_domain is required" });
+  if (!email) return output({ error: "email is required" });
+  if (!password) return output({ error: "password is required" });
+  if (block_internal_hosts === true) {
+    return output({
+      success: false,
+      fallback: "manual",
+      scope_decision: "blocked",
+      error: "block_internal_hosts cannot be enforced for browser auto-signup because Chromium resolves network destinations outside Bob's safeFetch transport.",
+    });
+  }
 
   try {
-    const { assertSafeResolvedRequestUrl } = require("./lib/safe-fetch.js");
-    await assertSafeResolvedRequestUrl(signup_url, target_domain, { blockInternalHosts: block_internal_hosts === true });
+    await assertSafeResolvedRequestUrl(signup_url, target_domain, { blockInternalHosts: false });
   } catch (err) {
     if (err && err.scope_decision === "blocked") {
-      output({
+      return output({
         success: false,
         fallback: "manual",
         scope_decision: "blocked",
         error: err.message || String(err),
       });
     }
-    output({
+    return output({
       success: false,
       fallback: "manual",
       error: err.message || String(err),
@@ -587,7 +628,7 @@ async function main() {
   try {
     patchright = require("patchright");
   } catch {
-    output({ error: "patchright not installed. Run: npm install && npx patchright install chromium" });
+    return output({ error: "patchright not installed. Run: npm install && npx patchright install chromium" });
   }
 
   const launchOptions = {
@@ -610,7 +651,7 @@ async function main() {
     try {
       browser = await patchright.chromium.launch(launchOptions);
     } catch (err) {
-      output({ error: `Browser launch failed: ${err.message}` });
+      return output({ error: `Browser launch failed: ${err.message}` });
     }
   }
 
@@ -621,6 +662,7 @@ async function main() {
     timezoneId: Intl.DateTimeFormat().resolvedOptions().timeZone,
     colorScheme: "light",
     reducedMotion: "no-preference",
+    serviceWorkers: "block",
   };
 
   if (proxy) {
@@ -633,6 +675,7 @@ async function main() {
   }
 
   const context = await browser.newContext(contextOptions);
+  await installScopedRequestGuard(context, target_domain, block_internal_hosts === true);
   const page = await context.newPage();
 
   // Set a hard timeout for the entire operation

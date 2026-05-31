@@ -19,7 +19,7 @@ async function handler(args) {
 
 module.exports = Object.freeze({
   name: "bounty_foundry_run",
-  description: "Run forge test on a local Foundry harness, optionally pinned to a fork-url and fork-block-number. Forks use the public RPC fallback ladder for the supplied chain_id; on RPC failure the result reports kind: foundry_fork blockage so the hunter can record blocked_harness_runs[] and set surface_status: partial. Returns structured per-test pass/fail with gas, reason, and counterexamples (truncated). Requires `forge` in PATH on the user's machine; if absent, returns reason: forge_not_in_path. Subprocess hard-killed at timeout (default 60s, max 300s).",
+  description: "Run forge test on a local Foundry harness, optionally pinned to a fork-url and fork-block-number. Forks use direct public HTTPS RPC endpoints from explicit fork_urls, env overrides, or the supplied chain_id ladder; DNS-private/private/localnet endpoints and egress_profile proxy routing are unsupported by default. Endpoint filtering is preflight-only handoff; Bob does not DNS-pin the downstream forge socket. On RPC failure the result reports reason: rpc_unreachable or a no_fork_endpoints* reason plus redacted fork_attempts[]/rpc_policy_rejections[] so the hunter can record blocked_harness_runs[] and set surface_status: partial. Returns structured per-test pass/fail with gas, reason, and counterexamples (truncated). Requires `forge` in PATH on the user's machine; if absent, returns reason: forge_not_in_path. Subprocess hard-killed at timeout (default 60s, max 300s).",
   inputSchema: {
     "type": "object",
     "properties": {
@@ -50,5 +50,4 @@ module.exports = Object.freeze({
   scope_required: false,
   sensitive_output: false,
   session_artifacts_written: [],
-  hook_required: false,
 });

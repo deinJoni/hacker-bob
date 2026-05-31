@@ -5,7 +5,12 @@ const path = require("path");
 const { sessionDir } = require("./paths.js");
 const { writeFileAtomic } = require("./storage.js");
 const { isAddress } = require("./evm-client.js");
-const { isPublicHttpsUrl } = require("./evm-rpc-pool.js");
+const {
+  isPublicHttpsUrl,
+  redactRpcEndpoint,
+  redactRpcEndpointText,
+} = require("./sc-egress-policy.js");
+const { requestPublicHttpsText } = require("./sc-http-client.js");
 
 const SOURCIFY_BASE = "https://sourcify.dev/server/files/any";
 const ETHERSCAN_V2_BASE = "https://api.etherscan.io/v2/api";
@@ -79,49 +84,16 @@ function writeCachedSource(domain, chainId, address, manifest) {
 }
 
 async function fetchTextWithTimeout(url, { timeoutMs = SOURCE_FETCH_TIMEOUT_MS, maxBytes = SOURCE_MAX_RESPONSE_BYTES, headers = {} } = {}) {
-  if (typeof fetch !== "function") {
-    throw new Error("fetch is unavailable in this Node runtime");
-  }
   if (!isPublicHttpsUrl(url)) {
-    throw new Error(`source fetch URL is not a public https URL: ${url}`);
+    throw new Error(`source fetch URL is not a public https URL: ${redactRpcEndpoint(url)}`);
   }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const resp = await fetch(url, {
-      headers: { Accept: "application/json,text/plain", "User-Agent": "Mozilla/5.0 (compatible; hacker-bob)", ...headers },
-      signal: controller.signal,
-    });
-    if (!resp.body || typeof resp.body.getReader !== "function") {
-      const text = await resp.text();
-      const buffer = Buffer.from(text, "utf8");
-      const trimmed = buffer.length <= maxBytes ? text : buffer.subarray(0, maxBytes).toString("utf8");
-      return { ok: resp.ok, status: resp.status, text: trimmed };
-    }
-    const reader = resp.body.getReader();
-    const chunks = [];
-    let received = 0;
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        const buffer = Buffer.from(value);
-        const remaining = maxBytes - received;
-        if (remaining > 0) chunks.push(buffer.length > remaining ? buffer.subarray(0, remaining) : buffer);
-        received += buffer.length;
-        if (received > maxBytes) {
-          try { if (typeof reader.cancel === "function") await reader.cancel(); } catch {}
-          break;
-        }
-      }
-    } finally {
-      if (typeof reader.releaseLock === "function") reader.releaseLock();
-    }
-    const text = Buffer.concat(chunks).toString("utf8");
-    return { ok: resp.ok, status: resp.status, text };
-  } finally {
-    clearTimeout(timeout);
-  }
+  const resp = await requestPublicHttpsText(url, {
+    method: "GET",
+    headers: { Accept: "application/json,text/plain", ...headers },
+    timeoutMs,
+    maxBytes,
+  });
+  return { ok: resp.ok, status: resp.status, text: resp.text };
 }
 
 function trimFiles(files) {
@@ -144,17 +116,27 @@ function trimFiles(files) {
   return { files: trimmed, total_bytes: totalBytes };
 }
 
+function sourceFetchErrorText(value, maxChars = 200, knownSecrets = []) {
+  let text = String(value || "");
+  for (const secret of knownSecrets) {
+    if (typeof secret === "string" && secret.length > 0) {
+      text = text.split(secret).join("REDACTED");
+    }
+  }
+  return redactRpcEndpointText(text).slice(0, maxChars);
+}
+
 async function fetchFromSourcify(chainId, address) {
   const url = `${SOURCIFY_BASE}/${chainId}/${address}`;
   const { ok, status, text } = await fetchTextWithTimeout(url);
   if (!ok) {
-    return { source: "sourcify", ok: false, status, error: text.slice(0, 200) };
+    return { source: "sourcify", ok: false, status, error: sourceFetchErrorText(text) };
   }
   let parsed;
   try {
     parsed = JSON.parse(text);
   } catch (error) {
-    return { source: "sourcify", ok: false, status, error: `parse failed: ${error.message || String(error)}` };
+    return { source: "sourcify", ok: false, status, error: sourceFetchErrorText(`parse failed: ${error.message || String(error)}`) };
   }
   const files = Array.isArray(parsed.files) ? parsed.files : [];
   if (files.length === 0) {
@@ -179,16 +161,16 @@ async function fetchFromEtherscanV2(chainId, address, apiKey) {
   const url = `${ETHERSCAN_V2_BASE}?chainid=${encodeURIComponent(chainId)}&module=contract&action=getsourcecode&address=${encodeURIComponent(address)}&apikey=${encodeURIComponent(apiKey)}`;
   const { ok, status, text } = await fetchTextWithTimeout(url);
   if (!ok) {
-    return { source: "etherscan-v2", ok: false, status, error: text.slice(0, 200) };
+    return { source: "etherscan-v2", ok: false, status, error: sourceFetchErrorText(text, 200, [apiKey]) };
   }
   let parsed;
   try {
     parsed = JSON.parse(text);
   } catch (error) {
-    return { source: "etherscan-v2", ok: false, status, error: `parse failed: ${error.message || String(error)}` };
+    return { source: "etherscan-v2", ok: false, status, error: sourceFetchErrorText(`parse failed: ${error.message || String(error)}`, 200, [apiKey]) };
   }
   if (parsed.status !== "1" || !Array.isArray(parsed.result) || parsed.result.length === 0) {
-    return { source: "etherscan-v2", ok: false, status, error: parsed.message || "no source returned" };
+    return { source: "etherscan-v2", ok: false, status, error: sourceFetchErrorText(parsed.message || "no source returned", 200, [apiKey]) };
   }
   const entry = parsed.result[0];
   if (!entry || typeof entry !== "object") {
@@ -263,7 +245,7 @@ async function fetchVerifiedSource({ domain, chainId, address, force = false }) 
 
   const attempts = [];
   let manifest = null;
-  const sourcify = await fetchFromSourcify(numericChainId, lower).catch((error) => ({ source: "sourcify", ok: false, error: error.message || String(error) }));
+  const sourcify = await fetchFromSourcify(numericChainId, lower).catch((error) => ({ source: "sourcify", ok: false, error: redactRpcEndpointText(error.message || String(error)) }));
   attempts.push({ source: sourcify.source, ok: sourcify.ok, error: sourcify.error || null });
   if (sourcify.ok) {
     const trimmed = trimFiles(sourcify.files);
@@ -281,7 +263,7 @@ async function fetchVerifiedSource({ domain, chainId, address, force = false }) 
 
   if (!manifest) {
     const apiKey = process.env.BOB_ETHERSCAN_API_KEY || null;
-    const etherscan = await fetchFromEtherscanV2(numericChainId, lower, apiKey).catch((error) => ({ source: "etherscan-v2", ok: false, error: error.message || String(error) }));
+    const etherscan = await fetchFromEtherscanV2(numericChainId, lower, apiKey).catch((error) => ({ source: "etherscan-v2", ok: false, error: redactRpcEndpointText(error.message || String(error)) }));
     attempts.push({ source: etherscan.source, ok: etherscan.ok, error: etherscan.error || null });
     if (etherscan.ok) {
       const trimmed = trimFiles(etherscan.files);

@@ -27,8 +27,8 @@ import {
 import HeroScene from './HeroScene';
 
 const repoUrl = 'https://github.com/vmihalis/hacker-bob';
-const npmUrl = 'https://www.npmjs.com/package/hacker-bob-cc';
-const installCommand = 'npx -y hacker-bob-cc@latest install /path/to/your/project';
+const npmUrl = 'https://www.npmjs.com/package/hacker-bob';
+const installCommand = 'npx -y hacker-bob@latest install /path/to/your/project';
 
 function externalProps(label: string) {
   return {
@@ -206,14 +206,14 @@ function App() {
               <p className="section-kicker">Install path</p>
               <h2>Install Bob into one Claude Code project.</h2>
               <p>
-                The canonical npm package is <a href={npmUrl} {...externalProps('Open hacker-bob-cc on npm')}>hacker-bob-cc</a>.
+                The canonical npm package is <a href={npmUrl} {...externalProps('Open hacker-bob on npm')}>hacker-bob</a>.
                 After install, restart Claude Code from that project and run <code>/bob-hunt target.com</code>.
               </p>
             </div>
             <div className="install-strip__command">
               <CommandBox />
               <div className="quick-facts" aria-label="Install facts">
-                <span><Package size={16} /> npm: hacker-bob-cc</span>
+                <span><Package size={16} /> npm: hacker-bob</span>
                 <span><Terminal size={16} /> requires Claude Code</span>
                 <span><Code2 size={16} /> Node.js 20+</span>
               </div>

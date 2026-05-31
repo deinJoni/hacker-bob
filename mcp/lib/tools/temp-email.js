@@ -47,5 +47,4 @@ module.exports = Object.freeze({
   scope_required: false,
   sensitive_output: true,
   session_artifacts_written: [],
-  hook_required: false,
 });

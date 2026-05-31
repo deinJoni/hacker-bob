@@ -51,6 +51,5 @@ module.exports = Object.freeze({
   scope_required: true,
   sensitive_output: false,
   session_artifacts_written: ["public-intel.json"],
-  hook_required: false,
   bountyPublicIntel,
 });

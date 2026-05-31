@@ -2,11 +2,9 @@
 
 const fs = require("fs");
 const path = require("path");
-const crypto = require("crypto");
 const {
   assertBoolean,
   assertNonEmptyString,
-  compareAgentLabels,
   normalizeStringArray,
   parseAgentId,
   parseSurfaceStatus,
@@ -17,22 +15,25 @@ const {
 const {
   sessionDir,
   attackSurfacePath,
+  liveDeadEndsJsonlPath,
   surfaceLeadsPath,
   surfaceRoutesPath,
   waveAssignmentsPath,
 } = require("./paths.js");
 const {
   appendJsonlLine,
-  readJsonFile,
+  readFileUtf8,
   withSessionLock,
   writeFileAtomic,
 } = require("./storage.js");
 const {
   compactSessionState,
-  readSessionStateStrict,
   terminallyBlockedSurfaceIds,
+} = require("./session-state-contracts.js");
+const {
+  readSessionStateStrict,
   writeSessionStateDocument,
-} = require("./session-state.js");
+} = require("./session-state-store.js");
 const {
   loadWaveAssignments,
   normalizeWaveAssignmentsInput,
@@ -49,9 +50,9 @@ const {
 const {
   isAssignableSurfaceLead,
   previewSurfaceLeadPromotion,
-  promoteSurfaceLeadsInternal,
+  promoteSurfaceLeadsForWave,
   readSurfaceLeadsDocument,
-  recordSurfaceLeadsInternal,
+  recordSurfaceLeadsForWaveHandoff,
 } = require("./surface-leads.js");
 const {
   rankAttackSurfaces,
@@ -77,707 +78,40 @@ const {
 } = require("./envelope.js");
 const {
   safeAppendPipelineEventDirect,
-} = require("./pipeline-analytics.js");
+} = require("./pipeline-events.js");
 const {
-  validateNoSensitiveMaterial,
-} = require("./sensitive-material.js");
+  ensureHandoffSigningKey,
+} = require("./handoff-signing-key.js");
 const { listAuthProfiles } = require("./auth.js");
 const { listEgressProfiles } = require("./egress-profiles.js");
 const {
   computeHuntToChainGate,
 } = require("./phase-gates.js");
-
-function listWaveHandoffFiles(dir, wave) {
-  const handoffPrefix = `handoff-${wave}-`;
-  // Readiness intentionally indexes only structured handoff JSON. Markdown handoffs are for humans/debugging.
-  return fs.existsSync(dir)
-    ? fs.readdirSync(dir)
-        .filter((name) => name.startsWith(handoffPrefix) && name.endsWith(".json"))
-        .sort()
-    : [];
-}
-
-function buildWaveHandoffFileIndex(dir, wave, assignmentByAgent) {
-  const handoffFiles = listWaveHandoffFiles(dir, wave);
-  const handoffPathByAgent = new Map();
-  const unexpectedAgentSet = new Set();
-
-  for (const fileName of handoffFiles) {
-    const rawAgent = fileName.slice(`handoff-${wave}-`.length, -".json".length);
-    if (!assignmentByAgent.has(rawAgent)) {
-      unexpectedAgentSet.add(rawAgent);
-      continue;
-    }
-    handoffPathByAgent.set(rawAgent, path.join(dir, fileName));
-  }
-
-  return {
-    handoffFiles,
-    handoffPathByAgent,
-    unexpectedAgents: Array.from(unexpectedAgentSet).sort(compareAgentLabels),
-  };
-}
-
-function loadWaveArtifacts(domain, waveNumber) {
-  const assignmentsInfo = loadWaveAssignments(domain, waveNumber);
-  const handoffInfo = buildWaveHandoffFileIndex(
-    assignmentsInfo.dir,
-    assignmentsInfo.wave,
-    assignmentsInfo.assignmentByAgent,
-  );
-
-  return {
-    ...assignmentsInfo,
-    ...handoffInfo,
-  };
-}
-
-function buildWaveReadiness(artifacts) {
-  const receivedAgents = [];
-  const missingAgents = [];
-
-  for (const assignment of artifacts.assignments) {
-    if (artifacts.handoffPathByAgent.has(assignment.agent)) {
-      receivedAgents.push(assignment.agent);
-    } else {
-      missingAgents.push(assignment.agent);
-    }
-  }
-
-  return {
-    assignments_total: artifacts.assignments.length,
-    handoffs_total: artifacts.handoffFiles.length,
-    received_agents: receivedAgents,
-    missing_agents: missingAgents,
-    unexpected_agents: artifacts.unexpectedAgents,
-    is_complete: missingAgents.length === 0,
-  };
-}
-
-function sha256Hex(value) {
-  return crypto.createHash("sha256").update(String(value), "utf8").digest("hex");
-}
-
-function generateHandoffToken() {
-  return crypto.randomBytes(24).toString("base64url");
-}
-
-function assignmentRequiresToken(assignment) {
-  return !!(assignment && assignment.handoff_token_sha256);
-}
-
-function validateHandoffToken(assignment, token) {
-  if (!assignmentRequiresToken(assignment)) {
-    return "legacy_unverified";
-  }
-  if (typeof token !== "string" || !token.trim()) {
-    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "handoff_token is required for this wave assignment");
-  }
-  if (sha256Hex(token.trim()) !== assignment.handoff_token_sha256) {
-    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "handoff_token does not match this wave assignment");
-  }
-  return "verified";
-}
-
-function validateHandoffProvenance(payload, assignment) {
-  if (!assignmentRequiresToken(assignment)) {
-    return "legacy_unverified";
-  }
-  if (payload.provenance !== "verified") {
-    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "handoff provenance is not verified for this tokenized assignment");
-  }
-  normalizeHandoffSummary(payload, { requireStructuredSummary: true });
-  return "verified";
-}
-
-function normalizeHandoffSummary(payload, { requireStructuredSummary = false } = {}) {
-  if (payload.summary == null && !requireStructuredSummary) {
-    return null;
-  }
-  const summary = assertNonEmptyString(payload.summary, "summary");
-  if (summary.length > 2000) {
-    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "summary must be at most 2000 characters");
-  }
-  return summary;
-}
-
-function normalizeChainNotes(value) {
-  const notes = normalizeStringArray(value, "chain_notes");
-  if (notes.length > 20) {
-    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "chain_notes must contain at most 20 entries");
-  }
-  for (const note of notes) {
-    if (note.length > 300) {
-      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "chain_notes entries must be at most 300 characters");
-    }
-  }
-  return notes;
-}
-
-// Phase E/F: enum mirrors the bounty_write_wave_handoff JSON schema and the
-// renderer's BLOCKED_HARNESS_RUN_KINDS constant. Mismatch here would cause
-// SVM/Move/Substrate/CosmWasm hunters to fail finalization even though the
-// schema accepted their handoff. capability-packs-rendering.js exports a
-// schema-vs-renderer parity test; this mirror is the runtime side of that
-// invariant.
-const BLOCKED_HARNESS_KIND_VALUES = Object.freeze([
-  "foundry_fork",
-  "anchor_fork",
-  "aptos_fork",
-  "sui_fork",
-  "substrate_fork",
-  "cosmwasm_fork",
-  "rpc_endpoint",
-  "fuzzer",
-  "symbolic_solver",
-  "mock_dependency",
-  "external_api",
-  "other",
-]);
-
-// Mirror of capability-packs-rendering.js BLOCKED_PREREQ_KINDS and the
-// bounty_write_wave_handoff schema enum for blocked_prereqs[].kind. Like
-// BLOCKED_HARNESS_KIND_VALUES this is a runtime guard that throws on unknown
-// kinds before the JSON schema would even check; mismatch with the renderer
-// constant or schema enum is caught by the parity test in
-// test/prompt-contracts.test.js.
-const BLOCKED_PREREQ_KIND_VALUES = Object.freeze([
-  "auth_missing",
-  "egress_unreachable",
-  "funded_wallet_missing",
-  "key_material_missing",
-  "external_credential_missing",
-]);
-
-const BLOCKED_PREREQ_IDENTIFIER_HINT_PATTERN = /^[a-z0-9][a-z0-9_.-]{0,63}$/;
-
-// Long-hex rejector for identifier_hint. Catches private-key / hash shapes
-// (32+ lowercase hex chars) that pass the handle-format regex but should
-// never appear in a registry handle. Layered defense above
-// validateNoSensitiveMaterial which targets JWT / bearer / cookie shapes.
-const BLOCKED_PREREQ_IDENTIFIER_HINT_LONG_HEX_PATTERN = /^[0-9a-f]{32,}$/;
-
-const BYPASS_ATTEMPT_OUTCOME_VALUES = Object.freeze([
-  "no_finding",
-  "partial_evidence",
-  "finding_recorded",
-  "blocked",
-]);
-
-function normalizeBlockedHarnessRuns(value) {
-  if (value == null) return [];
-  if (!Array.isArray(value)) {
-    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "blocked_harness_runs must be an array");
-  }
-  if (value.length > 20) {
-    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "blocked_harness_runs must contain at most 20 entries");
-  }
-  return value.map((entry, index) => {
-    if (entry == null || typeof entry !== "object" || Array.isArray(entry)) {
-      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_harness_runs[${index}] must be an object`);
-    }
-    const kind = assertNonEmptyString(entry.kind, `blocked_harness_runs[${index}].kind`);
-    if (!BLOCKED_HARNESS_KIND_VALUES.includes(kind)) {
-      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_harness_runs[${index}].kind must be one of ${BLOCKED_HARNESS_KIND_VALUES.join(", ")}`);
-    }
-    const harness = assertNonEmptyString(entry.harness, `blocked_harness_runs[${index}].harness`);
-    const reason = assertNonEmptyString(entry.reason, `blocked_harness_runs[${index}].reason`);
-    if (harness.length > 120) {
-      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_harness_runs[${index}].harness must be at most 120 characters`);
-    }
-    if (reason.length > 240) {
-      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_harness_runs[${index}].reason must be at most 240 characters`);
-    }
-    const normalized = { kind, harness, reason };
-    if (entry.needed_for != null) {
-      const neededFor = assertNonEmptyString(entry.needed_for, `blocked_harness_runs[${index}].needed_for`);
-      if (neededFor.length > 200) {
-        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_harness_runs[${index}].needed_for must be at most 200 characters`);
-      }
-      normalized.needed_for = neededFor;
-    }
-    return normalized;
-  });
-}
-
-function normalizeBlockedPrereqs(value) {
-  if (value == null) return [];
-  if (!Array.isArray(value)) {
-    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "blocked_prereqs must be an array");
-  }
-  if (value.length > 20) {
-    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "blocked_prereqs must contain at most 20 entries");
-  }
-  return value.map((entry, index) => {
-    if (entry == null || typeof entry !== "object" || Array.isArray(entry)) {
-      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_prereqs[${index}] must be an object`);
-    }
-    const kind = assertNonEmptyString(entry.kind, `blocked_prereqs[${index}].kind`);
-    if (!BLOCKED_PREREQ_KIND_VALUES.includes(kind)) {
-      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_prereqs[${index}].kind must be one of ${BLOCKED_PREREQ_KIND_VALUES.join(", ")}`);
-    }
-    const reason = assertNonEmptyString(entry.reason, `blocked_prereqs[${index}].reason`);
-    if (reason.length > 240) {
-      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_prereqs[${index}].reason must be at most 240 characters`);
-    }
-    try {
-      validateNoSensitiveMaterial(reason, `blocked_prereqs[${index}].reason`);
-    } catch (error) {
-      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, error.message);
-    }
-    const normalized = { kind, reason };
-    if (entry.identifier_hint != null) {
-      const identifierHint = assertNonEmptyString(entry.identifier_hint, `blocked_prereqs[${index}].identifier_hint`);
-      if (identifierHint.length > 64) {
-        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_prereqs[${index}].identifier_hint must be at most 64 characters`);
-      }
-      if (!BLOCKED_PREREQ_IDENTIFIER_HINT_PATTERN.test(identifierHint)) {
-        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_prereqs[${index}].identifier_hint must match /^[a-z0-9][a-z0-9_.-]{0,63}$/ — use a lowercase registry handle, not a credential or token value`);
-      }
-      if (BLOCKED_PREREQ_IDENTIFIER_HINT_LONG_HEX_PATTERN.test(identifierHint)) {
-        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_prereqs[${index}].identifier_hint looks like a hex private key, address, or hash; use a human-readable registry handle instead`);
-      }
-      try {
-        validateNoSensitiveMaterial(identifierHint, `blocked_prereqs[${index}].identifier_hint`);
-      } catch (error) {
-        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, error.message);
-      }
-      normalized.identifier_hint = identifierHint;
-    }
-    if (entry.evidence_summary != null) {
-      const evidenceSummary = assertNonEmptyString(entry.evidence_summary, `blocked_prereqs[${index}].evidence_summary`);
-      if (evidenceSummary.length > 300) {
-        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_prereqs[${index}].evidence_summary must be at most 300 characters`);
-      }
-      try {
-        validateNoSensitiveMaterial(evidenceSummary, `blocked_prereqs[${index}].evidence_summary`);
-      } catch (error) {
-        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, error.message);
-      }
-      normalized.evidence_summary = evidenceSummary;
-    }
-    if (entry.needed_for != null) {
-      const neededFor = assertNonEmptyString(entry.needed_for, `blocked_prereqs[${index}].needed_for`);
-      if (neededFor.length > 200) {
-        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `blocked_prereqs[${index}].needed_for must be at most 200 characters`);
-      }
-      try {
-        validateNoSensitiveMaterial(neededFor, `blocked_prereqs[${index}].needed_for`);
-      } catch (error) {
-        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, error.message);
-      }
-      normalized.needed_for = neededFor;
-    }
-    return normalized;
-  });
-}
-
-const BYPASS_ATTEMPT_CONDITION_MIN_CHARS = 4;
-const BYPASS_ATTEMPT_SUMMARY_MIN_CHARS = 30;
-
-function normalizeBypassAttempts(value, { findingIds = null } = {}) {
-  if (value == null) return [];
-  if (!Array.isArray(value)) {
-    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "bypass_attempts must be an array");
-  }
-  if (value.length > 30) {
-    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "bypass_attempts must contain at most 30 entries");
-  }
-  return value.map((entry, index) => {
-    if (entry == null || typeof entry !== "object" || Array.isArray(entry)) {
-      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `bypass_attempts[${index}] must be an object`);
-    }
-    const condition = assertNonEmptyString(entry.condition, `bypass_attempts[${index}].condition`);
-    if (condition.length < BYPASS_ATTEMPT_CONDITION_MIN_CHARS) {
-      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `bypass_attempts[${index}].condition must be at least ${BYPASS_ATTEMPT_CONDITION_MIN_CHARS} characters`);
-    }
-    if (condition.length > 120) {
-      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `bypass_attempts[${index}].condition must be at most 120 characters`);
-    }
-    const attemptSummary = assertNonEmptyString(entry.attempt_summary, `bypass_attempts[${index}].attempt_summary`);
-    if (attemptSummary.length < BYPASS_ATTEMPT_SUMMARY_MIN_CHARS) {
-      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `bypass_attempts[${index}].attempt_summary must be at least ${BYPASS_ATTEMPT_SUMMARY_MIN_CHARS} characters; describe the concrete state machine or payload you exercised`);
-    }
-    if (attemptSummary.length > 500) {
-      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `bypass_attempts[${index}].attempt_summary must be at most 500 characters`);
-    }
-    const outcome = assertNonEmptyString(entry.outcome, `bypass_attempts[${index}].outcome`);
-    if (!BYPASS_ATTEMPT_OUTCOME_VALUES.includes(outcome)) {
-      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `bypass_attempts[${index}].outcome must be one of ${BYPASS_ATTEMPT_OUTCOME_VALUES.join(", ")}`);
-    }
-    const normalized = { condition, attempt_summary: attemptSummary, outcome };
-    if (entry.finding_id != null) {
-      const findingId = assertNonEmptyString(entry.finding_id, `bypass_attempts[${index}].finding_id`);
-      if (!/^F-([1-9]\d*)$/.test(findingId)) {
-        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `bypass_attempts[${index}].finding_id must match F-N pattern`);
-      }
-      if (findingIds && !findingIds.has(findingId)) {
-        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `bypass_attempts[${index}].finding_id ${findingId} does not match any recorded finding for this run`);
-      }
-      normalized.finding_id = findingId;
-    }
-    if (outcome === "finding_recorded" && !normalized.finding_id) {
-      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `bypass_attempts[${index}].finding_id is required when outcome is "finding_recorded"`);
-    }
-    return normalized;
-  });
-}
-
-function assertBlockedHarnessConsistency(surfaceStatus, blockedHarnessRuns) {
-  if (surfaceStatus === "complete" && blockedHarnessRuns.length > 0) {
-    throw new ToolError(
-      ERROR_CODES.INVALID_ARGUMENTS,
-      "surface_status cannot be 'complete' when blocked_harness_runs is non-empty; set surface_status to 'partial' or resolve the blocked harnesses first",
-    );
-  }
-}
-
-function assertBlockedPrereqConsistency(surfaceStatus, blockedPrereqs) {
-  if (surfaceStatus === "complete" && blockedPrereqs.length > 0) {
-    throw new ToolError(
-      ERROR_CODES.INVALID_ARGUMENTS,
-      "surface_status cannot be 'complete' when blocked_prereqs is non-empty; set surface_status to 'partial' or resolve the missing prerequisites first",
-    );
-  }
-}
-
-function assertSmartContractCompletionEvidence({
-  surfaceType,
-  surfaceStatus,
-  bypassAttempts,
-  findingCount,
-}) {
-  if (surfaceType !== "smart_contract") return;
-  if (surfaceStatus !== "complete") return;
-  if (findingCount > 0) return;
-  if (bypassAttempts.length > 0) return;
-  throw new ToolError(
-    ERROR_CODES.INVALID_ARGUMENTS,
-    "smart_contract surfaces cannot be marked 'complete' without evidence of attempted invariant breaks: record at least one finding for this surface, or supply at least one bypass_attempts entry citing a trust_assumptions[*].bypass_conditions condition that was tested. Set surface_status to 'partial' if no attempt was made.",
-  );
-}
-
-function validateWaveHandoffPayload(payload, {
-  targetDomain,
-  wave,
-  agent,
-  surfaceId,
-  effectiveSurfaceType,
-  findingsForRun,
-}) {
-  if (payload == null || typeof payload !== "object" || Array.isArray(payload)) {
-    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "handoff payload must be an object");
-  }
-
-  if (payload.target_domain != null && assertNonEmptyString(payload.target_domain, "target_domain") !== targetDomain) {
-    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "handoff target_domain does not match merge target");
-  }
-
-  const payloadWave = parseWaveId(payload.wave);
-  const payloadAgent = parseAgentId(payload.agent);
-  const payloadSurfaceId = assertNonEmptyString(payload.surface_id, "surface_id");
-  const surfaceStatus = parseSurfaceStatus(payload.surface_status);
-
-  if (payloadWave !== wave) throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "handoff wave does not match assignment wave");
-  if (payloadAgent !== agent) throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "handoff agent does not match assignment");
-  if (payloadSurfaceId !== surfaceId) throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "handoff surface_id does not match assignment");
-
-  const findingsForCheck = Array.isArray(findingsForRun)
-    ? findingsForRun
-    : readFindingsFromJsonl(targetDomain).filter((finding) => (
-      finding.wave === wave &&
-      finding.agent === agent &&
-      finding.surface_id === surfaceId
-    ));
-  const findingIdSet = new Set(findingsForCheck.map((finding) => finding.id));
-
-  const blockedHarnessRuns = normalizeBlockedHarnessRuns(payload.blocked_harness_runs);
-  const blockedPrereqs = normalizeBlockedPrereqs(payload.blocked_prereqs);
-  const bypassAttempts = normalizeBypassAttempts(payload.bypass_attempts, { findingIds: findingIdSet });
-  assertBlockedHarnessConsistency(surfaceStatus, blockedHarnessRuns);
-  assertBlockedPrereqConsistency(surfaceStatus, blockedPrereqs);
-
-  // Authoritative source for surface_type is the MCP-owned assignment file
-  // (captured at start_wave time). Callers from active wave paths
-  // (mergeWaveHandoffsInternal, buildWaveHandoffsDocument, writeWaveHandoff)
-  // pass effectiveSurfaceType from the assignment. The payload.surface_type
-  // fallback is defensive for legacy callers and is consistent with the
-  // stored value (which itself was sourced from the assignment).
-  const surfaceTypeFallback = typeof payload.surface_type === "string" && payload.surface_type.trim() !== ""
-    ? payload.surface_type.trim()
-    : null;
-  const surfaceType = effectiveSurfaceType !== undefined
-    ? effectiveSurfaceType
-    : surfaceTypeFallback;
-  assertSmartContractCompletionEvidence({
-    surfaceType,
-    surfaceStatus,
-    bypassAttempts,
-    findingCount: findingsForCheck.length,
-  });
-
-  return {
-    surface_type: surfaceType,
-    summary: normalizeHandoffSummary(payload),
-    chain_notes: normalizeChainNotes(payload.chain_notes),
-    blocked_harness_runs: blockedHarnessRuns,
-    blocked_prereqs: blockedPrereqs,
-    bypass_attempts: bypassAttempts,
-    dead_ends: normalizeStringArray(payload.dead_ends, "dead_ends"),
-    waf_blocked_endpoints: normalizeStringArray(payload.waf_blocked_endpoints, "waf_blocked_endpoints"),
-    lead_surface_ids: normalizeStringArray(payload.lead_surface_ids, "lead_surface_ids"),
-    surface_lead_ids: normalizeStringArray(payload.surface_lead_ids, "surface_lead_ids"),
-    surface_status: surfaceStatus,
-  };
-}
-
-function groupBlockedHarnessRuns(entries) {
-  const groups = new Map();
-  for (const entry of entries) {
-    const key = `${entry.kind}\u0000${entry.harness}`;
-    if (!groups.has(key)) {
-      groups.set(key, { kind: entry.kind, harness: entry.harness, count: 0, agents: new Set(), surface_ids: new Set() });
-    }
-    const group = groups.get(key);
-    group.count += 1;
-    if (entry.agent) group.agents.add(entry.agent);
-    if (entry.surface_id) group.surface_ids.add(entry.surface_id);
-  }
-  return Array.from(groups.values()).map((group) => ({
-    kind: group.kind,
-    harness: group.harness,
-    count: group.count,
-    agents: Array.from(group.agents).sort(compareAgentLabels),
-    surface_ids: Array.from(group.surface_ids).sort(),
-  }));
-}
-
-// Group blocked_prereqs by (kind, identifier_hint||""). identifier_hint is
-// optional, so "" stands in for "unspecified" — group "auth_missing without
-// any specific profile name" together. Matches the loop-detector identity
-// the merge promotion uses.
-function groupBlockedPrereqs(entries) {
-  const groups = new Map();
-  for (const entry of entries) {
-    const hint = entry.identifier_hint || "";
-    const key = `${entry.kind}\t${hint}`;
-    if (!groups.has(key)) {
-      groups.set(key, {
-        kind: entry.kind,
-        identifier_hint: entry.identifier_hint || null,
-        count: 0,
-        agents: new Set(),
-        surface_ids: new Set(),
-      });
-    }
-    const group = groups.get(key);
-    group.count += 1;
-    if (entry.agent) group.agents.add(entry.agent);
-    if (entry.surface_id) group.surface_ids.add(entry.surface_id);
-  }
-  return Array.from(groups.values()).map((group) => ({
-    kind: group.kind,
-    identifier_hint: group.identifier_hint,
-    count: group.count,
-    agents: Array.from(group.agents).sort(compareAgentLabels),
-    surface_ids: Array.from(group.surface_ids).sort(),
-  }));
-}
-
-function groupBypassAttempts(entries) {
-  const groups = new Map();
-  for (const entry of entries) {
-    const key = `${entry.condition}\u0000${entry.outcome}`;
-    if (!groups.has(key)) {
-      groups.set(key, { condition: entry.condition, outcome: entry.outcome, count: 0, agents: new Set(), surface_ids: new Set() });
-    }
-    const group = groups.get(key);
-    group.count += 1;
-    if (entry.agent) group.agents.add(entry.agent);
-    if (entry.surface_id) group.surface_ids.add(entry.surface_id);
-  }
-  return Array.from(groups.values()).map((group) => ({
-    condition: group.condition,
-    outcome: group.outcome,
-    count: group.count,
-    agents: Array.from(group.agents).sort(compareAgentLabels),
-    surface_ids: Array.from(group.surface_ids).sort(),
-  }));
-}
-
-function buildSuspicionFlags({ smartContractCompletedSurfaceIds, bypassAttemptsForCompletedSurfaces, recordedFindingsBySurface }) {
-  const flags = [];
-  for (const surfaceId of smartContractCompletedSurfaceIds) {
-    const findings = recordedFindingsBySurface.get(surfaceId) || [];
-    const attempts = bypassAttemptsForCompletedSurfaces.get(surfaceId) || [];
-    if (findings.length > 0) continue;
-    if (attempts.length === 0) continue;
-    // Flag SC complete with no finding when no attempt yielded substantive
-    // evidence. "no_finding" alone or "blocked" alone indicates structural
-    // attestation without recorded evidence; only partial_evidence or
-    // finding_recorded outcomes signal that a real attempt produced something.
-    const hasSubstantiveOutcome = attempts.some((attempt) => (
-      attempt.outcome === "partial_evidence" || attempt.outcome === "finding_recorded"
-    ));
-    if (hasSubstantiveOutcome) continue;
-    flags.push({
-      flag: "sc_complete_with_zero_evidence",
-      surface_id: surfaceId,
-      reason: "smart_contract surface marked complete with no recorded finding and no bypass_attempts entry produced partial_evidence or finding_recorded; review for low-effort attestation",
-    });
-  }
-  return flags;
-}
-
-function mergeWaveHandoffsInternal(domain, waveNumber) {
-  const artifacts = loadWaveArtifacts(domain, waveNumber);
-  const readiness = buildWaveReadiness(artifacts);
-
-  const receivedAgents = [];
-  const invalidAgents = [];
-  const completedSurfaceIds = [];
-  const partialSurfaceIds = [];
-  const missingSurfaceIds = [];
-  const deadEnds = [];
-  const wafBlockedEndpoints = [];
-  const leadSurfaceIds = [];
-  const blockedHarnessRuns = [];
-  const blockedPrereqs = [];
-  const bypassAttempts = [];
-  const provenance = {
-    verified_agents: [],
-    legacy_unverified_agents: [],
-  };
-
-  const deadEndSet = new Set();
-  const wafSet = new Set();
-  const leadSet = new Set();
-
-  // Pre-read findings once and index by (wave, agent, surface_id) so per-handoff
-  // validation does not re-parse findings.jsonl O(handoffs × findings) times.
-  const allFindings = readFindingsFromJsonl(domain);
-  const findingsByRun = new Map();
-  const recordedFindingsBySurface = new Map();
-  for (const finding of allFindings) {
-    if (finding.wave === artifacts.wave) {
-      const runKey = `${finding.wave}\u0000${finding.agent}\u0000${finding.surface_id}`;
-      if (!findingsByRun.has(runKey)) findingsByRun.set(runKey, []);
-      findingsByRun.get(runKey).push(finding);
-      if (!recordedFindingsBySurface.has(finding.surface_id)) recordedFindingsBySurface.set(finding.surface_id, []);
-      recordedFindingsBySurface.get(finding.surface_id).push(finding);
-    }
-  }
-
-  const smartContractCompletedSurfaceIds = [];
-  const bypassAttemptsForCompletedSurfaces = new Map();
-
-  for (const assignment of artifacts.assignments) {
-    const filePath = artifacts.handoffPathByAgent.get(assignment.agent);
-    if (!filePath) {
-      missingSurfaceIds.push(assignment.surface_id);
-      continue;
-    }
-
-    try {
-      const handoffJson = readJsonFile(filePath);
-      const runKey = `${artifacts.wave}\u0000${assignment.agent}\u0000${assignment.surface_id}`;
-      const findingsForRun = findingsByRun.get(runKey) || [];
-      const effectiveSurfaceType = assignment.surface_type || null;
-      const payload = validateWaveHandoffPayload(handoffJson, {
-        targetDomain: domain,
-        wave: artifacts.wave,
-        agent: assignment.agent,
-        surfaceId: assignment.surface_id,
-        effectiveSurfaceType,
-        findingsForRun,
-      });
-      const provenanceStatus = validateHandoffProvenance(handoffJson, assignment);
-
-      receivedAgents.push(assignment.agent);
-      if (provenanceStatus === "verified") {
-        provenance.verified_agents.push(assignment.agent);
-      } else {
-        provenance.legacy_unverified_agents.push(assignment.agent);
-      }
-      if (payload.surface_status === "complete") {
-        completedSurfaceIds.push(assignment.surface_id);
-        if (effectiveSurfaceType === "smart_contract") {
-          smartContractCompletedSurfaceIds.push(assignment.surface_id);
-          bypassAttemptsForCompletedSurfaces.set(assignment.surface_id, payload.bypass_attempts || []);
-        }
-      } else {
-        partialSurfaceIds.push(assignment.surface_id);
-      }
-      pushUnique(deadEnds, deadEndSet, payload.dead_ends);
-      pushUnique(wafBlockedEndpoints, wafSet, payload.waf_blocked_endpoints);
-      pushUnique(leadSurfaceIds, leadSet, payload.lead_surface_ids);
-      for (const entry of payload.blocked_harness_runs || []) {
-        blockedHarnessRuns.push({ ...entry, agent: assignment.agent, surface_id: assignment.surface_id });
-      }
-      for (const entry of payload.blocked_prereqs || []) {
-        blockedPrereqs.push({ ...entry, agent: assignment.agent, surface_id: assignment.surface_id });
-      }
-      for (const entry of payload.bypass_attempts || []) {
-        bypassAttempts.push({ ...entry, agent: assignment.agent, surface_id: assignment.surface_id });
-      }
-    } catch {
-      invalidAgents.push(assignment.agent);
-    }
-  }
-
-  const suspicionFlags = buildSuspicionFlags({
-    smartContractCompletedSurfaceIds,
-    bypassAttemptsForCompletedSurfaces,
-    recordedFindingsBySurface,
-  });
-
-  for (const assignment of artifacts.assignments) {
-    const logPath = path.join(artifacts.dir, `live-dead-ends-${artifacts.wave}-${assignment.agent}.jsonl`);
-    if (!fs.existsSync(logPath)) continue;
-    let raw;
-    try {
-      raw = fs.readFileSync(logPath, "utf8");
-    } catch {
-      continue;
-    }
-    const lines = raw.trim().split("\n");
-    for (const line of lines) {
-      if (!line) continue;
-      try {
-        const record = JSON.parse(line);
-        if (record.surface_id !== assignment.surface_id) continue;
-        pushUnique(deadEnds, deadEndSet, normalizeStringArray(record.dead_ends, "live_dead_ends"));
-        pushUnique(wafBlockedEndpoints, wafSet, normalizeStringArray(record.waf_blocked_endpoints, "live_waf_blocked"));
-      } catch {
-        // Skip malformed line, keep processing remaining records
-      }
-    }
-  }
-
-  return {
-    artifacts,
-    readiness,
-    merge: {
-      received_agents: receivedAgents,
-      invalid_agents: invalidAgents,
-      unexpected_agents: readiness.unexpected_agents,
-      completed_surface_ids: completedSurfaceIds,
-      partial_surface_ids: partialSurfaceIds,
-      missing_surface_ids: missingSurfaceIds,
-      dead_ends: deadEnds,
-      waf_blocked_endpoints: wafBlockedEndpoints,
-      lead_surface_ids: leadSurfaceIds,
-      blocked_harness_runs: blockedHarnessRuns,
-      blocked_harness_runs_grouped: groupBlockedHarnessRuns(blockedHarnessRuns),
-      blocked_prereqs: blockedPrereqs,
-      blocked_prereqs_grouped: groupBlockedPrereqs(blockedPrereqs),
-      bypass_attempts: bypassAttempts,
-      bypass_attempts_grouped: groupBypassAttempts(bypassAttempts),
-      suspicion_flags: suspicionFlags,
-      provenance,
-    },
-  };
-}
+const {
+  WAVE_HANDOFF_CONTENT_MAX_CHARS,
+  assertBlockedHarnessConsistency,
+  assertBlockedPrereqConsistency,
+  assertSmartContractCompletionEvidence,
+  generateHandoffToken,
+  HANDOFF_PROVENANCE_MODEL,
+  normalizeBlockedHarnessRuns,
+  normalizeBlockedPrereqs,
+  normalizeBypassAttempts,
+  normalizeChainNotes,
+  normalizeHandoffSummary,
+  sha256Hex,
+  signHandoffProvenance,
+  validateHandoffToken,
+} = require("./wave-handoff-contracts.js");
+const {
+  buildWaveHandoffsDocument,
+  buildWaveReadiness,
+  loadWaveArtifacts,
+  mergeWaveHandoffs,
+  mergeWaveHandoffsInternal,
+  readWaveHandoffs,
+  waveHandoffStatus,
+} = require("./wave-handoff-store.js");
 
 function computeRequeueSurfaceIds(artifacts, merge, coverageRecords = []) {
   const requeueSurfaceIds = [];
@@ -941,11 +275,13 @@ function startWaveLocked(domain, {
       hunter_agent: route.hunter_agent,
       brief_profile: route.brief_profile,
       context_budget: route.context_budget,
+      handoff_token_required: true,
       handoff_token_sha256: sha256Hex(token),
       handoff_token: token,
     };
   });
   const assignmentsForDisk = persistedAssignments.map(({ handoff_token, ...assignment }) => assignment);
+  ensureHandoffSigningKey(domain);
 
   // Snapshot registries BEFORE the assignment file is written. If the
   // snapshot throws (auth.json malformed, egress config missing, etc.)
@@ -960,6 +296,9 @@ function startWaveLocked(domain, {
   ].sort((a, b) => a.wave - b.wave);
 
   writeFileAtomic(assignmentsPath, `${JSON.stringify({
+    version: 1,
+    handoff_tokens_required: true,
+    handoff_provenance_model: HANDOFF_PROVENANCE_MODEL,
     wave_number: waveNumber,
     assignments: assignmentsForDisk,
   }, null, 2)}\n`);
@@ -1045,7 +384,7 @@ function snapshotFileForRollback(filePath) {
   return {
     path: filePath,
     existed: fs.existsSync(filePath),
-    content: fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : null,
+    content: fs.existsSync(filePath) ? readFileUtf8(filePath, { label: path.basename(filePath) }) : null,
   };
 }
 
@@ -1129,7 +468,7 @@ function buildStartNextWaveResponse({
 }
 
 function readRankedAttackSurfacesForPlanning(domain) {
-  const ranked = rankAttackSurfaces(domain, { write: false });
+  const ranked = rankAttackSurfaces(domain);
   if (!ranked) {
     readAttackSurfaceStrict(domain);
     return [];
@@ -1186,11 +525,10 @@ function startNextWave(args) {
           snapshotFileForRollback(surfaceLeadsPath(domain)),
           snapshotFileForRollback(surfaceRoutesPath(domain)),
         ];
-        const promoted = promoteSurfaceLeadsInternal(domain, {
+        const promoted = promoteSurfaceLeadsForWave(domain, {
           limit: 8,
           min_score: 60,
           include_medium: false,
-          update_state: false,
         });
         promotedForThisStart = promoted.promoted_surface_ids.length > 0;
         promotion = {
@@ -1425,7 +763,7 @@ function applyWaveMerge(args) {
       throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Wave merge requires pending_wave ${waveNumber}, found ${state.pending_wave}`);
     }
 
-    const readiness = buildWaveReadiness(loadWaveArtifacts(domain, waveNumber));
+    const readiness = buildWaveReadiness(loadWaveArtifacts(domain, waveNumber), { domain });
     if (!readiness.is_complete && !forceMerge) {
       safeAppendPipelineEventDirect(domain, "wave_merge_pending", {
         phase: state.phase,
@@ -1621,6 +959,7 @@ function applyWaveMerge(args) {
       merge: {
         received_agents: merge.received_agents,
         invalid_agents: merge.invalid_agents,
+        invalid_handoffs: merge.invalid_handoffs,
         unexpected_agents: merge.unexpected_agents,
         completed_surface_ids: merge.completed_surface_ids,
         partial_surface_ids: merge.partial_surface_ids,
@@ -1679,8 +1018,6 @@ function logDeadEnds(args) {
   const agent = parseAgentId(args.agent);
   const surfaceId = assertNonEmptyString(args.surface_id, "surface_id");
 
-  validateAssignedWaveAgentSurface(domain, wave, agent, surfaceId);
-
   const deadEnds = normalizeStringArray(args.dead_ends, "dead_ends");
   const wafBlocked = normalizeStringArray(args.waf_blocked_endpoints, "waf_blocked_endpoints");
 
@@ -1688,21 +1025,24 @@ function logDeadEnds(args) {
     return JSON.stringify({ appended: 0, message: "Nothing to log" });
   }
 
-  const dir = sessionDir(domain);
-  const logPath = path.join(dir, `live-dead-ends-${wave}-${agent}.jsonl`);
-  const record = {
-    ts: new Date().toISOString(),
-    surface_id: surfaceId,
-    dead_ends: deadEnds,
-    waf_blocked_endpoints: wafBlocked,
-  };
-  appendJsonlLine(logPath, record);
+  return withSessionLock(domain, () => {
+    validateAssignedWaveAgentSurface(domain, wave, agent, surfaceId);
 
-  return JSON.stringify({
-    appended: deadEnds.length + wafBlocked.length,
-    dead_ends: deadEnds.length,
-    waf_blocked_endpoints: wafBlocked.length,
-    log_path: logPath,
+    const logPath = liveDeadEndsJsonlPath(domain, wave, agent);
+    const record = {
+      ts: new Date().toISOString(),
+      surface_id: surfaceId,
+      dead_ends: deadEnds,
+      waf_blocked_endpoints: wafBlocked,
+    };
+    appendJsonlLine(logPath, record);
+
+    return JSON.stringify({
+      appended: deadEnds.length + wafBlocked.length,
+      dead_ends: deadEnds.length,
+      waf_blocked_endpoints: wafBlocked.length,
+      log_path: logPath,
+    });
   });
 }
 
@@ -1735,16 +1075,26 @@ function writeWaveHandoff(args) {
   if (typeof args.content !== "string") {
     throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "content must be a string");
   }
+  if (args.content.length > WAVE_HANDOFF_CONTENT_MAX_CHARS) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `content must be at most ${WAVE_HANDOFF_CONTENT_MAX_CHARS} characters`,
+    );
+  }
 
   return withSessionLock(domain, () => {
     const assignment = validateAssignedWaveAgentSurface(domain, wave, agent, surfaceId);
-    const provenance = validateHandoffToken(assignment, args.handoff_token);
-    const surfaceLeadResult = recordSurfaceLeadsInternal(domain, Array.isArray(args.surface_leads) ? args.surface_leads : [], {
-      source: "hunter_handoff",
-      source_wave: wave,
-      source_agent: agent,
-      source_surface_id: surfaceId,
-    });
+    // Session state may be missing in narrow test paths that only seed
+    // assignments + attack surface. Default to legacy mode in that case;
+    // production callers always have an initialized session here.
+    let requireProvenance = false;
+    try {
+      const { state } = readSessionStateStrict(domain);
+      requireProvenance = state.handoff_provenance_required === true;
+    } catch {
+      requireProvenance = false;
+    }
+    const provenance = validateHandoffToken(assignment, args.handoff_token, { requireProvenance });
 
     // Read surface_type from the immutable, MCP-owned assignment file (captured
     // at start_wave time). Reading from agent-writable attack_surface.json would
@@ -1764,6 +1114,12 @@ function writeWaveHandoff(args) {
       surfaceStatus,
       bypassAttempts,
       findingCount: findingsForRun.length,
+    });
+    const surfaceLeadResult = recordSurfaceLeadsForWaveHandoff(domain, Array.isArray(args.surface_leads) ? args.surface_leads : [], {
+      source: "hunter_handoff",
+      source_wave: wave,
+      source_agent: agent,
+      source_surface_id: surfaceId,
     });
 
     const handoff = {
@@ -1786,164 +1142,25 @@ function writeWaveHandoff(args) {
     if (surfaceLeadResult.lead_ids.length > 0) {
       handoff.surface_lead_ids = surfaceLeadResult.lead_ids;
     }
+    const persistedHandoff = provenance === "verified"
+      ? signHandoffProvenance(handoff, ensureHandoffSigningKey(domain), { assignment })
+      : handoff;
 
     const dir = sessionDir(domain);
     const markdownPath = path.join(dir, `handoff-${wave}-${agent}.md`);
     const jsonPath = path.join(dir, `handoff-${wave}-${agent}.json`);
 
     writeFileAtomic(markdownPath, args.content);
-    writeFileAtomic(jsonPath, JSON.stringify(handoff, null, 2) + "\n");
+    writeFileAtomic(jsonPath, JSON.stringify(persistedHandoff, null, 2) + "\n");
 
     return JSON.stringify({
       written_md: markdownPath,
       written_json: jsonPath,
       provenance,
+      provenance_model: persistedHandoff.provenance_model || null,
       surface_lead_ids: surfaceLeadResult.lead_ids,
     });
   });
-}
-
-function waveHandoffStatus(args) {
-  const domain = assertNonEmptyString(args.target_domain, "target_domain");
-  const waveNumber = parseWaveNumber(args.wave_number);
-  return JSON.stringify(buildWaveReadiness(loadWaveArtifacts(domain, waveNumber)));
-}
-
-function mergeWaveHandoffs(args) {
-  const domain = assertNonEmptyString(args.target_domain, "target_domain");
-  const waveNumber = parseWaveNumber(args.wave_number);
-  const { readiness, merge } = mergeWaveHandoffsInternal(domain, waveNumber);
-
-  return JSON.stringify({
-    assignments_total: readiness.assignments_total,
-    handoffs_total: readiness.handoffs_total,
-    received_agents: merge.received_agents,
-    invalid_agents: merge.invalid_agents,
-    unexpected_agents: merge.unexpected_agents,
-    completed_surface_ids: merge.completed_surface_ids,
-    partial_surface_ids: merge.partial_surface_ids,
-    missing_surface_ids: merge.missing_surface_ids,
-    dead_ends: merge.dead_ends,
-    waf_blocked_endpoints: merge.waf_blocked_endpoints,
-    lead_surface_ids: merge.lead_surface_ids,
-    blocked_harness_runs: merge.blocked_harness_runs,
-    blocked_harness_runs_grouped: merge.blocked_harness_runs_grouped,
-    blocked_prereqs: merge.blocked_prereqs,
-    blocked_prereqs_grouped: merge.blocked_prereqs_grouped,
-    bypass_attempts: merge.bypass_attempts,
-    bypass_attempts_grouped: merge.bypass_attempts_grouped,
-    suspicion_flags: merge.suspicion_flags,
-    provenance: merge.provenance,
-  });
-}
-
-function listWaveAssignmentNumbers(domain) {
-  const dir = sessionDir(domain);
-  if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir)
-    .map((fileName) => {
-      const match = fileName.match(/^wave-([1-9][0-9]*)-assignments\.json$/);
-      return match ? Number(match[1]) : null;
-    })
-    .filter((waveNumber) => Number.isInteger(waveNumber))
-    .sort((a, b) => a - b);
-}
-
-function buildWaveHandoffsDocument(domain, waveNumbers) {
-  const handoffs = [];
-  const missingHandoffs = [];
-  const invalidHandoffs = [];
-  const unexpectedHandoffs = [];
-
-  // Pre-read findings once per call, not per handoff.
-  const allFindings = readFindingsFromJsonl(domain);
-  const findingsByRun = new Map();
-  for (const finding of allFindings) {
-    const runKey = `${finding.wave} ${finding.agent} ${finding.surface_id}`;
-    if (!findingsByRun.has(runKey)) findingsByRun.set(runKey, []);
-    findingsByRun.get(runKey).push(finding);
-  }
-
-  for (const waveNumber of waveNumbers) {
-    const artifacts = loadWaveArtifacts(domain, waveNumber);
-    for (const agent of artifacts.unexpectedAgents) {
-      unexpectedHandoffs.push({ wave: artifacts.wave, agent });
-    }
-
-    for (const assignment of artifacts.assignments) {
-      const filePath = artifacts.handoffPathByAgent.get(assignment.agent);
-      if (!filePath) {
-        missingHandoffs.push({
-          wave: artifacts.wave,
-          agent: assignment.agent,
-          surface_id: assignment.surface_id,
-        });
-        continue;
-      }
-
-      try {
-        const handoffJson = readJsonFile(filePath);
-        const runKey = `${artifacts.wave} ${assignment.agent} ${assignment.surface_id}`;
-        const findingsForRun = findingsByRun.get(runKey) || [];
-        const effectiveSurfaceType = assignment.surface_type || null;
-        const payload = validateWaveHandoffPayload(handoffJson, {
-          targetDomain: domain,
-          wave: artifacts.wave,
-          agent: assignment.agent,
-          surfaceId: assignment.surface_id,
-          effectiveSurfaceType,
-          findingsForRun,
-        });
-        const provenance = validateHandoffProvenance(handoffJson, assignment);
-        const handoff = {
-          wave: artifacts.wave,
-          agent: assignment.agent,
-          surface_id: assignment.surface_id,
-          surface_type: payload.surface_type,
-          surface_status: payload.surface_status,
-          provenance,
-          summary: payload.summary,
-          chain_notes: payload.chain_notes,
-          blocked_harness_runs: payload.blocked_harness_runs,
-          blocked_prereqs: payload.blocked_prereqs,
-          bypass_attempts: payload.bypass_attempts,
-          dead_ends: payload.dead_ends,
-          waf_blocked_endpoints: payload.waf_blocked_endpoints,
-          lead_surface_ids: payload.lead_surface_ids,
-        };
-        if (payload.surface_lead_ids.length > 0) {
-          handoff.surface_lead_ids = payload.surface_lead_ids;
-        }
-        handoffs.push(handoff);
-      } catch (error) {
-        invalidHandoffs.push({
-          wave: artifacts.wave,
-          agent: assignment.agent,
-          surface_id: assignment.surface_id,
-          error: error.message || String(error),
-        });
-      }
-    }
-  }
-
-  return {
-    version: 1,
-    target_domain: domain,
-    wave_numbers: waveNumbers,
-    handoffs,
-    missing_handoffs: missingHandoffs,
-    invalid_handoffs: invalidHandoffs,
-    unexpected_handoffs: unexpectedHandoffs,
-  };
-}
-
-function readWaveHandoffs(args) {
-  const domain = assertNonEmptyString(args.target_domain, "target_domain");
-  const waveNumbers = args.wave_number == null
-    ? listWaveAssignmentNumbers(domain)
-    : [parseWaveNumber(args.wave_number)];
-
-  return JSON.stringify(buildWaveHandoffsDocument(domain, waveNumbers));
 }
 
 module.exports = {
@@ -1958,4 +1175,5 @@ module.exports = {
   waveStatus,
   writeHandoff,
   writeWaveHandoff,
+  WAVE_HANDOFF_CONTENT_MAX_CHARS,
 };

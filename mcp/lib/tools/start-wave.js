@@ -33,5 +33,4 @@ module.exports = Object.freeze({
   scope_required: false,
   sensitive_output: false,
   session_artifacts_written: ["surface-routes.json", "wave-N-assignments.json", "state.json"],
-  hook_required: false,
 });

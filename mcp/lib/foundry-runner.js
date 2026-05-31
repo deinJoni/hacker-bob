@@ -4,7 +4,15 @@ const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { resolveEvmRpcEndpoints, isPublicHttpsUrl } = require("./evm-rpc-pool.js");
+const { resolveEvmRpcEndpoints } = require("./evm-rpc-pool.js");
+const {
+  directSmartContractSubprocessEnv,
+  filterResolvedPublicRpcEndpoints,
+  redactRpcEndpoint,
+  redactRpcEndpointArgs,
+  redactRpcEndpointText,
+  summarizeRpcPolicyRejections,
+} = require("./sc-egress-policy.js");
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_TIMEOUT_MS = 300_000;
@@ -78,7 +86,7 @@ function spawnForge(args, { workdir, env, timeoutMs }) {
       // them running.
       child = spawn("forge", args, {
         cwd: workdir,
-        env: { ...process.env, ...env },
+        env: directSmartContractSubprocessEnv(env),
         stdio: ["ignore", "pipe", "pipe"],
         detached: true,
       });
@@ -193,11 +201,11 @@ function summarizeForgeJson(document) {
           test: testName,
           status: normalizedStatus,
           status_raw: rawStatus,
-          reason: typeof result?.reason === "string" ? result.reason : null,
+          reason: typeof result?.reason === "string" ? redactRpcEndpointText(result.reason) : null,
           gas_used: typeof result?.kind?.Standard?.gasUsed === "number"
             ? result.kind.Standard.gasUsed
             : (typeof result?.gas === "number" ? result.gas : null),
-          counterexample: result && result.counterexample ? truncateString(JSON.stringify(result.counterexample), 1024) : null,
+          counterexample: result && result.counterexample ? truncateString(redactRpcEndpointText(JSON.stringify(result.counterexample)), 1024) : null,
         });
       } else {
         truncated = true;
@@ -229,12 +237,16 @@ async function runFoundryTest({
   }
   const cappedTimeout = Math.min(Math.max(Number(timeoutMs) || DEFAULT_TIMEOUT_MS, 5_000), MAX_TIMEOUT_MS);
 
-  const explicitForkUrls = Array.isArray(forkUrls)
-    ? forkUrls.filter(isPublicHttpsUrl)
+  const explicitForkUrls = Array.isArray(forkUrls) && forkUrls.length > 0
+    ? forkUrls
     : null;
-  const candidateForkUrls = explicitForkUrls && explicitForkUrls.length > 0
+  const rawCandidateForkUrls = explicitForkUrls && explicitForkUrls.length > 0
     ? explicitForkUrls
     : (chainId ? resolveEvmRpcEndpoints(chainId) : []);
+  const {
+    endpoints: candidateForkUrls,
+    rejected: rpcPolicyRejections,
+  } = await filterResolvedPublicRpcEndpoints(rawCandidateForkUrls);
 
   // Validate match expressions are simple regex-safe strings to keep the
   // command line well-formed; forge accepts regex but we keep it conservative.
@@ -265,23 +277,26 @@ async function runFoundryTest({
 
   const forkAttempts = [];
   if (candidateForkUrls.length === 0) {
-    if (chainId != null) {
+    if (chainId != null || explicitForkUrls) {
       // Fail closed: the user asked for a forked run on a specific chain but
       // we have no endpoints. Silently running a local-only test would let a
       // hunter record "tested" without ever touching the target chain.
       return {
         ok: false,
         reason: "no_fork_endpoints_for_chain",
-        chain_id: Number(chainId),
-        error: `no public RPC endpoints available for chain_id ${chainId}; supply fork_urls explicitly or set BOB_EVM_RPCS_${chainId}=url1,url2 in the MCP server env`,
-        command: ["forge", ...baseArgs],
+        chain_id: chainId == null ? null : Number(chainId),
+        error: chainId == null
+          ? "no public HTTPS RPC endpoints remain after applying the smart-contract egress policy"
+          : `no public HTTPS RPC endpoints available for chain_id ${chainId}; supply fork_urls explicitly or set BOB_EVM_RPCS_${chainId}=url1,url2 in the MCP server env`,
+        command: ["forge", ...redactRpcEndpointArgs(baseArgs)],
+        rpc_policy_rejections: summarizeRpcPolicyRejections(rpcPolicyRejections),
         fork_attempts: [],
       };
     }
     // No chain_id supplied — run a local-only test (covers chain-independent
     // fixtures and pure-fuzz harnesses).
     const result = await spawnForge(baseArgs, { workdir: resolvedWorkdir, timeoutMs: cappedTimeout, env: {} });
-    return finalizeRun({ result, args: baseArgs, forkAttempts: [], forkBlock, fork_used: null });
+    return finalizeRun({ result, args: baseArgs, forkAttempts: [], forkBlock, fork_used: null, rpcPolicyRejections });
   }
 
   let lastResult = null;
@@ -290,38 +305,39 @@ async function runFoundryTest({
     const result = await spawnForge(args, { workdir: resolvedWorkdir, timeoutMs: cappedTimeout, env: {} });
     lastResult = result;
     forkAttempts.push({
-      endpoint: url,
+      endpoint: redactRpcEndpoint(url),
       ok: result.ok,
       exit_code: result.exit_code,
       timed_out: result.timed_out === true,
       reason: result.reason || null,
-      stderr_excerpt: truncateString(result.stderr || "", 600),
+      stderr_excerpt: truncateString(redactRpcEndpointText(result.stderr || ""), 600),
     });
     if (result.ok) {
-      return finalizeRun({ result, args, forkAttempts, forkBlock, fork_used: url });
+      return finalizeRun({ result, args, forkAttempts, forkBlock, fork_used: redactRpcEndpoint(url), rpcPolicyRejections });
     }
     // If forge is missing entirely, no point trying other RPCs.
     if (result.reason === "forge_not_in_path") {
-      return finalizeRun({ result, args, forkAttempts, forkBlock, fork_used: null });
+      return finalizeRun({ result, args, forkAttempts, forkBlock, fork_used: null, rpcPolicyRejections });
     }
     // Differentiate test failure from RPC failure: if stderr shows our forge
     // produced JSON, the RPC was fine — the test simply failed/asserted.
     const looksLikeJsonOnStdout = typeof result.stdout === "string" && /^\s*\{/.test(result.stdout);
     if (looksLikeJsonOnStdout) {
-      return finalizeRun({ result, args, forkAttempts, forkBlock, fork_used: url });
+      return finalizeRun({ result, args, forkAttempts, forkBlock, fork_used: redactRpcEndpoint(url), rpcPolicyRejections });
     }
     // Otherwise treat as RPC failure and try the next endpoint.
   }
-  return finalizeRun({ result: lastResult, args: baseArgs, forkAttempts, forkBlock, fork_used: null });
+  return finalizeRun({ result: lastResult, args: baseArgs, forkAttempts, forkBlock, fork_used: null, rpcPolicyRejections });
 }
 
-function finalizeRun({ result, args, forkAttempts, forkBlock, fork_used }) {
+function finalizeRun({ result, args, forkAttempts, forkBlock, fork_used, rpcPolicyRejections = [] }) {
   if (!result || result.reason === "forge_not_in_path" || result.reason === "forge_spawn_failed") {
     return {
       ok: false,
       reason: result && result.reason ? result.reason : "spawn_failed",
       error: result && result.error ? result.error : null,
-      command: ["forge", ...args],
+      command: ["forge", ...redactRpcEndpointArgs(args)],
+      rpc_policy_rejections: summarizeRpcPolicyRejections(rpcPolicyRejections),
       fork_attempts: forkAttempts,
     };
   }
@@ -379,7 +395,8 @@ function finalizeRun({ result, args, forkAttempts, forkBlock, fork_used }) {
     fork_block: forkBlock || null,
     fork_block_used: forkBlockUsed,
     fork_attempts: forkAttempts,
-    command: ["forge", ...args],
+    command: ["forge", ...redactRpcEndpointArgs(args)],
+    rpc_policy_rejections: summarizeRpcPolicyRejections(rpcPolicyRejections),
     summary: {
       total: summary.total,
       passed: summary.passed,
@@ -388,8 +405,8 @@ function finalizeRun({ result, args, forkAttempts, forkBlock, fork_used }) {
     tests: summary.tests,
     tests_truncated: summary.truncated === true,
     raw_excerpt: {
-      stdout: truncateString(result.stdout || "", RAW_EXCERPT_BYTES),
-      stderr: truncateString(result.stderr || "", RAW_EXCERPT_BYTES),
+      stdout: truncateString(redactRpcEndpointText(result.stdout || ""), RAW_EXCERPT_BYTES),
+      stderr: truncateString(redactRpcEndpointText(result.stderr || ""), RAW_EXCERPT_BYTES),
       truncated: result.truncated === true,
     },
     parse_warning: parseResult.ok ? null : parseResult.reason,

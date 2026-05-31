@@ -46,7 +46,7 @@ async function handler(args) {
 
 module.exports = Object.freeze({
   name: "bounty_sui_fetch_object",
-  description: "Read-only Sui sui_getObject through the public RPC fallback ladder. Returns the object's owner (Immutable / Shared / AddressOwner / ObjectOwner), Move type, content fields, and previous transaction digest, plus the latest checkpoint sequence the read is anchored against. Used by Sui hunters to detect object_ownership_violation, capability_leakage, and dynamic-field unauthorized access before constructing exploit hypotheses.",
+  description: "Read-only Sui sui_getObject through the DNS-pinned direct public HTTPS RPC fallback ladder. DNS-private/private endpoints and egress_profile proxy routing are unsupported by default; localnet RPC has no default endpoint and endpoint_used is redacted. Returns the object's owner (Immutable / Shared / AddressOwner / ObjectOwner), Move type, content fields, and previous transaction digest, plus the latest checkpoint sequence the read is anchored against. Used by Sui hunters to detect object_ownership_violation, capability_leakage, and dynamic-field unauthorized access before constructing exploit hypotheses.",
   inputSchema: {
     "type": "object",
     "properties": {
@@ -70,5 +70,4 @@ module.exports = Object.freeze({
   scope_required: false,
   sensitive_output: false,
   session_artifacts_written: [],
-  hook_required: false,
 });

@@ -22,7 +22,7 @@ Read it in two passes:
 All paths in this guide are relative to the repository root:
 
 ```text
-/Users/memehalis/sec/hacker-bob
+<repo-root>
 ```
 
 The most important idea is this:
@@ -226,7 +226,7 @@ Code project directory.
 The source repo is where you develop Bob:
 
 ```text
-/Users/memehalis/sec/hacker-bob
+<repo-root>
 ```
 
 Here you run:
@@ -275,8 +275,9 @@ hacker-bob doctor <project-dir>
 hacker-bob uninstall <project-dir>
 ```
 
-The `hacker-bob` package under `packages/hacker-bob/` is only a convenience
-alias. The canonical package is `hacker-bob-cc`.
+`hacker-bob` is the canonical npm package. `hacker-bob-cc` and
+`hacker-bob-codex` are small adapter wrapper packages that depend on the
+matching canonical version.
 
 \newpage
 
@@ -572,6 +573,9 @@ Example simplified `state.json`:
 {
   "target": "example.com",
   "target_url": "https://example.com",
+  "checkpoint_mode": "paranoid",
+  "block_internal_hosts": true,
+  "block_internal_hosts_source": "paranoid_default",
   "phase": "HUNT",
   "hunt_wave": 2,
   "pending_wave": null,
@@ -619,6 +623,12 @@ hold_count
 
 auth_status
   pending, authenticated, or unauthenticated.
+
+checkpoint_mode / block_internal_hosts
+  The selected checkpoint mode and effective direct-egress internal-host
+  blocking policy. `normal`, `yolo`, and pre-policy legacy sessions default to
+  false; `paranoid` defaults to true unless initialized with
+  `allow_internal_hosts`.
 ```
 
 There are two read styles:
@@ -714,6 +724,7 @@ the report writer.
 | `traffic.jsonl` | JSONL | MCP | Imported HAR/Burp-style traffic |
 | `http-audit.jsonl` | JSONL | MCP | Redacted record of Bob HTTP scan calls |
 | `wave-N-assignments.json` | JSON | MCP | Which hunter owns which surface |
+| `.handoff-signing-key.json` | JSON | MCP | Session-local private key for tokenized handoff signatures |
 | `handoff-wN-aN.json` | JSON | MCP | Authoritative hunter final handoff |
 | `handoff-wN-aN.md` | Markdown | MCP | Human mirror of hunter handoff |
 | `coverage.jsonl` | JSONL | MCP | Endpoint/class/auth coverage records |
@@ -739,7 +750,16 @@ mcp/server.js
 ```
 
 This file is a facade. It imports most runtime helpers and exports them for
-tests and hooks. When run as a process, it starts the stdio MCP server:
+runtime entrypoints only:
+
+- `TOOLS`
+- `TOOL_MANIFEST`
+- `executeTool`
+- `startServer`
+
+Tests and helper scripts should import lower-level behavior from the module that
+owns it instead of expanding this facade. When run as a process, it starts the
+stdio MCP server:
 
 ```text
 startServer()
@@ -792,7 +812,6 @@ browser_access
 scope_required
 sensitive_output
 session_artifacts_written
-hook_required
 ```
 
 This metadata drives:
@@ -801,7 +820,7 @@ This metadata drives:
 - Claude settings permissions
 - agent allowed tools
 - prompt contract tests
-- hooks for scope-sensitive tools
+- installed session-artifact hooks; central session authority is enforced by the dispatcher/policy layer, with HTTP scope URL checks layered on tools that set `scope_required`
 - docs and generated surfaces
 
 ## Dispatch
@@ -818,6 +837,8 @@ Flow:
 executeTool(name, args)
   -> look up tool
   -> validate input schema
+  -> resolve session authority
+  -> apply scoped URL policy
   -> call handler
   -> parse handler result
   -> classify data errors
@@ -1327,11 +1348,15 @@ Effects:
 - validates surface IDs exist in `attack_surface.json`
 - generates a secret handoff token for each assignment
 - writes `wave-N-assignments.json` with token hashes
+- creates the session-local `.handoff-signing-key.json` with `0600` permissions
 - returns plain handoff tokens to the orchestrator
 - sets `state.pending_wave = N`
 
 The token is given only to the assigned hunter. The token prevents another
-agent from writing a fake authoritative handoff.
+agent from writing through `bounty_write_wave_handoff` for a different
+assignment. After token validation, Bob signs the persisted JSON with the
+session-local `.handoff-signing-key.json` key so read and merge paths can reject
+later hand-edited JSON for tokenized assignments.
 
 ## Spawn Background Hunters
 
@@ -1364,6 +1389,13 @@ Example simplified handoff:
   "surface_id": "auth-flow",
   "surface_status": "partial",
   "provenance": "verified",
+  "provenance_model": "session_file_hmac_v1",
+  "provenance_assignment_hash": "...",
+  "provenance_signature": {
+    "version": 1,
+    "algorithm": "hmac-sha256",
+    "digest": "..."
+  },
   "summary": "Tested signup, reset, invite, and OAuth callback flows.",
   "chain_notes": [
     "Password reset token leak may combine with weak session rotation."
@@ -1650,7 +1682,7 @@ Responsibilities:
 - require `target_domain`
 - resolve egress profile
 - optionally attach auth profile headers
-- optionally block internal/private hosts when `block_internal_hosts: true`
+- apply the session's effective internal-host policy, optionally blocking internal/private hosts on direct egress
 - send request through safe fetch
 - cap response bytes
 - analyze response for tech, endpoints, secrets, security hints
@@ -1658,15 +1690,39 @@ Responsibilities:
 
 Important design choice:
 
-Bob permits localhost, private, internal, metadata-style, and third-party hosts
-by default. This keeps authorized chaining flexible. A caller can opt into
-blocking internal hosts with:
+For session-bound tools, caller `target_domain` is only a session lookup key.
+The dispatcher authorizes against initialized session state, validates the raw
+stored `target` and `target_url`, and rejects drift before the handler runs.
+Legacy sessions may default progress or presentation fields, but missing or
+drifted authority fields fail closed for tools that rely on them.
+
+Bob's MCP-scoped HTTP tools require a public `target_domain` and only send
+first-party target-host requests after session authority passes. That policy
+blocks direct off-target URLs before the request is sent, rejects
+public-suffix-only scope tokens with the packaged Public Suffix List via `psl`,
+and isolates registrable tenant domains.
+If that packaged list is stale, set `BOB_PSL_OVERLAY_FILE` to a local suffix
+file before running Bob; overlay matches are recorded in HTTP audit rows with
+`public_suffix_source` and `psl_overlay_file`, and the overlay is not a
+per-request bypass.
+It still does not make first-party host scope into DNS-rebinding protection or
+SSRF protection. `normal`, `yolo`, and pre-policy legacy sessions allow a public
+first-party hostname that resolves to private infrastructure. `paranoid`
+sessions default to local DNS/private-address blocking on direct/default egress
+unless the operator starts an explicitly authorized internal/lab program with
+`--allow-internal-hosts`. A caller can force blocking outside paranoid mode with:
 
 ```json
 {
   "block_internal_hosts": true
 }
 ```
+
+Strict internal-host blocking is a direct-egress policy. Bob refuses
+effective `block_internal_hosts: true` with proxy-backed egress profiles because
+target DNS and routing may be resolved by the proxy outside Bob's process. The
+effective value is persisted in session state, hunter briefs, HTTP audit rows,
+pipeline events, and analytics.
 
 ## Auth Storage
 
@@ -1838,20 +1894,25 @@ handoff are valid.
 
 It also records metadata-only hunter run telemetry.
 
-## Scope Guard Hooks
+## No Shell Scope Guard
 
-Files:
+Bob no longer installs a shell or MCP scope-guard hook. The previous hook files
+were intentionally permissive compatibility shims, so keeping them registered
+overstated the enforcement model.
 
-```text
-.claude/hooks/scope-guard.sh
-.claude/hooks/scope-guard-mcp.sh
-```
+MCP-scoped HTTP tool policy is enforced in the runtime dispatcher and handlers.
+Those tools require first-party target-host URLs, and they can add local
+DNS/private-address blocking only when the caller passes
+effective `block_internal_hosts: true` on direct egress. Browser-based auto-signup routes
+page HTTP requests through a target-host guard, blocks service workers, and
+blocks WebSockets when the host browser API supports it, but it refuses
+effective `block_internal_hosts: true` because Chromium resolves destinations outside
+Bob's safeFetch transport. Raw shell recon commands such as `curl`, `httpx`,
+`katana`, `nuclei`, and passive intel collection are bounded by generated
+prompts, host permissions, and operator authorization, not by Bob-enforced
+network containment.
 
-In this version, the Bash scope guard is intentionally permissive. MCP HTTP
-tools can block internal/private hosts only when the caller passes
-`block_internal_hosts: true`.
-
-This is documented and tested, not accidental.
+This boundary is documented and tested, not accidental.
 
 \newpage
 
@@ -1927,8 +1988,15 @@ Telemetry is intentionally metadata-only:
 - target domain
 - wave/agent/surface context
 - registry metadata
+- authority decision metadata: version, class, mode, source, result, symbolic
+  error code, and shadow status
 
-It avoids storing raw secret-bearing payloads.
+It avoids storing raw secret-bearing payloads, raw tool arguments, raw session
+state, session paths, scoped URLs, target URLs, and egress credentials.
+Read summaries redact local telemetry and transcript paths to stable labels.
+`bounty_read_tool_telemetry` aggregates authority status by version, class,
+result, and symbolic error code so blocked authority paths are visible without
+exposing the state document.
 
 ## Pipeline Analytics Reader
 
@@ -2449,9 +2517,19 @@ First meaningful write:
 ```text
 bounty_init_session({
   target_domain: "example.test",
-  target_url: "https://example.test"
+  target_url: "https://example.test",
+  egress_profile: "default"
 })
 ```
+
+Session initialization binds the selected egress profile identity in `state.json`.
+Bob records `egress_profile_identity_hash` and redacted source metadata, not raw
+proxy credentials. Later egress-bound requests compare against that hash; changing
+the profile or proxy route fails closed, while credential rotation on the same
+route does not. Egress-bound HTTP and signup calls require initialized session
+state. Pre-identity legacy sessions are bound on their first egress-bound resume
+and record `egress_profile_identity_bind_source: "legacy_migration"` plus the
+previous unbound egress fields.
 
 Code path:
 
@@ -2661,6 +2739,7 @@ Important `wave-1-assignments.json` detail:
     {
       "agent": "a1",
       "surface_id": "api-main",
+      "handoff_token_required": true,
       "handoff_token_sha256": "..."
     }
   ]
@@ -2674,8 +2753,14 @@ only the matching hunter prompt.
 Why this matters:
 
 - an agent cannot write another agent's authoritative handoff without the token
-- the merge can distinguish verified handoffs from legacy/unverified handoffs
+- read and merge paths can distinguish signed MCP-written handoffs from
+  unsigned or tampered JSON for tokenized assignments
 - the orchestrator does not have to trust Markdown claims
+
+This is a session-file trust model, not remote cryptographic nonrepudiation. A
+local actor with direct read access to `.handoff-signing-key.json` can forge a
+signature; Bob's guarantee is that the key is not returned through MCP and raw
+tokens are not persisted in assignment or handoff JSON.
 
 ## Step 5: Hunters Run In Parallel
 
@@ -3399,6 +3484,7 @@ Use it to answer:
 
 - what did Bob actually request?
 - which egress profile was used?
+- which `egress_profile_identity_hash` was bound to the request?
 - did target-owned hosts repeatedly timeout or fail?
 - what request refs support evidence?
 - did geofence warnings appear?
@@ -3412,6 +3498,8 @@ authoritative metadata trail for Bob HTTP requests
 Important caution:
 
 It should be redacted and bounded. It is not a raw packet capture.
+It records profile names, regions, proxy-configured status, and identity hashes,
+but not proxy URLs or credentials.
 
 ## `wave-N-assignments.json`
 
@@ -3444,7 +3532,9 @@ authoritative wave assignment record
 
 Important caution:
 
-It stores token hashes, not plaintext tokens.
+It stores token hashes and `handoff_token_required: true`, not plaintext tokens.
+The separate `.handoff-signing-key.json` file stores the session-local signing
+key and is created with `0600` permissions when the wave is started.
 
 ## `handoff-wN-aN.json`
 
@@ -3458,7 +3548,7 @@ Read by:
 
 ```text
 bounty_read_wave_handoffs
-bounty_wave_handoff_status
+bounty_wave_handoff_status (presence only)
 bounty_apply_wave_merge
 chain builder
 phase gates for chain-note detection
@@ -3473,6 +3563,11 @@ Use it to answer:
 - what dead ends and WAF blocks were discovered?
 - what chain notes should the chain builder consider?
 - was the handoff token verified?
+- does tokenized provenance have a valid session-file signature?
+
+Use `bounty_read_wave_handoffs` or merge output for provenance validation.
+`bounty_wave_handoff_status` answers only whether structured JSON files are
+present for assigned agents.
 
 Trust level:
 
@@ -3481,6 +3576,12 @@ authoritative hunter completion record
 ```
 
 Important caution:
+
+For tokenized assignments, `provenance: "verified"` is accepted only when the
+handoff carries `provenance_model: "session_file_hmac_v1"` and a valid HMAC
+signature over the JSON payload. Legacy assignments without token hashes remain
+explicitly `legacy_unverified`; unsigned verified claims are invalid for
+tokenized waves.
 
 Markdown handoffs are ignored for machine merge. A Markdown-only handoff is not
 a completed wave handoff.
@@ -4618,7 +4719,8 @@ bounty_http_scan({
   wave: "w1",
   agent: "a2",
   surface_id: "billing-api",
-  egress_profile: "default"
+  egress_profile: "default",
+  block_internal_hosts: false
 })
 ```
 
@@ -4717,6 +4819,13 @@ Important fields:
   "surface_id": "billing-api",
   "surface_status": "complete",
   "provenance": "verified",
+  "provenance_model": "session_file_hmac_v1",
+  "provenance_assignment_hash": "...",
+  "provenance_signature": {
+    "version": 1,
+    "algorithm": "hmac-sha256",
+    "digest": "..."
+  },
   "summary": "Tested invoice export and related billing endpoints.",
   "chain_notes": [
     "Invoice IDOR may combine with account enumeration from auth-flow."
@@ -5500,9 +5609,14 @@ Answer:
 
 `bounty_start_wave` generates a plaintext token per assignment and writes only
 its SHA-256 hash to `wave-N-assignments.json`. `bounty_write_wave_handoff`
-validates the supplied token. Verified handoffs get `provenance: "verified"`.
+validates the supplied token, then signs the JSON handoff with the session-local
+`.handoff-signing-key.json` key. Verified handoffs carry
+`provenance: "verified"` plus `provenance_model: "session_file_hmac_v1"` and a
+signature.
 
-This prevents unauthenticated handoff spoofing between agents.
+This prevents unauthenticated handoff writes through the MCP tool and lets read
+and merge paths reject hand-edited tokenized handoff JSON unless the local
+session signing key is available.
 
 ## Exercise 4: Find The Hunter's First Required Action
 
@@ -5587,7 +5701,6 @@ browser_access
 scope_required
 sensitive_output
 session_artifacts_written
-hook_required
 ```
 
 This supports tool governance, prompt generation, and contract tests.
@@ -5795,8 +5908,6 @@ mcp/lib/tool-telemetry.js
 ```text
 .claude/hooks/session-write-guard.sh
 .claude/hooks/hunter-subagent-stop.js
-.claude/hooks/scope-guard.sh
-.claude/hooks/scope-guard-mcp.sh
 ```
 
 ## Where Are Prompt Contracts Tested?
@@ -6651,21 +6762,47 @@ The file is mode `0600`. Agents should not read it directly. They use
 
 ## Does Bob block private IPs and localhost?
 
-Not by default. Bob allows them by default for authorized labs, internal scopes,
-VPN targets, SSRF chains, and user-authorized pivots. HTTP tools can block them
-when called with `block_internal_hosts: true`.
+Bob's MCP-scoped HTTP tools require both passing session authority and a public
+`target_domain`, so direct localhost/private-IP URLs are not valid first-party
+targets for normal HTTP scans. `normal`, `yolo`, and compatible legacy sessions
+still permit public
+first-party hostnames that resolve to private IPs, which keeps authorized labs,
+VPN scopes, and internal programs usable. `paranoid` sessions block those DNS
+results by default on direct/default egress unless initialized with
+`--allow-internal-hosts`; `--block-internal-hosts` forces the same policy in
+other modes. First-party host scope does not protect against DNS rebinding or
+proxy-side DNS/routing.
+
+Smart-contract RPC/REST tools use a separate direct-only policy. EVM, SVM,
+Aptos, Sui, Substrate, and CosmWasm reads/runners accept only public HTTPS
+endpoints from shipped ladders, explicit `endpoints` / `fork_urls`, or
+`BOB_<FAMILY>_RPCS_<NETWORK>` env overrides. Bob rejects HTTP, private/internal
+host literals, and public hostnames whose DNS answers resolve to private or
+link-local addresses during bounded preflight. Bob-owned Node SC reads and EVM
+source fetches then pin the HTTPS socket lookup to one of those preflighted
+public DNS answers. Fork runners are preflight-only handoff: Bob strips
+inherited proxy/RPC/secret env before spawning downstream CLIs, then restores
+only runner-created fork URL env or CLI args from preflighted public endpoints;
+it does not control or DNS-pin the CLI socket. SC RPC does not use `egress_profile` proxy routing.
+Private/localnet RPC remains unsupported by default; Sui/Substrate/CosmWasm
+`localnet` may run local-only harness tests, but no localnet RPC endpoint is
+accepted without a future per-family opt-in policy. DNS preflight is bounded
+before the SC read or runner timeout budget applies. Endpoint evidence and
+policy rejections redact credentials and query values.
 
 ## What is an egress profile?
 
-A named route for Bob HTTP scan calls. The default profile is direct local
+A named route for Bob network tools that support managed egress, including HTTP
+scan, signup detection, and browser signup. The default profile is direct local
 connection. Non-default profiles can point to operator-managed proxies via
 environment variable references.
 
-## Why is the scope guard a no-op?
+## Why is there no shell scope guard?
 
-The current design keeps scope decisions permissive at the hook layer and puts
-optional blocking into MCP HTTP calls. This is tested behavior, not missing
-code.
+The current design puts enforceable target-host policy into MCP HTTP calls and
+does not claim Bob-enforced containment for raw Bash recon. The removed hook
+files were permissive compatibility shims, so deleting them makes the installed
+surface match the enforcement model. This is tested behavior, not missing code.
 
 ## What is `/bob-status`?
 
@@ -6676,8 +6813,9 @@ session stands.
 ## What is `/bob-debug`?
 
 A deeper read-only debugger. It starts with telemetry and analytics, then can
-inspect artifacts and narrow transcript windows. With `--deep`, it can run the
-local policy replay diagnostics when a policy/refusal issue is identified.
+inspect artifacts and narrow transcript windows. With `--deep`, it identifies
+policy/refusal failure windows that a developer can replay with the local
+policy replay harness.
 
 ## What is policy replay?
 

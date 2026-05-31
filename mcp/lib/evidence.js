@@ -25,6 +25,12 @@ const {
 const {
   validateNoSensitiveMaterial,
 } = require("./sensitive-material.js");
+const {
+  readFindingIdSet: readCanonicalFindingIdSet,
+} = require("./finding-store.js");
+const {
+  normalizeVerificationRoundDocument,
+} = require("./verification-round-store.js");
 
 const EVIDENCE_PACKS_VERSION = 1;
 const MAX_SAMPLE_COUNT = 1000;
@@ -110,12 +116,8 @@ function normalizeSensitiveClusters(value) {
   });
 }
 
-function findingsLib() {
-  return require("./findings.js");
-}
-
-function pipelineAnalyticsLib() {
-  return require("./pipeline-analytics.js");
+function pipelineEventsLib() {
+  return require("./pipeline-events.js");
 }
 
 function verificationLib() {
@@ -123,12 +125,10 @@ function verificationLib() {
 }
 
 function readFindingIdSet(domain) {
-  const { readFindingsFromJsonl } = findingsLib();
-  return new Set(readFindingsFromJsonl(domain).map((finding) => finding.id));
+  return readCanonicalFindingIdSet(domain);
 }
 
 function loadFinalVerification(domain, findingIdSet, action = "evidence validation") {
-  const { normalizeVerificationRoundDocument } = findingsLib();
   const paths = verificationRoundPaths(domain, "final");
   let document;
   try {
@@ -437,7 +437,7 @@ function writeEvidencePacks(args) {
       response.final_verification_hash = verificationBinding.final_verification_hash;
     }
     writeMarkdownMirror(paths.markdown, renderEvidencePacksMarkdown(document), response);
-    pipelineAnalyticsLib().safeAppendPipelineEventDirect(domain, "evidence_written", {
+    pipelineEventsLib().safeAppendPipelineEventDirect(domain, "evidence_written", {
       phase: "VERIFY",
       status: document.packs.length === 0 ? "empty" : "written",
       source: "bounty_write_evidence_packs",
@@ -450,7 +450,7 @@ function writeEvidencePacks(args) {
         reportable_findings_covered: reportableIds.length,
       },
     });
-    if (verificationBinding) verificationLib().refreshVerificationManifest(domain);
+    if (verificationBinding) verificationLib().refreshVerificationManifest(domain, { throw_on_error: true });
     return JSON.stringify(response);
   });
 }

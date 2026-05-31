@@ -51,6 +51,5 @@ module.exports = Object.freeze({
   scope_required: false,
   sensitive_output: false,
   session_artifacts_written: ["static-imports","static-artifacts.jsonl"],
-  hook_required: false,
   importStaticArtifact,
 });

@@ -22,8 +22,10 @@ const {
 } = require("./storage.js");
 const {
   initSession,
-  readSessionStateStrict,
 } = require("./session-state.js");
+const {
+  readSessionStateStrict,
+} = require("./session-state-store.js");
 
 const REPO_INVENTORY_VERSION = 1;
 const REPO_CHECK_LOG_MAX_RECORDS = 1000;

@@ -8,9 +8,6 @@ const {
   attackSurfacePath,
 } = require("./paths.js");
 const {
-  writeFileAtomic,
-} = require("./storage.js");
-const {
   readTrafficRecordsFromJsonl,
   summarizeTrafficRecords,
 } = require("./http-records.js");
@@ -103,12 +100,11 @@ function scoreSurfaceRanking(surface, { trafficSummary = null, intelSummary = nu
   };
 }
 
-function rankAttackSurfaces(domain, { write = false } = {}) {
+function rankAttackSurfaces(domain) {
   const filePath = attackSurfacePath(domain);
   if (!fs.existsSync(filePath)) return null;
   const attackSurface = readAttackSurfaceStrict(domain);
   const trafficRecords = readTrafficRecordsFromJsonl(domain);
-  let changed = false;
   const rankedSurfaces = attackSurface.document.surfaces.map((surface) => {
     const trafficSummary = summarizeTrafficRecords(trafficRecords, { surface, limit: 0 });
     const intelSummary = summarizePublicIntelForSurface(domain, surface, 3);
@@ -128,22 +124,13 @@ function rankAttackSurfaces(domain, { write = false } = {}) {
     };
     if (JSON.stringify(currentRanking) !== JSON.stringify(nextRanking)) {
       nextSurface.ranking = nextRanking;
-      changed = true;
     }
     if (rankedPriority !== existingPriority) {
       if (!nextSurface.original_priority) nextSurface.original_priority = existingPriority;
       nextSurface.priority = rankedPriority;
-      changed = true;
     }
     return nextSurface;
   });
-
-  if (changed && write) {
-    writeFileAtomic(filePath, `${JSON.stringify({
-      ...attackSurface.document,
-      surfaces: rankedSurfaces,
-    }, null, 2)}\n`);
-  }
 
   return {
     path: filePath,

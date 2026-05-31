@@ -21,6 +21,7 @@
 // human-readable output keeps the verifier resilient across CLI versions.
 
 const MOVE_TESTS_CAP = 100;
+const { redactTextSensitiveValues } = require("../redaction.js");
 
 // Regex captures: 1=status token (PASS|FAIL|TIMEOUT|SKIP), 2=test id like
 // 0x42::module::test_name, optional trailing `;` text after the id (Sui adds
@@ -75,7 +76,7 @@ function parseMoveTestStdout(stdout) {
           || (last.test_id && stripped === last.test_id.split("::").pop())
           || (last.test_id && stripped === last.test_id);
         if (!isBoxHeader && stripped.length > 0 && last.test_id === pendingFailure && !last.reason) {
-          last.reason = stripped.slice(0, 1024);
+          last.reason = redactTextSensitiveValues(stripped).slice(0, 1024);
           pendingFailure = null;
         }
       }
@@ -111,7 +112,7 @@ function parseMoveTestStdout(stdout) {
         test_id: testId,
         status: normalizedStatus,
         status_raw: status,
-        reason: inlineReason ? inlineReason.slice(0, 1024) : null,
+        reason: inlineReason ? redactTextSensitiveValues(inlineReason).slice(0, 1024) : null,
       });
     } else {
       truncated = true;

@@ -2,6 +2,9 @@
 
 const fs = require("fs");
 const { bobSpecPath } = require("./paths.js");
+const {
+  readFileUtf8,
+} = require("./storage.js");
 
 const KNOWN_PLATFORMS = Object.freeze(["immunefi", "sherlock", "code4rena", "cantina", "custom"]);
 const KNOWN_SEVERITY_SYSTEMS = Object.freeze(["immunefi-v2.3", "sherlock", "code4rena", "cantina", "custom"]);
@@ -196,7 +199,7 @@ function loadBobSpec(domain) {
 
   let raw;
   try {
-    raw = fs.readFileSync(filePath, "utf8");
+    raw = readFileUtf8(filePath, { label: "bob-spec.json" });
   } catch (error) {
     return {
       present: true,

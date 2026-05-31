@@ -28,7 +28,7 @@ function renderFrontmatter() {
     "---",
     "name: bob-hunt",
     "disable-model-invocation: true",
-    'argument-hint: "[target-url | resume <domain> [force-merge]] [--deep] [--egress <profile>]"',
+    'argument-hint: "[target-url | resume <domain> [force-merge]] [--no-auth] [--normal|--paranoid|--yolo] [--deep] [--egress <profile>] [--block-internal-hosts|--allow-internal-hosts]"',
     "allowed-tools:",
     allowedTools,
     "---",

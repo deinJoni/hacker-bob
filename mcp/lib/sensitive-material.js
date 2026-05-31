@@ -8,6 +8,11 @@ const SENSITIVE_VALUE_RE = Object.freeze([
   /\b(?:bearer|basic)\s+[a-z0-9._~+/=-]{8,}/i,
   /\b(?:password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|jwt|sessionid)\s*[:=]\s*["']?[a-z0-9._~+/=-]{6,}/i,
   /\beyJ[a-z0-9_-]{10,}\.[a-z0-9_-]{10,}\.[a-z0-9_-]{10,}\b/i,
+  /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/,
+  /\bAKIA[0-9A-Z]{16}\b/,
+  /\bAIza[0-9A-Za-z_-]{20,}\b/,
+  /\bgh[pousr]_[0-9A-Za-z_]{20,}\b/,
+  /\bxox[baprs]-[0-9A-Za-z-]{10,}\b/,
 ]);
 
 function isPlainObject(value) {

@@ -1,6 +1,6 @@
 "use strict";
 
-const { recordFinding } = require("../findings.js");
+const { recordFinding } = require("../finding-store.js");
 
 module.exports = Object.freeze({
   name: "bounty_record_finding",
@@ -161,5 +161,4 @@ module.exports = Object.freeze({
   scope_required: false,
   sensitive_output: false,
   session_artifacts_written: ["findings.jsonl","findings.md"],
-  hook_required: false,
 });

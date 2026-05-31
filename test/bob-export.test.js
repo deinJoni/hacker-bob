@@ -49,7 +49,7 @@ function withTempHome(fn) {
   }
 }
 
-function writeSession(domain, events) {
+function writeSession(domain, events, stateOverrides = {}) {
   fs.mkdirSync(sessionDir(domain), { recursive: true });
   writeJson(statePath(domain), {
     target: domain,
@@ -60,8 +60,25 @@ function writeSession(domain, events) {
     total_findings: 0,
     hold_count: 0,
     auth_status: "pending",
+    checkpoint_mode: "normal",
+    block_internal_hosts: false,
+    block_internal_hosts_source: "legacy_default",
+    egress_profile: null,
+    egress_region: null,
+    proxy_configured: false,
+    egress_profile_identity_hash: null,
+    egress_profile_identity_version: null,
+    egress_profile_identity_source: null,
+    egress_profile_identity_bound_at: null,
+    egress_profile_identity_bind_source: null,
+    egress_profile_legacy_migration: null,
+    verification_schema_version: null,
+    verification_attempt_id: null,
+    verification_snapshot_hash: null,
+    verification_entered_at: null,
     explored: [],
     terminally_blocked: [],
+    ...stateOverrides,
   });
   if (events.length > 0) {
     appendJsonl(pipelineEventsJsonlPath(domain), events);
@@ -87,10 +104,17 @@ test("Bob export creates a version-scoped deterministic improvement bundle", () 
     fs.mkdirSync(path.join(projectDir, ".hacker-bob"), { recursive: true });
     fs.writeFileSync(path.join(projectDir, ".hacker-bob", "VERSION"), "9.9.9\n", "utf8");
 
+    const egressIdentityHash = "b".repeat(64);
     writeSession("current.example", [
       pipelineEvent("current.example", "9.9.9", "2026-05-08T10:00:00.000Z"),
       pipelineEvent("current.example", "9.9.9", "2026-05-08T10:01:00.000Z", "phase_transitioned"),
-    ]);
+    ], {
+      egress_profile: "operator-eu",
+      egress_region: "EU",
+      proxy_configured: true,
+      egress_profile_identity_hash: egressIdentityHash,
+      egress_profile_identity_version: 1,
+    });
     writeSession("old.example", [
       pipelineEvent("old.example", "9.9.8", "2026-05-08T10:00:00.000Z"),
     ]);
@@ -204,6 +228,10 @@ test("Bob export creates a version-scoped deterministic improvement bundle", () 
     const sessions = readJson(path.join(first.bundle_dir, "sessions.json"));
     assert.deepEqual(sessions.sessions.map((session) => session.target_domain), ["current.example"]);
     assert.ok(sessions.sessions[0].event_log.events.every((event) => event.bob_version === "9.9.9"));
+    assert.ok(sessions.sessions[0].event_log.events.every((event) => (
+      event.egress_profile_identity_hash === egressIdentityHash &&
+      event.egress_profile_identity_version === 1
+    )));
 
     assert.ok(manifest.replay_budget, "replay_budget present in manifest");
     assert.ok(Array.isArray(manifest.replay_budget.snapshot));
@@ -247,5 +275,60 @@ test("Bob export creates a version-scoped deterministic improvement bundle", () 
     const rendered = renderExportResult(first);
     assert.match(rendered, new RegExp(`AGENT_PROMPT\\.md: ${first.files.AGENT_PROMPT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
     assert.match(rendered, /1 session, 2 tool events, 1 agent run, 3 excluded sessions/);
+  });
+});
+
+test("Bob export strips authority-invalid session state and event fields", () => {
+  withTempHome((tempHome) => {
+    const projectDir = path.join(tempHome, "project");
+    fs.mkdirSync(path.join(projectDir, ".hacker-bob"), { recursive: true });
+    fs.writeFileSync(path.join(projectDir, ".hacker-bob", "VERSION"), "9.9.9\n", "utf8");
+
+    const domain = "drift.example";
+    const poisonHash = "authority-sensitive-export-hash";
+    writeSession(domain, [{
+      ...pipelineEvent(domain, "9.9.9", "2026-05-08T10:00:00.000Z"),
+      checkpoint_mode: "normal",
+      block_internal_hosts: true,
+      block_internal_hosts_source: "explicit_block",
+      egress_profile: "vpn-us",
+      egress_region: "us",
+      proxy_configured: true,
+      egress_profile_identity_hash: poisonHash,
+      egress_profile_identity_version: 1,
+    }], {
+      target_url: "https://outside.example.net",
+      checkpoint_mode: "normal",
+      block_internal_hosts: true,
+      block_internal_hosts_source: "explicit_block",
+      egress_profile: "vpn-us",
+      egress_region: "us",
+      proxy_configured: true,
+      egress_profile_identity_hash: poisonHash,
+      egress_profile_identity_version: 1,
+    });
+
+    const result = exportBobReleaseBundle({
+      projectDir,
+      env: process.env,
+      now: new Date("2026-05-08T12:00:00.123Z"),
+    });
+
+    assert.equal(result.ok, true);
+    const manifest = readJson(path.join(result.bundle_dir, "manifest.json"));
+    assert.equal(manifest.counts.included_sessions, 1);
+
+    const sessions = readJson(path.join(result.bundle_dir, "sessions.json"));
+    const session = sessions.sessions[0];
+    assert.equal(session.target_domain, domain);
+    assert.ok(session.artifact_summary.artifact_errors.includes("Session authority invalid: target_url_drift"));
+    assert.equal(session.artifact_summary.state.phase, null);
+    assert.equal(session.artifact_summary.state.block_internal_hosts, null);
+    assert.equal(session.artifact_summary.state.egress_profile_identity_hash, null);
+    assert.equal(session.event_log.events[0].egress_profile_identity_hash, undefined);
+    assert.equal(session.event_log.events[0].block_internal_hosts, undefined);
+    assert.equal(session.pipeline_analytics.sessions[0].latest_event.egress_profile_identity_hash, undefined);
+    assert.equal(JSON.stringify(sessions).includes(poisonHash), false);
+    assert.equal(JSON.stringify(sessions).includes("outside.example.net"), false);
   });
 });

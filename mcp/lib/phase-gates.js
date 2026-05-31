@@ -29,7 +29,33 @@ const {
 } = require("./chain-attempts.js");
 const {
   sessionDir,
+  statePath,
 } = require("./paths.js");
+const {
+  readJsonFile,
+} = require("./storage.js");
+const {
+  loadWaveAssignments,
+} = require("./assignments.js");
+const {
+  readHandoffSigningKey,
+} = require("./handoff-signing-key.js");
+const {
+  assignmentRequiresToken,
+  validateHandoffProvenance,
+} = require("./wave-handoff-contracts.js");
+
+// Read the session's handoff_provenance_required flag directly from state.json
+// (no normalization, no lock — call sites are read-only). See wave-handoff-store
+// for the equivalent helper; we duplicate rather than circular-import.
+function readHandoffProvenanceRequired(domain) {
+  try {
+    const raw = readJsonFile(statePath(domain));
+    return raw && raw.handoff_provenance_required === true;
+  } catch {
+    return false;
+  }
+}
 
 // Inline rather than importing terminallyBlockedSurfaceIds from
 // session-state.js to avoid a circular dep (session-state.js depends on
@@ -152,7 +178,7 @@ function computeHuntToChainGate(domain, state) {
   let surfaces = null;
   let rankedSurfaces = null;
   try {
-    rankedSurfaces = rankAttackSurfaces(domain, { write: false })?.surfaces || null;
+    rankedSurfaces = rankAttackSurfaces(domain)?.surfaces || null;
   } catch {}
   try {
     surfaces = rankedSurfaces || readAttackSurfaceStrict(domain).document.surfaces;
@@ -243,18 +269,45 @@ function readStructuredHandoffChainNotes(domain) {
     return [];
   }
 
+  const requireProvenance = readHandoffProvenanceRequired(domain);
   const refs = [];
+  const assignmentContexts = new Map();
+
+  function contextFor(wave, agent) {
+    if (!assignmentContexts.has(wave)) {
+      const waveNumber = Number(wave.slice(1));
+      const artifacts = loadWaveAssignments(domain, waveNumber);
+      const signingKey = artifacts.assignments.some((assignment) => assignmentRequiresToken(assignment))
+        ? readHandoffSigningKey(domain)
+        : null;
+      assignmentContexts.set(wave, { artifacts, signingKey });
+    }
+    const context = assignmentContexts.get(wave);
+    const assignment = context.artifacts.assignmentByAgent.get(agent);
+    if (!assignment) throw new Error(`Unexpected handoff agent ${agent} in ${wave}`);
+    return { assignment, signingKey: context.signingKey };
+  }
+
   for (const fileName of fs.readdirSync(dir).sort()) {
     const match = fileName.match(/^handoff-(w[1-9][0-9]*)-(a[1-9][0-9]*)\.json$/);
     if (!match) continue;
     let document;
     try {
-      document = JSON.parse(fs.readFileSync(path.join(dir, fileName), "utf8"));
+      document = readJsonFile(path.join(dir, fileName), { label: fileName });
     } catch {
       continue;
     }
     if (!document || typeof document !== "object" || Array.isArray(document)) continue;
-    if (document.target_domain != null && document.target_domain !== domain) continue;
+    let assignment;
+    try {
+      const context = contextFor(match[1], match[2]);
+      assignment = context.assignment;
+      if (document.target_domain != null && document.target_domain !== domain) continue;
+      if (document.wave !== match[1] || document.agent !== match[2] || document.surface_id !== assignment.surface_id) continue;
+      validateHandoffProvenance(document, assignment, { signingKey: context.signingKey, requireProvenance });
+    } catch {
+      continue;
+    }
     const chainNotes = Array.isArray(document.chain_notes)
       ? document.chain_notes.filter((note) => typeof note === "string" && note.trim())
       : [];

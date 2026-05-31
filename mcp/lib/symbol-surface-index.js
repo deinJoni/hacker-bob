@@ -7,7 +7,10 @@ const {
   sessionDir,
   symbolSurfaceIndexPath,
 } = require("./paths.js");
-const { hashCanonicalJson } = require("./verification.js");
+const {
+  readJsonFile,
+} = require("./storage.js");
+const { hashCanonicalJson } = require("./verification-contracts.js");
 
 function isPlainObject(value) {
   return value != null && typeof value === "object" && !Array.isArray(value);
@@ -23,7 +26,7 @@ function safeReadAttackSurfaceSurfaces(domain) {
   const filePath = attackSurfacePath(domain);
   if (!fs.existsSync(filePath)) return [];
   try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const parsed = readJsonFile(filePath, { label: "attack_surface.json" });
     if (!isPlainObject(parsed) || !Array.isArray(parsed.surfaces)) return [];
     return parsed.surfaces;
   } catch (_err) {
@@ -147,7 +150,7 @@ function readSymbolSurfaceIndex(domain) {
   const filePath = symbolSurfaceIndexPath(safeDomain);
   if (!fs.existsSync(filePath)) return null;
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return readJsonFile(filePath, { label: "symbol-surface-index.json" });
   } catch (err) {
     throw new Error(`Malformed symbol-surface-index.json: ${err.message || String(err)}`);
   }

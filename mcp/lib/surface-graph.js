@@ -6,7 +6,10 @@ const {
   sessionDir,
   surfaceGraphJsonlPath,
 } = require("./paths.js");
-const { hashCanonicalJson } = require("./verification.js");
+const {
+  readFileUtf8,
+} = require("./storage.js");
+const { hashCanonicalJson } = require("./verification-contracts.js");
 
 const NODE_TYPES = Object.freeze([
   "surface",
@@ -97,7 +100,7 @@ function normalizeEdge(edge) {
 
 function readEdgesFromJsonl(filePath) {
   if (!fs.existsSync(filePath)) return [];
-  const raw = fs.readFileSync(filePath, "utf8");
+  const raw = readFileUtf8(filePath, { label: "surface-graph.jsonl" });
   const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
   const records = [];
   for (let i = 0; i < lines.length; i++) {

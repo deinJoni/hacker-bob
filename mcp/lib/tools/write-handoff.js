@@ -106,5 +106,4 @@ module.exports = Object.freeze({
   scope_required: false,
   sensitive_output: false,
   session_artifacts_written: ["SESSION_HANDOFF.md"],
-  hook_required: false,
 });

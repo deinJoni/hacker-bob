@@ -24,7 +24,8 @@ module.exports = Object.freeze({
         "type": "string"
       },
       "block_internal_hosts": {
-        "type": "boolean"
+        "type": "boolean",
+        "description": "Optional one-way strict override for the brief context. When omitted, Bob reports the session's persisted effective internal-host policy."
       }
     },
     "required": [
@@ -42,5 +43,4 @@ module.exports = Object.freeze({
   scope_required: false,
   sensitive_output: false,
   session_artifacts_written: [],
-  hook_required: false,
 });

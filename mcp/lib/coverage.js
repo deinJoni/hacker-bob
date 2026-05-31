@@ -21,6 +21,7 @@ const {
 } = require("./paths.js");
 const {
   appendJsonlLines,
+  readFileUtf8,
   withSessionLock,
 } = require("./storage.js");
 const {
@@ -28,7 +29,7 @@ const {
 } = require("./assignments.js");
 const {
   safeAppendPipelineEventDirect,
-} = require("./pipeline-analytics.js");
+} = require("./pipeline-events.js");
 
 function normalizeCoverageRecord(record, { expectedDomain = null, lineNumber = null } = {}) {
   if (record == null || typeof record !== "object" || Array.isArray(record)) {
@@ -101,7 +102,7 @@ function readCoverageRecordsFromJsonl(domain) {
     return [];
   }
 
-  const content = fs.readFileSync(filePath, "utf8");
+  const content = readFileUtf8(filePath, { label: "coverage.jsonl" });
   if (!content.trim()) {
     return [];
   }

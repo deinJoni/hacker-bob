@@ -25,7 +25,7 @@ module.exports = Object.freeze({
   name: "bounty_query_findings_index",
   capability_id: "I6_findings_index",
   description:
-    "Query the hashed-feature-vector findings index for top-K similar past findings. Defaults to per-target scope; pass scope: 'cross_target' to walk all session directories. Use this to inject prior-art into a new hunt's brief or to look up similar findings while triaging a candidate.",
+    "Query the hashed-feature-vector findings index for top-K similar past findings. Defaults to per-target scope; pass scope: 'cross_target' to scan a bounded recent window of per-target indexes. Use this to inject prior-art into a new hunt's brief or to look up similar findings while triaging a candidate.",
   inputSchema: {
     type: "object",
     properties: {
@@ -37,7 +37,7 @@ module.exports = Object.freeze({
       scope: {
         type: "string",
         enum: ["target", "cross_target"],
-        description: "Default 'target' searches the named target's index; 'cross_target' aggregates across every per-target index.",
+        description: "Default 'target' searches the named target's index; 'cross_target' aggregates across a bounded recent window and reports truncation metadata.",
       },
     },
     required: ["query_text"],
@@ -51,5 +51,4 @@ module.exports = Object.freeze({
   scope_required: false,
   sensitive_output: false,
   session_artifacts_written: [],
-  hook_required: false,
 });

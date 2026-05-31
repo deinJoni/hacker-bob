@@ -5,7 +5,14 @@
 // suffix per aptos-rpc-pool ladder. We therefore strip a leading slash from
 // the path argument and append it directly to the endpoint URL.
 
-const { resolveAptosRpcEndpoints, isPublicHttpsUrl } = require("./aptos-rpc-pool.js");
+const { resolveAptosRpcEndpoints } = require("./aptos-rpc-pool.js");
+const {
+  filterResolvedPublicRpcEndpoints,
+  redactRpcEndpoint,
+  redactRpcEndpointText,
+  summarizeRpcPolicyRejections,
+} = require("./sc-egress-policy.js");
+const { requestPublicHttpsText } = require("./sc-http-client.js");
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 256 * 1024;
@@ -26,41 +33,25 @@ function normalizeMoveAddress(value) {
   return `0x${hex.padStart(64, "0")}`;
 }
 
-async function readResponseTextCapped(resp, maxBytes) {
-  if (!resp.body || typeof resp.body.getReader !== "function") {
-    const text = await resp.text();
-    const buffer = Buffer.from(text, "utf8");
-    if (buffer.length <= maxBytes) return text;
-    return buffer.subarray(0, maxBytes).toString("utf8");
-  }
-  const reader = resp.body.getReader();
-  const chunks = [];
-  let received = 0;
+function redactJsonBody(value) {
+  if (!value || typeof value !== "object") return value;
   try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      const buffer = Buffer.from(value);
-      const remaining = maxBytes - received;
-      if (remaining > 0) {
-        chunks.push(buffer.length > remaining ? buffer.subarray(0, remaining) : buffer);
-      }
-      received += buffer.length;
-      if (received > maxBytes) {
-        try { if (typeof reader.cancel === "function") await reader.cancel(); } catch {}
-        break;
-      }
-    }
-  } finally {
-    if (typeof reader.releaseLock === "function") reader.releaseLock();
+    return JSON.parse(redactRpcEndpointText(JSON.stringify(value)));
+  } catch {
+    return value;
   }
-  return Buffer.concat(chunks).toString("utf8");
 }
 
-async function restGetOnce(baseUrl, path, { timeoutMs = DEFAULT_TIMEOUT_MS, maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES, ledgerVersion = null } = {}) {
-  const trimmedBase = baseUrl.replace(/\/+$/, "");
-  const trimmedPath = path.replace(/^\/+/, "");
-  let url = `${trimmedBase}/${trimmedPath}`;
+function buildRestUrl(baseUrl, path) {
+  const parsed = new URL(baseUrl);
+  const basePath = parsed.pathname.replace(/\/+$/, "");
+  const trimmedPath = String(path || "").replace(/^\/+/, "");
+  parsed.pathname = trimmedPath ? `${basePath || ""}/${trimmedPath}` : (basePath || "/");
+  return parsed.toString();
+}
+
+async function restGetOnce(baseUrl, path, { timeoutMs = DEFAULT_TIMEOUT_MS, maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES, ledgerVersion = null, lookup } = {}) {
+  let url = buildRestUrl(baseUrl, path);
   // Aptos accepts ?ledger_version=N to read at a specific version. This is the
   // analog of EVM block-pinning, but verifiers always run against fresh state
   // (no pin) — only diagnostic tooling passes ledgerVersion.
@@ -68,62 +59,58 @@ async function restGetOnce(baseUrl, path, { timeoutMs = DEFAULT_TIMEOUT_MS, maxR
     const sep = url.includes("?") ? "&" : "?";
     url = `${url}${sep}ledger_version=${encodeURIComponent(ledgerVersion)}`;
   }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const resp = await fetch(url, {
-      method: "GET",
-      headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0 (compatible; hacker-bob)" },
-      signal: controller.signal,
-    });
-    const text = await readResponseTextCapped(resp, maxResponseBytes);
-    // Aptos REST returns 4xx with a JSON body shaped {message, error_code, vm_error_code}.
-    // Treat 200 as success, otherwise surface the body as the error so callers
-    // can distinguish "no such resource" (404) from RPC trouble (5xx).
-    if (!resp.ok) {
-      let parsed = null;
-      try { parsed = JSON.parse(text); } catch {}
-      const msg = parsed && parsed.message ? parsed.message : text.slice(0, 200);
-      const err = new Error(`HTTP ${resp.status} from ${url}: ${msg}`);
-      err.status = resp.status;
-      err.body = parsed || text;
-      throw err;
-    }
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch (error) {
-      throw new Error(`malformed JSON response from ${url}: ${error.message || String(error)}`);
-    }
-    // Aptos populates X-Aptos-Ledger-Version on responses; the verifier uses
-    // this for the verified-at version reference. fetch on Node exposes
-    // headers via resp.headers.get().
-    const ledgerVersionUsed = resp.headers && typeof resp.headers.get === "function"
-      ? resp.headers.get("X-Aptos-Ledger-Version") || resp.headers.get("x-aptos-ledger-version")
-      : null;
-    return { result: parsed, ledger_version_used: ledgerVersionUsed };
-  } finally {
-    clearTimeout(timeout);
+  const displayUrl = redactRpcEndpoint(url);
+  const resp = await requestPublicHttpsText(url, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    timeoutMs,
+    maxBytes: maxResponseBytes,
+    lookup,
+  });
+  const text = resp.text;
+  // Aptos REST returns 4xx with a JSON body shaped {message, error_code, vm_error_code}.
+  // Treat 200 as success, otherwise surface the body as the error so callers
+  // can distinguish "no such resource" (404) from RPC trouble (5xx).
+  if (!resp.ok) {
+    let parsed = null;
+    try { parsed = JSON.parse(text); } catch {}
+    const msg = redactRpcEndpointText(parsed && parsed.message ? parsed.message : text).slice(0, 200);
+    const err = new Error(`HTTP ${resp.status} from ${displayUrl}: ${msg}`);
+    err.status = resp.status;
+    err.body = parsed ? redactJsonBody(parsed) : redactRpcEndpointText(text);
+    throw err;
   }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`malformed JSON response from ${displayUrl}: ${error.message || String(error)}`);
+  }
+  // Aptos populates X-Aptos-Ledger-Version on responses; the verifier uses
+  // this for the verified-at version reference.
+  const ledgerVersionUsed = resp.headers && typeof resp.headers.get === "function"
+    ? resp.headers.get("X-Aptos-Ledger-Version") || resp.headers.get("x-aptos-ledger-version")
+    : null;
+  return { result: parsed, ledger_version_used: ledgerVersionUsed };
 }
 
-async function restGet({ network, path, endpoints, timeoutMs = DEFAULT_TIMEOUT_MS, maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES, ledgerVersion = null } = {}) {
-  if (typeof fetch !== "function") {
-    throw new Error("fetch is unavailable in this Node runtime");
-  }
-  const endpointList = Array.isArray(endpoints) && endpoints.length > 0
-    ? endpoints.filter(isPublicHttpsUrl)
+async function restGet({ network, path, endpoints, timeoutMs = DEFAULT_TIMEOUT_MS, maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES, ledgerVersion = null, lookup } = {}) {
+  const rawEndpointList = Array.isArray(endpoints) && endpoints.length > 0
+    ? endpoints
     : resolveAptosRpcEndpoints(network);
+  const { endpoints: endpointList, rejected } = await filterResolvedPublicRpcEndpoints(rawEndpointList, { lookup });
   if (endpointList.length === 0) {
-    throw new Error(`no public REST endpoints available for network ${network}; set BOB_APTOS_RPCS_${String(network).toUpperCase()}=url1,url2 to override`);
+    const err = new Error(`no public HTTPS REST endpoints available for network ${network}; set BOB_APTOS_RPCS_${String(network).toUpperCase()}=url1,url2 to override`);
+    err.rpc_policy_rejections = summarizeRpcPolicyRejections(rejected);
+    err.details = { rpc_policy_rejections: err.rpc_policy_rejections };
+    throw err;
   }
 
   const errors = [];
   for (const endpoint of endpointList) {
     try {
-      const { result, ledger_version_used } = await restGetOnce(endpoint, path, { timeoutMs, maxResponseBytes, ledgerVersion });
-      return { result, endpoint, ledger_version_used };
+      const { result, ledger_version_used } = await restGetOnce(endpoint, path, { timeoutMs, maxResponseBytes, ledgerVersion, lookup });
+      return { result, endpoint: redactRpcEndpoint(endpoint), ledger_version_used };
     } catch (error) {
       // 404 is a real "no such resource" answer — bubble it up rather than
       // failing over to other endpoints (they would return the same 404).
@@ -131,10 +118,13 @@ async function restGet({ network, path, endpoints, timeoutMs = DEFAULT_TIMEOUT_M
         const err = new Error(error.message);
         err.status = 404;
         err.body = error.body;
-        err.endpoint = endpoint;
+        err.endpoint = redactRpcEndpoint(endpoint);
         throw err;
       }
-      errors.push({ endpoint, message: error.message || String(error) });
+      errors.push({
+        endpoint: redactRpcEndpoint(endpoint),
+        message: redactRpcEndpointText(error.message || String(error)),
+      });
     }
   }
   const summary = errors.map((e) => `${e.endpoint}: ${e.message}`).join("; ");

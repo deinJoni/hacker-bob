@@ -5,39 +5,27 @@ const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const {
+  DISALLOWED_PACKED_FILE_PATTERNS,
+  DISALLOWED_PACKED_TEXT_PATTERNS,
+  EXCLUDED_CANONICAL_PACKAGE_FILES,
+  LOCAL_INSTALL_METADATA_FILES,
+  REQUIRED_SUPPORT_SURFACES,
+  expectedCanonicalFiles,
+  isInternalRefactorDoc,
+  isPackableBin,
+  isPackableBobResource,
+  isPackableScript,
+  isPackedTextFile,
+  wrapperPackages,
+} = require("./lib/package-policy.js");
 
 const ROOT = path.join(__dirname, "..");
-// Adapter wrapper packages: each is a thin CLI wrapper around the canonical
-// hacker-bob package, pinning `--adapter <id>` as the default. Adding a new
-// adapter wrapper requires creating packages/<name>/ with the same shape and
-// listing it here.
-const WRAPPER_PACKAGES = Object.freeze([
-  {
-    name: "hacker-bob-cc",
-    root: path.join(ROOT, "packages", "hacker-bob-cc"),
-    bin: "bin/hacker-bob-cc.js",
-    adapter: "claude",
-    label: "Claude Code wrapper",
-  },
-  {
-    name: "hacker-bob-codex",
-    root: path.join(ROOT, "packages", "hacker-bob-codex"),
-    bin: "bin/hacker-bob-codex.js",
-    adapter: "codex",
-    label: "Codex wrapper",
-  },
-]);
+const WRAPPER_PACKAGES = wrapperPackages(ROOT);
 const NPM_CACHE = process.env.HACKER_BOB_RELEASE_NPM_CACHE || path.join(os.tmpdir(), "hacker-bob-release-check-npm-cache");
 const args = new Set(process.argv.slice(2));
 const registryMode = args.has("--registry");
 const allowPublished = args.has("--allow-published");
-const LOCAL_INSTALL_METADATA_FILES = new Set([
-  ".hacker-bob/VERSION",
-  ".hacker-bob/install.json",
-  ".claude/bob/VERSION",
-  ".claude/bob/install.json",
-  ".claude/bob/egress-profiles.json",
-]);
 
 let failures = 0;
 let warnings = 0;
@@ -70,47 +58,6 @@ function readJson(filePath) {
 
 function exists(filePath) {
   return fs.existsSync(filePath);
-}
-
-function sourceTreeFiles(relativeDir) {
-  const root = path.join(ROOT, relativeDir);
-  if (!exists(root)) return [];
-  const files = [];
-  const visit = (current) => {
-    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-      const full = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        visit(full);
-      } else if (entry.isFile()) {
-        files.push(path.relative(ROOT, full).split(path.sep).join("/"));
-      }
-    }
-  };
-  visit(root);
-  return files.sort();
-}
-
-function expectedCanonicalFiles() {
-  return Array.from(new Set([
-    "package.json",
-    "README.md",
-    "LICENSE",
-    "NOTICE",
-    "CHANGELOG.md",
-    "CODE_OF_CONDUCT.md",
-    "CONTRIBUTING.md",
-    "DISCLAIMER.md",
-    "SECURITY.md",
-    "install.sh",
-    ...sourceTreeFiles(".hacker-bob").filter((file) => !LOCAL_INSTALL_METADATA_FILES.has(file)),
-    ...sourceTreeFiles(".claude").filter((file) => !LOCAL_INSTALL_METADATA_FILES.has(file)),
-    ...sourceTreeFiles("adapters"),
-    ...sourceTreeFiles("bin"),
-    ...sourceTreeFiles("docs"),
-    ...sourceTreeFiles("mcp"),
-    ...sourceTreeFiles("prompts"),
-    ...sourceTreeFiles("scripts"),
-  ])).sort();
 }
 
 function run(command, commandArgs, options = {}) {
@@ -224,11 +171,25 @@ function checkCanonicalPack(rootPackage) {
   assertEqual(canonical.name, "hacker-bob", "canonical pack name is hacker-bob");
   assertEqual(canonical.version, rootPackage.version, "canonical pack version matches package.json");
 
-  for (const expected of expectedCanonicalFiles()) {
+  for (const expected of expectedCanonicalFiles(ROOT)) {
     if (files.has(expected)) {
       pass(`canonical pack includes ${expected}`);
     } else {
       fail(`canonical pack is missing ${expected}`);
+    }
+  }
+  for (const expected of REQUIRED_SUPPORT_SURFACES) {
+    if (files.has(expected)) {
+      pass(`canonical pack intentionally includes support surface ${expected}`);
+    } else {
+      fail(`canonical pack is missing intentional support surface ${expected}`);
+    }
+  }
+  for (const excluded of EXCLUDED_CANONICAL_PACKAGE_FILES) {
+    if (files.has(excluded)) {
+      fail(`canonical pack includes excluded file ${excluded}`);
+    } else {
+      pass(`canonical pack excludes ${excluded}`);
     }
   }
 
@@ -243,6 +204,30 @@ function checkCanonicalPack(rootPackage) {
     if (file.startsWith("test/") || file.startsWith("tests/")) {
       foundDisallowed = true;
       fail(`canonical pack includes test artifact ${file}`);
+    }
+    if (isInternalRefactorDoc(file)) {
+      foundDisallowed = true;
+      fail(`canonical pack includes internal refactor tracker ${file}`);
+    }
+    if (file.startsWith("scripts/replay-prompts/")) {
+      foundDisallowed = true;
+      fail(`canonical pack includes deprecated replay prompt ${file}`);
+    }
+    if (DISALLOWED_PACKED_FILE_PATTERNS.some((pattern) => pattern.test(file))) {
+      foundDisallowed = true;
+      fail(`canonical pack includes local/temp artifact ${file}`);
+    }
+    if (file.startsWith("scripts/") && !isPackableScript(file)) {
+      foundDisallowed = true;
+      fail(`canonical pack includes unsupported scripts/ file ${file}`);
+    }
+    if (file.startsWith("bin/") && !isPackableBin(file)) {
+      foundDisallowed = true;
+      fail(`canonical pack includes unsupported bin/ file ${file}`);
+    }
+    if (file.startsWith(".hacker-bob/") && !isPackableBobResource(file)) {
+      foundDisallowed = true;
+      fail(`canonical pack includes unsupported .hacker-bob resource ${file}`);
     }
     if (file.startsWith("packages/")) {
       foundDisallowed = true;
@@ -267,6 +252,18 @@ function checkCanonicalPack(rootPackage) {
     if (file.includes("bounty-agent-sessions")) {
       foundDisallowed = true;
       fail(`canonical pack includes session artifact ${file}`);
+    }
+    if (isPackedTextFile(file)) {
+      const sourcePath = path.join(ROOT, file);
+      if (exists(sourcePath)) {
+        const content = fs.readFileSync(sourcePath, "utf8");
+        for (const pattern of DISALLOWED_PACKED_TEXT_PATTERNS) {
+          if (pattern.test(content)) {
+            foundDisallowed = true;
+            fail(`canonical pack text file includes local absolute path ${file}`);
+          }
+        }
+      }
     }
   }
   if (!foundDisallowed) {

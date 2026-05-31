@@ -14,15 +14,32 @@ const {
   validateToolArguments,
 } = require("./tool-validation.js");
 const {
+  enforceToolPolicy,
+} = require("./tool-policy.js");
+const {
   safeRecordToolTelemetry,
 } = require("./tool-telemetry.js");
 const {
   runWithReplaySafety,
-} = require("./verification.js");
+} = require("./verification-replay-safety.js");
+
+function shadowSafeErrorMessage(error, authority) {
+  const message = error && error.message ? error.message : String(error);
+  if (
+    authority &&
+    authority.authority_shadowed === true &&
+    authority.authority_error_code === "no_session" &&
+    /Missing session state:/i.test(message)
+  ) {
+    return "Session state is missing";
+  }
+  return message;
+}
 
 async function executeTool(name, args) {
   const startedAt = Date.now();
   const safeArgs = args || {};
+  let authority = null;
   const tool = getRegisteredTool(name);
   const finish = (envelope) => {
     safeRecordToolTelemetry({
@@ -31,6 +48,7 @@ async function executeTool(name, args) {
       args: safeArgs,
       envelope,
       elapsedMs: Date.now() - startedAt,
+      authority,
     });
     return envelope;
   };
@@ -41,8 +59,17 @@ async function executeTool(name, args) {
 
   try {
     validateToolArguments(name, safeArgs);
+    authority = enforceToolPolicy(tool, safeArgs);
   } catch (error) {
-    return finish(errorEnvelope(name, ERROR_CODES.INVALID_ARGUMENTS, error.message || String(error)));
+    if (error && error.authority) {
+      authority = error.authority;
+    }
+    return finish(errorEnvelope(
+      name,
+      error.code && Object.values(ERROR_CODES).includes(error.code) ? error.code : ERROR_CODES.INVALID_ARGUMENTS,
+      error.message || String(error),
+      error.details,
+    ));
   }
 
   try {
@@ -53,7 +80,7 @@ async function executeTool(name, args) {
     }
     return finish(okEnvelope(name, data));
   } catch (error) {
-    return finish(errorEnvelope(name, classifyException(error), error.message || String(error), error.details));
+    return finish(errorEnvelope(name, classifyException(error), shadowSafeErrorMessage(error, authority), error.details));
   }
 }
 

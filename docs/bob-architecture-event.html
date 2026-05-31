@@ -1609,7 +1609,8 @@
   "url": "https://api.example.com/api/...",
   "status": 200,
   "auth_profile": "attacker",
-  "egress_profile": "default"
+  "egress_profile": "default",
+  "egress_profile_identity_hash": "..."
 }</pre>
           </div>
         </div>
@@ -1621,7 +1622,7 @@
         <div class="content narrow center">
           <p class="kicker">Egress control</p>
           <p class="big">Bob does not silently rotate networks.</p>
-          <p class="subtitle">If reachability looks blocked or geofenced, Bob reports it and the operator chooses an egress profile.</p>
+          <p class="subtitle">Session state binds the chosen egress profile identity; route drift fails closed, while same-route credential rotation is allowed.</p>
           <div class="pill-row">
             <span class="pill">/bob-egress</span>
             <span class="pill">operator choice</span>
@@ -2036,14 +2037,14 @@
           </div>
           <div class="code-card">
             <div class="code-title"><span>Install and run</span><span>high level</span></div>
-            <pre>npx -y hacker-bob-cc@latest install /path/to/project
+            <pre>npx -y hacker-bob@latest install /path/to/project
 hacker-bob doctor /path/to/project
 
 # inside Claude Code
 /bob-hunt target.com</pre>
           </div>
         </div>
-        <div class="foot"><span>Canonical package</span><span>hacker-bob-cc</span></div>
+        <div class="foot"><span>Canonical package</span><span>hacker-bob</span></div>
       </section>
 
       <section class="slide dark" data-title="Recap">

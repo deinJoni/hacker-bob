@@ -1,6 +1,6 @@
 "use strict";
 
-const { hashCanonicalJson } = require("./verification.js");
+const { hashCanonicalJson } = require("./verification-contracts.js");
 
 const POSTMAN_AUTH_SCHEME_PREFIX = "postman_auth";
 const PATH_VARIABLE_PATTERN = /^:(\w+)$/;

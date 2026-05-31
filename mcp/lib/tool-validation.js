@@ -53,13 +53,6 @@ function validateStringConstraints(value, schema, pathParts) {
   }
 }
 
-function maybeAutoTruncateString(value, schema) {
-  if (typeof value !== "string") return value;
-  if (schema["x-autoTruncate"] !== true) return value;
-  if (schema.maxLength == null || value.length <= schema.maxLength) return value;
-  return value.slice(0, schema.maxLength);
-}
-
 function validateNumberConstraints(value, schema, pathParts) {
   if (typeof value !== "number") return;
   if (schema.minimum != null && value < schema.minimum) {
@@ -84,6 +77,20 @@ function validateArrayConstraints(value, schema, pathParts) {
   if (schema.maxItems != null && value.length > schema.maxItems) {
     throw new Error(`${formatPath(pathParts)} must contain at most ${schema.maxItems} items`);
   }
+}
+
+function autoTruncatedValue(value, schema) {
+  if (
+    typeof value === "string" &&
+    schema &&
+    schema["x-autoTruncate"] === true &&
+    Number.isInteger(schema.maxLength) &&
+    schema.maxLength >= 0 &&
+    value.length > schema.maxLength
+  ) {
+    return value.slice(0, schema.maxLength);
+  }
+  return value;
 }
 
 function validateOneOf(value, schema, pathParts) {
@@ -118,14 +125,22 @@ function validateObject(value, schema, pathParts) {
     : false;
 
   for (const key of required) {
-    if (!hasOwn(value, key) || value[key] === undefined) {
+    // `required` means the key must be present. If the property's schema type
+    // includes "null", an explicit null value is still a valid presence; the
+    // per-property type check later enforces non-null when the schema disallows it.
+    if (!hasOwn(value, key)) {
       throw new Error(`${formatPath([...pathParts, key])} is required`);
     }
   }
 
   for (const [key, childValue] of Object.entries(value)) {
     if (hasOwn(properties, key)) {
-      value[key] = validateAgainstSchema(childValue, properties[key], [...pathParts, key]);
+      const childSchema = properties[key];
+      const nextChildValue = autoTruncatedValue(childValue, childSchema);
+      if (nextChildValue !== childValue) {
+        value[key] = nextChildValue;
+      }
+      validateAgainstSchema(value[key], childSchema, [...pathParts, key]);
       continue;
     }
 
@@ -133,7 +148,7 @@ function validateObject(value, schema, pathParts) {
       continue;
     }
     if (additionalProperties && typeof additionalProperties === "object") {
-      value[key] = validateAgainstSchema(childValue, additionalProperties, [...pathParts, key]);
+      validateAgainstSchema(childValue, additionalProperties, [...pathParts, key]);
       continue;
     }
 
@@ -143,42 +158,44 @@ function validateObject(value, schema, pathParts) {
 
 function validateAgainstSchema(value, schema, pathParts = []) {
   if (!schema || typeof schema !== "object") {
-    return value;
+    return;
   }
 
   if (Array.isArray(schema.oneOf)) {
     validateOneOf(value, schema, pathParts);
-    return value;
+    return;
   }
 
   if (schema.type && !schemaTypeMatches(value, schema.type)) {
     throw new Error(`${formatPath(pathParts)} must be ${expectedTypeLabel(schema.type)}`);
   }
 
-  const normalizedValue = maybeAutoTruncateString(value, schema);
   validateEnum(value, schema, pathParts);
-  validateStringConstraints(normalizedValue, schema, pathParts);
+  validateStringConstraints(value, schema, pathParts);
   validateNumberConstraints(value, schema, pathParts);
   validateArrayConstraints(value, schema, pathParts);
 
-  if (normalizedValue == null) {
-    return normalizedValue;
+  if (value == null) {
+    return;
   }
 
   const types = Array.isArray(schema.type) ? schema.type : [schema.type];
   if (types.includes("object") || (!schema.type && (schema.properties || schema.additionalProperties))) {
-    if (typeof normalizedValue === "object" && !Array.isArray(normalizedValue)) {
-      validateObject(normalizedValue, schema, pathParts);
+    if (typeof value === "object" && !Array.isArray(value)) {
+      validateObject(value, schema, pathParts);
     }
   }
 
-  if ((types.includes("array") || (!schema.type && schema.items)) && Array.isArray(normalizedValue)) {
-    for (let index = 0; index < normalizedValue.length; index += 1) {
-      normalizedValue[index] = validateAgainstSchema(normalizedValue[index], schema.items || {}, [...pathParts, index]);
+  if ((types.includes("array") || (!schema.type && schema.items)) && Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      const itemSchema = schema.items || {};
+      const nextItemValue = autoTruncatedValue(value[index], itemSchema);
+      if (nextItemValue !== value[index]) {
+        value[index] = nextItemValue;
+      }
+      validateAgainstSchema(value[index], itemSchema, [...pathParts, index]);
     }
   }
-
-  return normalizedValue;
 }
 
 function validateToolArguments(name, args) {

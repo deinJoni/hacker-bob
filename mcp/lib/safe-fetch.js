@@ -38,9 +38,11 @@ function makeScopeBlockedError(message) {
 function assertSafeRequestUrl(url, targetDomain, options = {}) {
   try {
     validateScanUrl(url, options);
+    let scopeDecision = null;
     if (targetDomain) {
-      validateHttpScanScope(url, targetDomain);
+      scopeDecision = validateHttpScanScope(url, targetDomain);
     }
+    return scopeDecision;
   } catch (error) {
     if (!error.scope_decision) {
       error.scope_decision = "blocked";

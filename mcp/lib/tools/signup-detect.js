@@ -17,7 +17,12 @@ module.exports = Object.freeze({
       },
       "block_internal_hosts": {
         "type": "boolean",
-        "description": "When true, block localhost, private/link-local IP ranges, .internal/.local names, cloud metadata hosts, and public hostnames that resolve to those addresses. Defaults to false."
+        "description": "When true, block localhost, private/link-local IP ranges, .internal/.local names, cloud metadata hosts, and public hostnames that resolve to those addresses on direct egress. When omitted, Bob uses the session's persisted effective policy: normal/yolo/legacy false, paranoid true unless allow_internal_hosts was set at init. Proxy-backed egress rejects this mode because Bob cannot verify proxy-side DNS/routing."
+      },
+      "egress_profile": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+        "description": "Optional named egress profile from .claude/bob/egress-profiles.json. Defaults to direct local egress."
       }
     },
     "required": [
@@ -32,7 +37,7 @@ module.exports = Object.freeze({
   network_access: true,
   browser_access: false,
   scope_required: true,
+  scope_url_fields: ["target_url"],
   sensitive_output: false,
   session_artifacts_written: [],
-  hook_required: true,
 });

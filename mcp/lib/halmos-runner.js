@@ -4,6 +4,10 @@ const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const {
+  directSmartContractSubprocessEnv,
+  redactRpcEndpointText,
+} = require("./sc-egress-policy.js");
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 600_000;
@@ -69,7 +73,7 @@ function spawnHalmos(args, { workdir, timeoutMs }) {
       // spawns solver subprocesses that would otherwise survive a parent kill.
       child = spawn("halmos", args, {
         cwd: workdir,
-        env: { ...process.env },
+        env: directSmartContractSubprocessEnv({}),
         stdio: ["ignore", "pipe", "pipe"],
         detached: true,
       });
@@ -180,7 +184,7 @@ function parseHalmosOutput(stdout) {
       // capture a name, treat the entire run as a failure rather than dropping.
       const failMatch = line.match(/\[FAIL\]\s+(\S+)/);
       if (failMatch) {
-        tests.push({ test: failMatch[1], status: "Fail", counterexample: line });
+        tests.push({ test: failMatch[1], status: "Fail", counterexample: redactRpcEndpointText(line) });
       } else {
         observedUnmatchedFail = true;
       }
@@ -225,7 +229,7 @@ function summarizeHalmosOutput(document) {
       test: name,
       status: ok ? "Pass" : "Fail",
       counterexample: entry.counterexample
-        ? truncateString(typeof entry.counterexample === "string" ? entry.counterexample : JSON.stringify(entry.counterexample), 1024)
+        ? truncateString(redactRpcEndpointText(typeof entry.counterexample === "string" ? entry.counterexample : JSON.stringify(entry.counterexample)), 1024)
         : null,
       time_ms: typeof entry.time_ms === "number" ? entry.time_ms : null,
     });
@@ -305,8 +309,8 @@ async function runHalmos({
     summary: { total: summary.total, passed: summary.passed, failed: summary.failed },
     tests: summary.tests,
     raw_excerpt: {
-      stdout: truncateString(result.stdout || "", RAW_EXCERPT_BYTES),
-      stderr: truncateString(result.stderr || "", RAW_EXCERPT_BYTES),
+      stdout: truncateString(redactRpcEndpointText(result.stdout || ""), RAW_EXCERPT_BYTES),
+      stderr: truncateString(redactRpcEndpointText(result.stderr || ""), RAW_EXCERPT_BYTES),
       truncated: result.truncated === true,
     },
     parse_warning: parseResult.ok ? null : parseResult.reason,

@@ -51,6 +51,7 @@ BLOCKED_EXACT = {
     "pipeline-events.jsonl",
     "report.md",
     "chains.md",
+    ".handoff-signing-key.json",
 }
 
 ALLOWED_EXACT = {

@@ -1,10 +1,15 @@
 "use strict";
 
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { redactUrlSensitiveValues } = require("../redaction.js");
+const {
+  readJsonFile,
+} = require("./storage.js");
 
 const EGRESS_PROFILES_VERSION = 1;
+const EGRESS_PROFILE_IDENTITY_VERSION = 1;
 const EGRESS_PROFILE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const ENV_REF_RE = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/;
 const SUPPORTED_PROXY_PROTOCOLS = Object.freeze(["http:", "https:", "socks5:", "socks5h:"]);
@@ -86,12 +91,38 @@ function normalizeNullableString(value, fieldName) {
   return text || null;
 }
 
+function hasInlineProxyCredentials(proxyUrl) {
+  if (proxyUrl == null || ENV_REF_RE.test(proxyUrl)) return false;
+  try {
+    const parsed = new URL(proxyUrl);
+    return parsed.username.length > 0 || parsed.password.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function hasInlineProxyQueryOrFragment(proxyUrl) {
+  if (proxyUrl == null || ENV_REF_RE.test(proxyUrl)) return false;
+  try {
+    const parsed = new URL(proxyUrl);
+    return parsed.search.length > 0 || parsed.hash.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 function normalizeProfile(profile, index) {
   if (!isPlainObject(profile)) {
     throw new Error(`profiles[${index}] must be an object`);
   }
   const name = normalizeProfileName(profile.name, `profiles[${index}].name`);
   const proxyUrl = normalizeNullableString(profile.proxy_url, `profiles[${index}].proxy_url`);
+  if (hasInlineProxyCredentials(proxyUrl)) {
+    throw new Error(`profiles[${index}].proxy_url credentials must use an environment reference such as \${BOB_EGRESS_PROXY_URL}`);
+  }
+  if (hasInlineProxyQueryOrFragment(proxyUrl)) {
+    throw new Error(`profiles[${index}].proxy_url query strings or fragments must use an environment reference such as \${BOB_EGRESS_PROXY_URL}`);
+  }
   const region = normalizeNullableString(profile.region, `profiles[${index}].region`);
   const description = normalizeNullableString(profile.description, `profiles[${index}].description`);
   const enabled = profile.enabled == null ? true : profile.enabled;
@@ -152,7 +183,7 @@ function readEgressProfilesDocument(projectRoot = projectRootFromMcp()) {
   if (!fs.existsSync(filePath)) {
     return defaultEgressProfilesDocument();
   }
-  const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const parsed = readJsonFile(filePath, { label: EGRESS_PROFILES_FILE });
   return normalizeEgressProfilesDocument(parsed);
 }
 
@@ -170,7 +201,7 @@ function ensureEgressProfilesConfig(projectRoot = projectRootFromMcp()) {
     writeEgressProfilesDocument(projectRoot, defaultEgressProfilesDocument());
     return { created: true, path: filePath };
   }
-  normalizeEgressProfilesDocument(JSON.parse(fs.readFileSync(filePath, "utf8")));
+  normalizeEgressProfilesDocument(readJsonFile(filePath, { label: EGRESS_PROFILES_FILE }));
   return { created: false, path: filePath };
 }
 
@@ -194,6 +225,12 @@ function resolveProxyUrl(proxyUrl, env = process.env) {
   return proxyUrl;
 }
 
+function envRefName(proxyUrl) {
+  if (proxyUrl == null) return null;
+  const envRef = String(proxyUrl).match(ENV_REF_RE);
+  return envRef ? envRef[1] : null;
+}
+
 function validateProxyUrl(proxyUrl) {
   if (proxyUrl == null) return null;
   let parsed;
@@ -208,7 +245,85 @@ function validateProxyUrl(proxyUrl) {
   if (!parsed.hostname) {
     throw new Error(`egress proxy URL is missing a host: ${redactProxyUrl(proxyUrl)}`);
   }
+  if (parsed.search.length > 0 || parsed.hash.length > 0) {
+    throw new Error("egress proxy URL query strings or fragments are not supported");
+  }
   return parsed;
+}
+
+function defaultProxyPort(protocol) {
+  if (protocol === "http:") return "80";
+  if (protocol === "https:") return "443";
+  if (protocol === "socks5:" || protocol === "socks5h:") return "1080";
+  return "";
+}
+
+function resolvedProxyIdentity(proxyUrl) {
+  if (proxyUrl == null) return null;
+  const parsed = validateProxyUrl(proxyUrl);
+  return {
+    protocol: parsed.protocol,
+    hostname: parsed.hostname.toLowerCase(),
+    port: parsed.port || defaultProxyPort(parsed.protocol),
+  };
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => (
+      `${JSON.stringify(key)}:${canonicalJson(value[key])}`
+    )).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function stableIdentityHash(input) {
+  return crypto
+    .createHash("sha256")
+    .update(canonicalJson(input))
+    .digest("hex");
+}
+
+function buildEgressProfileIdentity(profile, resolvedProxyUrl) {
+  const proxyConfigured = resolvedProxyUrl != null;
+  const envRef = envRefName(profile.proxy_url);
+  const resolvedProxy = resolvedProxyIdentity(resolvedProxyUrl);
+  const source = {
+    proxy_url_source: envRef ? "env" : profile.proxy_url == null ? "none" : "inline",
+    proxy_env_var: envRef,
+    proxy_url_redacted: resolvedProxyUrl == null ? null : redactProxyUrl(resolvedProxyUrl),
+    resolved_proxy: resolvedProxy,
+  };
+  const hashInput = {
+    identity_version: EGRESS_PROFILE_IDENTITY_VERSION,
+    profile_name: profile.name,
+    region: profile.region,
+    proxy_configured: proxyConfigured,
+    proxy_source: {
+      proxy_url_source: source.proxy_url_source,
+      proxy_env_var: source.proxy_env_var,
+    },
+    resolved_proxy: resolvedProxy,
+  };
+  return {
+    egress_profile_identity_hash: stableIdentityHash(hashInput),
+    egress_profile_identity_version: EGRESS_PROFILE_IDENTITY_VERSION,
+    egress_profile_identity_source: source,
+  };
+}
+
+function egressProfileIdentityFields(profile) {
+  return {
+    egress_profile: profile.name,
+    egress_region: profile.region,
+    proxy_configured: profile.proxy_configured === true,
+    egress_profile_identity_hash: profile.egress_profile_identity_hash,
+    egress_profile_identity_version: profile.egress_profile_identity_version,
+    egress_profile_identity_source: profile.egress_profile_identity_source,
+  };
 }
 
 function profilePublicView(profile) {
@@ -240,6 +355,7 @@ function resolveEgressProfile(name = "default", {
   }
   const proxyUrl = resolveProxyUrl(profile.proxy_url, env);
   validateProxyUrl(proxyUrl);
+  const identity = buildEgressProfileIdentity(profile, proxyUrl);
   return {
     name: profile.name,
     region: profile.region,
@@ -247,6 +363,7 @@ function resolveEgressProfile(name = "default", {
     proxy_url: proxyUrl,
     proxy_url_redacted: redactProxyUrl(proxyUrl),
     proxy_configured: proxyUrl != null,
+    ...identity,
   };
 }
 
@@ -304,7 +421,7 @@ function isUntouchedGeneratedEgressConfig(projectRoot = projectRootFromMcp()) {
   const filePath = egressProfilesPath(projectRoot);
   if (!fs.existsSync(filePath)) return false;
   try {
-    const current = normalizeEgressProfilesDocument(JSON.parse(fs.readFileSync(filePath, "utf8")));
+    const current = normalizeEgressProfilesDocument(readJsonFile(filePath, { label: EGRESS_PROFILES_FILE }));
     return JSON.stringify(current) === JSON.stringify(defaultEgressProfilesDocument());
   } catch {
     return false;
@@ -314,6 +431,7 @@ function isUntouchedGeneratedEgressConfig(projectRoot = projectRootFromMcp()) {
 module.exports = {
   EGRESS_PROFILES_EXAMPLE_FILE,
   EGRESS_PROFILES_FILE,
+  EGRESS_PROFILE_IDENTITY_VERSION,
   EGRESS_PROFILES_VERSION,
   EGRESS_PROFILE_NAME_RE,
   SUPPORTED_PROXY_PROTOCOLS,
@@ -321,6 +439,7 @@ module.exports = {
   createProxyAgent,
   defaultEgressProfile,
   defaultEgressProfilesDocument,
+  egressProfileIdentityFields,
   egressProfilesExamplePath,
   egressProfilesPath,
   ensureEgressProfilesConfig,

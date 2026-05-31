@@ -11,6 +11,7 @@ const {
   detectAdapterId,
   getAdapter,
 } = require("../adapters/index.js");
+const { clearUpdateCache } = require("../mcp/lib/update-check.js");
 
 const BOB_RESOURCE_DIR = ".hacker-bob";
 const NEUTRAL_INSTALL_SCHEMA_VERSION = 2;
@@ -180,6 +181,42 @@ function copyResourceSet(sourceRoot, targetAbs, resourceSet) {
   return copied;
 }
 
+function copyRuntimeNodeDependencies(sourceRoot, mcpDir) {
+  const manifest = packageManifest(sourceRoot);
+  const copied = [];
+  const queued = [];
+  for (const name of Object.keys(manifest.dependencies || {}).sort()) {
+    queued.push({ name, optional: false });
+  }
+  for (const name of Object.keys(manifest.optionalDependencies || {}).sort()) {
+    queued.push({ name, optional: true });
+  }
+  const visited = new Set();
+  const targetNodeModules = path.join(mcpDir, "node_modules");
+  while (queued.length > 0) {
+    const { name: packageName, optional } = queued.shift();
+    if (!packageName || visited.has(packageName)) continue;
+    const sourceDir = path.join(sourceRoot, "node_modules", ...packageName.split("/"));
+    if (!fs.existsSync(sourceDir) || !fs.statSync(sourceDir).isDirectory()) {
+      if (optional) continue;
+      throw new Error(`Runtime dependency ${packageName} is missing; run npm install before installing Bob into a project`);
+    }
+    visited.add(packageName);
+    const dependencyManifest = JSON.parse(fs.readFileSync(path.join(sourceDir, "package.json"), "utf8"));
+    for (const dependencyName of Object.keys(dependencyManifest.dependencies || {}).sort()) {
+      if (!visited.has(dependencyName)) queued.push({ name: dependencyName, optional });
+    }
+    for (const dependencyName of Object.keys(dependencyManifest.optionalDependencies || {}).sort()) {
+      if (!visited.has(dependencyName)) queued.push({ name: dependencyName, optional: true });
+    }
+    const destinationDir = path.join(targetNodeModules, packageName);
+    if (path.resolve(sourceDir) === path.resolve(destinationDir)) continue;
+    fs.rmSync(destinationDir, { recursive: true, force: true });
+    copied.push(...copyDirRecursive(sourceDir, destinationDir).map((file) => path.join(packageName, file)));
+  }
+  return copied;
+}
+
 function sourceResourceNames(sourceRoot, resourceSet) {
   const sourceDir = path.join(sourceRoot, resourceSet.source);
   if (!fs.existsSync(sourceDir)) return [];
@@ -333,10 +370,10 @@ function installProject(projectDir, options = {}) {
     fs.rmSync(targetToolsDir, { recursive: true, force: true });
     copyDirFiles(sourceToolsDir, targetToolsDir, (name) => name.endsWith(".js"));
   }
+  const copiedRuntimeDependencies = copyRuntimeNodeDependencies(sourceRoot, mcpDir);
 
-  // Policy-replay diagnostic harness (v1.1.3+). Adapter-agnostic; lives at
-  // testing/policy-replay/ in the target. /bob-debug shells out here when
-  // diagnosing refusal regressions. Skip node_modules to avoid bloat.
+  // Policy-replay diagnostic harness. Adapter-agnostic tooling under
+  // testing/policy-replay/ in the target. Skip node_modules to avoid bloat.
   const sourcePolicyReplayDir = path.join(sourceRoot, "testing", "policy-replay");
   const targetPolicyReplayDir = path.join(targetAbs, "testing", "policy-replay");
   if (fs.existsSync(sourcePolicyReplayDir) && path.resolve(sourcePolicyReplayDir) !== path.resolve(targetPolicyReplayDir)) {
@@ -400,6 +437,11 @@ function installProject(projectDir, options = {}) {
     commitSha,
     adapterIds: metadataAdapters,
   });
+  try {
+    clearUpdateCache(targetAbs);
+  } catch {
+    // A stale update hint is cosmetic; never fail an otherwise valid install.
+  }
 
   fs.mkdirSync(path.join(os.homedir(), "bounty-agent-sessions"), { recursive: true });
 
@@ -421,6 +463,7 @@ function installProject(projectDir, options = {}) {
     bypassTables: copiedResources.bypassTables.length,
     knowledge: copiedResources.knowledge.length,
     legacyResourcesRemoved,
+    runtimeDependencyFiles: copiedRuntimeDependencies.length,
     patchrightAvailable: patchrightAvailable(targetAbs, sourceRoot),
   };
 }
@@ -434,7 +477,7 @@ function printInstallSummary(summary) {
     console.log("  Claude command shims (/bob-update, /bob-egress, /bob-export)");
     console.log("  Claude bob-hunt + bob-oss + bob-status + bob-debug skills");
     console.log(`  ${summary.rules} Claude rules`);
-    console.log("  Claude scope/session guard hooks, update/export helpers, and status line");
+    console.log("  Claude session guard hooks, update/export helpers, and status line");
     console.log("  Claude .mcp.json and settings.json merged");
     console.log("  .claude/bob/VERSION and install.json compatibility metadata");
   }
@@ -455,7 +498,7 @@ function printInstallSummary(summary) {
   }
   console.log(`  ${summary.bypassTables} neutral bypass tables`);
   console.log(`  ${summary.knowledge} neutral hunter knowledge files`);
-  console.log("  MCP runtime (mcp/server.js, auto-signup.js, redaction.js, lib/*.js, lib/tools/*.js)");
+  console.log(`  MCP runtime (mcp/server.js, auto-signup.js, redaction.js, lib/*.js, lib/tools/*.js, dependency files ${summary.runtimeDependencyFiles})`);
   console.log("  .hacker-bob/ resources");
   console.log("  .hacker-bob/VERSION and install.json");
   console.log("  ~/bounty-agent-sessions/");

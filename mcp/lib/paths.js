@@ -54,6 +54,14 @@ function waveAssignmentsPath(domain, waveNumber) {
   return path.join(sessionDir(domain), `wave-${waveNumber}-assignments.json`);
 }
 
+function liveDeadEndsJsonlPath(domain, wave, agent) {
+  return path.join(sessionDir(domain), `live-dead-ends-${wave}-${agent}.jsonl`);
+}
+
+function handoffSigningKeyPath(domain) {
+  return path.join(sessionDir(domain), ".handoff-signing-key.json");
+}
+
 function scopeWarningsPath(domain) {
   return path.join(sessionDir(domain), "scope-warnings.log");
 }
@@ -245,6 +253,7 @@ module.exports = {
   findingsMarkdownPath,
   gradeArtifactPaths,
   httpAuditJsonlPath,
+  liveDeadEndsJsonlPath,
   pipelineEventsJsonlPath,
   publicIntelPath,
   repoCommandRunsJsonlPath,
@@ -262,6 +271,7 @@ module.exports = {
   surfaceRoutesPath,
   techniqueAttemptsJsonlPath,
   techniquePackReadsJsonlPath,
+  handoffSigningKeyPath,
   auditReportsJsonlPath,
   authDifferentialResultsPath,
   chainTreeJsonlPath,

@@ -25,7 +25,7 @@ const {
 } = require("./storage.js");
 const {
   readSessionStateStrict,
-} = require("./session-state.js");
+} = require("./session-state-store.js");
 const {
   NATIVE_CODE_EXTENSIONS,
   normalizeRepoPath,

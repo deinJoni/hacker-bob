@@ -15,7 +15,14 @@
 // Bech32 addresses are case-insensitive but we always lower-case before
 // querying so two findings against "Osmo1..." and "osmo1..." dedupe.
 
-const { resolveCosmwasmRpcEndpoints, isPublicHttpsUrl } = require("./cosmwasm-rpc-pool.js");
+const { resolveCosmwasmRpcEndpoints } = require("./cosmwasm-rpc-pool.js");
+const {
+  filterResolvedPublicRpcEndpoints,
+  redactRpcEndpoint,
+  redactRpcEndpointText,
+  summarizeRpcPolicyRejections,
+} = require("./sc-egress-policy.js");
+const { requestPublicHttpsText } = require("./sc-http-client.js");
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 256 * 1024;
@@ -32,96 +39,78 @@ function normalizeBech32(value) {
   return value.toLowerCase();
 }
 
-async function readResponseTextCapped(resp, maxBytes) {
-  if (!resp.body || typeof resp.body.getReader !== "function") {
-    const text = await resp.text();
-    const buffer = Buffer.from(text, "utf8");
-    if (buffer.length <= maxBytes) return text;
-    return buffer.subarray(0, maxBytes).toString("utf8");
-  }
-  const reader = resp.body.getReader();
-  const chunks = [];
-  let received = 0;
+function redactJsonBody(value) {
+  if (!value || typeof value !== "object") return value;
   try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      const buffer = Buffer.from(value);
-      const remaining = maxBytes - received;
-      if (remaining > 0) {
-        chunks.push(buffer.length > remaining ? buffer.subarray(0, remaining) : buffer);
-      }
-      received += buffer.length;
-      if (received > maxBytes) {
-        try { if (typeof reader.cancel === "function") await reader.cancel(); } catch {}
-        break;
-      }
-    }
-  } finally {
-    if (typeof reader.releaseLock === "function") reader.releaseLock();
-  }
-  return Buffer.concat(chunks).toString("utf8");
-}
-
-async function restGetOnce(baseUrl, path, { timeoutMs = DEFAULT_TIMEOUT_MS, maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES } = {}) {
-  const trimmedBase = baseUrl.replace(/\/+$/, "");
-  const trimmedPath = path.replace(/^\/+/, "");
-  const url = `${trimmedBase}/${trimmedPath}`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const resp = await fetch(url, {
-      method: "GET",
-      headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0 (compatible; hacker-bob)" },
-      signal: controller.signal,
-    });
-    const text = await readResponseTextCapped(resp, maxResponseBytes);
-    if (!resp.ok) {
-      // CosmWasm REST returns 404 for "no such contract" with a JSON body
-      // shaped {code, message, details}. Surface the JSON body so callers
-      // can distinguish "not found" from "endpoint broken".
-      let parsed = null;
-      try { parsed = JSON.parse(text); } catch {}
-      const msg = parsed && parsed.message ? parsed.message : text.slice(0, 200);
-      const err = new Error(`HTTP ${resp.status} from ${url}: ${msg}`);
-      err.status = resp.status;
-      err.body = parsed || text;
-      throw err;
-    }
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch (error) {
-      throw new Error(`malformed JSON response from ${url}: ${error.message || String(error)}`);
-    }
-    // Cosmos SDK populates "Grpc-Metadata-X-Cosmos-Block-Height" with the block
-    // height the read was served from. Surface it so verifier prompts can
-    // record "verified at block N" without an extra round-trip.
-    const blockHeight = resp.headers && typeof resp.headers.get === "function"
-      ? resp.headers.get("Grpc-Metadata-X-Cosmos-Block-Height") || resp.headers.get("grpc-metadata-x-cosmos-block-height")
-      : null;
-    return { result: parsed, block_height_used: blockHeight };
-  } finally {
-    clearTimeout(timeout);
+    return JSON.parse(redactRpcEndpointText(JSON.stringify(value)));
+  } catch {
+    return value;
   }
 }
 
-async function restGet({ network, path, endpoints, timeoutMs = DEFAULT_TIMEOUT_MS, maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES } = {}) {
-  if (typeof fetch !== "function") {
-    throw new Error("fetch is unavailable in this Node runtime");
+function buildRestUrl(baseUrl, path) {
+  const parsed = new URL(baseUrl);
+  const basePath = parsed.pathname.replace(/\/+$/, "");
+  const trimmedPath = String(path || "").replace(/^\/+/, "");
+  parsed.pathname = trimmedPath ? `${basePath || ""}/${trimmedPath}` : (basePath || "/");
+  return parsed.toString();
+}
+
+async function restGetOnce(baseUrl, path, { timeoutMs = DEFAULT_TIMEOUT_MS, maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES, lookup } = {}) {
+  const url = buildRestUrl(baseUrl, path);
+  const displayUrl = redactRpcEndpoint(url);
+  const resp = await requestPublicHttpsText(url, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    timeoutMs,
+    maxBytes: maxResponseBytes,
+    lookup,
+  });
+  const text = resp.text;
+  if (!resp.ok) {
+    // CosmWasm REST returns 404 for "no such contract" with a JSON body
+    // shaped {code, message, details}. Surface the JSON body so callers
+    // can distinguish "not found" from "endpoint broken".
+    let parsed = null;
+    try { parsed = JSON.parse(text); } catch {}
+    const msg = redactRpcEndpointText(parsed && parsed.message ? parsed.message : text).slice(0, 200);
+    const err = new Error(`HTTP ${resp.status} from ${displayUrl}: ${msg}`);
+    err.status = resp.status;
+    err.body = parsed ? redactJsonBody(parsed) : redactRpcEndpointText(text);
+    throw err;
   }
-  const endpointList = Array.isArray(endpoints) && endpoints.length > 0
-    ? endpoints.filter(isPublicHttpsUrl)
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`malformed JSON response from ${displayUrl}: ${error.message || String(error)}`);
+  }
+  // Cosmos SDK populates "Grpc-Metadata-X-Cosmos-Block-Height" with the block
+  // height the read was served from. Surface it so verifier prompts can
+  // record "verified at block N" without an extra round-trip.
+  const blockHeight = resp.headers && typeof resp.headers.get === "function"
+    ? resp.headers.get("Grpc-Metadata-X-Cosmos-Block-Height") || resp.headers.get("grpc-metadata-x-cosmos-block-height")
+    : null;
+  return { result: parsed, block_height_used: blockHeight };
+}
+
+async function restGet({ network, path, endpoints, timeoutMs = DEFAULT_TIMEOUT_MS, maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES, lookup } = {}) {
+  const rawEndpointList = Array.isArray(endpoints) && endpoints.length > 0
+    ? endpoints
     : resolveCosmwasmRpcEndpoints(network);
+  const { endpoints: endpointList, rejected } = await filterResolvedPublicRpcEndpoints(rawEndpointList, { lookup });
   if (endpointList.length === 0) {
-    throw new Error(`no public REST endpoints available for network ${network}; set BOB_COSMWASM_RPCS_${String(network).toUpperCase()}=url1,url2 to override`);
+    const err = new Error(`no public HTTPS REST endpoints available for network ${network}; set BOB_COSMWASM_RPCS_${String(network).toUpperCase()}=url1,url2 to override`);
+    err.rpc_policy_rejections = summarizeRpcPolicyRejections(rejected);
+    err.details = { rpc_policy_rejections: err.rpc_policy_rejections };
+    throw err;
   }
 
   const errors = [];
   for (const endpoint of endpointList) {
     try {
-      const { result, block_height_used } = await restGetOnce(endpoint, path, { timeoutMs, maxResponseBytes });
-      return { result, endpoint, block_height_used };
+      const { result, block_height_used } = await restGetOnce(endpoint, path, { timeoutMs, maxResponseBytes, lookup });
+      return { result, endpoint: redactRpcEndpoint(endpoint), block_height_used };
     } catch (error) {
       // 404 is a real "no such resource" answer — bubble it up rather than
       // failing over (the next endpoint would return the same 404).
@@ -129,10 +118,13 @@ async function restGet({ network, path, endpoints, timeoutMs = DEFAULT_TIMEOUT_M
         const err = new Error(error.message);
         err.status = 404;
         err.body = error.body;
-        err.endpoint = endpoint;
+        err.endpoint = redactRpcEndpoint(endpoint);
         throw err;
       }
-      errors.push({ endpoint, message: error.message || String(error) });
+      errors.push({
+        endpoint: redactRpcEndpoint(endpoint),
+        message: redactRpcEndpointText(error.message || String(error)),
+      });
     }
   }
   const summary = errors.map((e) => `${e.endpoint}: ${e.message}`).join("; ");

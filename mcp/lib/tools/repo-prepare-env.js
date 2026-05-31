@@ -50,6 +50,5 @@ module.exports = Object.freeze({
   scope_required: false,
   sensitive_output: false,
   session_artifacts_written: ["Dockerfile.bob", "repo-env.json"],
-  hook_required: false,
   prepareRepoEnv,
 });

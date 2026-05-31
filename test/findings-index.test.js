@@ -16,7 +16,14 @@ const {
   queryFindingsForTarget,
   queryFindingsCrossTarget,
   FEATURE_DIMENSION,
+  FINDINGS_INDEX_CROSS_TARGET_DOMAIN_LIMIT,
+  FINDINGS_INDEX_MAX_BYTES,
+  FINDINGS_INDEX_MAX_RECORDS,
+  FINDINGS_INDEX_TECH_STACK_MAX_ITEMS,
 } = require("../mcp/lib/findings-index.js");
+const {
+  DEFAULT_ARTIFACT_READ_MAX_BYTES,
+} = require("../mcp/lib/storage.js");
 
 function uniqueDomain(prefix = "bob-findings-index-test") {
   const suffix = crypto.randomBytes(4).toString("hex");
@@ -30,6 +37,19 @@ function domainDir(domain) {
 function cleanupDomain(domain) {
   const dir = domainDir(domain);
   if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+}
+
+function withTempHome(fn) {
+  const previousHome = process.env.HOME;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "bob-findings-index-home-"));
+  process.env.HOME = home;
+  try {
+    return fn(home);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 }
 
 test("tokenize lowercases, splits on non-alphanumeric, drops stopwords, and emits 2-grams", () => {
@@ -137,6 +157,85 @@ test("indexFinding upserts by finding_id without growing the index", () => {
   }
 });
 
+test("indexFinding keeps the derived index capped and rebuildable", () => {
+  const domain = uniqueDomain();
+  try {
+    const filePath = path.join(domainDir(domain), "findings-index.jsonl");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const rows = [];
+    for (let i = 1; i <= FINDINGS_INDEX_MAX_RECORDS + 5; i++) {
+      rows.push(JSON.stringify({
+        finding_id: `F-${i}`,
+        target_domain: domain,
+        title: `old finding ${i}`,
+        severity: "low",
+        indexed_at: `2026-05-14T00:00:${String(i % 60).padStart(2, "0")}.000Z`,
+        feature_vector: hashedFeatureVector(`old finding ${i}`),
+      }));
+    }
+    fs.writeFileSync(filePath, `${rows.join("\n")}\n`, "utf8");
+
+    const result = indexFinding({
+      target_domain: domain,
+      finding: {
+        finding_id: "F-new",
+        title: "fresh derived index row",
+        description: "newest row survives capped index rewrite",
+        severity: "high",
+      },
+    });
+
+    assert.equal(result.index_record_limit, FINDINGS_INDEX_MAX_RECORDS);
+    const retained = fs.readFileSync(filePath, "utf8").trim().split("\n");
+    assert.equal(retained.length, FINDINGS_INDEX_MAX_RECORDS);
+    assert.ok(retained.some((line) => JSON.parse(line).finding_id === "F-new"));
+    assert.ok(fs.statSync(filePath).size <= FINDINGS_INDEX_MAX_BYTES);
+  } finally {
+    cleanupDomain(domain);
+  }
+});
+
+test("indexFinding recovers legacy derived indexes that exceed the read byte cap", () => {
+  const domain = uniqueDomain();
+  try {
+    const filePath = path.join(domainDir(domain), "findings-index.jsonl");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const fd = fs.openSync(filePath, "w");
+    try {
+      for (let i = 1; i <= 4000; i++) {
+        fs.writeSync(fd, `${JSON.stringify({
+          finding_id: `F-${i}`,
+          target_domain: domain,
+          title: `legacy oversized index row ${i} ${"x".repeat(5000)}`,
+          severity: "low",
+          indexed_at: `2026-05-14T00:${String(i % 60).padStart(2, "0")}:00.000Z`,
+          feature_vector: { dimension: FEATURE_DIMENSION, slots: {} },
+        })}\n`);
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+    assert.ok(fs.statSync(filePath).size > DEFAULT_ARTIFACT_READ_MAX_BYTES);
+
+    const result = indexFinding({
+      target_domain: domain,
+      finding: {
+        finding_id: "F-new",
+        title: "fresh row after oversized recovery",
+        description: "newest row survives byte recovery",
+        severity: "high",
+      },
+    });
+
+    assert.equal(result.finding_id, "F-new");
+    assert.ok(fs.statSync(filePath).size <= FINDINGS_INDEX_MAX_BYTES);
+    const retained = fs.readFileSync(filePath, "utf8");
+    assert.match(retained, /F-new/);
+  } finally {
+    cleanupDomain(domain);
+  }
+});
+
 test("queryFindingsForTarget ranks similar findings higher than dissimilar ones", () => {
   const domain = uniqueDomain();
   try {
@@ -236,6 +335,64 @@ test("indexFinding rejects unsafe target_domain and missing finding_id", () => {
   );
 });
 
+test("indexFinding rejects secret-shaped or oversized derived index text", () => {
+  const domain = uniqueDomain();
+  try {
+    assert.throws(
+      () => indexFinding({
+        target_domain: domain,
+        finding: {
+          finding_id: "F-1",
+          title: "secret-bearing finding",
+          description: "Authorization: Bearer abcdefghijklmnopqrstuvwxyz",
+          severity: "high",
+        },
+      }),
+      /appears to contain secrets/,
+    );
+    assert.throws(
+      () => indexFinding({
+        target_domain: domain,
+        finding: {
+          finding_id: "F-2",
+          title: "oversized finding",
+          description: "x".repeat(4001),
+          severity: "high",
+        },
+      }),
+      /finding\.description is too large/,
+    );
+    assert.throws(
+      () => indexFinding({
+        target_domain: domain,
+        finding: {
+          finding_id: "F-secret",
+          title: "bad calibration",
+          description: "safe",
+          severity: "high",
+        },
+        calibration_label: "api_key=abcdef1234567890",
+      }),
+      /appears to contain secrets/,
+    );
+    assert.throws(
+      () => indexFinding({
+        target_domain: domain,
+        finding: {
+          finding_id: "F-tech",
+          title: "too much tech",
+          description: "safe",
+          severity: "high",
+          tech_stack: new Array(FINDINGS_INDEX_TECH_STACK_MAX_ITEMS + 1).fill("express"),
+        },
+      }),
+      /finding\.tech_stack must contain at most/,
+    );
+  } finally {
+    cleanupDomain(domain);
+  }
+});
+
 test("queryFindingsCrossTarget aggregates across multiple session directories", () => {
   const domainA = uniqueDomain("bob-cross-a");
   const domainB = uniqueDomain("bob-cross-b");
@@ -270,6 +427,33 @@ test("queryFindingsCrossTarget aggregates across multiple session directories", 
     cleanupDomain(domainA);
     cleanupDomain(domainB);
   }
+});
+
+test("queryFindingsCrossTarget exposes bounded cross-target scan metadata", () => {
+  withTempHome(() => {
+    for (let i = 0; i < FINDINGS_INDEX_CROSS_TARGET_DOMAIN_LIMIT + 2; i++) {
+      indexFinding({
+        target_domain: `bounded-${i}.example.com`,
+        finding: {
+          finding_id: "F-1",
+          title: `shared idor ${i}`,
+          description: "broken object level auth",
+          severity: "high",
+          attack_class: "idor",
+        },
+      });
+    }
+
+    const result = queryFindingsCrossTarget({
+      query_text: "broken object level auth",
+      top_k: 5,
+    });
+
+    assert.equal(result.domain_scan_limit, FINDINGS_INDEX_CROSS_TARGET_DOMAIN_LIMIT);
+    assert.equal(result.domains_available, FINDINGS_INDEX_CROSS_TARGET_DOMAIN_LIMIT + 2);
+    assert.equal(result.domains_scanned, FINDINGS_INDEX_CROSS_TARGET_DOMAIN_LIMIT);
+    assert.equal(result.domains_truncated, true);
+  });
 });
 
 test("queryFindingsForTarget caps top_k to 50", () => {

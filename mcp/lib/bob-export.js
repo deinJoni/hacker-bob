@@ -20,7 +20,7 @@ const {
 } = require("./pipeline-analytics.js");
 const {
   replayExecutionPolicy,
-} = require("./verification.js");
+} = require("./verification-replay-safety.js");
 const {
   attackSurfacePath,
   chainAttemptsJsonlPath,
@@ -167,7 +167,7 @@ function sessionVersions(eventRead) {
 }
 
 function classifySession(targetDomain, currentVersion) {
-  const eventRead = readPipelineEvents(targetDomain, { allowBackfill: false });
+  const eventRead = readPipelineEvents(targetDomain, { allowBackfill: false, validateAuthority: true });
   const { versions, unknown_events: unknownEvents } = sessionVersions(eventRead);
   const base = {
     target_domain: targetDomain,
@@ -223,7 +223,7 @@ function parsePipelineAnalytics(targetDomain, env) {
       target_domain: targetDomain,
       include_events: true,
       limit: 100,
-    }, { env }));
+    }, { env, validateAuthority: true }));
     return {
       sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
       funnel: parsed.funnel || null,
@@ -300,7 +300,7 @@ function readSessions(currentVersion, env) {
       exclusions.push(classified.exclusion);
       continue;
     }
-    const artifacts = readSessionArtifactSummary(targetDomain);
+    const artifacts = readSessionArtifactSummary(targetDomain, { validateAuthority: true });
     const analytics = parsePipelineAnalytics(targetDomain, env);
     const pipelineEvents = sortEvents(
       classified.eventRead.events.filter((event) => versionMatches(event, currentVersion)),

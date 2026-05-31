@@ -1,5 +1,14 @@
 "use strict";
 
+const {
+  isHttpsUrl,
+  isPrivateHost,
+  isPublicHttpsUrl,
+  normalizeRpcEndpointList,
+  redactRpcEndpoint,
+  splitRpcEndpointEnv,
+} = require("./sc-egress-policy.js");
+
 // Public archive RPC fallback ladder per major EVM chain.
 // Order matters — earlier endpoints are tried first. All entries are full
 // archive nodes that support eth_call at historical blocks.
@@ -64,65 +73,16 @@ const DEFAULT_PUBLIC_RPC_LADDER = Object.freeze({
   ]),
 });
 
-const PRIVATE_HOST_PATTERNS = [
-  /^localhost$/i,
-  /^127\./,
-  /^10\./,
-  /^192\.168\./,
-  /^172\.(1[6-9]|2[0-9]|3[01])\./,
-  /^169\.254\./, // link-local
-  /^::1$/,
-  /^fe80:/i,    // link-local v6
-  /^fc00:/i, /^fd00:/i, // unique local v6
-  /\.local$/i,
-  /\.internal$/i,
-];
-
-function isPrivateHost(host) {
-  if (!host) return false;
-  return PRIVATE_HOST_PATTERNS.some((re) => re.test(host));
-}
-
-function isHttpsUrl(value) {
-  if (typeof value !== "string" || !value.trim()) return false;
-  try {
-    const parsed = new URL(value.trim());
-    return parsed.protocol === "https:" || parsed.protocol === "http:";
-  } catch {
-    return false;
-  }
-}
-
-function isPublicHttpsUrl(value) {
-  if (!isHttpsUrl(value)) return false;
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "https:" && !isPrivateHost(parsed.hostname);
-  } catch {
-    return false;
-  }
-}
-
 function envOverride(chainId) {
   const key = `BOB_EVM_RPCS_${chainId}`;
-  const raw = process.env[key];
-  if (typeof raw !== "string" || !raw.trim()) return [];
-  return raw.split(",")
-    .map((url) => url.trim())
-    .filter((url) => url.length > 0)
-    .filter((url) => isHttpsUrl(url)); // env overrides may include http for local dev
+  return splitRpcEndpointEnv(process.env[key]);
 }
 
 function defaultOverride() {
-  const raw = process.env.BOB_EVM_RPCS_DEFAULT;
-  if (typeof raw !== "string" || !raw.trim()) return [];
-  return raw.split(",")
-    .map((url) => url.trim())
-    .filter((url) => url.length > 0)
-    .filter((url) => isHttpsUrl(url));
+  return splitRpcEndpointEnv(process.env.BOB_EVM_RPCS_DEFAULT);
 }
 
-function resolveEvmRpcEndpoints(chainId, { allowPrivate = false } = {}) {
+function resolveEvmRpcEndpoints(chainId) {
   const numericChainId = Number(chainId);
   if (!Number.isInteger(numericChainId) || numericChainId <= 0) {
     throw new Error(`chainId must be a positive integer, received: ${chainId}`);
@@ -131,23 +91,8 @@ function resolveEvmRpcEndpoints(chainId, { allowPrivate = false } = {}) {
   const defaults = DEFAULT_PUBLIC_RPC_LADDER[numericChainId] || [];
   const fromDefaultEnv = defaultOverride();
 
-  const seen = new Set();
-  const endpoints = [];
-
   // Priority: chain-specific env > shipped defaults > global env fallback.
-  for (const url of [...fromEnv, ...defaults, ...fromDefaultEnv]) {
-    if (seen.has(url)) continue;
-    if (!allowPrivate) {
-      try {
-        if (isPrivateHost(new URL(url).hostname)) continue;
-      } catch {
-        continue;
-      }
-    }
-    seen.add(url);
-    endpoints.push(url);
-  }
-  return endpoints;
+  return normalizeRpcEndpointList([...fromEnv, ...defaults, ...fromDefaultEnv]).endpoints;
 }
 
 function summarizeRpcPoolForBrief(chainFamily, chainId) {
@@ -190,7 +135,7 @@ function summarizeRpcPoolForBrief(chainFamily, chainId) {
     endpoints = [];
   }
   // Cap the brief view at 6 endpoints (matches HUNTER_BRIEF_SURFACE_ARRAY_LIMITS.fork_rpc_pool).
-  const trimmed = endpoints.slice(0, 6);
+  const trimmed = endpoints.slice(0, 6).map(redactRpcEndpoint);
   const note = endpoints.length === 0
     ? `No default RPC ladder for chain_id ${numericChainId}. Hunters must pass 'endpoints' explicitly to bounty_evm_* tools and 'fork_urls' to bounty_foundry_run. Operators can set BOB_EVM_RPCS_${numericChainId}=url1,url2 in the MCP server env (before launch) for a default.`
     : null;

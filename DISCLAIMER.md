@@ -16,7 +16,7 @@ If you do not have explicit written authorization, do not run Bob.
 
 ## Bob does not enforce scope for you
 
-Bob has internal guard hooks (`scope-guard.sh`, `scope-guard-mcp.sh`) and audit logging via `bounty_http_scan`, but these are operational aids only. They are not legal, authorization, or scope enforcement controls. They do not verify permission, enforce bug bounty scope, or guarantee containment. The bug bounty program's policy or written testing agreement is the only source of truth.
+Bob's MCP-scoped HTTP tools enforce first-party target-host policy and write audit records through `bounty_http_scan`, while session guard hooks protect Bob-owned artifacts from accidental direct edits. Browser auto-signup uses Bob egress profiles and a target-host request guard, but refuses strict internal-host blocking because Chromium owns final DNS resolution. Bob does not install a shell or browser-wide network containment hook, and raw shell/browser/external recon is not Bob-enforced scope containment. These are operational aids only; they are not legal authorization controls and do not verify permission. The bug bounty program's policy or written testing agreement is the only source of truth.
 
 ## Legal context
 

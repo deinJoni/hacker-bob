@@ -38,6 +38,7 @@ function loadWaveAssignments(domain, waveNumber) {
   if (!Array.isArray(assignmentsDoc.assignments)) {
     throw new Error(`Assignment file assignments must be an array in ${assignmentsPath}`);
   }
+  const documentRequiresHandoffTokens = assignmentsDoc.handoff_tokens_required === true;
 
   const assignments = [];
   const assignmentByAgent = new Map();
@@ -50,6 +51,7 @@ function loadWaveAssignments(domain, waveNumber) {
     const handoffTokenSha256 = typeof assignment.handoff_token_sha256 === "string" && assignment.handoff_token_sha256.trim()
       ? assignment.handoff_token_sha256.trim()
       : null;
+    const handoffTokenRequired = documentRequiresHandoffTokens || assignment.handoff_token_required === true || !!handoffTokenSha256;
     // surface_type is captured at start_wave time from attack_surface.json
     // and persisted in the (MCP-owned) assignment file. The completion gate
     // reads from here, not from the agent-writable attack_surface.json.
@@ -62,6 +64,7 @@ function loadWaveAssignments(domain, waveNumber) {
     }
     const normalizedAssignment = { agent, surface_id: surfaceId, ...routeMetadata };
     if (handoffTokenSha256) normalizedAssignment.handoff_token_sha256 = handoffTokenSha256;
+    if (handoffTokenRequired) normalizedAssignment.handoff_token_required = true;
     if (surfaceType) normalizedAssignment.surface_type = surfaceType;
     assignments.push(normalizedAssignment);
     assignmentByAgent.set(agent, normalizedAssignment);

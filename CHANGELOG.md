@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+- v1.3.6 follow-up: complete removal of the `legacy_unverified` handoff path. v1.3.5 keeps the path behind the per-session `handoff_provenance_required` flag so sessions initialised on v1.3.5+ already fail-closed; v1.3.6 will drop the legacy branch entirely from `wave-handoff-contracts.js`, `phase-gates.js`, `pipeline-session-artifacts.js`, and `wave-handoff-store.js`.
+- v1.3.6 follow-up: end-to-end live policy-replay smoke. v1.3.5 fixes SDK package + native-binary resolution from an installed workspace's `testing/policy-replay/replay.mjs`, but does not exercise `query()` invocation. v1.3.6 will add a Claude-OAuth-gated live-replay smoke test so binary lookup is verified beyond static resolution.
+
+## [1.3.5] - 2026-05-25
+
+### Runtime contracts and release gates
+
+- Narrowed `mcp/server.js` to the runtime MCP facade: `TOOLS`, `TOOL_MANIFEST`, `executeTool`, and `startServer`. Internal tests now import lower-level contracts from their owning modules.
+- Clarified the egress policy boundary: raw shell recon is not claimed as Bob-enforced containment, MCP-scoped HTTP tools remain the runtime policy authority, no-op scope guard hooks were removed from generated settings, browser auto-signup now uses egress profiles and refuses strict internal-host mode, and `block_internal_hosts` now rejects proxy-backed HTTP egress profiles because proxy-side DNS/routing cannot be verified by Bob.
+- Extracted shared contract/store modules for session state, findings, verification rounds, wave handoffs, grade verdicts, pipeline events, and session authority.
+- Added clean release/package gates, dependency freshness checks, package-surface documentation, and a generated authority inventory freshness check.
+- Suppressed stale Claude statusline update hints after local installs and clarified the hint text as an update target instead of a current-version label.
+- Release notes: [docs/releases/v1.3.5.md](docs/releases/v1.3.5.md).
+
+### Review-cycle hardening
+
+- Fixed `mcp/lib/tool-validation.js` so explicit `null` is no longer conflated with "missing" for required + nullable fields. Affects `bounty_write_verification_round.notes`, `bounty_write_evidence_packs.packs[].redaction_notes`, `bounty_write_grade_verdict.feedback`, and `bounty_write_grade_verdict.findings[].feedback`; consumers already normalize null via `normalizeOptionalText`.
+- Restored a compat shim in `mcp/lib/pipeline-analytics.js` that re-exports `appendPipelineEventDirect`, `safeAppendPipelineEventDirect`, `safeAppendPipelineEventWithSessionLock`, and `safeRecordHunterStoppedPipelineEvent` from `pipeline-events.js` so downstream importers do not break.
+- Reordered session-state normalization before fail-closed assertion in `mcp/lib/session-authority.js`, and trimmed `LEGACY_FAIL_CLOSED_FIELDS` to `target` + `target_url` only. v1.3.4-shaped sessions now backfill via the normalizer instead of failing with `STATE_CONFLICT` on read.
+- Added the per-session `handoff_provenance_required` flag in `mcp/lib/session-state-contracts.js`, defaulted to `true` for sessions initialised on v1.3.5+ and `false` for legacy sessions resumed from disk. When set, `validateHandoffToken` and `validateHandoffProvenance` reject the previous `legacy_unverified` downgrade path with an actionable re-init hint; when unset, legacy behavior is preserved so in-flight pre-v1.3.5 sessions can drain.
+- Unified wave readiness in `mcp/lib/wave-handoff-store.js`: `buildWaveReadiness` now validates handoff content and provenance inline when the domain is provided, exposes an `invalid_agents` field, and sets `is_complete = missing.length === 0 && invalid.length === 0`. `bounty_apply_wave_merge` propagates invalid surfaces into `missing_surface_ids` so the orchestrator cannot lose track of them.
+- Hardened `summarizeStructuredHandoffChainNotes` in `mcp/lib/pipeline-session-artifacts.js`: a legitimately missing assignment file (ENOENT) falls back to direct `chain_notes` parsing capped at 10 per session, and the summary reports `unsigned_handoff_count` for operator visibility. Tamper-style validation failures still drop the affected handoff.
+- Wired `npm run release:check:dependencies` as its own step in `.github/workflows/release.yml` so PSL freshness gates run on every tagged release.
+- Closed the pre-existing live-replay SDK-resolution gap surfaced by the PR #44 install layout: `testing/policy-replay/replay.mjs` now tries the bare specifier first and falls back to `createRequire(<workspace>/mcp/server.js).resolve("@anthropic-ai/claude-agent-sdk")`, and `scripts/install.js` now walks `optionalDependencies` so the SDK's current-platform native package (e.g. `@anthropic-ai/claude-agent-sdk-darwin-arm64`) propagates into the installed workspace when npm installed it in source. `test/install-smoke.test.js` asserts both contracts.
+
 ## [1.3.4] - 2026-05-14
 
 ### Codex adapter parity

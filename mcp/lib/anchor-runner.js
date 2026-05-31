@@ -4,7 +4,15 @@ const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { resolveSvmRpcEndpoints, isPublicHttpsUrl } = require("./svm-rpc-pool.js");
+const { resolveSvmRpcEndpoints } = require("./svm-rpc-pool.js");
+const {
+  directSmartContractSubprocessEnv,
+  filterResolvedPublicRpcEndpoints,
+  redactRpcEndpoint,
+  redactRpcEndpointArgs,
+  redactRpcEndpointText,
+  summarizeRpcPolicyRejections,
+} = require("./sc-egress-policy.js");
 
 const DEFAULT_TIMEOUT_MS = 90_000;
 const MAX_TIMEOUT_MS = 600_000;
@@ -71,7 +79,7 @@ function spawnAnchor(args, { workdir, env, timeoutMs }) {
       // parent-only kill leaves them running.
       child = spawn("anchor", args, {
         cwd: workdir,
-        env: { ...process.env, ...env },
+        env: directSmartContractSubprocessEnv(env),
         stdio: ["ignore", "pipe", "pipe"],
         detached: true,
       });
@@ -198,7 +206,7 @@ function summarizeAnchorMochaJson(document) {
         full_title: typeof entry.fullTitle === "string" ? entry.fullTitle : null,
         status,
         status_raw: isPending ? "pending" : (hasErr ? "failure" : "success"),
-        reason: hasErr && typeof entry.err.message === "string" ? entry.err.message.slice(0, 1024) : null,
+        reason: hasErr && typeof entry.err.message === "string" ? redactRpcEndpointText(entry.err.message).slice(0, 1024) : null,
         duration_ms: typeof entry.duration === "number" ? entry.duration : null,
       });
     } else {
@@ -229,12 +237,16 @@ async function runAnchorTest({
   }
   const cappedTimeout = Math.min(Math.max(Number(timeoutMs) || DEFAULT_TIMEOUT_MS, 5_000), MAX_TIMEOUT_MS);
 
-  const explicitForkUrls = Array.isArray(forkUrls)
-    ? forkUrls.filter(isPublicHttpsUrl)
+  const explicitForkUrls = Array.isArray(forkUrls) && forkUrls.length > 0
+    ? forkUrls
     : null;
-  const candidateForkUrls = explicitForkUrls && explicitForkUrls.length > 0
+  const rawCandidateForkUrls = explicitForkUrls && explicitForkUrls.length > 0
     ? explicitForkUrls
     : (cluster ? resolveSvmRpcEndpoints(cluster) : []);
+  const {
+    endpoints: candidateForkUrls,
+    rejected: rpcPolicyRejections,
+  } = await filterResolvedPublicRpcEndpoints(rawCandidateForkUrls);
 
   if (typeof matchTest !== "string") throw new Error("match_test must be a string");
   if (matchTest.length < 1 || matchTest.length > 200) {
@@ -268,7 +280,7 @@ async function runAnchorTest({
   // env so the test can read it via process.env if needed; if Anchor.toml in
   // the workdir already pins cluster, that wins.
   if (candidateForkUrls.length === 0) {
-    if (cluster != null) {
+    if (cluster != null || explicitForkUrls) {
       // Fail closed: the hunter declared a cluster but we have no endpoints.
       // Silently running against localnet would let a hunter record "tested"
       // without the real cluster ever being touched.
@@ -276,15 +288,18 @@ async function runAnchorTest({
         ok: false,
         reason: "no_fork_endpoints_for_cluster",
         cluster,
-        error: `no public RPC endpoints available for cluster ${cluster}; supply fork_urls explicitly or set BOB_SVM_RPCS_${String(cluster).toUpperCase().replace(/-/g, "_")}=url1,url2 in the MCP server env`,
-        command: ["anchor", ...baseArgs],
+        error: cluster == null
+          ? "no public HTTPS RPC endpoints remain after applying the smart-contract egress policy"
+          : `no public HTTPS RPC endpoints available for cluster ${cluster}; supply fork_urls explicitly or set BOB_SVM_RPCS_${String(cluster).toUpperCase().replace(/-/g, "_")}=url1,url2 in the MCP server env`,
+        command: ["anchor", ...redactRpcEndpointArgs(baseArgs)],
+        rpc_policy_rejections: summarizeRpcPolicyRejections(rpcPolicyRejections),
         fork_attempts: [],
       };
     }
     // No cluster supplied — run with whatever Anchor.toml configures. Covers
     // pure-localnet harnesses that don't depend on cloning.
     const result = await spawnAnchor(baseArgs, { workdir: resolvedWorkdir, timeoutMs: cappedTimeout, env: {} });
-    return finalizeRun({ result, args: baseArgs, forkAttempts: [], forkSlot, fork_used: null });
+    return finalizeRun({ result, args: baseArgs, forkAttempts: [], forkSlot, fork_used: null, rpcPolicyRejections });
   }
 
   let lastResult = null;
@@ -296,29 +311,29 @@ async function runAnchorTest({
     const result = await spawnAnchor(baseArgs, { workdir: resolvedWorkdir, timeoutMs: cappedTimeout, env });
     lastResult = result;
     forkAttempts.push({
-      endpoint: url,
+      endpoint: redactRpcEndpoint(url),
       ok: result.ok,
       exit_code: result.exit_code,
       timed_out: result.timed_out === true,
       reason: result.reason || null,
-      stderr_excerpt: truncateString(result.stderr || "", 600),
+      stderr_excerpt: truncateString(redactRpcEndpointText(result.stderr || ""), 600),
     });
     if (result.ok) {
-      return finalizeRun({ result, args: baseArgs, forkAttempts, forkSlot, fork_used: url });
+      return finalizeRun({ result, args: baseArgs, forkAttempts, forkSlot, fork_used: redactRpcEndpoint(url), rpcPolicyRejections });
     }
     // If anchor is missing entirely, no point trying other RPCs.
     if (result.reason === "anchor_not_in_path") {
-      return finalizeRun({ result, args: baseArgs, forkAttempts, forkSlot, fork_used: null });
+      return finalizeRun({ result, args: baseArgs, forkAttempts, forkSlot, fork_used: null, rpcPolicyRejections });
     }
     // Differentiate test failure from RPC failure: if stdout shows mocha JSON,
     // the RPC was fine — the test simply asserted/failed.
     const looksLikeJsonOnStdout = typeof result.stdout === "string" && /\{\s*"stats"\s*:/.test(result.stdout);
     if (looksLikeJsonOnStdout) {
-      return finalizeRun({ result, args: baseArgs, forkAttempts, forkSlot, fork_used: url });
+      return finalizeRun({ result, args: baseArgs, forkAttempts, forkSlot, fork_used: redactRpcEndpoint(url), rpcPolicyRejections });
     }
     // Otherwise treat as RPC failure and try the next endpoint.
   }
-  return finalizeRun({ result: lastResult, args: baseArgs, forkAttempts, forkSlot, fork_used: null });
+  return finalizeRun({ result: lastResult, args: baseArgs, forkAttempts, forkSlot, fork_used: null, rpcPolicyRejections });
 }
 
 // Classify a non-zero anchor exit by inspecting stderr. ENOENT on the anchor
@@ -363,13 +378,14 @@ function classifyAnchorFailure(result, parseResultOk) {
   return null;
 }
 
-function finalizeRun({ result, args, forkAttempts, forkSlot, fork_used }) {
+function finalizeRun({ result, args, forkAttempts, forkSlot, fork_used, rpcPolicyRejections = [] }) {
   if (!result || result.reason === "anchor_not_in_path" || result.reason === "anchor_spawn_failed") {
     return {
       ok: false,
       reason: result && result.reason ? result.reason : "spawn_failed",
       error: result && result.error ? result.error : null,
-      command: ["anchor", ...args],
+      command: ["anchor", ...redactRpcEndpointArgs(args)],
+      rpc_policy_rejections: summarizeRpcPolicyRejections(rpcPolicyRejections),
       fork_attempts: forkAttempts,
     };
   }
@@ -422,7 +438,8 @@ function finalizeRun({ result, args, forkAttempts, forkSlot, fork_used }) {
     fork_slot: forkSlot || null,
     fork_slot_used: forkSlotUsed,
     fork_attempts: forkAttempts,
-    command: ["anchor", ...args],
+    command: ["anchor", ...redactRpcEndpointArgs(args)],
+    rpc_policy_rejections: summarizeRpcPolicyRejections(rpcPolicyRejections),
     summary: {
       total: summary.total,
       passed: summary.passed,
@@ -431,8 +448,8 @@ function finalizeRun({ result, args, forkAttempts, forkSlot, fork_used }) {
     tests: summary.tests,
     tests_truncated: summary.truncated === true,
     raw_excerpt: {
-      stdout: truncateString(result.stdout || "", RAW_EXCERPT_BYTES),
-      stderr: truncateString(result.stderr || "", RAW_EXCERPT_BYTES),
+      stdout: truncateString(redactRpcEndpointText(result.stdout || ""), RAW_EXCERPT_BYTES),
+      stderr: truncateString(redactRpcEndpointText(result.stderr || ""), RAW_EXCERPT_BYTES),
       truncated: result.truncated === true,
     },
     parse_warning: parseResult.ok ? null : parseResult.reason,
