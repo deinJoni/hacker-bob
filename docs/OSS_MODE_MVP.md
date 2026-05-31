@@ -24,6 +24,27 @@ The first version is local-repo first:
 GitHub URL cloning, automatic PR creation, hosted scanning, and write-mode fixes
 are out of scope for this MVP.
 
+## Multi-Repo Dashboard
+
+Use the local dashboard when running several OSS sessions in parallel:
+
+```bash
+hacker-bob dashboard --repo-only
+```
+
+The command starts a read-only server on `127.0.0.1:4873` by default and reads
+the existing `~/bounty-agent-sessions` artifacts. It does not launch agents or
+mutate sessions. It shows each repo session's phase, wave handoff progress,
+coverage, technique attempts, findings, final reportable counts,
+evidence/grade/report state, and bottlenecks.
+
+For automation or tests, print the same cross-session snapshot without starting
+the UI:
+
+```bash
+hacker-bob dashboard --repo-only --json
+```
+
 ## Task Graph
 
 ```text

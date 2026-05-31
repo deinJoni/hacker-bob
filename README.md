@@ -153,6 +153,16 @@ hacker-bob doctor /path/to/your/project
 hacker-bob doctor /path/to/your/project --adapter codex
 ```
 
+For a local read-only dashboard over multiple concurrent sessions:
+
+```bash
+hacker-bob dashboard --repo-only
+```
+
+The dashboard binds to `127.0.0.1` by default and reads
+`~/bounty-agent-sessions`. It shows OSS/repo progress, pending handoffs,
+findings, verification/evidence/grade state, and cross-session bottlenecks.
+
 ## How A Hunt Works
 
 Bob follows a structured workflow:
