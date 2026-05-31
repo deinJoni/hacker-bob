@@ -45,7 +45,11 @@ jobs:
         uses: ejmockler/brutalist-mcp/packages/github-action@v1.14.4
         env:
           # Per-critic spawn cap (brutalist-mcp). Real since v1.14.3.
-          BRUTALIST_TIMEOUT: "180000"
+          # Tightened to 90s: the trace showed 3 parallel roasts (9 critic
+          # spawns) never returning in 12 min. If the cap works, 90s bounds
+          # each agy spawn so the roasts finish fast; if it still stalls, the
+          # cap isn't firing (deeper bug).
+          BRUTALIST_TIMEOUT: "90000"
           # DIAGNOSTIC (v1.14.4): trace each orchestrator-brain SDK message
           # to stderr (which roast call, timings, where it hangs) and cap the
           # orchestrator wall-clock low so a stall fails in 12 min, not 30.
