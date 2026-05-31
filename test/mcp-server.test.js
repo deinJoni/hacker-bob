@@ -452,6 +452,7 @@ const EXPECTED_TOOL_NAMES = [
   "bob_propose_transition",
   "bob_materialize_task_graph",
   "bob_read_task_graph",
+  "bob_attach_contract",
   "bob_materialize_frontier",
   "bob_read_queue_policy",
   "bob_set_queue_policy",

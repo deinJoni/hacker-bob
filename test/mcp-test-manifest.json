@@ -70,5 +70,6 @@
   "test/realization-oss-e2e-smoke.test.js",
   "test/task-graph-events.test.js",
   "test/task-graph-materializer.test.js",
-  "test/transition-surface-kind.test.js"
+  "test/transition-surface-kind.test.js",
+  "test/contracts.test.js"
 ]

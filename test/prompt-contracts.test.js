@@ -933,7 +933,12 @@ test("evaluator agents stay under their MCP tool budget", () => {
   // renderer can ground reasoning in the materialized graph. It's a single
   // bounded read tool with summary/raw views; budgets bump by +1
   // (SC 36→37, web 38→39) to keep parity with the actual bundle surface.
-  const EVALUATOR_MCP_TOOL_BUDGET = 37;
+  // Cycle X.4 (Plane X) adds bob_attach_contract (mutating, single-event
+  // node.transitioned writer) to evaluator-shared per X-D10. The tool
+  // accepts a structured Contract payload but does not surface in briefs;
+  // budgets bump by +1 (SC 37→38, web 39→40) to keep parity with the
+  // bundle surface.
+  const EVALUATOR_MCP_TOOL_BUDGET = 38;
   const agentNameToRoleId = {};
   for (const [roleId, spec] of Object.entries(CLAUDE_ROLE_SPECS)) {
     if (spec.kind === "agent" && typeof spec.output_path === "string") {
@@ -942,7 +947,7 @@ test("evaluator agents stay under their MCP tool budget", () => {
   }
   for (const pack of Object.values(CAPABILITY_PACKS)) {
     const roleId = agentNameToRoleId[pack.evaluator_agent];
-    const budget = pack.brief_profile === "web" ? 39 : EVALUATOR_MCP_TOOL_BUDGET;
+    const budget = pack.brief_profile === "web" ? 40 : EVALUATOR_MCP_TOOL_BUDGET;
     assert.ok(
       mcpToolNamesForRole(roleId).length <= budget,
       `pack ${pack.id} evaluator over budget (got ${mcpToolNamesForRole(roleId).length}, budget ${budget})`,

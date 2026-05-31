@@ -122,6 +122,11 @@ const TOOL_MODULES = Object.freeze([
   // force-flush + the read surface for X.5 / X.8 / X.11 callers.
   require("./materialize-task-graph.js"),
   require("./read-task-graph.js"),
+  // Plane X Cycle X.4 — Contract schema + attach with pre-dispatch
+  // satisfiability check. Backed by mcp/lib/contracts.js (the X-D4 7-witness
+  // schema + the X-D11 satisfiability gate). The attach tool emits
+  // node.transitioned proposed → contracted with the canonical contract_hash.
+  require("./attach-contract.js"),
   require("./materialize-frontier.js"),
   require("./read-queue-policy.js"),
   require("./set-queue-policy.js"),
