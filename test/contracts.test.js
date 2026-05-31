@@ -636,6 +636,143 @@ test("appendContract refuses to re-emit proposed → contracted when the node is
     assert.ok(caught, "second appendContract must refuse");
     assert.equal(caught.code, "node_not_proposed");
     assert.equal(caught.details.current_state, "contracted");
+    assert.deepEqual(
+      caught.details.legal_from_states,
+      ["proposed", "failed"],
+      "structured error must surface the rev-4 legal_from_states list",
+    );
+  });
+});
+
+// X.8 rev 4 retry-with-recall: appendContract emits failed → contracted
+// when the operator re-contracts a previously failed node. The prior
+// failure events stay on the ledger so the X.8 prepare_node brief's
+// `prior_attempt` slice can surface the structured failure payload.
+test("appendContract emits failed → contracted when re-contracting a failed node (rev-4 retry-with-recall)", () => {
+  withTempHome(() => {
+    const domain = "x4-recontract-failed.example.com";
+    const nodeId = seedProposedHypothesis(domain);
+
+    // Initial attach lands proposed → contracted.
+    appendContract({
+      target_domain: domain,
+      node_id: nodeId,
+      contract: baseContractInput({ contractId: "C-initial" }),
+    });
+    // Walk through the full lifecycle to land at `failed` so the next
+    // re-contract has a real prior failure to recall.
+    appendNodeTransition({
+      target_domain: domain,
+      node_id: nodeId,
+      from_state: "contracted",
+      to_state: "ready",
+    });
+    appendNodeTransition({
+      target_domain: domain,
+      node_id: nodeId,
+      from_state: "ready",
+      to_state: "dispatched",
+      prep_token_hash: "synthetic-prep-token-hash",
+    });
+    appendNodeTransition({
+      target_domain: domain,
+      node_id: nodeId,
+      from_state: "dispatched",
+      to_state: "executed",
+    });
+    appendNodeTransition({
+      target_domain: domain,
+      node_id: nodeId,
+      from_state: "executed",
+      to_state: "failed",
+      failure_reason: {
+        reason: "mechanical_verifier_failed",
+        failures: [{ witness_id: "W1", reason: "tool_output_did_not_match" }],
+      },
+    });
+    materializeTaskGraph(domain, { write: true });
+
+    // The materializer surfaces state: failed.
+    let doc = materializeTaskGraph(domain, { write: false }).document;
+    let node = doc.nodes.find((n) => n.node_id === nodeId);
+    assert.equal(node.state, "failed");
+
+    // Re-contract with a refined Contract. The rev-4 X.8 retry-with-recall
+    // path emits failed → contracted; the result's from_state must match.
+    const refined = baseContractInput({
+      contractId: "C-refined",
+      witnessKind: "tool_output_match",
+      predicateOverride: { tool: KNOWN_TOOL, match: { path: "$.status", equals: 201 } },
+    });
+    const { event, contract, from_state } = appendContract({
+      target_domain: domain,
+      node_id: nodeId,
+      contract: refined,
+    });
+    assert.equal(from_state, "failed");
+    assert.equal(event.payload.from_state, "failed");
+    assert.equal(event.payload.to_state, "contracted");
+    assert.equal(event.payload.contract_hash, contract.contract_hash);
+
+    // The prior failure event is still on the ledger.
+    const transitions = readNodeTransitions(domain);
+    const priorFailed = transitions.filter(
+      (t) => t.payload && t.payload.node_id === nodeId && t.payload.to_state === "failed",
+    );
+    assert.equal(priorFailed.length, 1);
+    assert.equal(priorFailed[0].payload.failure_reason.reason, "mechanical_verifier_failed");
+
+    // The materialized node now reflects the refined contract_hash.
+    materializeTaskGraph(domain, { write: true });
+    doc = materializeTaskGraph(domain, { write: false }).document;
+    node = doc.nodes.find((n) => n.node_id === nodeId);
+    assert.equal(node.state, "contracted");
+    assert.equal(node.contract_hash, contract.contract_hash);
+  });
+});
+
+// The rev-4 retry-with-recall path is the ONLY extension to the legal
+// from_states. All other non-proposed, non-failed states must continue
+// to refuse with the structured node_not_proposed error.
+test("appendContract refuses to re-contract from states other than proposed or failed", () => {
+  withTempHome(() => {
+    const domain = "x4-recontract-other.example.com";
+    const nodeId = seedProposedHypothesis(domain);
+
+    // Land the node at `dispatched` (not in {proposed, failed}).
+    appendContract({
+      target_domain: domain,
+      node_id: nodeId,
+      contract: baseContractInput({ contractId: "C-initial" }),
+    });
+    appendNodeTransition({
+      target_domain: domain,
+      node_id: nodeId,
+      from_state: "contracted",
+      to_state: "ready",
+    });
+    appendNodeTransition({
+      target_domain: domain,
+      node_id: nodeId,
+      from_state: "ready",
+      to_state: "dispatched",
+      prep_token_hash: "synthetic-prep-token-hash-other",
+    });
+    materializeTaskGraph(domain, { write: true });
+
+    let caught = null;
+    try {
+      appendContract({
+        target_domain: domain,
+        node_id: nodeId,
+        contract: baseContractInput({ contractId: "C-attempt-from-dispatched" }),
+      });
+    } catch (error) {
+      caught = error;
+    }
+    assert.ok(caught, "re-contract from dispatched must refuse");
+    assert.equal(caught.code, "node_not_proposed");
+    assert.equal(caught.details.current_state, "dispatched");
   });
 });
 
@@ -716,6 +853,67 @@ test("bob_attach_contract refuses re-attach with structured node_not_proposed er
     assert.ok(caught, "must refuse re-attach");
     assert.equal(caught.code, "node_not_proposed");
     assert.equal(caught.details.current_state, "contracted");
+    assert.deepEqual(
+      caught.details.legal_from_states,
+      ["proposed", "failed"],
+      "structured error surfaces the rev-4 legal_from_states list",
+    );
+  });
+});
+
+// X.8 rev 4 retry-with-recall via the bob_attach_contract tool surface:
+// the operator re-contracts a failed node with a refined Contract and
+// the tool's response surfaces from_state=failed so callers can detect
+// the retry path explicitly.
+test("bob_attach_contract accepts re-contracting a failed node and surfaces from_state=failed (rev-4 retry-with-recall)", () => {
+  withTempHome(() => {
+    const domain = "x4-tool-recontract-failed.example.com";
+    const nodeId = seedProposedHypothesis(domain);
+
+    // Initial attach.
+    TOOL_HANDLERS.bob_attach_contract({
+      target_domain: domain,
+      node_id: nodeId,
+      contract: baseContractInput({ contractId: "C-initial" }),
+    });
+    // Walk to failed.
+    appendNodeTransition({
+      target_domain: domain,
+      node_id: nodeId,
+      from_state: "contracted",
+      to_state: "ready",
+    });
+    appendNodeTransition({
+      target_domain: domain,
+      node_id: nodeId,
+      from_state: "ready",
+      to_state: "dispatched",
+      prep_token_hash: "synthetic-prep-token-hash-tool",
+    });
+    appendNodeTransition({
+      target_domain: domain,
+      node_id: nodeId,
+      from_state: "dispatched",
+      to_state: "executed",
+    });
+    appendNodeTransition({
+      target_domain: domain,
+      node_id: nodeId,
+      from_state: "executed",
+      to_state: "failed",
+      failure_reason: { reason: "mechanical_verifier_failed" },
+    });
+    materializeTaskGraph(domain, { write: true });
+
+    // Re-contract via the tool.
+    const result = JSON.parse(TOOL_HANDLERS.bob_attach_contract({
+      target_domain: domain,
+      node_id: nodeId,
+      contract: baseContractInput({ contractId: "C-refined" }),
+    }));
+    assert.equal(result.attached, true);
+    assert.equal(result.from_state, "failed");
+    assert.equal(result.to_state, "contracted");
   });
 });
 

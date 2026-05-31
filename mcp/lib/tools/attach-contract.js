@@ -26,6 +26,7 @@
 // the structural check.
 
 const {
+  APPEND_CONTRACT_LEGAL_FROM_STATES,
   appendContract,
   normalizeContract,
   assertContractSatisfiable,
@@ -84,18 +85,23 @@ function handler(args) {
       { node_id: nodeId },
     );
   }
-  if (existing.state !== "proposed") {
-    // X.1's frozen state transition table forbids proposed→contracted
-    // from anything other than proposed; we surface a domain-specific
-    // refusal instead of bubbling the lower-level invalid_node_transition
-    // because a Contract attachment to a contracted/dispatched/finalized
-    // node is almost always operator confusion, and the structured code
-    // helps the operator-facing UI render a clear "already contracted"
-    // message.
+  if (!APPEND_CONTRACT_LEGAL_FROM_STATES.includes(existing.state)) {
+    // The X.4 attach path requires `proposed`; the rev-4 X.8
+    // retry-with-recall path adds `failed` as a re-contract entry so the
+    // operator can attach a refined Contract to a previously failed node
+    // without first abandoning it. All other states (contracted, ready,
+    // dispatched, executed, verified, finalized, abandoned) refuse with
+    // the structured node_not_proposed code so the operator-facing UI
+    // can render a clear domain-specific message instead of bubbling the
+    // lower-level invalid_node_transition error.
     throw structuredError(
       "node_not_proposed",
-      `node ${nodeId} is in state "${existing.state}"; attach-contract requires state "proposed"`,
-      { node_id: nodeId, current_state: existing.state },
+      `node ${nodeId} is in state "${existing.state}"; attach-contract requires one of [${APPEND_CONTRACT_LEGAL_FROM_STATES.join(", ")}]`,
+      {
+        node_id: nodeId,
+        current_state: existing.state,
+        legal_from_states: APPEND_CONTRACT_LEGAL_FROM_STATES.slice(),
+      },
     );
   }
 
@@ -151,18 +157,21 @@ function handler(args) {
 module.exports = Object.freeze({
   name: "bob_attach_contract",
   description:
-    "Attach a hash-bound Contract to a TaskGraph node and transition "
-    + "the node from \"proposed\" to \"contracted\". Validates the Contract "
-    + "schema (≥1 invariant + ≥1 witness + ≥1 production_path per X-P2; "
-    + `invariant statements capped at ${INVARIANT_STATEMENT_MAX_CHARS} chars), `
-    + "hashes the canonical form with the per-Contract severity_floor "
-    + "bound in (X-D9), and runs the pre-dispatch satisfiability check "
-    + "(X-D11): every production_paths[].tool_call_pattern[].tool must "
-    + "exist in the MCP tool registry, every tool_output_match witness "
-    + "must reference a tool present in production_paths, and every "
-    + "relational_value_match / hash_equals predicate must use an "
-    + "artifact_ref prefix in the X-D12 closed set. Mismatch → structured "
-    + "contract_unsatisfiable refusal.",
+    "Attach a hash-bound Contract to a TaskGraph node and transition the "
+    + "node to \"contracted\". The default path is proposed → contracted; "
+    + "the rev-4 X.8 retry-with-recall path also allows failed → contracted "
+    + "(operator re-contracts a failed node with a refined Contract; prior "
+    + "failure events stay on the ledger so the next bob_prepare_node call's "
+    + "`prior_attempt` brief slice surfaces the structured failure payload). "
+    + "Validates the Contract schema (≥1 invariant + ≥1 witness + ≥1 "
+    + `production_path per X-P2; invariant statements capped at ${INVARIANT_STATEMENT_MAX_CHARS} chars), `
+    + "hashes the canonical form with the per-Contract severity_floor bound "
+    + "in (X-D9), and runs the pre-dispatch satisfiability check (X-D11): "
+    + "every production_paths[].tool_call_pattern[].tool must exist in the "
+    + "MCP tool registry, every tool_output_match witness must reference a "
+    + "tool present in production_paths, and every relational_value_match / "
+    + "hash_equals predicate must use an artifact_ref prefix in the X-D12 "
+    + "closed set. Mismatch → structured contract_unsatisfiable refusal.",
   inputSchema: {
     type: "object",
     properties: {
@@ -170,7 +179,7 @@ module.exports = Object.freeze({
       node_id: {
         type: "string",
         description:
-          "TaskGraph node id (TG-<prefix>-<slug>). Must already be in the materialized graph with state \"proposed\".",
+          "TaskGraph node id (TG-<prefix>-<slug>). Must already be in the materialized graph with state \"proposed\" (default path) or \"failed\" (rev-4 X.8 retry-with-recall re-contract path).",
       },
       contract: {
         type: "object",

@@ -14,9 +14,11 @@
 //     for the next bob_prepare_node call's `prior_attempt` slice.
 //   - executed → verified → finalized   when the mechanical verifier
 //     passes. The adjudication chain (X-D9, severity-floor-gated) is
-//     queued via a structured chain_request payload that X.9's graph
-//     scheduler picks up; X.8 ships the QUEUE shape, the live dispatch
-//     wires in X.9 + later cycles.
+//     queued via a structured chain_request payload on the verified
+//     event so X.9's graph scheduler can pick it up; X.8 ships the QUEUE
+//     shape, the live LLM-round dispatch wires in X.9 (per X-D7 the
+//     graph scheduler owns Transition + Hypothesis dispatch including
+//     the adjudication-chain dispatch path).
 //
 // edge_added_to[] surfaces downstream nodes the verified Contract has
 // unblocked. The materializer derives `unblocks` edges from this field
@@ -287,8 +289,13 @@ function handler(args) {
   }
 
   // Mechanical verifier passed → queue adjudication chain per X-D9.
-  // X.8 surfaces the chain SHAPE in the verified payload; X.9 + later
-  // cycles wire the live dispatcher. The chain is severity_floor-gated.
+  // X.8 emits the executed → verified → finalized chain WITHOUT actually
+  // dispatching the adjudication-round agents. The verified payload
+  // carries the severity-floor-gated round list as a deferred queue
+  // shape so X.9's graph-walking scheduler (which owns adjudication
+  // dispatch per X-D7) can pick it up. X.8's contract is: the chain
+  // shape lands on the ledger as soon as the mechanical verifier passes;
+  // live adjudication dispatch is X.9's responsibility.
   const adjudicationRounds = ADJUDICATION_CHAIN_BY_SEVERITY[attached.contract.severity_floor] || [];
   const verifiedEvent = appendNodeTransition({
     target_domain: domain,

@@ -101,9 +101,13 @@ test("NODE_STATE_VALUES matches the X.1 vocabulary", () => {
   ]);
 });
 
-test("NODE_STATE_TRANSITIONS matches the X.1 Do step 4 frozen table", () => {
+test("NODE_STATE_TRANSITIONS matches the X.1 table (extended by X.8 rev 4 retry-with-recall)", () => {
   // The table is intentionally narrow; copy it verbatim from the spec so
   // any drift surfaces as a test failure rather than a silent runtime change.
+  // Rev 4 (X.8) extends `failed → contracted` to close the retry-with-recall
+  // workflow: when the operator re-contracts a failed node with a refined
+  // Contract, the brief inlines the prior failure payload via the
+  // `prior_attempt` slice.
   const expected = {
     proposed: ["contracted", "abandoned"],
     contracted: ["ready", "abandoned"],
@@ -112,14 +116,14 @@ test("NODE_STATE_TRANSITIONS matches the X.1 Do step 4 frozen table", () => {
     executed: ["verified", "failed"],
     verified: ["finalized", "failed"],
     finalized: [],
-    failed: [],
+    failed: ["contracted"],
     abandoned: [],
   };
   for (const state of Object.keys(expected)) {
     assert.deepEqual(
       NODE_STATE_TRANSITIONS[state].slice(),
       expected[state],
-      `transitions for ${state} drifted from the X.1 frozen table`,
+      `transitions for ${state} drifted from the X.1/X.8 state table`,
     );
   }
 });
@@ -131,15 +135,20 @@ test("isAllowedNodeTransition accepts in-table pairs and refuses everything else
   assert.equal(isAllowedNodeTransition("dispatched", "executed"), true);
   assert.equal(isAllowedNodeTransition("dispatched", "failed"), true);
   assert.equal(isAllowedNodeTransition("verified", "finalized"), true);
+  // Rev 4 (X.8) retry-with-recall: failed → contracted is the re-contract path.
+  assert.equal(isAllowedNodeTransition("failed", "contracted"), true);
 
   // Out-of-order
   assert.equal(isAllowedNodeTransition("proposed", "ready"), false);
   assert.equal(isAllowedNodeTransition("dispatched", "ready"), false);
   // Skipping verified → finalized via executed → finalized
   assert.equal(isAllowedNodeTransition("executed", "finalized"), false);
-  // Terminal states have no successors
+  // Truly terminal states have no successors
   assert.equal(isAllowedNodeTransition("finalized", "verified"), false);
   assert.equal(isAllowedNodeTransition("abandoned", "proposed"), false);
+  // failed → dispatched (skipping contracted) is still refused.
+  assert.equal(isAllowedNodeTransition("failed", "dispatched"), false);
+  assert.equal(isAllowedNodeTransition("failed", "ready"), false);
 });
 
 test("assertNodeTransitionAllowed throws a structured invalid_node_transition error", () => {

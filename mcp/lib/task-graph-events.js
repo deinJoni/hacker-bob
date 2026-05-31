@@ -52,9 +52,18 @@ const NODE_STATE_VALUES = Object.freeze([
   "abandoned",
 ]);
 
-// X.1 Do step 4: the frozen state-transition table.
-// Append-time enforcement: any (from_state, to_state) pair outside this
-// table is refused with a structured `invalid_node_transition` error.
+// X.1 Do step 4 (extended by X.8 rev 4 for retry-with-recall): the
+// state-transition table. Append-time enforcement: any (from_state,
+// to_state) pair outside this table is refused with a structured
+// `invalid_node_transition` error.
+//
+// Rev 4 (X.8) extension: `failed → contracted` is the operator
+// re-contract path that closes the rev-4 retry-with-recall loop. The
+// X.8 spec line 338 requires `bob_prepare_node` to succeed on a node
+// the operator has re-contracted from a prior failed attempt so the
+// brief's `prior_attempt` slice can surface the prior failure payload.
+// `finalized` and `abandoned` remain terminal — there is no rev-4
+// workflow that re-enters from those states.
 const NODE_STATE_TRANSITIONS = Object.freeze({
   proposed: Object.freeze(["contracted", "abandoned"]),
   contracted: Object.freeze(["ready", "abandoned"]),
@@ -62,11 +71,14 @@ const NODE_STATE_TRANSITIONS = Object.freeze({
   dispatched: Object.freeze(["executed", "failed"]),
   executed: Object.freeze(["verified", "failed"]),
   verified: Object.freeze(["finalized", "failed"]),
-  // Terminal states have no successors. They appear as legal from_states
-  // (so isAllowedNodeTransition can return false) but never as to_states
-  // for any other state in the table above.
+  // `failed` is no longer strictly terminal: the X.8 rev-4
+  // retry-with-recall workflow re-enters via `failed → contracted`
+  // (operator re-contracts with a refined Contract; the prior failure
+  // events stay on the ledger and the prepare_node brief inlines them
+  // via the `prior_attempt` slice). All other prior-rev terminals
+  // (finalized, abandoned) remain terminal.
   finalized: Object.freeze([]),
-  failed: Object.freeze([]),
+  failed: Object.freeze(["contracted"]),
   abandoned: Object.freeze([]),
 });
 

@@ -10,8 +10,10 @@
 //      succeeds; downstream nodes ready
 //   5. mechanical-fail flow → finalize emits failed with structured
 //      failure_reason; downstream not ready
-//   6. re-prepare after failed finalize → brief contains prior_attempt
-//      slice with the prior failure's structured payload
+//   6. retry-with-recall (rev 4): operator re-contracts a failed node via
+//      bob_attach_contract (failed → contracted), re-prepares, the brief
+//      surfaces the prior failure via prior_attempt slice, and the second
+//      finalize succeeds against the refined Contract
 //   7. graph drift detection: mid-run a new edge gets added; fresh
 //      bob_prepare_node produces a different graph_context_hash
 //   8. hypothesis visibility for Surface node with adjacent Hypothesis
@@ -34,7 +36,6 @@ const {
   appendNodeTransition,
   appendTransitionProposal,
   expireStaleDispatchedNodes,
-  findMostRecentNodeTransition,
   readNodeTransitions,
 } = require("../mcp/lib/task-graph-events.js");
 const {
@@ -356,240 +357,136 @@ test("finalize → failed when mechanical verifier rejects; failure_reason carri
 });
 
 // ─── Do step 5 (6): re-prepare carries the prior_attempt slice ──────────
+//
+// End-to-end retry-with-recall workflow (rev 4 spec line 338 + X.12 line 425):
+//   1. Operator proposes a Hypothesis + attaches an initial Contract (state
+//      proposed → contracted).
+//   2. prepare_node → finalize_node fails the mechanical verifier (state
+//      contracted → ready → dispatched → executed → failed).
+//   3. Operator re-contracts the failed node with a refined Contract via
+//      bob_attach_contract. The rev-4 X.8 failed → contracted path lands
+//      the node back in `contracted` while the prior failed event stays on
+//      the ledger.
+//   4. A second prepare_node call succeeds and the brief's `prior_attempt`
+//      slice surfaces the prior failure's structured failure_reason
+//      (including the failed witness_id list per Do step 2 / spec line 327).
+//   5. The second finalize_node call succeeds against the refined Contract.
 
-test("re-prepare after failed finalize inlines prior_attempt slice with structured failure", () => {
+test("retry-with-recall: re-prepare after re-contracting a failed node inlines the prior_attempt slice with structured failure_reason and the second attempt succeeds", () => {
   withTempHome(() => {
-    const domain = "x8-prior-attempt.example.com";
+    const domain = "x8-retry-with-recall.example.com";
     seedSession(domain);
-    const contract = baseContractInput({ contractId: "C-prior", witnessKind: "tool_output_match" });
-    const nodeId = seedContractedNode(domain, "HP-prior", contract);
 
-    // First attempt fails.
+    // (1) Propose a Hypothesis and attach an initial Contract.
+    const initialContract = baseContractInput({
+      contractId: "C-rwr-attempt-1",
+      witnessKind: "tool_output_match",
+      // Expect status 200; the first attempt will produce status 500 so
+      // the mechanical verifier surfaces tool_output_did_not_match.
+      predicate: { tool: KNOWN_TOOL, match: { path: "$.status", equals: 200 } },
+    });
+    const nodeId = seedContractedNode(domain, "HP-rwr", initialContract);
+
+    // (2) First attempt — fails the mechanical verifier.
     const prep1 = JSON.parse(TOOL_HANDLERS.bob_prepare_node({
       target_domain: domain,
       node_id: nodeId,
     }));
-    TOOL_HANDLERS.bob_finalize_node({
+    const fin1 = JSON.parse(TOOL_HANDLERS.bob_finalize_node({
       target_domain: domain,
       node_id: nodeId,
       prep_token: prep1.prep_token,
       agent_output: {
         tool_invocations: [{ tool: KNOWN_TOOL, output: { status: 500 } }],
       },
+    }));
+    assert.equal(fin1.to_state, "failed");
+    assert.equal(fin1.failure_reason.reason, "mechanical_verifier_failed");
+    // Capture the prior failure's witness_id so we can assert the
+    // prior_attempt slice surfaces the same structured payload below.
+    const priorWitnessFailure = fin1.failure_reason.failures.find((f) => f.witness_id === "W1");
+    assert.ok(priorWitnessFailure, "expected first attempt to fail witness W1");
+    assert.equal(priorWitnessFailure.reason, "tool_output_did_not_match");
+
+    // Sanity: live state on the materialized graph is `failed`.
+    materializeTaskGraph(domain, { write: true });
+    let liveDoc = materializeTaskGraph(domain, { write: false }).document;
+    let liveNode = liveDoc.nodes.find((n) => n.node_id === nodeId);
+    assert.equal(liveNode.state, "failed");
+
+    // (3) Operator re-contracts via bob_attach_contract with a refined
+    // Contract. The rev-4 X.8 failed → contracted path is the
+    // retry-with-recall re-contract entry. The refined Contract uses a
+    // DIFFERENT predicate (e.g., a different artifact_ref pair, per X.12)
+    // — here we tighten the status check to 200 OR 201 (still expects 200
+    // but the refined Contract is keyed on a new id so the hash differs).
+    const refinedContract = baseContractInput({
+      contractId: "C-rwr-attempt-2-refined",
+      witnessKind: "tool_output_match",
+      predicate: { tool: KNOWN_TOOL, match: { path: "$.status", equals: 200 } },
     });
+    const reAttach = JSON.parse(TOOL_HANDLERS.bob_attach_contract({
+      target_domain: domain,
+      node_id: nodeId,
+      contract: refinedContract,
+    }));
+    assert.equal(reAttach.from_state, "failed", "re-contract emits failed → contracted");
+    assert.equal(reAttach.to_state, "contracted");
+    assert.notEqual(reAttach.contract_hash, prep1.contract_hash, "refined Contract must have a new contract_hash");
 
-    // Operator manually re-contracts: the spec says "operator re-contracts the
-    // failed node with a refined Contract". For X.8 we simulate by emitting
-    // failed → ... transitions are not allowed (terminal). The spec actually
-    // says the OPERATOR re-contracts a failed node which requires a separate
-    // node id (a new proposal). For the prior_attempt test we instead simulate
-    // a node that has BOTH a failed transition AND a fresh dispatched state on
-    // the same id. The reaper test below proves the failed state is terminal;
-    // for the prior_attempt slice rendering we directly emit a new node and
-    // contract, but re-use the SAME failure payload via the brief's
-    // prior_attempt slice when it shares the node id. Since the spec says
-    // re-prepare on a failed node, we test the slice rendering by emitting a
-    // fresh node and asserting the prior_attempt slice can surface the most
-    // recent failure event for THAT node id.
-    //
-    // Actual workflow: when the agent retries, the new node is a NEW TG-H-<id>
-    // proposed by the operator. The prior_attempt slice fires on the FRESH
-    // node id ONLY when a prior failure event exists for that same id. The
-    // common operational path is: (a) operator abandons the failed node and
-    // proposes a new one, OR (b) operator re-uses the same node id by
-    // re-contracting via a fresh proposal flow.
-    //
-    // For this test we directly seed the prior failure events on the SAME
-    // node id, then re-prepare via the same flow. We bypass the state-machine
-    // check by manually appending a node.transitioned that resets the node.
-    //
-    // NOTE: in production X.10 will document the operator re-attempt flow.
+    materializeTaskGraph(domain, { write: true });
+    liveDoc = materializeTaskGraph(domain, { write: false }).document;
+    liveNode = liveDoc.nodes.find((n) => n.node_id === nodeId);
+    assert.equal(liveNode.state, "contracted", "re-contracted node is in contracted state");
 
-    // Confirm the failure event is on disk.
-    const lastFailed = findMostRecentNodeTransition(domain, nodeId, "failed");
-    assert.ok(lastFailed, "expected a failed event from the first attempt");
+    // (4) Second prepare_node call — the brief MUST inline the prior
+    // failure via the prior_attempt slice.
+    const prep2 = JSON.parse(TOOL_HANDLERS.bob_prepare_node({
+      target_domain: domain,
+      node_id: nodeId,
+    }));
+    assert.ok(prep2.brief.prior_attempt, "prior_attempt slice MUST be present on re-prepare after a prior failed attempt");
+    assert.ok(Array.isArray(prep2.brief.prior_attempt.attempts), "prior_attempt.attempts must be an array");
+    assert.ok(prep2.brief.prior_attempt.attempts.length >= 1, "at least one prior attempt must be surfaced");
+    const surfacedFailure = prep2.brief.prior_attempt.attempts[0];
+    assert.equal(surfacedFailure.failure_reason.reason, "mechanical_verifier_failed",
+      "prior_attempt slice surfaces the structured failure_reason from the prior finalize");
+    assert.ok(Array.isArray(surfacedFailure.failure_reason.failures),
+      "prior_attempt.attempts[0].failure_reason.failures[] must carry the prior witness failures");
+    const surfacedWitnessFailure = surfacedFailure.failure_reason.failures.find((f) => f.witness_id === "W1");
+    assert.ok(surfacedWitnessFailure, "prior_attempt surfaces the same witness_id (W1) that failed on the first attempt");
+    assert.equal(surfacedWitnessFailure.reason, "tool_output_did_not_match");
 
-    // Seed a fresh contracted node sharing surface_refs so that the
-    // prior_attempt slice rendering can be exercised on the SAME nodeId.
-    // We append a new contracted transition under a fresh proposal that
-    // reuses the failed node id via a manual transition path. Because the
-    // state-transition table forbids failed → contracted, we instead test
-    // the slice render by exercising the helper directly on a node id that
-    // has a prior failure.
-    //
-    // The helper findMostRecentNodeTransition + collectPriorAttempts (called
-    // by the brief renderer) operate on the node id; calling them through
-    // the prepare_node tool requires the node to be in contracted/ready state.
-    // Per the spec's "operator re-contracts the failed node" semantics, the
-    // simplest faithful test is: directly verify the brief context inlines
-    // the prior_attempt payload when assembled for a node with a prior failure.
-    // We do that by introspecting the prepare-node module's exported helpers.
+    // The contract hash on the brief is the REFINED Contract's hash, not
+    // the prior one — the brief is grounded in the current Contract.
+    assert.equal(prep2.brief.recap_and_handoff.contract_hash, reAttach.contract_hash);
 
-    const prepareNode = require("../mcp/lib/tools/prepare-node.js");
-    // The handler refuses (state is failed) — but we can confirm the
-    // collector returns the prior failure payload directly.
-    let caught = null;
-    try {
-      prepareNode.handler({ target_domain: domain, node_id: nodeId });
-    } catch (err) { caught = err; }
-    assert.ok(caught, "expected refusal because the node is in failed state");
-    assert.equal(caught.code, "node_not_dispatch_ready");
+    // (5) Second finalize_node — succeeds against the refined Contract.
+    const fin2 = JSON.parse(TOOL_HANDLERS.bob_finalize_node({
+      target_domain: domain,
+      node_id: nodeId,
+      prep_token: prep2.prep_token,
+      agent_output: {
+        // This time the tool_output_match witness will pass.
+        tool_invocations: [{ tool: KNOWN_TOOL, output: { status: 200 } }],
+      },
+    }));
+    assert.equal(fin2.to_state, "finalized",
+      `second finalize should succeed: ${JSON.stringify(fin2.mechanical_verdict || fin2.failure_reason)}`);
+    assert.equal(fin2.mechanical_verdict.satisfied, true);
 
-    // Validate the prior_attempt payload directly via the helper export
-    // contract: read the failed events and assert the structured failure
-    // is recoverable. This proves the data the brief renderer would inline.
-    const events = readNodeTransitions(domain);
-    const failed = events.filter(
+    // Sanity: the prior failure is still on the ledger so future operators
+    // can audit the retry history.
+    const allFailures = readNodeTransitions(domain).filter(
       (e) => e.payload && e.payload.node_id === nodeId && e.payload.to_state === "failed",
     );
-    assert.equal(failed.length, 1);
-    assert.equal(failed[0].payload.failure_reason.reason, "mechanical_verifier_failed");
-    assert.ok(Array.isArray(failed[0].payload.failure_reason.failures));
-    assert.ok(failed[0].payload.failure_reason.failures.find((f) => f.witness_id === "W1"));
-  });
-});
+    assert.equal(allFailures.length, 1, "the prior failure event remains on the ledger");
 
-// Direct slice exercise — re-prepare with a fresh contracted node id whose
-// failure events were seeded on it. This exercises the brief renderer's
-// prior_attempt slice path end-to-end.
-test("prior_attempt slice renders when a fresh dispatched node shares an id with a prior failure", () => {
-  withTempHome(() => {
-    const domain = "x8-prior-slice.example.com";
-    seedSession(domain);
-    // Seed a node and run it to failed.
-    const contract = baseContractInput({ contractId: "C-slice", witnessKind: "tool_output_match" });
-    const nodeId = seedContractedNode(domain, "HP-slice", contract);
-    const prep1 = JSON.parse(TOOL_HANDLERS.bob_prepare_node({
-      target_domain: domain,
-      node_id: nodeId,
-    }));
-    TOOL_HANDLERS.bob_finalize_node({
-      target_domain: domain,
-      node_id: nodeId,
-      prep_token: prep1.prep_token,
-      agent_output: {
-        tool_invocations: [{ tool: KNOWN_TOOL, output: { status: 500 } }],
-      },
-    });
-    // Manually bypass the state machine: re-emit the node into contracted
-    // state via a fresh proposal AND a fresh contracted transition that
-    // shares the id. We append a separate Hypothesis proposal pointing at
-    // the same TG-H- id, then attach a fresh Contract. This simulates an
-    // operator-driven retry workflow.
-    appendHypothesisProposal({
-      target_domain: domain,
-      ts: "2026-05-31T01:00:00.000Z",
-      hypothesis_statement: "Re-attempt with refined Contract.",
-      surface_refs: ["surface:auth"],
-      proposal_id: "HP-slice-retry",
-    });
+    // The reaper-style sanity: the live materialized state is finalized.
     materializeTaskGraph(domain, { write: true });
-    const retryNodeId = `${TASK_GRAPH_NODE_ID_PREFIX}H-HP-slice-retry`;
-    // Append a fresh failure event under the retryNodeId so the brief's
-    // prior_attempt collector returns it on re-prepare.
-    appendNodeTransition({
-      target_domain: domain,
-      node_id: retryNodeId,
-      from_state: "proposed",
-      to_state: "contracted",
-      contract_hash: "deadbeef".repeat(8),
-    });
-    // Now also append a synthetic prior failure for retryNodeId. The
-    // state-transition table forbids contracted → failed directly, so we
-    // synthesize the prior failure as a separate event by walking through
-    // a fake lifecycle. Per the spec the prior_attempt slice fires on ANY
-    // prior failed transition for the node id; we test that property by
-    // emitting the chain contracted → ready → dispatched → executed → failed.
-    appendNodeTransition({
-      target_domain: domain,
-      node_id: retryNodeId,
-      from_state: "contracted",
-      to_state: "ready",
-    });
-    appendNodeTransition({
-      target_domain: domain,
-      node_id: retryNodeId,
-      from_state: "ready",
-      to_state: "dispatched",
-      prep_token_hash: "synthetic-old-token-hash",
-    });
-    appendNodeTransition({
-      target_domain: domain,
-      node_id: retryNodeId,
-      from_state: "dispatched",
-      to_state: "executed",
-    });
-    appendNodeTransition({
-      target_domain: domain,
-      node_id: retryNodeId,
-      from_state: "executed",
-      to_state: "failed",
-      failure_reason: { reason: "mechanical_verifier_failed", note: "synthetic prior" },
-    });
-    // Now propose another retry on a fresh node id to exercise the slice
-    // collector path under prepare_node — this time the node is contracted
-    // and dispatch-ready. We use a third proposal id to avoid colliding
-    // with the failed-terminal state.
-    appendHypothesisProposal({
-      target_domain: domain,
-      ts: "2026-05-31T02:00:00.000Z",
-      hypothesis_statement: "Second retry.",
-      surface_refs: ["surface:auth"],
-      proposal_id: "HP-slice-retry-2",
-    });
-    materializeTaskGraph(domain, { write: true });
-    const retry2NodeId = `${TASK_GRAPH_NODE_ID_PREFIX}H-HP-slice-retry-2`;
-    appendContract({
-      target_domain: domain,
-      node_id: retry2NodeId,
-      contract: baseContractInput({ contractId: "C-slice-retry-2" }),
-    });
-    materializeTaskGraph(domain, { write: true });
-
-    // Append a synthetic prior failure for retry2NodeId so the slice fires.
-    // We bend the state machine: emit a sequence that lands at failed, then
-    // re-prepare via a state we set manually for testing.
-    appendNodeTransition({
-      target_domain: domain,
-      node_id: retry2NodeId,
-      from_state: "contracted",
-      to_state: "ready",
-    });
-    appendNodeTransition({
-      target_domain: domain,
-      node_id: retry2NodeId,
-      from_state: "ready",
-      to_state: "dispatched",
-      prep_token_hash: "synthetic-old-token-hash-2",
-    });
-    appendNodeTransition({
-      target_domain: domain,
-      node_id: retry2NodeId,
-      from_state: "dispatched",
-      to_state: "executed",
-    });
-    appendNodeTransition({
-      target_domain: domain,
-      node_id: retry2NodeId,
-      from_state: "executed",
-      to_state: "failed",
-      failure_reason: {
-        reason: "mechanical_verifier_failed",
-        failures: [{ witness_id: "W1", reason: "tool_output_did_not_match" }],
-      },
-    });
-    materializeTaskGraph(domain, { write: true });
-    // Final state is failed — re-prepare must refuse, but we can confirm
-    // the prior_attempt collector returns the structured payload by reading
-    // events directly. This proves the brief renderer's data source.
-    const events = readNodeTransitions(domain);
-    const priorFailures = events.filter(
-      (e) => e.payload && e.payload.node_id === retry2NodeId && e.payload.to_state === "failed",
-    );
-    assert.ok(priorFailures.length >= 1);
-    const lastFailure = priorFailures[priorFailures.length - 1];
-    assert.equal(lastFailure.payload.failure_reason.reason, "mechanical_verifier_failed");
-    assert.ok(Array.isArray(lastFailure.payload.failure_reason.failures));
+    liveDoc = materializeTaskGraph(domain, { write: false }).document;
+    liveNode = liveDoc.nodes.find((n) => n.node_id === nodeId);
+    assert.equal(liveNode.state, "finalized");
   });
 });
 

@@ -75,11 +75,19 @@ const {
 } = require("../assignment-brief.js");
 
 // X.8 Do step 1: only nodes in state contracted or ready may be prepared.
-// `ready` is reserved for X.9's graph-scheduler — the X.4 attach path lands
-// the node in `contracted`. Both states are dispatch-legal because the
-// frozen state-transition table permits ready → dispatched as well; X.8
-// keeps both legal so the X.9 scheduler can dispatch without re-emitting
-// an interim transition.
+// `ready` is reserved for X.9's graph-scheduler — the X.4 attach path
+// lands the node in `contracted`. Both states are dispatch-legal because
+// the frozen state-transition table permits ready → dispatched as well;
+// X.8 keeps both legal so the X.9 scheduler can dispatch without
+// re-emitting an interim transition.
+//
+// Rev 4 retry-with-recall workflow (spec line 338): when a prior attempt
+// landed the node in `failed`, the operator re-contracts via
+// bob_attach_contract (the rev-4 failed → contracted path) which lands
+// the node back in `contracted`. At that point prepare_node accepts it
+// here; the prior failure events stay on the ledger so
+// collectPriorAttempts surfaces them in the brief's `prior_attempt`
+// slice automatically.
 const PREPARE_NODE_LEGAL_STATES = Object.freeze(["contracted", "ready"]);
 
 // Cap the adjacent-observations slice to the most recent N events whose
@@ -653,9 +661,13 @@ module.exports = Object.freeze({
     + "detectable. Emits node.transitioned (contracted | ready) → dispatched "
     + "with prep_token in payload. Per X-P9 the brief inlines DISTILLED "
     + "SUMMARIES of recommended_reads — never bodies; the agent calls "
-    + "bob_resolve_body for bodies. Refuses on state ∉ {contracted, ready} or "
-    + "when no Contract is attached. Orchestrator + graph-scheduler only (X.9 "
-    + "ships the graph-scheduler bundle).",
+    + "bob_resolve_body for bodies. When the node has prior "
+    + "node.transitioned → failed events on the ledger (rev-4 retry-with-recall "
+    + "workflow: operator re-contracted a failed node via bob_attach_contract), "
+    + "the brief surfaces the prior failure payloads in the `prior_attempt` "
+    + "slice so the agent reasons against the prior verdict. Refuses on state "
+    + "∉ {contracted, ready} or when no Contract is attached. Orchestrator + "
+    + "graph-scheduler only (X.9 ships the graph-scheduler bundle).",
   inputSchema: {
     type: "object",
     properties: {

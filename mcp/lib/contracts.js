@@ -687,6 +687,15 @@ function defaultLookupNodeState(targetDomain, nodeId) {
 // state-transition table; appendContract layers in the per-attempt
 // "node is actually in proposed" check that operators rely on.
 
+// States from which `appendContract` may emit a contracted event.
+// `proposed` is the default attach path (X.4). `failed` is the X.8 rev-4
+// retry-with-recall re-contract path: the operator attaches a refined
+// Contract to a failed node so the next prepare_node call can surface
+// the prior failure via the brief's `prior_attempt` slice. Other states
+// (contracted/ready/dispatched/executed/verified/finalized/abandoned)
+// continue to refuse with `node_not_proposed`.
+const APPEND_CONTRACT_LEGAL_FROM_STATES = Object.freeze(["proposed", "failed"]);
+
 function appendContract(input, options = {}) {
   if (!isPlainObject(input)) {
     throw new Error("appendContract input must be an object");
@@ -700,20 +709,32 @@ function appendContract(input, options = {}) {
 
   // Live state check. The default lookup folds the materialized graph;
   // tests + the attach-contract tool can pass options.lookup_node_state
-  // to short-circuit the read or to inject a fixture.
+  // to short-circuit the read or to inject a fixture. The legal from_states
+  // are {proposed, failed}: rev 4 X.8 retry-with-recall extends the prior
+  // X.4 proposed-only path with the failed re-contract entry so the
+  // operator can attach a refined Contract to a failed node without first
+  // abandoning it.
   const lookup = typeof options.lookup_node_state === "function"
     ? options.lookup_node_state
     : defaultLookupNodeState;
   const existing = lookup(targetDomain, nodeId);
-  if (existing && existing.state !== "proposed") {
+  const fromState = existing ? existing.state : "proposed";
+  if (existing && !APPEND_CONTRACT_LEGAL_FROM_STATES.includes(fromState)) {
     // Surface the same node_not_proposed code the attach-contract tool
     // emits at the outer layer; callers reading both layers see a
-    // consistent code regardless of which guard fired first.
+    // consistent code regardless of which guard fired first. The code
+    // name (`node_not_proposed`) is preserved for backwards compatibility
+    // with X.4 callers; the message + details surface the rev-4
+    // alternative legal state explicitly.
     const err = new Error(
-      `node_not_proposed: node ${nodeId} is in state "${existing.state}"; appendContract requires state "proposed"`,
+      `node_not_proposed: node ${nodeId} is in state "${fromState}"; appendContract requires one of [${APPEND_CONTRACT_LEGAL_FROM_STATES.join(", ")}]`,
     );
     err.code = "node_not_proposed";
-    err.details = { node_id: nodeId, current_state: existing.state };
+    err.details = {
+      node_id: nodeId,
+      current_state: fromState,
+      legal_from_states: APPEND_CONTRACT_LEGAL_FROM_STATES.slice(),
+    };
     throw err;
   }
 
@@ -726,10 +747,16 @@ function appendContract(input, options = {}) {
   // X-P9 (invariants ≤ 280 chars each, predicates structured, production
   // paths description-bounded) so inlining stays comfortably under the
   // X-P9 2KB hard cap on payload bodies.
+  //
+  // When `fromState === "failed"`, the emitted transition is
+  // failed → contracted (the rev-4 retry-with-recall re-contract path).
+  // The prior dispatched/executed/failed event chain stays untouched on
+  // the ledger so the prepare_node brief's `prior_attempt` slice can
+  // surface the prior structured failure_reason payload verbatim.
   const event = appendNodeTransition({
     target_domain: targetDomain,
     node_id: nodeId,
-    from_state: "proposed",
+    from_state: fromState,
     to_state: "contracted",
     contract_hash: contract.contract_hash,
     contract,
@@ -741,10 +768,12 @@ function appendContract(input, options = {}) {
   return {
     event,
     contract,
+    from_state: fromState,
   };
 }
 
 module.exports = {
+  APPEND_CONTRACT_LEGAL_FROM_STATES,
   ARTIFACT_REF_PREFIX_VALUES,
   ARTIFACT_REF_RE,
   INVARIANT_STATEMENT_MAX_CHARS,
