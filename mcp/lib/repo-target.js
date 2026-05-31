@@ -169,6 +169,42 @@ function attackVectorForSurface(surfaceType, networkReachable) {
   return "local";
 }
 
+// Per-path reachability attribution. The repo-wide severity_ceiling stays the
+// best-case (max-credible) ceiling; this map tells the hunter WHICH files/dirs
+// carry the listener (pursue the CRITICAL primitive there) and which native dirs
+// look local-only (record an honest MEDIUM), so a repo that is both a daemon and
+// a pile of local parsers is not blanket-steered with one verdict. Flat string
+// arrays only — the brief copies scalars/arrays by default but skips objects.
+const REACH_ANCHOR_PREFIXES = ["net_call:", "server_path:", "systemd_unit:", "expose:"];
+
+function dirPrefixesAtDepth(files, maxDepth, cap) {
+  const dirs = new Set();
+  for (const file of files) {
+    if (!file.includes("/")) continue;
+    const parts = file.split("/");
+    dirs.add(parts.slice(0, Math.min(maxDepth, parts.length - 1)).join("/"));
+  }
+  return Array.from(dirs).slice(0, cap);
+}
+
+function reachabilityAttribution(signals, nativeFiles) {
+  const anchors = [];
+  for (const signal of signals) {
+    const prefix = REACH_ANCHOR_PREFIXES.find((p) => signal.startsWith(p));
+    if (prefix) anchors.push(signal.slice(prefix.length));
+  }
+  const anchorFiles = Array.from(new Set(anchors));
+  const reachableDirs = dirPrefixesAtDepth(anchorFiles, 2, 20);
+  const localDirs = dirPrefixesAtDepth(nativeFiles, 2, 200).filter(
+    (dir) => !reachableDirs.some((rd) => dir === rd || dir.startsWith(`${rd}/`) || rd.startsWith(`${dir}/`)),
+  ).slice(0, 20);
+  return {
+    network_reachable_anchors: anchorFiles.slice(0, 20),
+    network_reachable_dirs: reachableDirs,
+    local_only_candidate_dirs: localDirs,
+  };
+}
+
 // Scan a repo for evidence of an in-process network listener that could feed
 // attacker-controlled input into a parser. Bounded I/O: priority files first
 // (path/name suggests a server), then a capped fallback sweep of native files.
@@ -210,9 +246,12 @@ function detectNetworkReachability(repoPath, files) {
       if (NETWORK_CONTENT_RE.test(text) || NETWORK_SOCKET_RE.test(text)) { signals.push(`net_call:${file}`); netHit = true; break; }
     }
   }
+  const signalsOut = Array.from(new Set(signals)).slice(0, 14);
+  const reachable = netHit || signals.some((s) => s.startsWith("systemd_unit:"));
   return {
-    network_reachable: netHit || signals.some((s) => s.startsWith("systemd_unit:")),
-    signals: Array.from(new Set(signals)).slice(0, 14),
+    network_reachable: reachable,
+    signals: signalsOut,
+    attribution: reachable ? reachabilityAttribution(signalsOut, nativeFiles) : null,
   };
 }
 
@@ -494,7 +533,7 @@ function hasAny(files, predicate) {
 function makeSurface({
   id, title, surfaceType, priority, files, techStack, bugHints, flows, evidence,
   params = [], networkReachable = false, attackVector = null, severityCeiling = null,
-  residualHuntTargets = null,
+  residualHuntTargets = null, attribution = null,
 }) {
   const ceiling = severityCeiling || severityCeilingForSurface(surfaceType, networkReachable);
   const vector = attackVector || attackVectorForSurface(surfaceType, networkReachable);
@@ -523,6 +562,16 @@ function makeSurface({
   };
   if (Array.isArray(residualHuntTargets) && residualHuntTargets.length > 0) {
     surface.residual_hunt_targets = residualHuntTargets.slice(0, 20);
+  }
+  // Per-path attack-vector hints (flat string arrays so they ride the brief's
+  // copy-by-default path). The best-case severity_ceiling above is unchanged;
+  // these only tell the hunter which paths justify AV:N vs which look AV:L.
+  if (attribution && typeof attribution === "object") {
+    for (const field of ["network_reachable_anchors", "network_reachable_dirs", "local_only_candidate_dirs"]) {
+      if (Array.isArray(attribution[field]) && attribution[field].length > 0) {
+        surface[field] = attribution[field].slice(0, 20);
+      }
+    }
   }
   return surface;
 }
@@ -608,6 +657,7 @@ function buildRepoInventory(args) {
       // crowd out a genuine daemon/server surface.
       priority: reach.network_reachable ? "HIGH" : "MEDIUM",
       networkReachable: reach.network_reachable,
+      attribution: reach.attribution,
       residualHuntTargets,
       files: nativeFiles,
       techStack,
@@ -709,6 +759,7 @@ function buildRepoInventory(args) {
       network_reachable: surface.network_reachable,
     })),
     signals: reach.signals,
+    native_attack_vector_map: reach.attribution,
   };
 
   const inventory = {

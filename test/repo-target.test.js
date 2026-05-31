@@ -573,3 +573,38 @@ test("reachability detects digit-typed XDR primitives (xdr_uint32_t / xdr_int64_
   assert.equal(inventory.reachability.network_reachable, true, "xdr_uint32_t/xdr_int64_t must flip reachability");
   assert.equal(inventory.reachability.max_credible_severity_ceiling, "critical");
 }));
+
+test("reachability attributes per-path anchors (AV:N) and local-only dirs (AV:L) within one native surface", () => withTempHome((home) => {
+  // A repo that is BOTH a daemon AND a local-file parser: the surface ceiling
+  // stays best-case (CRITICAL), but the per-path map tells the hunter the daemon
+  // dir is the AV:N target and the parser dir is an AV:L candidate (#7).
+  const repo = path.join(home, "daemon-plus-parser");
+  fs.mkdirSync(repo, { recursive: true });
+  writeFile(repo, "CMakeLists.txt", "cmake_minimum_required(VERSION 3.22)\nproject(mixed C)\n");
+  writeFile(repo, "daemon/server.c", [
+    "#include <sys/socket.h>",
+    "#include <netinet/in.h>",
+    "int serve(void){",
+    "  int fd = socket(AF_INET, SOCK_STREAM, 0);",
+    "  struct sockaddr_in a; a.sin_addr.s_addr = INADDR_ANY;",
+    "  listen(fd, 16);",
+    "  return fd;",
+    "}",
+    "",
+  ].join("\n"));
+  writeFile(repo, "parsers/conf.c", "int parse_conf(const char *b, int n){ return n > 0 ? b[0] : 0; }\n");
+
+  const init = JSON.parse(initRepoSession({ repo_path: repo, target_domain: "repo-daemon-plus-parser" }));
+  const inventory = JSON.parse(buildRepoInventory({ target_domain: init.target_domain }));
+  assert.equal(inventory.reachability.network_reachable, true);
+  assert.equal(inventory.reachability.max_credible_severity_ceiling, "critical");
+  assert.ok(inventory.reachability.native_attack_vector_map, "inventory exposes the per-path map");
+
+  const surfaces = JSON.parse(fs.readFileSync(attackSurfacePath(init.target_domain), "utf8")).surfaces;
+  const native = surfaces.find((surface) => surface.id === "OSS-NATIVE-CODE");
+  assert.equal(native.severity_ceiling, "critical", "surface ceiling stays best-case");
+  assert.ok(native.network_reachable_anchors.includes("daemon/server.c"), "daemon file is a network anchor");
+  assert.ok(native.network_reachable_dirs.includes("daemon"), "daemon dir flagged AV:N");
+  assert.ok(native.local_only_candidate_dirs.includes("parsers"), "parser dir flagged AV:L candidate");
+  assert.ok(!native.local_only_candidate_dirs.includes("daemon"), "daemon dir is not a local-only candidate");
+}));
