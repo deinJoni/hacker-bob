@@ -123,6 +123,59 @@ const OSS_TECHNIQUE_PACKS = Object.freeze([
   }),
 ]);
 
+// ── Plane X Cycle X.5 — cross-stack identity-handoff technique pack ────────
+// Carries the hunting vocabulary that exercises the X.5 / X.11 cross-stack
+// thesis (the "Nike fix"): off-chain identity asserted by an auth artifact
+// (JWT / signed envelope) must propagate to on-chain identity in a way the
+// on-chain code can rely on without trust. Most cross-stack bugs live in the
+// silent assumption that "the wallet I see in tx is the same principal that
+// minted the JWT". `lens_affinity` covers the X.3 transition surface kinds
+// directly so the X.8 brief renderer can foreground this pack whenever the
+// dispatched node is a Transition (X.5 derivePackForNode UNION-includes it
+// for every Transition; the lens_affinity surfaces it for Surface and
+// Hypothesis briefs that touch identity_propagation / trust_handoff
+// adjacency too).
+//
+// Per X-P9 the `summary` is the brief-inlinable form; `full` keeps the
+// production-grade prompt the brief renderer pulls when the operator opts
+// into full-pack reads. Both stay short — under the 280-char invariant /
+// 512-char trust_assumption prose discipline applied across Plane X — so a
+// transition brief with this pack stays under the X-P9 brief budget by
+// construction.
+const WEB3_IDENTITY_HANDOFF_TECHNIQUE_PACK = Object.freeze({
+  id: "web3_identity_handoff",
+  title: "Cross-stack identity / trust handoff",
+  lens_affinity: Object.freeze([
+    "identity_propagation",
+    "value_movement",
+    "trust_handoff",
+    "state_dependency",
+    "oracle_dependency",
+    "message_passing",
+  ]),
+  summary:
+    "token-to-wallet correlation, off-chain auth assumption used as on-chain trust, signature recovery accepting forged eth_sign, meta-transaction replay, gas relayer permission escalation, message-bridge validator threshold under-set.",
+  full:
+    "Cross-stack identity / trust handoff hunting checklist:\n"
+    + "- token-to-wallet correlation: does the JWT.sub (or session principal) match the on-chain msg.sender / recovered signer? Mismatch = identity-propagation bug.\n"
+    + "- off-chain auth assumption used as on-chain trust: contract accepts an action because some off-chain service signed for it (oracle, relayer, custodian) — does the contract verify a signature bound to the OFF-CHAIN identity?\n"
+    + "- signature recovery accepting forged eth_sign: ecrecover over user-controlled prefix bytes; \\x19Ethereum Signed Message:\\n vs EIP-712 vs raw — wrong prefix → cross-domain replay.\n"
+    + "- meta-transaction replay: nonce per (signer, relayer) vs per signer; chainId binding; deadline; same signature replayable on fork chain.\n"
+    + "- gas relayer permission escalation: relayer wraps user-signed payload but adds its own privileged calldata after the boundary check.\n"
+    + "- message-bridge validator threshold under-set: validator set / DVN threshold defined off-chain or by a role that can be re-keyed without a freeze period.\n"
+    + "Witness this with relational_value_match: left = off-chain artifact (http_record, JWT.sub or signed envelope.signer), right = on-chain artifact (evm_call, recover_signer result or msg.sender). op: eq.",
+});
+
+const TECHNIQUE_PACKS_BY_ID = Object.freeze({
+  ...Object.fromEntries(OSS_TECHNIQUE_PACKS.map((pack) => [pack.id, pack])),
+  [WEB3_IDENTITY_HANDOFF_TECHNIQUE_PACK.id]: WEB3_IDENTITY_HANDOFF_TECHNIQUE_PACK,
+});
+
+function getTechniquePackById(packId) {
+  if (typeof packId !== "string" || !packId.trim()) return null;
+  return TECHNIQUE_PACKS_BY_ID[packId.trim()] || null;
+}
+
 // Technique-pack id alias map. MVP wisdom about id-typo recovery: the MVP
 // branch shipped packs under longer descriptive ids (e.g.
 // `oss-native-code-c-parser-review`) and operators / docs reference them by
@@ -1243,4 +1296,8 @@ module.exports = {
   OSS_TECHNIQUE_PACK_ID_ALIASES,
   findOssTechniquePack,
   resolveOssTechniquePackId,
+  // Cycle X.5 — cross-stack identity-handoff technique pack + lookup helper.
+  WEB3_IDENTITY_HANDOFF_TECHNIQUE_PACK,
+  TECHNIQUE_PACKS_BY_ID,
+  getTechniquePackById,
 };
