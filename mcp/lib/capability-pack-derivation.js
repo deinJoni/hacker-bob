@@ -43,9 +43,18 @@ const {
 const {
   TASK_GRAPH_NODE_ID_PREFIX,
 } = require("./task-graph-events.js");
-const {
-  toolNamesForRoleBundle,
-} = require("./tool-registry.js");
+// tool-registry.js eagerly loads every tool module via tools/index.js;
+// tools that themselves require capability-pack-derivation (e.g. X.8's
+// prepare-node) create a module-load cycle when this file requires
+// tool-registry at top scope. We lazy-resolve toolNamesForRoleBundle on
+// first call so the registry has fully materialized by then.
+let _toolNamesForRoleBundleCache = null;
+function toolNamesForRoleBundle(roleBundle) {
+  if (_toolNamesForRoleBundleCache == null) {
+    _toolNamesForRoleBundleCache = require("./tool-registry.js").toolNamesForRoleBundle;
+  }
+  return _toolNamesForRoleBundleCache(roleBundle);
+}
 
 // ─── Constants (frozen) ──────────────────────────────────────────────────
 

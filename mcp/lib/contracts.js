@@ -720,12 +720,19 @@ function appendContract(input, options = {}) {
   const source = normalizeOptionalObject(input.source, "source");
   const actor = normalizeOptionalText(input.actor, "actor");
 
+  // X.8 — inline the FULL normalized Contract content in the node.transitioned
+  // payload so the X.8 prepare_node brief renderer can recover the Contract
+  // without a separate persistence layer. The Contract is summary-grade per
+  // X-P9 (invariants ≤ 280 chars each, predicates structured, production
+  // paths description-bounded) so inlining stays comfortably under the
+  // X-P9 2KB hard cap on payload bodies.
   const event = appendNodeTransition({
     target_domain: targetDomain,
     node_id: nodeId,
     from_state: "proposed",
     to_state: "contracted",
     contract_hash: contract.contract_hash,
+    contract,
     ts: input.ts,
     source: source || undefined,
     actor: actor || undefined,

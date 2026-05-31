@@ -351,10 +351,53 @@ const OSS_BRIEF_SLICE_REGISTRY = Object.freeze([
   briefSliceEntry("recap_and_handoff", 2048, (context) => context.recapAndHandoff),
 ]);
 
+// Plane X Cycle X.8 — `node` profile slice registry. The X.8 bob_prepare_node
+// tool renders the per-node brief via this registry (separate from the
+// wave-scheduler readAssignmentBrief path because TaskGraph dispatch carries
+// its own context: a Contract, a derived capability pack, ≤1-hop adjacency,
+// and structured recall slices for prior_attempt + adjacent_hypotheses +
+// recommended_reads). Slices are listed in the spec's Do step 1 order:
+//
+//   1. governance               — common operator-facing context
+//   2. node_context             — node_id, kind, surface_refs, severity_floor,
+//                                 graph_context_hash
+//   3. contract                 — the FULL Contract inlined (already distilled
+//                                 per X-D4 + X-P9)
+//   4. allowed_tools_for_node   — the per-node tool-allow-list constraint
+//   5. recommended_reads        — distilled summary of each artifact_ref the
+//                                 agent should ground reasoning in
+//   6. adjacent_observations    — recent observation.recorded events at
+//                                 ≤1-hop; each already summary-grade per X-P9
+//   7. prior_attempt            — conditional: when a prior node.transitioned
+//                                 → failed exists for the node, surface its
+//                                 structured failure_reason + witness ids
+//   8. adjacent_hypotheses      — conditional for Surface + Transition: open
+//                                 Hypothesis nodes overlapping the dispatched
+//                                 node's surfaces
+//   9. recap_and_handoff        — handoff stanza
+//
+// Conditional slices return an empty string when the condition does not hold;
+// the registry assembly drops empty-string slices so the brief stays absent
+// rather than carrying an empty header (T-R1 inflation guard).
+const NODE_BRIEF_SLICE_REGISTRY = Object.freeze([
+  briefSliceEntry("governance", 1024, (context) => context.governance),
+  briefSliceEntry("node_context", 1024, (context) => context.nodeContext),
+  briefSliceEntry("contract", 4096, (context) => context.contract),
+  briefSliceEntry("allowed_tools_for_node", 2048, (context) => context.allowedToolsForNode),
+  briefSliceEntry("recommended_reads", 4096, (context) => context.recommendedReads),
+  briefSliceEntry("adjacent_observations", 4096, (context) => context.adjacentObservations),
+  briefSliceEntry("prior_attempt", 4096, (context) => context.priorAttempt || ""),
+  briefSliceEntry("adjacent_hypotheses", 2048, (context) => context.adjacentHypotheses || ""),
+  briefSliceEntry("recap_and_handoff", 2048, (context) => context.recapAndHandoff),
+]);
+
 const ASSIGNMENT_BRIEF_SLICE_REGISTRY = Object.freeze({
   web: WEB_BRIEF_SLICE_REGISTRY,
   smart_contract: SMART_CONTRACT_BRIEF_SLICE_REGISTRY,
   oss: OSS_BRIEF_SLICE_REGISTRY,
+  // Plane X Cycle X.8 — TaskGraph node dispatch profile. Read via
+  // bob_prepare_node, NOT via readAssignmentBrief.
+  node: NODE_BRIEF_SLICE_REGISTRY,
 });
 
 function briefSliceRegistryForProfile(profile) {
@@ -367,7 +410,25 @@ function briefSliceRegistryForProfile(profile) {
   if (profile === "oss") {
     return OSS_BRIEF_SLICE_REGISTRY;
   }
+  if (profile === "node") {
+    return NODE_BRIEF_SLICE_REGISTRY;
+  }
   return null;
+}
+
+// Render the `node` profile brief from a precomputed context bag. Used by
+// bob_prepare_node (X.8). Drops conditional slices that return an empty
+// string so an absent prior_attempt or adjacent_hypotheses section does not
+// carry an empty header into the brief.
+function renderNodeBriefExtras(context) {
+  const extras = buildBriefExtrasFromRegistry(NODE_BRIEF_SLICE_REGISTRY, context);
+  if (extras.prior_attempt === "" || extras.prior_attempt == null) {
+    delete extras.prior_attempt;
+  }
+  if (extras.adjacent_hypotheses === "" || extras.adjacent_hypotheses == null) {
+    delete extras.adjacent_hypotheses;
+  }
+  return extras;
 }
 
 function buildBriefExtrasFromRegistry(registry, context) {
@@ -1082,4 +1143,7 @@ module.exports = {
   REPO_WORKFLOW_TEXT,
   briefSliceRegistryForProfile,
   isOssLens,
+  // Plane X cycle X.8 — TaskGraph node profile slice registry + renderer.
+  NODE_BRIEF_SLICE_REGISTRY,
+  renderNodeBriefExtras,
 };

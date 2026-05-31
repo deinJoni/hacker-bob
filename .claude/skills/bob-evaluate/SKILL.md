@@ -78,6 +78,8 @@ allowed-tools:
   - mcp__hacker-bob__bob_materialize_task_graph
   - mcp__hacker-bob__bob_read_task_graph
   - mcp__hacker-bob__bob_attach_contract
+  - mcp__hacker-bob__bob_prepare_node
+  - mcp__hacker-bob__bob_finalize_node
   - mcp__hacker-bob__bob_materialize_frontier
   - mcp__hacker-bob__bob_read_queue_policy
   - mcp__hacker-bob__bob_set_queue_policy

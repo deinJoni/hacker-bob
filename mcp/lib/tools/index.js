@@ -133,6 +133,13 @@ const TOOL_MODULES = Object.freeze([
   // append-time; agents pull bodies via this resolver. Backed by
   // mcp/lib/body-resolvers/ (one resolver per X-D12 prefix).
   require("./resolve-body.js"),
+  // Plane X Cycle X.8 — clou-style three-call protocol: prepare-node mints
+  // the prep_token + brief; finalize-node validates the token, emits
+  // executed, runs the mechanical verifier first, and lands the node in
+  // verified/finalized or failed with structured failure payloads. Both
+  // tools are orchestrator + graph-scheduler-only.
+  require("./prepare-node.js"),
+  require("./finalize-node.js"),
   require("./materialize-frontier.js"),
   require("./read-queue-policy.js"),
   require("./set-queue-policy.js"),

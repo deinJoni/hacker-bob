@@ -74,5 +74,6 @@
   "test/contracts.test.js",
   "test/storage-distilled-emission-compliance.test.js",
   "test/capability-pack-derivation.test.js",
-  "test/contract-verifier.test.js"
+  "test/contract-verifier.test.js",
+  "test/prepare-finalize-node.test.js"
 ]

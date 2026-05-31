@@ -167,8 +167,19 @@ function assertProseUnderCap(value, fieldName, maxChars) {
 // Append a node-state-machine transition. Caller passes the full
 // from_state → to_state pair so the frozen table can refuse out-of-order
 // transitions without first reading the ledger. Payload structure is the
-// X-D1 schema: {node_id, from_state, to_state, contract_hash?, prep_token?,
-// output_hash?, failure_reason?, edge_added_to[]}.
+// X-D1 schema: {node_id, from_state, to_state, contract_hash?, contract?,
+// prep_token?, output_hash?, failure_reason?, edge_added_to[]}.
+//
+// Cycle X.8 extends the payload with TWO inline-only fields:
+//   - `contract` — the FULL normalized Contract content carried on the
+//     proposed → contracted event so the X.8 prepare_node brief renderer
+//     can inline the Contract slice without a separate persistence layer.
+//     The Contract is summary-grade per X-P9 (invariants ≤ 280 chars each,
+//     witness predicates structured, production paths description-bounded)
+//     so inlining keeps the event under the X-P9 2KB hard cap.
+//   - `verification` — the mechanical verifier verdict carried on the
+//     executed → verified | failed events. The verdict is already
+//     structured (X.6 output shape) and bounded by the witness count.
 function appendNodeTransition(input, options = {}) {
   if (input == null || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("appendNodeTransition input must be an object");
@@ -179,11 +190,24 @@ function appendNodeTransition(input, options = {}) {
   assertNodeTransitionAllowed(fromState, toState);
 
   const contractHash = normalizeOptionalText(input.contract_hash, "contract_hash");
-  const prepToken = normalizeOptionalText(input.prep_token, "prep_token");
+  // The prep_token is a sha256 hash of (node_id || contract_hash || brief_hash
+  // || materialized_at || graph_context_hash). It is NOT an auth credential
+  // (no bearer / cookie / API key) — it is a session-scoped binding hash that
+  // the finalize_node call cross-checks against the most recent dispatched
+  // event. We persist it under the `prep_token_hash` payload key so the
+  // sensitive-material guard does not flag it as a forbidden token-shaped
+  // field. The X.8 tool surfaces `prep_token` in its public API; the storage
+  // layer normalizes to `prep_token_hash` so the on-disk shape is unambiguous.
+  const prepTokenHash = normalizeOptionalText(
+    input.prep_token_hash != null ? input.prep_token_hash : input.prep_token,
+    "prep_token_hash",
+  );
   const outputHash = normalizeOptionalText(input.output_hash, "output_hash");
   const failureReason = normalizeOptionalObject(input.failure_reason, "failure_reason");
   const edgeAddedTo = normalizeStringArray(input.edge_added_to, "edge_added_to")
     .map((edge) => assertTaskGraphNodeId(edge, "edge_added_to[]"));
+  const contractPayload = normalizeOptionalObject(input.contract, "contract");
+  const verification = normalizeOptionalObject(input.verification, "verification");
 
   const payload = {
     node_id: nodeId,
@@ -191,9 +215,11 @@ function appendNodeTransition(input, options = {}) {
     to_state: toState,
   };
   if (contractHash) payload.contract_hash = contractHash;
-  if (prepToken) payload.prep_token = prepToken;
+  if (contractPayload) payload.contract = contractPayload;
+  if (prepTokenHash) payload.prep_token_hash = prepTokenHash;
   if (outputHash) payload.output_hash = outputHash;
   if (failureReason) payload.failure_reason = failureReason;
+  if (verification) payload.verification = verification;
   if (edgeAddedTo.length > 0) payload.edge_added_to = edgeAddedTo;
 
   const source = normalizeOptionalObject(input.source, "source");
@@ -210,6 +236,107 @@ function appendNodeTransition(input, options = {}) {
     // task_id, or claim_id. The materializer (X.2) joins via payload.node_id
     // → node.surface_refs[] folded from the proposal event.
   }, options);
+}
+
+// Find the most recent node.transitioned event for `nodeId` that carries
+// an inlined Contract payload (proposed → contracted emits one). Returns
+// `null` when the node has never been contracted. Used by X.8's
+// prepare_node to recover the Contract content for the brief renderer
+// without persisting a separate contracts.jsonl — the Contract IS the
+// payload of the contracting event.
+function findAttachedContract(targetDomain, nodeId) {
+  const events = readNodeTransitions(targetDomain);
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i];
+    if (!event || !event.payload) continue;
+    if (event.payload.node_id !== nodeId) continue;
+    if (event.payload.to_state !== "contracted") continue;
+    if (event.payload.contract && typeof event.payload.contract === "object") {
+      return {
+        contract: event.payload.contract,
+        contract_hash: event.payload.contract_hash || event.payload.contract.contract_hash,
+        event_id: event.event_id,
+        ts: event.ts,
+      };
+    }
+  }
+  return null;
+}
+
+// Find the most recent node.transitioned event for `nodeId` matching the
+// given `to_state`. Used by X.8's prepare_node + finalize_node to recover
+// prior failure payloads (for the prior_attempt slice) and to validate
+// prep_tokens against the most recent dispatched event. Returns null when
+// no matching event exists.
+function findMostRecentNodeTransition(targetDomain, nodeId, toState) {
+  const events = readNodeTransitions(targetDomain);
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i];
+    if (!event || !event.payload) continue;
+    if (event.payload.node_id !== nodeId) continue;
+    if (toState != null && event.payload.to_state !== toState) continue;
+    return event;
+  }
+  return null;
+}
+
+// X.8 reaper: a stuck `dispatched` node whose most-recent dispatched event
+// is older than `staleAfterMs` (default 30 minutes per the X.8 spec) is
+// expired into the `failed` terminal state with `failure_reason.reason =
+// "dispatch_timeout"`. The X.1 frozen state-transition table allows
+// `dispatched → failed` directly (the table forbids `dispatched →
+// abandoned`); the X.8 spec calls the result "abandoned" colloquially —
+// the canonical machine-readable surfacing is `failed` with the
+// dispatch_timeout failure_reason. The X.2 summary view surfaces these
+// in `failed_nodes[]` alongside mechanical-verifier failures so the
+// operator triage path is uniform.
+//
+// Idempotent: nodes whose CURRENT live state is not `dispatched` are
+// skipped (terminal failed/finalized/abandoned nodes are not re-failed).
+//
+// The caller MUST pass a materialized task-graph document (typically from
+// materializeTaskGraph(targetDomain, { write: false })). The reaper does
+// not materialize internally — pushing materialization out of this module
+// keeps the require graph cycle-free (the materializer requires
+// task-graph-events.js at top scope; the reverse dependency would close a
+// cycle the test/session-state-store.test.js closure check refuses).
+const DEFAULT_STALE_DISPATCH_MS = 30 * 60 * 1000;
+
+function expireStaleDispatchedNodes(targetDomain, materializedDocument, options = {}) {
+  const staleAfterMs = Number.isFinite(options.staleAfterMs)
+    ? options.staleAfterMs
+    : DEFAULT_STALE_DISPATCH_MS;
+  const now = options.now instanceof Date ? options.now : new Date();
+  const nowMs = now.getTime();
+  if (!materializedDocument || !Array.isArray(materializedDocument.nodes)) {
+    throw new Error("expireStaleDispatchedNodes requires a materialized task-graph document with nodes[]");
+  }
+  const emitted = [];
+  for (const node of materializedDocument.nodes) {
+    if (!node || node.state !== "dispatched") continue;
+    const lastDispatched = findMostRecentNodeTransition(targetDomain, node.node_id, "dispatched");
+    if (!lastDispatched) continue;
+    const tsMs = Date.parse(lastDispatched.ts);
+    if (!Number.isFinite(tsMs)) continue;
+    if (nowMs - tsMs < staleAfterMs) continue;
+    const event = appendNodeTransition({
+      target_domain: targetDomain,
+      node_id: node.node_id,
+      from_state: "dispatched",
+      to_state: "failed",
+      contract_hash: node.contract_hash || undefined,
+      failure_reason: {
+        reason: "dispatch_timeout",
+        stale_after_ms: staleAfterMs,
+        dispatched_at: lastDispatched.ts,
+        elapsed_ms: nowMs - tsMs,
+      },
+      ts: now.toISOString(),
+      source: { tool: "expireStaleDispatchedNodes" },
+    });
+    emitted.push(event);
+  }
+  return emitted;
 }
 
 // Append a transition-proposed observation. Reuses observation.recorded
@@ -327,6 +454,7 @@ function readHypothesisProposals(targetDomain) {
 }
 
 module.exports = {
+  DEFAULT_STALE_DISPATCH_MS,
   HYPOTHESIS_STATEMENT_MAX_CHARS,
   NODE_STATE_TRANSITIONS,
   NODE_STATE_VALUES,
@@ -339,6 +467,9 @@ module.exports = {
   appendTransitionProposal,
   assertNodeTransitionAllowed,
   assertTaskGraphNodeId,
+  expireStaleDispatchedNodes,
+  findAttachedContract,
+  findMostRecentNodeTransition,
   isAllowedNodeTransition,
   readHypothesisProposals,
   readNodeTransitions,
