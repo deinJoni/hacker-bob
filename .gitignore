@@ -2,6 +2,9 @@ node_modules/
 testing/**/node_modules/
 site/dist/
 CODEX_VISUALIZATION/dist/
+CLAUDE_VISUALIZATION/dist/
+__pycache__/
+*.pyc
 .DS_Store
 *.log
 *.tsbuildinfo

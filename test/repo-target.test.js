@@ -224,6 +224,24 @@ test("repo Docker environment plan and dry-run command stay session-scoped", () 
   assert.match(log, /"status":"dry_run"/);
 }));
 
+test("repo Docker plan ships libpcap-dev when the build links libpcap", () => withTempHome(async (home) => {
+  const repo = path.join(home, "pcap-sniffer");
+  fs.mkdirSync(repo, { recursive: true });
+  writeFile(repo, "configure.ac", "AC_INIT([pcap-sniffer],[1.0])\nAC_CHECK_LIB([pcap],[pcap_open_live])\n");
+  writeFile(repo, "Makefile.in", "LIBS = -lpcap\nall:\n\t$(CC) -o sniff sniff.c $(LIBS)\n");
+  writeFile(repo, "sniff.c", "#include <pcap.h>\nint main(void) { return 0; }\n");
+
+  const init = JSON.parse(initRepoSession({ repo_path: repo, target_domain: "repo-pcap-test" }));
+  JSON.parse(buildRepoInventory({ target_domain: init.target_domain }));
+
+  const env = JSON.parse(await prepareRepoEnv({ target_domain: init.target_domain }));
+  assert.equal(env.env.detected.source_hints.pcap_like, true);
+  assert.ok(env.env.packages.includes("libpcap-dev"), "expected libpcap-dev in the package list");
+
+  const dockerfile = fs.readFileSync(repoDockerfilePath(init.target_domain), "utf8");
+  assert.match(dockerfile, /libpcap-dev/);
+}));
+
 test("high severity OSS native findings require matching non-dry-run repo replay", () => withTempHome((home) => {
   const context = createNativeRepoSession(home);
 

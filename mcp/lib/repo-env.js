@@ -92,6 +92,17 @@ function basenameIs(files, name) {
   return files.some((file) => path.basename(file) === name);
 }
 
+function readRepoText(repoPath, relativePath, maxBytes = 512 * 1024) {
+  try {
+    const fullPath = path.join(repoPath, relativePath);
+    const stat = fs.statSync(fullPath);
+    if (!stat.isFile() || stat.size > maxBytes) return "";
+    return fs.readFileSync(fullPath, "utf8");
+  } catch {
+    return "";
+  }
+}
+
 function detectBuildEnvironment(repoPath, files) {
   const dockerfiles = files.filter((file) => (
     path.basename(file) === "Dockerfile" ||
@@ -117,6 +128,16 @@ function detectBuildEnvironment(repoPath, files) {
   const java = basenameIs(files, "pom.xml") || basenameIs(files, "build.gradle") || basenameIs(files, "build.gradle.kts");
   const libnfsLike = files.some((file) => /(^|\/)(libnfs|nfs)/i.test(file)) ||
     fs.existsSync(path.join(repoPath, "libnfs.pc.in"));
+  // Detect a libpcap build dependency (tcpdump and similar packet tools) so the
+  // session image ships libpcap-dev; without it native-code builds cannot link.
+  const buildConfigText = [
+    "configure.ac",
+    "configure.in",
+    "CMakeLists.txt",
+    "Makefile.am",
+    "Makefile.in",
+  ].map((name) => readRepoText(repoPath, name)).join("\n");
+  const pcapLike = /pcap/i.test(buildConfigText);
 
   const buildSystems = [];
   if (cmake) buildSystems.push("cmake");
@@ -145,6 +166,7 @@ function detectBuildEnvironment(repoPath, files) {
       php,
       java,
       libnfs_like: libnfsLike,
+      pcap_like: pcapLike,
     },
   };
 }
@@ -168,6 +190,9 @@ function dockerPackagesForDetection(detected) {
   }
   if (detected.source_hints.libnfs_like) {
     ["libssl-dev", "libkrb5-dev", "libtirpc-dev"].forEach((pkg) => packages.add(pkg));
+  }
+  if (detected.source_hints.pcap_like) {
+    packages.add("libpcap-dev");
   }
   if (detected.source_hints.node) ["nodejs", "npm"].forEach((pkg) => packages.add(pkg));
   if (detected.source_hints.python) ["python3", "python3-pip", "python3-venv"].forEach((pkg) => packages.add(pkg));
