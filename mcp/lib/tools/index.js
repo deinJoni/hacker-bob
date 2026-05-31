@@ -116,6 +116,12 @@ const TOOL_MODULES = Object.freeze([
   // entries expose the proposal surface to operator + evaluator bundles.
   require("./propose-hypothesis.js"),
   require("./propose-transition.js"),
+  // Plane X Cycle X.2 — TaskGraph materializer + raw/summary view. The fold
+  // also runs auto-debounced via frontier-materialize-debounce.js on every
+  // producer-event session-lock release; these tools are the orchestrator's
+  // force-flush + the read surface for X.5 / X.8 / X.11 callers.
+  require("./materialize-task-graph.js"),
+  require("./read-task-graph.js"),
   require("./materialize-frontier.js"),
   require("./read-queue-policy.js"),
   require("./set-queue-policy.js"),

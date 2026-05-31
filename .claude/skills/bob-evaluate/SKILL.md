@@ -75,6 +75,8 @@ allowed-tools:
   - mcp__hacker-bob__bob_append_frontier_event
   - mcp__hacker-bob__bob_propose_hypothesis
   - mcp__hacker-bob__bob_propose_transition
+  - mcp__hacker-bob__bob_materialize_task_graph
+  - mcp__hacker-bob__bob_read_task_graph
   - mcp__hacker-bob__bob_materialize_frontier
   - mcp__hacker-bob__bob_read_queue_policy
   - mcp__hacker-bob__bob_set_queue_policy

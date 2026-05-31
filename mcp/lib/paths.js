@@ -133,6 +133,14 @@ function taskQueuePath(domain) {
   return path.join(sessionDir(domain), "task-queue.json");
 }
 
+// Plane X Cycle X.2 — task-graph.json materialized view. Lives alongside
+// surface-index.json + task-queue.json under the session root. Folded from
+// frontier-events.jsonl by mcp/lib/task-graph-materializer.js on every
+// producer-event session-lock release (via frontier-materialize-debounce).
+function taskGraphPath(domain) {
+  return path.join(sessionDir(domain), "task-graph.json");
+}
+
 function queuePolicyPath(domain) {
   return path.join(sessionDir(domain), "queue-policy.json");
 }
@@ -376,6 +384,7 @@ module.exports = {
   staticArtifactPath,
   staticArtifactsJsonlPath,
   staticScanResultsJsonlPath,
+  taskGraphPath,
   taskQueuePath,
   telemetryDir,
   telemetryToolInvocationsJsonlPath,
