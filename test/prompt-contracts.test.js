@@ -919,11 +919,16 @@ test("evaluator agents stay under their MCP tool budget", () => {
   // Cycle O.5 (Plane O) adds bob_repo_check to evaluator-shared so the OSS
   // axis can probe repo files for existence/literal/regex evidence without
   // ever leaving the read-only repo mount (O-P1).
+  // Cycle X.1 (Plane X) adds bob_propose_hypothesis + bob_propose_transition
+  // to evaluator-shared per X-D10. Both tools are pure-write proposal events
+  // that take a single statement, do not surface in briefs, and reuse the
+  // existing observation.recorded ledger kind. They do not compound brief
+  // tokens, so budgets bump by +2 to keep parity with the bundle surface.
   // The browser-driver family is opaque-context (one verb per command, idle/
   // hard timeouts reap sessions) so it doesn't compound brief-rendered text;
-  // budgets stay bumped (SC 30→34, web 32→36) to keep parity with the role
-  // bundle's actual surface.
-  const EVALUATOR_MCP_TOOL_BUDGET = 34;
+  // budgets stay bumped (SC 30→34→36, web 32→36→38) to keep parity with the
+  // role bundle's actual surface.
+  const EVALUATOR_MCP_TOOL_BUDGET = 36;
   const agentNameToRoleId = {};
   for (const [roleId, spec] of Object.entries(CLAUDE_ROLE_SPECS)) {
     if (spec.kind === "agent" && typeof spec.output_path === "string") {
@@ -932,7 +937,7 @@ test("evaluator agents stay under their MCP tool budget", () => {
   }
   for (const pack of Object.values(CAPABILITY_PACKS)) {
     const roleId = agentNameToRoleId[pack.evaluator_agent];
-    const budget = pack.brief_profile === "web" ? 36 : EVALUATOR_MCP_TOOL_BUDGET;
+    const budget = pack.brief_profile === "web" ? 38 : EVALUATOR_MCP_TOOL_BUDGET;
     assert.ok(
       mcpToolNamesForRole(roleId).length <= budget,
       `pack ${pack.id} evaluator over budget (got ${mcpToolNamesForRole(roleId).length}, budget ${budget})`,

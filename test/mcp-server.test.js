@@ -448,6 +448,8 @@ const EXPECTED_TOOL_NAMES = [
   "bob_build_surface_graph",
   "bob_query_surface_graph",
   "bob_append_frontier_event",
+  "bob_propose_hypothesis",
+  "bob_propose_transition",
   "bob_materialize_frontier",
   "bob_read_queue_policy",
   "bob_set_queue_policy",

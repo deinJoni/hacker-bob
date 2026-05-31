@@ -87,6 +87,8 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_log_technique_attempt: "initialized_session_mutation",
   bob_merge_wave_handoffs: "initialized_session_read",
   bob_promote_surface_leads: "initialized_session_mutation",
+  bob_propose_hypothesis: "initialized_session_mutation",
+  bob_propose_transition: "initialized_session_mutation",
   bob_public_intel: "scoped_http_network",
   bob_query_audit_reports: "initialized_session_read",
   bob_query_chain_tree: "initialized_session_read",

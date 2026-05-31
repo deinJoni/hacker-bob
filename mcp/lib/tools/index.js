@@ -111,6 +111,11 @@ const TOOL_MODULES = Object.freeze([
   require("./build-surface-graph.js"),
   require("./query-surface-graph.js"),
   require("./append-frontier-event.js"),
+  // Plane X Cycle X.1 — TaskGraph proposal tools. The wrapper-backed
+  // appendXxx helpers live in mcp/lib/task-graph-events.js; these tool
+  // entries expose the proposal surface to operator + evaluator bundles.
+  require("./propose-hypothesis.js"),
+  require("./propose-transition.js"),
   require("./materialize-frontier.js"),
   require("./read-queue-policy.js"),
   require("./set-queue-policy.js"),

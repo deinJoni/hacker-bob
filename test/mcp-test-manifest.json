@@ -67,5 +67,6 @@
   "test/oss-blocked-harness.test.js",
   "test/oss-evidence-reference.test.js",
   "test/orchestrator-oss-branch.test.js",
-  "test/realization-oss-e2e-smoke.test.js"
+  "test/realization-oss-e2e-smoke.test.js",
+  "test/task-graph-events.test.js"
 ]

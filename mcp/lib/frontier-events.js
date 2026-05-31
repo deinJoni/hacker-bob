@@ -40,6 +40,13 @@ const FRONTIER_EVENT_KINDS = Object.freeze([
   "closure.recorded",
   "claim.candidate.linked",
   "claim.report_snapshot.appended",
+  // Plane X Cycle X.1 — the ONE new top-level kind permitted by X-P8.
+  // Every TaskGraph node state-machine transition lands as a single event of
+  // this kind so the materializer (X.2) folds an authoritative state stream
+  // without scanning typed observation.recorded payloads. Out-of-order
+  // transitions are refused at append-time by appendNodeTransition (the
+  // frozen state-transition table lives in task-graph-events.js).
+  "node.transitioned",
 ]);
 
 function generatedFrontierEventId(fields) {
