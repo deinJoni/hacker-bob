@@ -49,6 +49,11 @@ const {
 const {
   TASK_GRAPH_NODE_ID_PREFIX,
 } = require("./task-graph-events.js");
+// X.3 / X-P6: the SURFACE_KIND_VALUES enum is the canonical SoT for the
+// closed set of TaskGraph node kinds AND the kind discriminator persisted
+// in surface-index.json. The X.2 materializer alias TASK_GRAPH_NODE_KIND_VALUES
+// is preserved for back-compat re-export; both point at the same frozen array.
+const { SURFACE_KIND_VALUES } = require("./constants.js");
 
 // Ledger-pressure thresholds. Public for tests + downstream cycles that may
 // surface them in summaries.
@@ -66,15 +71,12 @@ if (LEDGER_PRESSURE_REFUSE_THRESHOLD >= FRONTIER_EVENTS_MAX_RECORDS) {
   );
 }
 
-// Closed set of TaskGraph node kinds. X.6 (Hypothesis nodes) and X.3
-// (Transition surface kind) cycle this enum; X.2 ships all 4 because the
-// materializer must already discriminate them when folding events.
-const TASK_GRAPH_NODE_KIND_VALUES = Object.freeze([
-  "surface",
-  "hypothesis",
-  "transition",
-  "claim",
-]);
+// Closed set of TaskGraph node kinds. X.3 (X-P6) promoted this enum into
+// mcp/lib/constants.js (SURFACE_KIND_VALUES) as the SoT shared with the
+// surface-index materializer (transition surfaces persist with kind:
+// "transition" per X-P6). The X.2 alias is preserved for back-compat
+// re-export; both point at the same frozen array.
+const TASK_GRAPH_NODE_KIND_VALUES = Object.freeze([...SURFACE_KIND_VALUES]);
 
 // Closed set of edge kinds the materializer emits. X.8's finalize emits
 // `unblocks` edges via `payload.edge_added_to[]`; surface adjacency for

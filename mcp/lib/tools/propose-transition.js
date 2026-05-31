@@ -1,15 +1,18 @@
 "use strict";
 
-// Plane X Cycle X.1 — bob_propose_transition.
+// Plane X Cycle X.1 / X.3 — bob_propose_transition.
 //
 // Records a TaskGraph Transition-node proposal. Reuses observation.recorded
 // with payload.kind: "transition_proposed" per X-P8. The trust_assumption
 // prose is bounded at append time (X-P9 / X.1 step 2). The transition_kind
 // is restricted to the X-D3 closed enum (identity_propagation,
 // value_movement, trust_handoff, state_dependency, oracle_dependency,
-// message_passing). X.3 wires the same enum into surface-index's
-// "transition" surface kind so the materializer can fold this proposal
-// onto a first-class transition node.
+// message_passing). X.3 promotes "transition" to a first-class surface kind
+// (SURFACE_KIND_VALUES in mcp/lib/constants.js) and wires endpoint-existence
+// validation into this handler: both from_surface and to_surface must already
+// be known to the session's materialized surface-index before a transition
+// can be proposed. The check prevents a wave of bogus transitions referencing
+// surfaces that have never been observed.
 
 const {
   appendTransitionProposal,
@@ -19,9 +22,49 @@ const {
 const {
   scheduleMaterialization,
 } = require("../frontier-materialize-debounce.js");
+const {
+  currentSurfaces,
+} = require("../frontier-projections.js");
+
+function knownSurfaceIds(targetDomain) {
+  const projection = currentSurfaces(targetDomain);
+  const ids = new Set();
+  for (const surface of projection.surfaces) {
+    if (surface == null || typeof surface !== "object") continue;
+    const id = typeof surface.id === "string" ? surface.id.trim() : "";
+    if (id) ids.add(id);
+  }
+  return ids;
+}
+
+function assertEndpointExists(known, value, fieldName) {
+  if (known.has(value)) return;
+  const err = new Error(
+    `unknown_surface: ${fieldName} "${value}" is not in the session's surface-index; observe it (or promote a lead) before proposing a transition`,
+  );
+  err.code = "unknown_surface";
+  err.details = {
+    field: fieldName,
+    surface_id: value,
+  };
+  throw err;
+}
 
 function handler(args) {
-  const event = appendTransitionProposal(args || {});
+  const input = args || {};
+  // X.3 Do step 3: both endpoints must exist in the session's surface-index
+  // before a transition can be proposed. We trim the inputs the same way
+  // appendTransitionProposal does so the check matches the persisted payload.
+  const targetDomain = typeof input.target_domain === "string" ? input.target_domain.trim() : "";
+  const fromSurface = typeof input.from_surface === "string" ? input.from_surface.trim() : "";
+  const toSurface = typeof input.to_surface === "string" ? input.to_surface.trim() : "";
+  if (targetDomain && fromSurface && toSurface) {
+    const known = knownSurfaceIds(targetDomain);
+    assertEndpointExists(known, fromSurface, "from_surface");
+    assertEndpointExists(known, toSurface, "to_surface");
+  }
+
+  const event = appendTransitionProposal(input);
   try {
     scheduleMaterialization(event.target_domain);
   } catch {

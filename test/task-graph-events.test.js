@@ -24,6 +24,7 @@ const path = require("path");
 
 const {
   FRONTIER_EVENT_KINDS,
+  appendFrontierEvent,
   readFrontierEvents,
 } = require("../mcp/lib/frontier-events.js");
 const {
@@ -40,7 +41,25 @@ const {
   readNodeTransitions,
   readTransitionProposals,
 } = require("../mcp/lib/task-graph-events.js");
+const {
+  materializeFrontier,
+} = require("../mcp/lib/frontier-materializer.js");
 const { TOOL_HANDLERS } = require("../mcp/lib/tool-registry.js");
+
+// X.3 Do step 3: bob_propose_transition validates both endpoints exist in
+// surface-index. Tests that exercise the tool roundtrip seed both endpoint
+// surfaces with surface.observed events and force a materialization so
+// surface-index.json carries them before the handler runs.
+function seedMaterializedSurface(domain, surfaceId) {
+  appendFrontierEvent({
+    target_domain: domain,
+    kind: "surface.observed",
+    ts: "2026-05-31T00:00:00.000Z",
+    surface_id: surfaceId,
+    payload: { title: surfaceId },
+  });
+  materializeFrontier(domain, { write: true });
+}
 
 function withTempHome(fn) {
   const previousHome = process.env.HOME;
@@ -450,10 +469,14 @@ test("bob_propose_hypothesis tool roundtrips an event and reports the payload ki
 
 test("bob_propose_transition tool roundtrips an event and reports the payload kind", () => {
   withTempHome(() => {
+    const domain = "x1-tool-tp.example.com";
+    // X.3 endpoint-existence gate: seed both surfaces before proposing.
+    seedMaterializedSurface(domain, "surface:auth");
+    seedMaterializedSurface(domain, "surface:vault");
     const handler = TOOL_HANDLERS.bob_propose_transition;
     assert.ok(typeof handler === "function", "tool registered");
     const raw = handler({
-      target_domain: "x1-tool-tp.example.com",
+      target_domain: domain,
       from_surface: "surface:auth",
       to_surface: "surface:vault",
       kind: TRANSITION_KIND_VALUES[0],
@@ -463,7 +486,7 @@ test("bob_propose_transition tool roundtrips an event and reports the payload ki
     assert.equal(result.appended, true);
     assert.equal(result.kind, "observation.recorded");
     assert.equal(result.payload_kind, "transition_proposed");
-    assert.equal(result.target_domain, "x1-tool-tp.example.com");
+    assert.equal(result.target_domain, domain);
   });
 });
 
@@ -487,11 +510,16 @@ test("bob_propose_hypothesis tool surfaces the prose_too_long failure as a throw
 
 test("bob_propose_transition tool surfaces the prose_too_long failure as a thrown error", () => {
   withTempHome(() => {
+    const domain = "x1-tool-cap-tp.example.com";
+    // X.3 endpoint-existence gate: seed both surfaces so the prose-cap error
+    // (not the endpoint-existence error) fires in this test.
+    seedMaterializedSurface(domain, "surface:a");
+    seedMaterializedSurface(domain, "surface:b");
     const handler = TOOL_HANDLERS.bob_propose_transition;
     let caught = null;
     try {
       handler({
-        target_domain: "x1-tool-cap-tp.example.com",
+        target_domain: domain,
         from_surface: "surface:a",
         to_surface: "surface:b",
         kind: "trust_handoff",

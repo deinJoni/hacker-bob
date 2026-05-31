@@ -29,6 +29,12 @@ const {
   compareObservationEvents,
   normalizeObservationEvent,
 } = require("./frontier-projections.js");
+const {
+  SURFACE_KIND_VALUES,
+} = require("./constants.js");
+const {
+  TRANSITION_KIND_VALUES,
+} = require("./task-graph-events.js");
 
 function uniqueSorted(values) {
   return Array.from(new Set(values.filter((value) => typeof value === "string" && value.length > 0))).sort();
@@ -168,11 +174,77 @@ function markTask(tasksByKey, event, statusField, eventListField) {
   tasksByKey.set(key, refreshTaskHash(task));
 }
 
+// X.3 / X-P6: a transition surface persisted in surface-index.json with
+// kind: "transition". The transition_id is derived deterministically so a
+// repeated transition_proposed event for the same (from, to, transition_kind)
+// folds into the same entry. Per X-P9 the payload is summary-grade:
+// trust_assumption is already capped at 512 chars at append time (X.1).
+function transitionSurfaceId(payload, eventId) {
+  const proposalId = typeof payload.proposal_id === "string" ? payload.proposal_id.trim() : "";
+  if (proposalId) return `transition:${proposalId}`;
+  const from = typeof payload.from_surface === "string" ? payload.from_surface.trim() : "";
+  const to = typeof payload.to_surface === "string" ? payload.to_surface.trim() : "";
+  const kind = typeof payload.transition_kind === "string" ? payload.transition_kind.trim() : "";
+  if (from && to && kind) {
+    return `transition:${from}::${to}::${kind}`;
+  }
+  // Last-resort: bind to the event id so the fold is still stable. Should be
+  // unreachable because appendTransitionProposal rejects missing fields.
+  return `transition:event:${eventId}`;
+}
+
+function ensureTransition(transitionsById, domain, transitionId, ts, fromSurface, toSurface, transitionKind) {
+  if (!transitionsById.has(transitionId)) {
+    transitionsById.set(transitionId, {
+      transition_id: transitionId,
+      target_domain: domain,
+      // X-P6: kind: "transition" is the surface-kind discriminator. The
+      // closed enum lives in SURFACE_KIND_VALUES (X.3 / constants.js).
+      kind: "transition",
+      from_surface: fromSurface,
+      to_surface: toSurface,
+      transition_kind: transitionKind,
+      trust_assumption: null,
+      evidence_refs: [],
+      first_seen_at: ts,
+      last_seen_at: ts,
+      source_event_ids: [],
+    });
+  }
+  const transition = transitionsById.get(transitionId);
+  if (Date.parse(ts) < Date.parse(transition.first_seen_at)) transition.first_seen_at = ts;
+  if (Date.parse(ts) > Date.parse(transition.last_seen_at)) transition.last_seen_at = ts;
+  return transition;
+}
+
+function applyTransitionFields(transition, payload) {
+  if (typeof payload.trust_assumption === "string" && payload.trust_assumption.trim()) {
+    // The most recent trust_assumption wins (a re-proposal with refined
+    // wording overwrites). Already capped at 512 chars by appendTransitionProposal.
+    transition.trust_assumption = payload.trust_assumption.trim();
+  }
+  if (Array.isArray(payload.evidence_refs)) {
+    for (const ref of payload.evidence_refs) {
+      if (typeof ref !== "string") continue;
+      const trimmed = ref.trim();
+      if (!trimmed) continue;
+      if (!transition.evidence_refs.includes(trimmed)) {
+        transition.evidence_refs.push(trimmed);
+      }
+    }
+  }
+}
+
 function materializeFrontierDocument(domain, { write = false, now = new Date(), queuePolicy = {} } = {}) {
   const events = readFrontierEvents(domain);
   const policy = normalizeQueuePolicy(queuePolicy);
   const surfacesById = new Map();
   const tasksByKey = new Map();
+  // X.3 / X-P6: transitions persist alongside surfaces in surface-index.json
+  // as first-class entries (kind: "transition"). They are keyed by
+  // transitionSurfaceId() not surface_id so they cannot collide with
+  // surface-observed entries (which are keyed by surface_id from the event).
+  const transitionsById = new Map();
 
   for (const event of events) {
     if (event.surface_id) {
@@ -188,6 +260,38 @@ function materializeFrontierDocument(domain, { write = false, now = new Date(), 
       const surface = ensureSurface(surfacesById, domain, event.surface_id, event.ts);
       addUnique(surface.observation_event_ids, event.event_id);
       surface.observations.push(normalizeObservationEvent(event));
+    }
+
+    // X.3: transition_proposed observation events fold into the transitions[]
+    // section of surface-index.json. These observation events do NOT carry a
+    // surface_id (they describe a bridge between two surfaces) so they do not
+    // attach observations to either endpoint; the materializer surfaces the
+    // bridge as its own entry per X-P6.
+    if (
+      event.kind === "observation.recorded"
+      && event.payload
+      && event.payload.kind === "transition_proposed"
+    ) {
+      const payload = event.payload;
+      const fromSurface = typeof payload.from_surface === "string" ? payload.from_surface.trim() : "";
+      const toSurface = typeof payload.to_surface === "string" ? payload.to_surface.trim() : "";
+      const transitionKind = typeof payload.transition_kind === "string" ? payload.transition_kind.trim() : "";
+      if (fromSurface && toSurface && transitionKind) {
+        const transitionId = transitionSurfaceId(payload, event.event_id);
+        const transition = ensureTransition(
+          transitionsById,
+          domain,
+          transitionId,
+          event.ts,
+          fromSurface,
+          toSurface,
+          transitionKind,
+        );
+        applyTransitionFields(transition, payload);
+        if (!transition.source_event_ids.includes(event.event_id)) {
+          transition.source_event_ids.push(event.event_id);
+        }
+      }
     }
 
     if (event.kind === "control_expectation.recorded" && event.surface_id) {
@@ -261,13 +365,28 @@ function materializeFrontierDocument(domain, { write = false, now = new Date(), 
   const tasks = Array.from(tasksByKey.values()).sort((a, b) => compareQueuedTasks(a, b, policy));
   const materializedAt = now instanceof Date ? now.toISOString() : new Date(now).toISOString();
 
+  // X.3 / X-P6: transitions persist alongside surfaces in surface-index.json
+  // so downstream readers (the X.5 capability-pack deriver, the X.11 cross-
+  // stack brief composer) can recover the bridge fabric in one read. Each
+  // entry carries kind: "transition" per the SURFACE_KIND_VALUES enum. Sort
+  // by transition_id for stable hashing across re-materializations.
+  const transitions = Array.from(transitionsById.values())
+    .map((transition) => ({
+      ...transition,
+      evidence_refs: transition.evidence_refs.slice().sort(),
+      source_event_ids: transition.source_event_ids.slice().sort(),
+    }))
+    .sort(sortByTextField("transition_id"));
+
   const surfaceIndex = {
     version: 1,
     target_domain: domain,
     materialized_at: materializedAt,
     source_event_count: events.length,
     surface_count: surfaces.length,
+    transition_count: transitions.length,
     surfaces,
+    transitions,
   };
   surfaceIndex.surface_index_hash = hashDocumentExcluding(surfaceIndex, [
     "materialized_at",
