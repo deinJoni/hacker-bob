@@ -45,11 +45,34 @@ const DEFAULT_ASSIGNMENT_BUDGET = Object.freeze({
 // Decision kinds describe the scheduling caller surface so downstream consumers
 // (wave-merge integrity checks, telemetry, debug) can distinguish a wave-driven
 // scheduler call from a direct operator dispatch.
+//
+// Plane X Cycle X.9 extends this enum with `schedule_graph_nodes` — the
+// graph-walking scheduler's decision kind. The wave-driven kinds
+// (schedule_work, wave_start, manual_dispatch) keep their task-shaped
+// payload; the graph-scheduler-driven kind carries a node-shaped payload
+// normalized through `normalizeGraphSchedulerDecision` (separate
+// normalizer; same JSONL ledger). The kind discriminator routes both
+// at-rest reads and at-append-time normalization.
 const SCHEDULER_DECISION_KIND_VALUES = Object.freeze([
   "schedule_work",
   "wave_start",
   "manual_dispatch",
+  "schedule_graph_nodes",
 ]);
+
+// Graph-decision kinds. Any decision with `decision_kind` in this set
+// is routed through `normalizeGraphSchedulerDecision` rather than the
+// task-shaped `normalizeSchedulerDecision`. The split keeps two
+// orthogonal shapes on the same ledger without forcing one shape to
+// accommodate fields the other doesn't carry (task vs node).
+const GRAPH_SCHEDULER_DECISION_KIND_VALUES = Object.freeze([
+  "schedule_graph_nodes",
+]);
+
+function isGraphSchedulerDecisionKind(value) {
+  return typeof value === "string"
+    && GRAPH_SCHEDULER_DECISION_KIND_VALUES.includes(value);
+}
 
 function normalizeSchedulerDecisionKind(value, fieldName = "decision_kind") {
   if (value == null) return "schedule_work";
@@ -302,30 +325,235 @@ function appendSchedulerDecision(input, options = {}) {
   });
 }
 
+// X.9 — GraphSchedulerDecision shape.
+//
+// {
+//   version: 1,
+//   target_domain,
+//   created_at,
+//   decision_kind: "schedule_graph_nodes",
+//   source_graph_hash,         // sha256 of materialized task-graph at selection
+//   selected_node_ids: [TG-...],
+//   skipped_node_ids: [TG-...],
+//   capacity_used,             // count actually selected (≤ capacity_limit)
+//   capacity_limit,            // configured cap at selection time
+//   policy,                    // normalized queue_policy snapshot
+//   queue_policy_hash,         // deterministic digest of policy
+//   considered_count,          // total eligible candidates before capacity cap
+//   selected_nodes: [{node_id, kind, state, priority, severity_floor, ts_first}],
+//   skipped_nodes:  [{node_id, kind, state, priority, severity_floor, ts_first}],
+// } + scheduler_decision_id + scheduler_decision_hash (document hash).
+//
+// Lives on the SAME scheduler-decisions.jsonl ledger as task decisions;
+// reads route through the kind discriminator so the two shapes coexist
+// without collision.
+function generatedGraphSchedulerDecisionId(fields) {
+  return `GSD-${hashCanonicalJson(fields).slice(0, 24)}`;
+}
+
+// Like normalizePositiveInteger but accepts 0 (the X.9 GraphSchedulerDecision
+// records empty selections — capacity_used and considered_count can both be
+// zero). Validates the type + range and rejects floats / negatives. The
+// helper is local to the graph-decision normalizer because no other shape
+// in this module needs the non-negative-integer shape today.
+function normalizeNonNegativeInteger(value, fieldName, { defaultValue = 0, max = undefined } = {}) {
+  if (value == null) return defaultValue;
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
+    throw new Error(`${fieldName} must be a non-negative integer (received: ${String(value)})`);
+  }
+  if (max != null && value > max) {
+    throw new Error(`${fieldName} must be ≤ ${max} (received: ${value})`);
+  }
+  return value;
+}
+
+function normalizeNodeIdArray(input, fieldName) {
+  if (input == null) return [];
+  if (!Array.isArray(input)) {
+    throw new Error(`${fieldName} must be an array`);
+  }
+  return input.map((value, index) => normalizeId(value, `${fieldName}[${index}]`));
+}
+
+function normalizeSelectedNodeRecords(input, fieldName) {
+  if (input == null) return [];
+  if (!Array.isArray(input)) {
+    throw new Error(`${fieldName} must be an array`);
+  }
+  return input.map((entry, index) => {
+    if (entry == null || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`${fieldName}[${index}] must be an object`);
+    }
+    const out = {
+      node_id: normalizeId(entry.node_id, `${fieldName}[${index}].node_id`),
+      kind: typeof entry.kind === "string" && entry.kind.trim() ? entry.kind.trim() : null,
+      state: typeof entry.state === "string" && entry.state.trim() ? entry.state.trim() : null,
+      priority: typeof entry.priority === "string" && entry.priority.trim()
+        ? entry.priority.trim()
+        : "medium",
+    };
+    if (entry.severity_floor != null) {
+      out.severity_floor = typeof entry.severity_floor === "string"
+        ? entry.severity_floor.trim() || null
+        : null;
+    }
+    if (entry.ts_first != null) {
+      out.ts_first = typeof entry.ts_first === "string" ? entry.ts_first : null;
+    }
+    return out;
+  });
+}
+
+function normalizeGraphSchedulerDecision(input, { targetDomain = null, now = new Date() } = {}) {
+  if (input == null || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("graph scheduler decision must be an object");
+  }
+  const domain = assertSafeDomain(input.target_domain || targetDomain);
+  const createdAt = normalizeIsoTimestamp(input.created_at || input.ts, "created_at", now);
+  const decisionKind = normalizeSchedulerDecisionKind(input.decision_kind || "schedule_graph_nodes");
+  if (!isGraphSchedulerDecisionKind(decisionKind)) {
+    throw new Error(
+      `decision_kind must be one of ${GRAPH_SCHEDULER_DECISION_KIND_VALUES.join(", ")} `
+      + `for graph scheduler decisions (received: ${decisionKind})`,
+    );
+  }
+  const policy = normalizeQueuePolicy(input.policy || {});
+  const queuePolicyHash = normalizeOptionalId(input.queue_policy_hash, "queue_policy_hash")
+    || withDocumentHash({ ...policy }, "queue_policy_hash").queue_policy_hash;
+  const sourceGraphHash = normalizeOptionalId(input.source_graph_hash, "source_graph_hash");
+  if (!sourceGraphHash) {
+    throw new Error("source_graph_hash is required for graph scheduler decisions");
+  }
+  const selectedNodes = normalizeSelectedNodeRecords(input.selected_nodes, "selected_nodes");
+  const skippedNodes = normalizeSelectedNodeRecords(input.skipped_nodes, "skipped_nodes");
+  const selectedNodeIds = input.selected_node_ids != null
+    ? normalizeNodeIdArray(input.selected_node_ids, "selected_node_ids")
+    : selectedNodes.map((entry) => entry.node_id);
+  const skippedNodeIds = input.skipped_node_ids != null
+    ? normalizeNodeIdArray(input.skipped_node_ids, "skipped_node_ids")
+    : skippedNodes.map((entry) => entry.node_id);
+  // Cross-check the bag of ids against the node detail records when both
+  // are present so a malformed caller cannot record selected_node_ids
+  // that disagree with selected_nodes[].node_id.
+  if (input.selected_node_ids != null && selectedNodes.length > 0) {
+    const detailIds = selectedNodes.map((entry) => entry.node_id);
+    if (JSON.stringify(detailIds) !== JSON.stringify(selectedNodeIds)) {
+      throw new Error("selected_node_ids must match selected_nodes[].node_id ordering");
+    }
+  }
+
+  // capacity_limit must be ≥1 (you can't schedule with zero capacity).
+  const capacityLimit = normalizePositiveInteger(
+    input.capacity_limit,
+    "capacity_limit",
+    { defaultValue: policy.max_parallel_tasks, max: 128 },
+  );
+  // capacity_used and considered_count CAN be zero (empty selections
+  // are a useful telemetry signal — the scheduler ran and found nothing
+  // to dispatch). normalizePositiveInteger refuses 0 so we use a
+  // non-negative helper.
+  const capacityUsed = normalizeNonNegativeInteger(
+    input.capacity_used,
+    "capacity_used",
+    { defaultValue: selectedNodeIds.length, max: capacityLimit },
+  );
+  if (capacityUsed !== selectedNodeIds.length) {
+    throw new Error(
+      `capacity_used (${capacityUsed}) must equal selected_node_ids.length (${selectedNodeIds.length})`,
+    );
+  }
+  const consideredCount = normalizeNonNegativeInteger(
+    input.considered_count,
+    "considered_count",
+    { defaultValue: selectedNodeIds.length + skippedNodeIds.length, max: 100000 },
+  );
+
+  const decision = {
+    version: SCHEDULER_DECISION_VERSION,
+    target_domain: domain,
+    created_at: createdAt,
+    decision_kind: decisionKind,
+    policy,
+    queue_policy_hash: queuePolicyHash,
+    source_graph_hash: sourceGraphHash,
+    capacity_used: capacityUsed,
+    capacity_limit: capacityLimit,
+    considered_count: consideredCount,
+    selected_node_ids: selectedNodeIds,
+    skipped_node_ids: skippedNodeIds,
+    selected_nodes: selectedNodes,
+    skipped_nodes: skippedNodes,
+  };
+
+  const decisionId = normalizeOptionalId(input.scheduler_decision_id, "scheduler_decision_id")
+    || generatedGraphSchedulerDecisionId({
+      target_domain: domain,
+      created_at: createdAt,
+      decision_kind: decisionKind,
+      source_graph_hash: sourceGraphHash,
+      selected_node_ids: selectedNodeIds,
+      skipped_node_ids: skippedNodeIds,
+    });
+
+  return withDocumentHash({
+    scheduler_decision_id: decisionId,
+    ...decision,
+  }, "scheduler_decision_hash");
+}
+
+function appendGraphSchedulerDecision(input, options = {}) {
+  const decision = normalizeGraphSchedulerDecision(input, options);
+  return withSessionLock(decision.target_domain, () => {
+    appendJsonlLine(schedulerDecisionsJsonlPath(decision.target_domain), decision, {
+      maxRecords: options.maxRecords == null ? SCHEDULER_DECISIONS_MAX_RECORDS : options.maxRecords,
+    });
+    return decision;
+  });
+}
+
+function normalizeAnySchedulerDecision(record, context = {}) {
+  if (record && typeof record === "object" && isGraphSchedulerDecisionKind(record.decision_kind)) {
+    return normalizeGraphSchedulerDecision(record, context);
+  }
+  return normalizeSchedulerDecision(record, context);
+}
+
 function readSchedulerDecisions(targetDomain) {
   const domain = assertSafeDomain(targetDomain);
   return readJsonlStrict(
     schedulerDecisionsJsonlPath(domain),
     "scheduler-decisions.jsonl",
-    (record) => normalizeSchedulerDecision(record, { targetDomain: domain, now: null }),
+    (record) => normalizeAnySchedulerDecision(record, { targetDomain: domain, now: null }),
   );
+}
+
+function readGraphSchedulerDecisions(targetDomain) {
+  return readSchedulerDecisions(targetDomain)
+    .filter((decision) => isGraphSchedulerDecisionKind(decision.decision_kind));
 }
 
 module.exports = {
   DEFAULT_ASSIGNMENT_BUDGET,
+  GRAPH_SCHEDULER_DECISION_KIND_VALUES,
   SCHEDULER_DECISIONS_MAX_RECORDS,
   SCHEDULER_DECISION_KIND_VALUES,
   SCHEDULER_DECISION_VERSION,
+  appendGraphSchedulerDecision,
   appendSchedulerDecision,
   findSchedulerDecisionByAssignmentBatchId,
   findSchedulerDecisionById,
   generatedAssignmentBatchId,
   generatedAssignmentId,
+  generatedGraphSchedulerDecisionId,
   generatedSchedulerDecisionId,
+  isGraphSchedulerDecisionKind,
+  normalizeAnySchedulerDecision,
+  normalizeGraphSchedulerDecision,
   normalizeSchedulerAssignment,
   normalizeSchedulerDecision,
   normalizeSchedulerDecisionKind,
   readCurrentTaskQueueHash,
+  readGraphSchedulerDecisions,
   readSchedulerDecisions,
   scheduleTasksFromQueue,
 };

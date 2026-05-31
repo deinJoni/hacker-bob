@@ -116,6 +116,11 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_read_task_graph: "initialized_session_read",
   bob_read_session_nucleus: "initialized_session_read",
   bob_schedule_tasks: "initialized_session_mutation",
+  // Plane X Cycle X.9: bob_schedule_graph_nodes wraps the graph-walking
+  // scheduler + bob_prepare_node dispatch. Same authority class as
+  // bob_schedule_tasks (both append to scheduler-decisions.jsonl and
+  // mutate session state via downstream tools).
+  bob_schedule_graph_nodes: "initialized_session_mutation",
   bob_set_pack_telemetry_config: "initialized_session_mutation",
   bob_set_queue_policy: "initialized_session_mutation",
   bob_read_session_state: "initialized_session_read",

@@ -456,6 +456,7 @@ const EXPECTED_TOOL_NAMES = [
   "bob_resolve_body",
   "bob_prepare_node",
   "bob_finalize_node",
+  "bob_schedule_graph_nodes",
   "bob_materialize_frontier",
   "bob_read_queue_policy",
   "bob_set_queue_policy",

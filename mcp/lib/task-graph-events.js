@@ -220,6 +220,17 @@ function appendNodeTransition(input, options = {}) {
     .map((edge) => assertTaskGraphNodeId(edge, "edge_added_to[]"));
   const contractPayload = normalizeOptionalObject(input.contract, "contract");
   const verification = normalizeOptionalObject(input.verification, "verification");
+  // X.9 Do step 1: the graph-scheduler sorts by priority + queue_policy.
+  // The X.2 materializer already folds `payload.priority` and
+  // `payload.severity_floor` from node.transitioned events, so the
+  // writer accepts both as optional inputs. Both are surface-level
+  // discriminators (not bound into the contract_hash); the operator
+  // can re-prioritize an open node via a state transition that carries
+  // the new priority. Values are trimmed but otherwise opaque to the
+  // wrapper (validation against the closed enum lives in the X.9
+  // scheduler which interprets them).
+  const priority = normalizeOptionalText(input.priority, "priority");
+  const severityFloor = normalizeOptionalText(input.severity_floor, "severity_floor");
 
   const payload = {
     node_id: nodeId,
@@ -232,6 +243,8 @@ function appendNodeTransition(input, options = {}) {
   if (outputHash) payload.output_hash = outputHash;
   if (failureReason) payload.failure_reason = failureReason;
   if (verification) payload.verification = verification;
+  if (priority) payload.priority = priority;
+  if (severityFloor) payload.severity_floor = severityFloor;
   if (edgeAddedTo.length > 0) payload.edge_added_to = edgeAddedTo;
 
   const source = normalizeOptionalObject(input.source, "source");

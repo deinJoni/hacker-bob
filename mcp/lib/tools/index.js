@@ -140,6 +140,14 @@ const TOOL_MODULES = Object.freeze([
   // tools are orchestrator + graph-scheduler-only.
   require("./prepare-node.js"),
   require("./finalize-node.js"),
+  // Plane X Cycle X.9 — Graph-walking scheduler. Orchestrator-only tool
+  // that wraps selectNextExecutableNodes(graph-scheduler.js) with a
+  // graph-hash-drift check and dispatches selected Transition +
+  // Hypothesis nodes via bob_prepare_node. Per X-D7 Surface + Claim
+  // ride the wave-scheduler unchanged; the graph-scheduler's selection
+  // filter rejects them so the two schedulers never contend for the
+  // same node.
+  require("./schedule-graph-nodes.js"),
   require("./materialize-frontier.js"),
   require("./read-queue-policy.js"),
   require("./set-queue-policy.js"),
