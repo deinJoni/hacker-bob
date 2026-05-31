@@ -1,7 +1,7 @@
 name: Brutalist Review
 
 # Multi-CLI adversarial code review on every PR, posted as inline comments.
-# Powered by ejmockler/brutalist-mcp (pinned to v1.14.1).
+# Powered by ejmockler/brutalist-mcp (pinned to v1.14.2).
 #
 # Critics: claude + codex + agy (Antigravity). Hard requirement is the
 # ANTHROPIC_OAUTH_TOKEN secret (claude). CODEX_AUTH (codex) and
@@ -34,7 +34,7 @@ jobs:
         # claude + brutalist-mcp are hard preflight requirements; codex and
         # agy are soft critics (warn if their auth secret is missing).
         run: |
-          npm install -g @brutalist/mcp@1.14.1 \
+          npm install -g @brutalist/mcp@1.14.2 \
                          @anthropic-ai/claude-code \
                          @openai/codex
           # agy (Antigravity) installs to ~/.local/bin/agy; put it on PATH.
@@ -42,16 +42,14 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Brutalist review
-        uses: ejmockler/brutalist-mcp/packages/github-action@v1.14.1
+        uses: ejmockler/brutalist-mcp/packages/github-action@v1.14.2
         env:
-          # Per-critic spawn cap (ms). brutalist-mcp's DEFAULT_TIMEOUT is
-          # 30 min, which equals the orchestrator's wall-clock budget — so
-          # a slow critic can sink the whole run. agy in particular runs an
-          # agentic loop that wanders the filesystem looking for code to
-          # review and often won't converge on a real repo. Capping each
-          # spawn at 3 min lets claude + codex always finish (they take
-          # seconds) and the review post; agy contributes only when it
-          # converges quickly, and is killed otherwise instead of stalling.
+          # Backstop only. v1.14.2's agy adapter scopes/anchors agy on diff
+          # reviews so it converges in ~15-50s instead of running out the
+          # 30-min orchestrator budget. This per-critic spawn cap (default
+          # 1800000ms = 30min = the orchestrator budget) stays as defense in
+          # depth: if any critic stalls, it's killed and the review still
+          # posts from the others (executeMultiCLI uses allSettled).
           BRUTALIST_TIMEOUT: "180000"
         with:
           github-token: ${{ github.token }}
