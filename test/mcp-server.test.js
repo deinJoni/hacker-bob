@@ -14706,7 +14706,7 @@ test("bounty_read_hunter_brief throws on an unsupported brief_profile rather tha
   });
 });
 
-test("bounty_read_hunter_brief caps assigned surface arrays and reports surface_limits", () => {
+test("bounty_read_hunter_brief caps assigned surface arrays and forwards unknown arrays with a default cap", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "HUNT", hunt_wave: 1, pending_wave: 1 });
@@ -14738,13 +14738,17 @@ test("bounty_read_hunter_brief caps assigned surface arrays and reports surface_
     assert.equal(brief.surface.bug_class_hints.length, 20);
     assert.equal(brief.surface.high_value_flows.length, 20);
     assert.equal(brief.surface.evidence.length, 25);
-    assert.equal(brief.surface.js_hints, undefined);
+    // Unknown array field (js_hints) is forwarded by default and capped at the
+    // generic default array limit — the copy-by-default contract that keeps a new
+    // surface field from being silently dropped before it reaches the hunter.
+    assert.equal(brief.surface.js_hints.length, 12);
+    assert.deepEqual(brief.surface_limits.js_hints, { shown: 12, total: 200, omitted: 188 });
     assert.deepEqual(brief.surface_limits.hosts, { shown: 20, total: 25, omitted: 5 });
     assert.deepEqual(brief.surface_limits.endpoints, { shown: 80, total: 90, omitted: 10 });
   });
 });
 
-test("bounty_read_hunter_brief caps scalar strings and omits unknown scalar fields", () => {
+test("bounty_read_hunter_brief caps scalar strings, forwards unknown scalars capped, and drops denylisted fields", () => {
   withTempHome(() => {
     const domain = "example.com";
     seedSessionState(domain, { phase: "HUNT", hunt_wave: 1, pending_wave: 1 });
@@ -14759,6 +14763,7 @@ test("bounty_read_hunter_brief caps scalar strings and omits unknown scalar fiel
       surface_type: huge,
       description: huge,
       recon_blob: huge,
+      cookies: huge,
     }]);
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-scalar" }]);
 
@@ -14766,7 +14771,11 @@ test("bounty_read_hunter_brief caps scalar strings and omits unknown scalar fiel
     assert.equal(brief.surface.surface_type.length, 80);
     assert.equal(brief.surface.description.length, 500);
     assert.equal(brief.surface.endpoints[0].length, 500);
-    assert.equal(brief.surface.recon_blob, undefined);
+    // Unknown scalar (recon_blob) is forwarded by default, capped at the generic
+    // default scalar cap; denylisted secret/bulky fields (cookies) stay dropped.
+    assert.equal(brief.surface.recon_blob.length, 200);
+    assert.deepEqual(brief.surface_limits.recon_blob, { shown_chars: 200, total_chars: 5000, omitted_chars: 4800 });
+    assert.equal(brief.surface.cookies, undefined);
     assert.deepEqual(brief.surface_limits.surface_type, {
       shown_chars: 80,
       total_chars: 5000,

@@ -139,7 +139,10 @@ function repoRunMatchesReproCommand(record, reproCommand) {
   }
   return repoRunCommandVariants(record.command).some((variant) => {
     const normalized = String(variant || "").trim();
-    return normalized === repro || normalized.includes(repro) || repro.includes(normalized);
+    // The executed run must contain the FULL claimed repro — one direction only.
+    // The reverse (repro.includes(normalized)) let a benign build command
+    // satisfy a longer claimed repro whose crash/PoC step never actually ran.
+    return normalized.includes(repro);
   });
 }
 
@@ -873,14 +876,6 @@ function recordFinding(args) {
       force_record: args.force_record === true,
     }, { expectedDomain: domain });
 
-    assertOssDynamicProofRequirement({
-      domain,
-      capabilityPack: finding.capability_pack,
-      severity: finding.severity,
-      reproCommand: finding.repro_command,
-      validated: finding.validated,
-    });
-
     const duplicate = existingFindings.find((existing) => existing.dedupe_key === finding.dedupe_key);
     if (duplicate && args.force_record !== true) {
       return JSON.stringify({
@@ -893,6 +888,17 @@ function recordFinding(args) {
         written_jsonl: structuredPath,
       });
     }
+
+    // Gate only records that will actually be written (new or force_record); a
+    // no-op duplicate return above must stay idempotent and not re-assert proof
+    // (the matching docker run can age out of the capped run log on long runs).
+    assertOssDynamicProofRequirement({
+      domain,
+      capabilityPack: finding.capability_pack,
+      severity: finding.severity,
+      reproCommand: finding.repro_command,
+      validated: finding.validated,
+    });
 
     appendJsonlLine(structuredPath, finding);
 

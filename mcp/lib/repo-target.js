@@ -107,8 +107,20 @@ const NATIVE_BUILD_FILE_RE = /(^|\/)(CMakeLists\.txt|Makefile|Makefile\.am|confi
 // Socket/RPC/TLS call signals. Bare `bind`/`accept`/`recv` are intentionally
 // excluded — they collide with std::bind, visitor.accept, etc. The tokens in
 // NETWORK_TOKEN_RE carry the socket-setup confidence instead.
-const NETWORK_CONTENT_RE = /\b(socket|listen|accept4|recvfrom|recvmsg|WSAStartup|getaddrinfo|svc_run|svc_register|svc_create|xdr_[a-z]|clnt_create|rpcb_set|MHD_start_daemon|evhttp_|uv_tcp_|SSL_accept|gnutls_handshake|bindresvport)\s*\(/;
+// Prefix families (xdr_*, evhttp_*, uv_tcp_*) must consume the rest of the
+// identifier — including digits, e.g. xdr_uint32_t / xdr_int64_t — before
+// `\s*\(`; a bare prefix only matches nonexistent literals like `xdr_x(`.
+const NETWORK_CONTENT_RE = /\b(accept4|recvfrom|recvmsg|WSAStartup|getaddrinfo|svc_run|svc_register|svc_create|xdr_[a-z0-9_]+|clnt_create|rpcb_set|MHD_start_daemon|evhttp_[a-z0-9_]+|uv_tcp_[a-z0-9_]+|SSL_accept|gnutls_handshake|bindresvport)\s*\(/;
+// socket()/listen() are the only libc tokens common enough to double as C++
+// method names (emitter.listen(), acceptor.socket()); require they not be
+// member-/pointer-/identifier-prefixed so event helpers don't read as daemons.
+const NETWORK_SOCKET_RE = /(?<![\w.>])(socket|listen)\s*\(/;
 const NETWORK_TOKEN_RE = /\b(INADDR_ANY|SOCK_STREAM|SOCK_DGRAM|AF_INET6?|sockaddr_in6?|htons|in_port_t)\b/;
+// Bundled test/example/fuzz/benchmark code routinely contains socket/server
+// code that is NOT part of the shipping daemon or library; excluding these dirs
+// from the reachability scan stops a local-file parser that ships a demo server
+// from being mis-stamped network-reachable (AV:N/CRITICAL).
+const NON_SHIPPING_DIR_RE = /(^|\/)(tests?|examples?|samples?|demos?|fuzz|fuzzing|benchmarks?|contrib|third[_-]?party|3rdparty|fixtures?|testdata)\//i;
 const SERVICE_UNIT_RE = /(^|\/)[^/]+\.(service|socket)$/;
 const SERVER_PATH_RE = /(^|\/)(daemon|daemons|server|servers|httpd|net|rpc|proto|protocol|listener|ipc)\//i;
 const SERVER_FILE_RE = /(^|\/)[^/]*(server|daemon|listener|socket|httpd|rpcsvc)[^/]*\.(c|cc|cpp|cxx|h|hpp)$/i;
@@ -162,13 +174,16 @@ function attackVectorForSurface(surfaceType, networkReachable) {
 // (path/name suggests a server), then a capped fallback sweep of native files.
 function detectNetworkReachability(repoPath, files) {
   const signals = [];
-  const nativeFiles = files.filter((file) => NATIVE_CODE_EXTENSIONS.has(path.extname(file).toLowerCase()));
-  for (const file of files) {
+  // Reachability must reflect the SHIPPING daemon/library, not bundled test
+  // harnesses, examples, or fuzzers (which routinely contain socket/server code).
+  const shippingFiles = files.filter((file) => !NON_SHIPPING_DIR_RE.test(file));
+  const nativeFiles = shippingFiles.filter((file) => NATIVE_CODE_EXTENSIONS.has(path.extname(file).toLowerCase()));
+  for (const file of shippingFiles) {
     if (SERVICE_UNIT_RE.test(file)) signals.push(`systemd_unit:${file}`);
   }
   const priority = nativeFiles.filter((file) => SERVER_PATH_RE.test(file) || SERVER_FILE_RE.test(file));
   for (const file of priority) signals.push(`server_path:${file}`);
-  const dockerfiles = files.filter((file) => DOCKERFILE_RE.test(file));
+  const dockerfiles = shippingFiles.filter((file) => DOCKERFILE_RE.test(file));
   const scanList = Array.from(new Set([
     ...priority,
     ...nativeFiles.filter((file) => ENTRYPOINT_FILE_RE.test(file)),
@@ -182,7 +197,7 @@ function detectNetworkReachability(repoPath, files) {
       if (/\bEXPOSE\s+\d/.test(text)) { signals.push(`expose:${file}`); netHit = true; }
       continue;
     }
-    if (NETWORK_CONTENT_RE.test(text) || NETWORK_TOKEN_RE.test(text)) {
+    if (NETWORK_CONTENT_RE.test(text) || NETWORK_SOCKET_RE.test(text) || NETWORK_TOKEN_RE.test(text)) {
       signals.push(`net_call:${file}`);
       netHit = true;
       if (signals.length >= 14) break;
@@ -192,7 +207,7 @@ function detectNetworkReachability(repoPath, files) {
     for (const file of nativeFiles.slice(0, NETWORK_FALLBACK_LIMIT)) {
       const text = safeReadText(repoPath, file, 150000);
       if (!text) continue;
-      if (NETWORK_CONTENT_RE.test(text)) { signals.push(`net_call:${file}`); netHit = true; break; }
+      if (NETWORK_CONTENT_RE.test(text) || NETWORK_SOCKET_RE.test(text)) { signals.push(`net_call:${file}`); netHit = true; break; }
     }
   }
   return {
@@ -214,6 +229,7 @@ const RESIDUAL_DOC_NAMES = new Set([
 ]);
 const RESIDUAL_GIT_TIMEOUT_MS = 15000;
 const RESIDUAL_MAX_TARGETS = 18;
+const RESIDUAL_GIT_PATHSPEC_MAX = 40;
 
 function extractResidualFromDocs(repoPath, files) {
   const leads = [];
@@ -233,18 +249,39 @@ function extractResidualFromDocs(repoPath, files) {
   return leads;
 }
 
+// Build a git pathspec that targets where native source actually lives. Prefer
+// depth-2 dirs (e.g. src/parsers) for precision; collapse to top-level dirs if a
+// wide flat layout would blow the pathspec budget. Root-level native files are
+// passed as explicit paths. Never fall back to "." (whole repo) — that drags
+// doc/vendor churn in as false residual seeds.
+function residualGitPathspec(nativeSourceFiles) {
+  const depth1 = new Set();
+  const depth2 = new Set();
+  const rootFiles = [];
+  for (const file of nativeSourceFiles) {
+    if (!file.includes("/")) { rootFiles.push(file); continue; }
+    const parts = file.split("/");
+    depth1.add(parts[0]);
+    depth2.add(parts.slice(0, Math.min(2, parts.length - 1)).join("/"));
+  }
+  const dirs = depth2.size <= RESIDUAL_GIT_PATHSPEC_MAX ? depth2 : depth1;
+  return [
+    ...Array.from(dirs).slice(0, RESIDUAL_GIT_PATHSPEC_MAX),
+    ...rootFiles.slice(0, RESIDUAL_GIT_PATHSPEC_MAX),
+  ];
+}
+
 function extractResidualFromGit(repoPath, nativeSourceFiles) {
   if (!fs.existsSync(path.join(repoPath, ".git"))) return [];
-  const dirs = Array.from(new Set(
-    nativeSourceFiles.map((file) => (file.includes("/") ? file.slice(0, file.indexOf("/")) : ".")),
-  )).filter(Boolean).slice(0, 12);
+  const pathspec = residualGitPathspec(nativeSourceFiles);
+  if (pathspec.length === 0) return [];
   let out = "";
   try {
     out = execFileSync("git", [
       "-C", repoPath, "log", "--no-merges",
       "--since=9 months ago", "--max-count=600",
       "--pretty=format:%h%x1f%s",
-      "--", ...(dirs.length ? dirs : ["."]),
+      "--", ...pathspec,
     ], {
       encoding: "utf8",
       timeout: RESIDUAL_GIT_TIMEOUT_MS,
@@ -273,6 +310,11 @@ function extractResidualFromGit(repoPath, nativeSourceFiles) {
 // changelog lines). The hunter sibling-hunts these: same struct, adjacent
 // count/length field, parallel branch the patch did not bound.
 function extractResidualHuntTargets(repoPath, files, nativeSourceFiles) {
+  // nativeSourceFiles is the UNCAPPED native set (computed once by the caller).
+  // The 120-cap display slice must NOT be used here — on a large daemon
+  // (netatalk-class) the alphabetically-first 120 files starve recently-patched
+  // dirs like libatalk/ or sys/, and incomplete-fix residual hunting is the
+  // highest-yield HIGH method in the corpus, so that bias matters most here.
   const gitLeads = extractResidualFromGit(repoPath, nativeSourceFiles);
   const docLeads = extractResidualFromDocs(repoPath, files);
   return Array.from(new Set([...gitLeads, ...docLeads])).slice(0, RESIDUAL_MAX_TARGETS);
@@ -499,7 +541,10 @@ function buildRepoInventory(args) {
     .map((file) => parsePackageJson(repoPath, file));
   const techStack = detectTechStack(files, packageManifests);
   const lockfiles = manifests.filter((file) => /lock|sum$/.test(path.basename(file)) || file.endsWith("pnpm-lock.yaml"));
-  const nativeSourceFiles = hasAny(files, (file) => NATIVE_CODE_EXTENSIONS.has(path.extname(file).toLowerCase()));
+  // Compute the native-source set once: the uncapped set feeds residual git
+  // mining (which must see every dir), the 120-slice is the surface display cap.
+  const allNativeSourceFiles = files.filter((file) => NATIVE_CODE_EXTENSIONS.has(path.extname(file).toLowerCase()));
+  const nativeSourceFiles = allNativeSourceFiles.slice(0, 120);
   const nativeBuildFiles = hasAny(files, (file) => NATIVE_BUILD_FILE_RE.test(file));
   const nativeFiles = Array.from(new Set([
     ...nativeBuildFiles,
@@ -533,8 +578,8 @@ function buildRepoInventory(args) {
   // Auth/authz guarding a network API is itself network-reachable even when the
   // listener is in a sibling component the content scan did not sample.
   const authNetworkReachable = reach.network_reachable || apiFiles.length > 0;
-  const residualHuntTargets = nativeSourceFiles.length > 0
-    ? extractResidualHuntTargets(repoPath, files, nativeSourceFiles)
+  const residualHuntTargets = allNativeSourceFiles.length > 0
+    ? extractResidualHuntTargets(repoPath, files, allNativeSourceFiles)
     : [];
 
   const surfaces = [];
@@ -804,6 +849,7 @@ function repoCheck(args) {
 }
 
 module.exports = {
+  NATIVE_CODE_EXTENSIONS,
   REPO_INVENTORY_VERSION,
   buildRepoInventory,
   initRepoSession,

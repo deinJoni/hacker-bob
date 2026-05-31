@@ -17,6 +17,7 @@ const {
 } = require("../mcp/server.js");
 const {
   HUNTER_BRIEF_SLICE_REGISTRY,
+  slimSurfaceForBrief,
 } = require("../mcp/lib/hunter-brief.js");
 const {
   ingestSchemaDoc,
@@ -332,4 +333,49 @@ test("smart-contract hunter brief stays within 30k with representative slice fix
     assert.ok(brief.priors_slice && brief.priors_slice.priors.length > 0);
     assert.ok(brief.surface_graph_slice && brief.surface_graph_slice.related_endpoints.length > 0);
   });
+});
+
+test("slimSurfaceForBrief carries the network_reachable triage field through the whitelist", () => {
+  // The hunter/orchestrator prompts name severity_ceiling, attack_vector, AND
+  // network_reachable as fields the surface carries. slimSurfaceForBrief copies
+  // only whitelisted scalars, so all three must survive (booleans coerce to the
+  // string "true"/"false") — otherwise the documented field reads undefined.
+  const networked = slimSurfaceForBrief({
+    id: "OSS-NATIVE-CODE",
+    surface_type: "oss_native_code",
+    attack_vector: "network",
+    severity_ceiling: "critical",
+    network_reachable: true,
+  }).surface;
+  assert.equal(networked.attack_vector, "network");
+  assert.equal(networked.severity_ceiling, "critical");
+  assert.equal(networked.network_reachable, "true");
+
+  // A false value must still be carried, not dropped — the hunter needs to read
+  // the AV:L signal too, not just infer it from a missing field.
+  const local = slimSurfaceForBrief({ id: "OSS-NATIVE-CODE", network_reachable: false }).surface;
+  assert.equal(local.network_reachable, "false");
+});
+
+test("slimSurfaceForBrief forwards unknown surface fields by default and drops denylisted ones", () => {
+  // Copy-by-default: a brand-new surface field (in no *_LIMITS map) must reach the
+  // hunter automatically — the inversion of the closed whitelist that silently
+  // dropped network_reachable. Secrets/raw bodies and nested objects stay out.
+  const slim = slimSurfaceForBrief({
+    id: "OSS-NATIVE-CODE",
+    reachability_confidence: "high",                          // new unknown scalar
+    network_entrypoints: ["daemon/server.c", "rpc/stub.c"],   // new unknown array
+    cookies: "session=secret",                                // denylisted
+    auth: { token: "t" },                                     // denylisted
+    nested_obj: { a: 1 },                                     // non-ranking object → skipped
+  }).surface;
+  assert.equal(slim.reachability_confidence, "high");
+  assert.deepEqual(slim.network_entrypoints, ["daemon/server.c", "rpc/stub.c"]);
+  assert.equal(slim.cookies, undefined);
+  assert.equal(slim.auth, undefined);
+  assert.equal(slim.nested_obj, undefined);
+
+  // The generic default cap still bounds an unknown scalar (no unbounded passthrough).
+  const big = slimSurfaceForBrief({ id: "X", scratch: "y".repeat(5000) }).surface;
+  assert.equal(big.scratch.length, 200);
 });
