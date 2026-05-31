@@ -95,7 +95,12 @@ test("npm package contains runtime surfaces and excludes test/cache artifacts", 
       assert.ok(files.has(expected), `${expected} missing from npm pack output`);
     }
 
-    assert.ok(pack.size < 2500000, `npm pack size ${pack.size} exceeds 2.5 MB threshold`);
+    // Backstop against accidental bloat (a stray node_modules, cache, or test
+    // fixture would add megabytes); the real exclusions are asserted per-file
+    // below. Raised 2.5 MB -> 3 MB after shipped docs/prompts grew the canonical
+    // package past the old ceiling (packed ~2.51 MB at v1.3.4, all intended to
+    // ship per the docs/** files glob and expectedCanonicalFiles()).
+    assert.ok(pack.size < 3000000, `npm pack size ${pack.size} exceeds 3 MB threshold`);
 
     for (const file of files) {
       assert.ok(!file.startsWith("test/"), `${file} should not be packed`);

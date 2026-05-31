@@ -127,7 +127,7 @@ function terminallyBlockedSurfaceIds(state) {
 
 function normalizeRepoMetadata(value, fieldName = "repo") {
   if (value == null) return null;
-  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+  if (typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${fieldName} must be an object`);
   }
   const result = {
@@ -594,7 +594,7 @@ function transitionPhase(args) {
       transitionGate = computeVerifyToGradeGate(domain, state);
       transitionGateLabel = "VERIFY -> GRADE";
     } else if (fromPhase === "GRADE" && toPhase === "REPORT") {
-      transitionGate = computeGradeToReportGate(domain, state);
+      transitionGate = computeGradeToReportGate(domain);
       transitionGateLabel = "GRADE -> REPORT";
     }
     if (transitionGate && transitionGate.transition_blockers.length > 0 && overrideReason == null) {

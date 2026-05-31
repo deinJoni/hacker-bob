@@ -27,6 +27,7 @@ const {
   readSessionStateStrict,
 } = require("./session-state.js");
 const {
+  NATIVE_CODE_EXTENSIONS,
   normalizeRepoPath,
   walkRepoFiles,
 } = require("./repo-target.js");
@@ -104,18 +105,10 @@ function readRepoText(repoPath, relativePath, maxBytes = 512 * 1024) {
 }
 
 function detectBuildEnvironment(repoPath, files) {
-  const dockerfiles = files.filter((file) => (
-    path.basename(file) === "Dockerfile" ||
-    path.basename(file).endsWith(".Dockerfile") ||
-    path.basename(file).endsWith("Dockerfile")
-  )).slice(0, 40);
-  const composeFiles = files.filter((file) => (
-    /(^|\/)(docker-)?compose\.(ya?ml)$/i.test(file) ||
-    /(^|\/)docker-compose\.(ya?ml)$/i.test(file)
-  )).slice(0, 40);
+  const dockerfiles = files.filter((file) => path.basename(file).endsWith("Dockerfile")).slice(0, 40);
+  const composeFiles = files.filter((file) => /(^|\/)(docker-)?compose\.ya?ml$/i.test(file)).slice(0, 40);
   const devcontainerFiles = files.filter((file) => file.startsWith(".devcontainer/")).slice(0, 40);
-  const sourceExtensions = new Set(files.map((file) => path.extname(file).toLowerCase()).filter(Boolean));
-  const cLike = [".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp"].some((ext) => sourceExtensions.has(ext));
+  const cLike = files.some((file) => NATIVE_CODE_EXTENSIONS.has(path.extname(file).toLowerCase()));
   const cmake = basenameIs(files, "CMakeLists.txt");
   const autoconf = basenameIs(files, "configure") || basenameIs(files, "configure.ac") || basenameIs(files, "configure.in") || basenameIs(files, "Makefile.am");
   const make = basenameIs(files, "Makefile");
