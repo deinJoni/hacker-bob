@@ -127,6 +127,12 @@ const TOOL_MODULES = Object.freeze([
   // schema + the X-D11 satisfiability gate). The attach tool emits
   // node.transitioned proposed → contracted with the canonical contract_hash.
   require("./attach-contract.js"),
+  // Plane X Cycle X.7 — bob_resolve_body + storage-distilled emission retrofit.
+  // The tool is the single sanctioned reader of artifact bodies addressable
+  // by an X-D12 artifact_ref. Brief renderers inline distilled summaries at
+  // append-time; agents pull bodies via this resolver. Backed by
+  // mcp/lib/body-resolvers/ (one resolver per X-D12 prefix).
+  require("./resolve-body.js"),
   require("./materialize-frontier.js"),
   require("./read-queue-policy.js"),
   require("./set-queue-policy.js"),

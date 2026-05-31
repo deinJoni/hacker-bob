@@ -751,6 +751,15 @@ const REPO_DOCKER_RUN_MAX_TIMEOUT_MS = 600_000;
 const REPO_DOCKER_RUN_MAX_OUTPUT_BYTES = 16 * 1024 * 1024; // 16 MB per stream
 const REPO_DOCKER_RUN_MAX_COMMAND_TOKENS = 64;
 const REPO_DOCKER_RUN_MAX_TOKEN_LENGTH = 2048;
+// Plane X Cycle X.7 (X-P9 retrofit): stdout/stderr first-line previews
+// cap. 200 chars matches the http_record body_preview discipline; the
+// per-stream first line is captured at completion time so the JSONL
+// row becomes brief-inlinable without resolving the full capture file.
+const REPO_DOCKER_RUN_FIRST_LINE_MAX_CHARS = 200;
+// Bound the bytes we read from each capture file when probing for the
+// first line so a degenerate stream that emits a multi-MB first line
+// does not pull 16 MB into RAM just to compute a 200-char preview.
+const REPO_DOCKER_RUN_FIRST_LINE_PROBE_BYTES = 4096;
 const REPO_MOUNT_MODE_VALUES = Object.freeze(["read_only", "read_write"]);
 const REPO_DOCKER_RUN_DNS = "1.1.1.1";
 const REPO_DOCKER_RUN_PROXY_ARG = Object.freeze({
@@ -975,6 +984,40 @@ function hashFile(filePath) {
     if (!fs.existsSync(filePath)) return null;
     const data = fs.readFileSync(filePath);
     return sha256Hex(data);
+  } catch {
+    return null;
+  }
+}
+
+// Plane X Cycle X.7 (X-P9 retrofit): read the first line of a capture
+// file for the brief-inlinable summary. Bounded by a 4KB probe so a
+// degenerate single-line capture file does not pull 16MB into memory
+// just to compute a 200-char preview. Returns null on missing file,
+// empty file, or read error; the JSONL row's `null` is then a stable
+// signal that there was no usable first line.
+function readFirstLine(filePath, maxChars) {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const stat = fs.statSync(filePath);
+    if (stat.size === 0) return null;
+    const probeLen = Math.min(stat.size, REPO_DOCKER_RUN_FIRST_LINE_PROBE_BYTES);
+    const fd = fs.openSync(filePath, "r");
+    try {
+      const buf = Buffer.alloc(probeLen);
+      const bytesRead = fs.readSync(fd, buf, 0, probeLen, 0);
+      if (bytesRead <= 0) return null;
+      const text = buf.subarray(0, bytesRead).toString("utf8");
+      const newlineIdx = text.indexOf("\n");
+      const firstLine = newlineIdx === -1 ? text : text.slice(0, newlineIdx);
+      // Strip trailing CR for CRLF-emitting platforms.
+      const stripped = firstLine.endsWith("\r") ? firstLine.slice(0, -1) : firstLine;
+      if (!stripped) return null;
+      return stripped.length > maxChars
+        ? `${stripped.slice(0, maxChars)}…`
+        : stripped;
+    } finally {
+      fs.closeSync(fd);
+    }
   } catch {
     return null;
   }
@@ -1249,6 +1292,8 @@ async function repoDockerRun({
   const stderrTruncated = runResult.stderr_truncated === true;
   const stdoutHash = hashFile(stdoutPath);
   const stderrHash = hashFile(stderrPath);
+  const stdoutFirstLine = readFirstLine(stdoutPath, REPO_DOCKER_RUN_FIRST_LINE_MAX_CHARS);
+  const stderrFirstLine = readFirstLine(stderrPath, REPO_DOCKER_RUN_FIRST_LINE_MAX_CHARS);
   const completedAt = new Date().toISOString();
 
   const liveRow = {
@@ -1276,6 +1321,16 @@ async function repoDockerRun({
     stderr_truncated: stderrTruncated,
     stdout_hash: stdoutHash,
     stderr_hash: stderrHash,
+    // Plane X Cycle X.7 (X-P9 retrofit): distilled summary fields.
+    // stdout/stderr capture files stay on disk (path + hash unchanged
+    // so the C.7 5-hash binding is preserved); the JSONL record becomes
+    // the brief-inlinable form via these scalars. Per X-P9 the bounds
+    // are structural (200-char first-line, integer counters) so the
+    // 2KB hard cap is honored by construction.
+    stdout_first_line: stdoutFirstLine,
+    stderr_first_line: stderrFirstLine,
+    stdout_size_bytes: stdoutBytes,
+    stderr_size_bytes: stderrBytes,
     egress_profile: egressProfileSummary,
   };
   if (normalizedReplayContext) liveRow.replay_context = normalizedReplayContext;
@@ -1307,6 +1362,10 @@ async function repoDockerRun({
     stderr_hash: stderrHash,
     stdout_bytes: stdoutBytes,
     stderr_bytes: stderrBytes,
+    stdout_size_bytes: stdoutBytes,
+    stderr_size_bytes: stderrBytes,
+    stdout_first_line: stdoutFirstLine,
+    stderr_first_line: stderrFirstLine,
     stdout_truncated: stdoutTruncated,
     stderr_truncated: stderrTruncated,
     exit_code: exitCode,
@@ -1332,6 +1391,7 @@ module.exports = {
   recommendedCommandsFor,
   assertNoEnvSecretLeak,
   dockerfileBobPath,
+  readFirstLine,
   repoEnvJsonPath,
   loadNfsXdrShape,
   // Constants
@@ -1339,6 +1399,7 @@ module.exports = {
   MAX_DOCKER_BUILD_TIMEOUT_MS,
   RECOMMENDED_COMMAND_ROLES,
   REPO_DOCKER_RUN_DEFAULT_TIMEOUT_MS,
+  REPO_DOCKER_RUN_FIRST_LINE_MAX_CHARS,
   REPO_DOCKER_RUN_MAX_OUTPUT_BYTES,
   REPO_DOCKER_RUN_MAX_TIMEOUT_MS,
   REPO_DOCKER_RUN_VERSION,

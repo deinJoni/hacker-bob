@@ -567,6 +567,7 @@ function pruneManagedDirs(targetAbs, result, { adapterIds, removeShared }) {
       path.join(BOB_RESOURCE_DIR, "knowledge"),
       BOB_RESOURCE_DIR,
       path.join("mcp", "lib", "tools"),
+      path.join("mcp", "lib", "body-resolvers"),
       path.join("mcp", "lib"),
       "mcp",
     );

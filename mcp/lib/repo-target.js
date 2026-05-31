@@ -1113,6 +1113,36 @@ function buildMatchedLines(text, predicate) {
   return { matched, truncated, scanned };
 }
 
+// Plane X Cycle X.7 (X-P9 retrofit): distilled summary for a repo_check
+// row. Brief renderers inline this; matched_lines[] stays as the body
+// (resolved via `bob_resolve_body(repo_check:<check_id>)`). The summary
+// shape is bounded by construction — top 3 matches, 120-char excerpts,
+// fixed scalar fields — so the X-P9 2KB hard cap is structurally honored.
+const REPO_CHECK_SUMMARY_EXCERPT_MAX_CHARS = 120;
+const REPO_CHECK_SUMMARY_TOP_N = 3;
+
+function buildRepoCheckSummary({ check_id, file_path: filePath, file_hash, matched_lines }) {
+  const lines = Array.isArray(matched_lines) ? matched_lines : [];
+  const top = lines.slice(0, REPO_CHECK_SUMMARY_TOP_N).map((entry) => {
+    const excerpt = typeof entry.excerpt === "string" ? entry.excerpt : "";
+    const redacted = excerpt.length > REPO_CHECK_SUMMARY_EXCERPT_MAX_CHARS
+      ? `${excerpt.slice(0, REPO_CHECK_SUMMARY_EXCERPT_MAX_CHARS)}…`
+      : excerpt;
+    return {
+      line_num: entry.line,
+      excerpt_hash: crypto.createHash("sha256").update(excerpt).digest("hex"),
+      redacted_excerpt: redacted,
+    };
+  });
+  return {
+    check_id,
+    file_path: filePath,
+    file_hash,
+    match_count: lines.length,
+    top_3_match_lines: top,
+  };
+}
+
 function repoCheck({
   target_domain: targetDomain,
   check_type: checkType = null,
@@ -1197,6 +1227,12 @@ function repoCheck({
         ts: new Date().toISOString(),
       };
       if (normalizedReplayContext) row.replay_context = normalizedReplayContext;
+      row.summary = buildRepoCheckSummary({
+        check_id: row.check_id,
+        file_path: filePath,
+        file_hash: null,
+        matched_lines: [],
+      });
       validateNoSensitiveMaterial(row, "repo_checks");
       withSessionLock(domain, () => {
         appendJsonlLine(repoChecksJsonlPath(domain), row);
@@ -1211,6 +1247,7 @@ function repoCheck({
         not_found: true,
         matched_lines: [],
         file_hash: null,
+        summary: row.summary,
       };
     }
     throw new ToolError(
@@ -1294,6 +1331,17 @@ function repoCheck({
     ts: new Date().toISOString(),
   };
   if (normalizedReplayContext) row.replay_context = normalizedReplayContext;
+  // Plane X Cycle X.7 (X-P9 retrofit): distilled summary field.
+  // matched_lines[] stays as the body (existing readers unchanged); the
+  // summary becomes the brief-inlinable form. Per X-P9 the summary is
+  // bounded by its shape (top_3 + 120-char excerpt), so it stays well
+  // under the 2KB hard cap regardless of file size or match count.
+  row.summary = buildRepoCheckSummary({
+    check_id: row.check_id,
+    file_path: filePath,
+    file_hash: fileHash,
+    matched_lines: matchedLines,
+  });
 
   // O-P7: dual-mode scrubbing. matched_lines[].excerpt is already redacted
   // via redactTextSensitiveValues above (the load-bearing primitive for
@@ -1308,6 +1356,14 @@ function repoCheck({
   const validationProbe = {
     ...row,
     matched_lines: matchedLines.map(({ line, offset }) => ({ line, offset })),
+    // The X.7 summary inlines redacted excerpts (already scrubbed via
+    // redactTextSensitiveValues); strip them from the probe so the
+    // structural validator sees only the scalar fields under its
+    // contract, mirroring the matched_lines treatment above.
+    summary: row.summary ? {
+      ...row.summary,
+      top_3_match_lines: row.summary.top_3_match_lines.map(({ line_num, excerpt_hash }) => ({ line_num, excerpt_hash })),
+    } : undefined,
   };
   validateNoSensitiveMaterial(validationProbe, "repo_checks");
   withSessionLock(domain, () => {
@@ -1328,6 +1384,7 @@ function repoCheck({
     file_size: stat.size,
     binary: isBinary,
     not_found: false,
+    summary: row.summary,
   };
 }
 
@@ -1566,9 +1623,12 @@ module.exports = {
   readRepoSession,
   buildRepoInventory,
   repoCheck,
+  buildRepoCheckSummary,
   // Exposed for cross-module reuse / tests.
   REPO_CHECK_MAX_FILE_BYTES,
   REPO_CHECK_MAX_EXCERPTS,
+  REPO_CHECK_SUMMARY_EXCERPT_MAX_CHARS,
+  REPO_CHECK_SUMMARY_TOP_N,
   REPO_CHECK_TYPES,
   REPO_WALK_MAX_FILES,
   RepoTooLargeError,

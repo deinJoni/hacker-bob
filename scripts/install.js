@@ -380,6 +380,17 @@ function installProject(projectDir, options = {}) {
     fs.rmSync(targetWavesDir, { recursive: true, force: true });
     copyDirFiles(sourceWavesDir, targetWavesDir, (name) => name.endsWith(".js"));
   }
+  // body-resolvers/ holds the X-D12 per-prefix resolver registry that
+  // backs bob_resolve_body (Plane X Cycle X.7). The MCP tool requires
+  // this directory at module-load time, so the installer must copy it
+  // alongside the tools/ + waves/ directories or server.js fails on
+  // startup with a Cannot find module './body-resolvers/index.js' error.
+  const sourceBodyResolversDir = path.join(sourceRoot, "mcp", "lib", "body-resolvers");
+  const targetBodyResolversDir = path.join(mcpDir, "lib", "body-resolvers");
+  if (path.resolve(sourceBodyResolversDir) !== path.resolve(targetBodyResolversDir)) {
+    fs.rmSync(targetBodyResolversDir, { recursive: true, force: true });
+    copyDirFiles(sourceBodyResolversDir, targetBodyResolversDir, (name) => name.endsWith(".js"));
+  }
   const copiedRuntimeDependencies = copyRuntimeNodeDependencies(sourceRoot, mcpDir);
 
   // Policy-replay diagnostic harness. Adapter-agnostic tooling under

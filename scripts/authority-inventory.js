@@ -134,6 +134,11 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_repo_docker_run: "initialized_session_mutation",
   bob_repo_inventory: "initialized_session_mutation",
   bob_repo_prepare_env: "initialized_session_mutation",
+  // Plane X Cycle X.7: bob_resolve_body is read-only — bodies are
+  // pull-only via the X-D12 resolver registry. Mapped to
+  // initialized_session_read because the tool reads session-bound
+  // artifacts and never mutates session state.
+  bob_resolve_body: "initialized_session_read",
   bounty_report_written: "initialized_session_mutation",
   bob_route_surfaces: "initialized_session_mutation",
   bob_run_auth_differential: "scoped_http_network",

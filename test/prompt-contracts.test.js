@@ -938,7 +938,12 @@ test("evaluator agents stay under their MCP tool budget", () => {
   // accepts a structured Contract payload but does not surface in briefs;
   // budgets bump by +1 (SC 37→38, web 39→40) to keep parity with the
   // bundle surface.
-  const EVALUATOR_MCP_TOOL_BUDGET = 38;
+  // Cycle X.7 (Plane X) adds bob_resolve_body (read-only body resolver
+  // for X-D12 artifact_refs) to evaluator-shared. Bodies are pull-only
+  // per X-P9 so the tool replaces ad-hoc body inlining in briefs;
+  // budgets bump by +1 (SC 38→39, web 40→41) to keep parity with the
+  // bundle surface.
+  const EVALUATOR_MCP_TOOL_BUDGET = 39;
   const agentNameToRoleId = {};
   for (const [roleId, spec] of Object.entries(CLAUDE_ROLE_SPECS)) {
     if (spec.kind === "agent" && typeof spec.output_path === "string") {
@@ -947,7 +952,7 @@ test("evaluator agents stay under their MCP tool budget", () => {
   }
   for (const pack of Object.values(CAPABILITY_PACKS)) {
     const roleId = agentNameToRoleId[pack.evaluator_agent];
-    const budget = pack.brief_profile === "web" ? 40 : EVALUATOR_MCP_TOOL_BUDGET;
+    const budget = pack.brief_profile === "web" ? 41 : EVALUATOR_MCP_TOOL_BUDGET;
     assert.ok(
       mcpToolNamesForRole(roleId).length <= budget,
       `pack ${pack.id} evaluator over budget (got ${mcpToolNamesForRole(roleId).length}, budget ${budget})`,

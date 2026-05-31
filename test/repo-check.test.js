@@ -353,7 +353,8 @@ test("CRITICAL O-P7 regression: synthetic .env API_KEY value is REDACTED in the 
 
     // The structural row metadata must still round-trip through
     // validateNoSensitiveMaterial without raising — matched_lines[].excerpt
-    // is the redaction-owned field (assignment-shaped content like
+    // and the X.7 retrofit's summary.top_3_match_lines[].redacted_excerpt
+    // are the redaction-owned fields (assignment-shaped content like
     // `API_KEY=REDACTED` legitimately remains there); the surrounding
     // metadata is what the structural validator covers.
     const rows = readJsonl(repoChecksJsonlPath(init.target_domain));
@@ -361,6 +362,10 @@ test("CRITICAL O-P7 regression: synthetic .env API_KEY value is REDACTED in the 
       const probe = {
         ...row,
         matched_lines: (row.matched_lines || []).map(({ line, offset }) => ({ line, offset })),
+        summary: row.summary ? {
+          ...row.summary,
+          top_3_match_lines: row.summary.top_3_match_lines.map(({ line_num, excerpt_hash }) => ({ line_num, excerpt_hash })),
+        } : row.summary,
       };
       validateNoSensitiveMaterial(probe, "repo_checks");
     }

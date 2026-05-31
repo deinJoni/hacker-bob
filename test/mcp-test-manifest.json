@@ -71,5 +71,6 @@
   "test/task-graph-events.test.js",
   "test/task-graph-materializer.test.js",
   "test/transition-surface-kind.test.js",
-  "test/contracts.test.js"
+  "test/contracts.test.js",
+  "test/storage-distilled-emission-compliance.test.js"
 ]

@@ -465,6 +465,24 @@ function normalizeSourceMeta(value) {
   return Object.keys(out).length === 0 ? null : out;
 }
 
+// Plane X Cycle X.7 (X-P9 retrofit): every traffic record carries a
+// deterministic `request_id`. The id is a sha256 fingerprint of the
+// surface-shaping tuple `{method, url, status, has_auth, ts}` truncated
+// to 16 hex chars. Two responses with identical surface keys collapse
+// to the same id (matching the existing trafficRecordKey dedup). The
+// id is the X-D12 `http_record:<request_id>` lookup key the X.7
+// resolver uses.
+function deriveTrafficRequestId(record) {
+  const fingerprint = crypto.createHash("sha256").update(JSON.stringify([
+    record.method,
+    record.url,
+    record.status == null ? "" : record.status,
+    record.has_auth ? "auth" : "anon",
+    record.ts,
+  ])).digest("hex");
+  return `R-${fingerprint.slice(0, 16)}`;
+}
+
 function normalizeTrafficRecord(record, { expectedDomain = null, lineNumber = null } = {}) {
   if (record == null || typeof record !== "object" || Array.isArray(record)) {
     throw new Error(lineNumber == null
@@ -499,6 +517,15 @@ function normalizeTrafficRecord(record, { expectedDomain = null, lineNumber = nu
     if (sourceMeta) {
       normalized.source_meta = sourceMeta;
     }
+
+    // X.7 retrofit: stamp the deterministic request_id so the X-D12
+    // http_record resolver has a stable lookup key. We compute the id
+    // AFTER URL redaction so two replays with the same redacted-url
+    // tuple share the id (the redaction is deterministic by
+    // construction).
+    normalized.request_id = typeof record.request_id === "string" && record.request_id.trim()
+      ? record.request_id
+      : deriveTrafficRequestId(normalized);
 
     if (expectedDomain != null && normalized.target_domain !== expectedDomain) {
       throw new Error("target_domain mismatch");
@@ -699,6 +726,53 @@ function summarizeTrafficRecords(records, { surface = null, limit = TRAFFIC_SUMM
   };
 }
 
+// Plane X Cycle X.7 (X-P9 retrofit): per-record distilled summary
+// payload. The summary is the brief-inlinable form of an
+// http_record:<request_id> artifact_ref. Bodies are pull-only via
+// `bob_resolve_body`. The 2KB X-P9 hard cap is structurally honored
+// because every field is a short scalar (or a 200-char preview); we do
+// not inline header arrays or full body bytes.
+const HTTP_RECORD_BODY_PREVIEW_MAX_CHARS = 200;
+
+function deriveContentTypeFromHeaderNames(headerNames) {
+  if (!Array.isArray(headerNames)) return null;
+  // We don't carry header VALUES on traffic records (header_names only),
+  // so content_type cannot be reconstructed from the record. Reserve the
+  // field shape for the future cycle that wires per-record headers; for
+  // now content_type is null when not present on the source record.
+  return null;
+}
+
+function buildHttpRecordObservedPayload(record) {
+  // The body_preview / body_hash / body_size fields are conditionally
+  // populated when the record carries those fields (the X.7 retrofit
+  // does not change the import path's body-capture behavior; HAR/Burp
+  // entries without a response body land with body fields absent).
+  const payload = {
+    observation_kind: "http_record_observed",
+    request_id: record.request_id,
+    method: record.method,
+    url: record.url,
+    status: record.status,
+    has_auth: record.has_auth === true,
+    content_type: typeof record.content_type === "string" && record.content_type.trim()
+      ? record.content_type.trim()
+      : deriveContentTypeFromHeaderNames(record.header_names),
+  };
+  if (typeof record.body_hash === "string" && record.body_hash) {
+    payload.body_hash = record.body_hash;
+  }
+  if (Number.isFinite(record.body_size_bytes)) {
+    payload.body_size_bytes = record.body_size_bytes;
+  }
+  if (typeof record.body_preview === "string" && record.body_preview) {
+    payload.body_preview = record.body_preview.length > HTTP_RECORD_BODY_PREVIEW_MAX_CHARS
+      ? `${record.body_preview.slice(0, HTTP_RECORD_BODY_PREVIEW_MAX_CHARS)}…`
+      : record.body_preview;
+  }
+  return payload;
+}
+
 function importHttpTraffic(args, { rankAttackSurfaces = null } = {}) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   const source = assertRequiredText(args.source, "source");
@@ -782,6 +856,27 @@ function importHttpTraffic(args, { rankAttackSurfaces = null } = {}) {
         scheduleMaterialization(domain);
       } catch {
         // Frontier ledger is dual-write best-effort during the deprecation window.
+      }
+
+      // Plane X Cycle X.7 (X-P9 retrofit): per-record distilled summary
+      // emission. The full body lives in traffic.jsonl; the per-record
+      // summary becomes the brief-inlinable form. Agents pull the body
+      // via `bob_resolve_body(http_record:<request_id>)`. Each emission
+      // stays under the X-P9 2KB hard cap by construction — we carry
+      // method/url/status/content_type/body_hash/body_size/body_preview/
+      // request_id only, no full headers, no full body bytes.
+      for (const record of records) {
+        try {
+          appendFrontierEvent({
+            target_domain: domain,
+            kind: "observation.recorded",
+            payload: buildHttpRecordObservedPayload(record),
+            source: { artifact: "traffic.jsonl", ref: record.request_id, tool: "bob_import_http_traffic" },
+          });
+        } catch {
+          // Per-record summary emission is best-effort; the body stays
+          // in traffic.jsonl regardless so the resolver still works.
+        }
       }
     }
 
@@ -1544,8 +1639,10 @@ module.exports = {
   _resetSchemaObservationDedup,
   appendHttpAuditRecord,
   buildCircuitBreakerSummary,
+  buildHttpRecordObservedPayload,
   compactHttpAuditRecord,
   compactTrafficRecord,
+  deriveTrafficRequestId,
   detectJwts,
   detectSchemas,
   headerNamesFromInput,
@@ -1568,4 +1665,5 @@ module.exports = {
   summarizeGeofenceWarnings,
   summarizeTrafficRecords,
   trafficRecordKey,
+  HTTP_RECORD_BODY_PREVIEW_MAX_CHARS,
 };
