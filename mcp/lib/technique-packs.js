@@ -166,6 +166,170 @@ const WEB3_IDENTITY_HANDOFF_TECHNIQUE_PACK = Object.freeze({
     + "Witness this with relational_value_match: left = off-chain artifact (http_record, JWT.sub or signed envelope.signer), right = on-chain artifact (evm_call, recover_signer result or msg.sender). op: eq.",
 });
 
+// ── Plane X Cycle X.11 — per-transition-kind hunting vocabulary ────────────
+// The X-D3 closed enum of six transition_kind values each has its own
+// focused hunting vocabulary derived from WEB3_IDENTITY_HANDOFF_TECHNIQUE_PACK.
+// X.11 brief composition foregrounds the per-kind vocab when rendering a
+// Transition node brief so the agent doesn't have to mentally pattern-match
+// the combined summary against the specific transition_kind they were
+// dispatched against. Each entry stays under the 512-char prose discipline
+// (X-P9) so a Transition brief with all six hunting bullets would still fit
+// inside the X-P9 brief budget.
+const TRANSITION_KIND_HUNTING_VOCAB = Object.freeze({
+  identity_propagation:
+    "token-to-wallet correlation: does the JWT.sub (or session principal) match the on-chain msg.sender / recovered signer? Mismatch = identity-propagation bug. Off-chain identity asserted in an auth artifact (JWT, signed envelope) must bind to the on-chain identity the contract enforces — a privileged caller hand-off without binding is the canonical bug.",
+  value_movement:
+    "off-chain auth used as on-chain trust for money movement: a contract that accepts a transfer or mint because some off-chain service signed for it (custodian, relayer, oracle) — does the contract verify a signature bound to the OFF-CHAIN identity that authorized the off-chain leg? Cross-stack value movement bugs hide in the silent assumption that the off-chain auth principal equals the on-chain caller.",
+  trust_handoff:
+    "trust handoff between off-chain auth and on-chain authority: an off-chain role (admin / operator / oracle owner) maps to an on-chain role without a binding. Check whether the on-chain role can be re-keyed without notice, whether the off-chain role's signing key rotates separately from the on-chain assignment, and whether revoking off-chain access removes the on-chain authority.",
+  state_dependency:
+    "state read across the off-chain/on-chain boundary: contract reads a state derived off-chain (e.g., committed reward index from an indexer, off-chain order book digest) — does the contract enforce that the off-chain producer's signature is fresh, bound to the contract's expected sequence, and unforgeable? A stale or replayed off-chain state digest accepted on-chain is the canonical bug.",
+  oracle_dependency:
+    "oracle dependency from a privileged off-chain producer: contract trusts a price / event / signature from a named oracle — does the contract enforce the oracle's signature scheme, freshness, and the off-chain producer's identity binding (NOT just \"this address signed\")? Oracle-stale, oracle-replay, oracle-impersonation each map to a different witness predicate.",
+  message_passing:
+    "cross-chain / cross-stack message passing: a message routed through a bridge / DVN / relayer carries an off-chain-signed envelope that the destination contract accepts. Check whether the validator threshold is set on-chain (not by an off-chain role), whether the envelope's source-chain identity binds to the destination action, and whether replay across forks / chains is prevented (chainId + nonce + deadline).",
+});
+
+// ── Plane X Cycle X.11 — per-transition-kind worked Contract templates ─────
+// The X.11 brief composition surfaces a complete relational_value_match
+// predicate skeleton per transition_kind so the agent doesn't have to invent
+// the shape. Each template names a left artifact_ref + extract_path AND a
+// right artifact_ref + extract_path; the agent fills in the real refs from
+// their dispatched observations. Templates use placeholder ref ids
+// (e.g. `<auth_token_response>`, `<verify_signature>`) so the agent reads
+// them as "fill these in" not "use these literal ids".
+//
+// Per X-P9 each template stays under the X-D4 invariant cap (280 chars per
+// invariant statement) so a Transition brief carrying all six templates
+// remains under the brief budget.
+const TRANSITION_KIND_CONTRACT_TEMPLATES = Object.freeze({
+  identity_propagation: Object.freeze({
+    invariant:
+      "An attacker MUST NOT cause the on-chain msg.sender / recovered signer to differ from the off-chain principal that signed the auth artifact.",
+    witness: Object.freeze({
+      kind: "relational_value_match",
+      predicate: Object.freeze({
+        left: Object.freeze({
+          artifact_ref: "http_record:<auth_token_response>",
+          extract_path: "$.response.body.access_token.payload.sub",
+        }),
+        op: "eq",
+        right: Object.freeze({
+          artifact_ref: "evm_call:<verify_signature>",
+          extract_path: "$.recovered_signer",
+        }),
+      }),
+    }),
+  }),
+  value_movement: Object.freeze({
+    invariant:
+      "An attacker MUST NOT cause an on-chain value-moving call to authorize a recipient that differs from the off-chain authorization's payee.",
+    witness: Object.freeze({
+      kind: "relational_value_match",
+      predicate: Object.freeze({
+        left: Object.freeze({
+          artifact_ref: "http_record:<authorize_transfer_response>",
+          extract_path: "$.response.body.authorized.payee",
+        }),
+        op: "eq",
+        right: Object.freeze({
+          artifact_ref: "evm_call:<execute_transfer>",
+          extract_path: "$.calldata.recipient",
+        }),
+      }),
+    }),
+  }),
+  trust_handoff: Object.freeze({
+    invariant:
+      "An attacker MUST NOT cause the on-chain authority to act under a role whose off-chain holder no longer holds the corresponding off-chain credential.",
+    witness: Object.freeze({
+      kind: "relational_value_match",
+      predicate: Object.freeze({
+        left: Object.freeze({
+          artifact_ref: "http_record:<current_role_holder>",
+          extract_path: "$.response.body.role.holder_address",
+        }),
+        op: "eq",
+        right: Object.freeze({
+          artifact_ref: "evm_call:<role_authority_check>",
+          extract_path: "$.recovered_signer",
+        }),
+      }),
+    }),
+  }),
+  state_dependency: Object.freeze({
+    invariant:
+      "An attacker MUST NOT cause the on-chain contract to accept an off-chain-produced state digest whose freshness, sequence, or signer binding is unverified.",
+    witness: Object.freeze({
+      kind: "relational_value_match",
+      predicate: Object.freeze({
+        left: Object.freeze({
+          artifact_ref: "http_record:<offchain_state_digest>",
+          extract_path: "$.response.body.commitment.digest",
+        }),
+        op: "eq",
+        right: Object.freeze({
+          artifact_ref: "evm_call:<onchain_state_read>",
+          extract_path: "$.return_value.committed_digest",
+        }),
+      }),
+    }),
+  }),
+  oracle_dependency: Object.freeze({
+    invariant:
+      "An attacker MUST NOT cause the on-chain contract to accept an oracle value whose signer identity does not bind to the named oracle's off-chain identity.",
+    witness: Object.freeze({
+      kind: "relational_value_match",
+      predicate: Object.freeze({
+        left: Object.freeze({
+          artifact_ref: "http_record:<oracle_report_envelope>",
+          extract_path: "$.response.body.signer_address",
+        }),
+        op: "eq",
+        right: Object.freeze({
+          artifact_ref: "evm_call:<oracle_verification>",
+          extract_path: "$.recovered_signer",
+        }),
+      }),
+    }),
+  }),
+  message_passing: Object.freeze({
+    invariant:
+      "An attacker MUST NOT cause a destination-chain action to be authorized by a source-chain envelope whose source-chain identity does not bind to the destination action.",
+    witness: Object.freeze({
+      kind: "relational_value_match",
+      predicate: Object.freeze({
+        left: Object.freeze({
+          artifact_ref: "http_record:<source_chain_envelope>",
+          extract_path: "$.response.body.source_chain.sender_address",
+        }),
+        op: "eq",
+        right: Object.freeze({
+          artifact_ref: "evm_call:<destination_chain_dispatch>",
+          extract_path: "$.calldata.authorized_sender",
+        }),
+      }),
+    }),
+  }),
+});
+
+// X.11 helper: surface the per-kind hunting vocab + Contract template for a
+// given transition_kind. Returns null for an unknown kind so callers can
+// gracefully fall back to the combined `web3_identity_handoff` summary.
+function transitionKindBriefContent(transitionKind) {
+  if (typeof transitionKind !== "string") return null;
+  const trimmed = transitionKind.trim();
+  if (!trimmed) return null;
+  const vocab = TRANSITION_KIND_HUNTING_VOCAB[trimmed];
+  const template = TRANSITION_KIND_CONTRACT_TEMPLATES[trimmed];
+  if (!vocab && !template) return null;
+  return Object.freeze({
+    transition_kind: trimmed,
+    hunting_vocab: vocab || null,
+    contract_template: template || null,
+  });
+}
+
 const TECHNIQUE_PACKS_BY_ID = Object.freeze({
   ...Object.fromEntries(OSS_TECHNIQUE_PACKS.map((pack) => [pack.id, pack])),
   [WEB3_IDENTITY_HANDOFF_TECHNIQUE_PACK.id]: WEB3_IDENTITY_HANDOFF_TECHNIQUE_PACK,
@@ -1300,4 +1464,9 @@ module.exports = {
   WEB3_IDENTITY_HANDOFF_TECHNIQUE_PACK,
   TECHNIQUE_PACKS_BY_ID,
   getTechniquePackById,
+  // Cycle X.11 — per-transition-kind hunting vocab + worked Contract
+  // templates surfaced in the cross-stack Transition brief composition.
+  TRANSITION_KIND_HUNTING_VOCAB,
+  TRANSITION_KIND_CONTRACT_TEMPLATES,
+  transitionKindBriefContent,
 };

@@ -720,7 +720,12 @@ test("orchestrator skill stays bounded and reflects the lifecycle topology", () 
   // contract; the role narrative grew by ~30 lines to cover argument parsing,
   // target-axis branching, OSS lenses, the SETUP repo-mode sub-flow, and the
   // explicit O-P8 contract. Cap bumped from 323 → 360.
-  assert.ok(lines <= 360, `bob-evaluate skill is ${lines} lines (cap 360)`);
+  // Plane X Cycle X.11 (Nike fix) added the cross-stack transition proposals
+  // stanza in OPEN_FRONTIER — names bob_propose_transition and the X-D3 closed
+  // transition_kind enum so the orchestrator proposes Transition nodes before
+  // dispatching Surface-node waves when ≥2 stack families share a target
+  // (+2 lines). Cap bumped 360 → 365.
+  assert.ok(lines <= 365, `bob-evaluate skill is ${lines} lines (cap 365)`);
   const skill = readFile(".claude/skills/bob-evaluate/SKILL.md");
   assert.match(
     skill,

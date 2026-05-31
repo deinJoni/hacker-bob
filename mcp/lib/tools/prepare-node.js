@@ -50,6 +50,7 @@ const {
   findAttachedContract,
   readHypothesisProposals,
   readNodeTransitions,
+  readTransitionProposals,
 } = require("../task-graph-events.js");
 const {
   materializeTaskGraph,
@@ -76,6 +77,10 @@ const {
 const {
   renderNodeBriefExtras,
 } = require("../assignment-brief.js");
+const {
+  TRANSITION_KIND_HUNTING_VOCAB,
+  transitionKindBriefContent,
+} = require("../technique-packs.js");
 
 // X.8 Do step 1: only nodes in state contracted or ready may be prepared.
 // `ready` is reserved for X.9's graph-scheduler — the X.4 attach path
@@ -112,6 +117,25 @@ const PRIOR_ATTEMPT_CAP = 3;
 // enough to surface every adjacent hypothesis in a typical run and small
 // enough to never dominate the brief.
 const ADJACENT_HYPOTHESES_CAP = 8;
+
+// Plane X Cycle X.11 — caps for the cross-stack composition slice.
+//
+// `ENDPOINT_OBSERVATIONS_PER_SURFACE_CAP`: when a Transition brief inlines
+// both endpoints' summary-grade observations (per X.11 Do step 1), each
+// endpoint surface gets at most this many observations. Per X-P9 each
+// observation is already shape-bounded at emit, so the cap defends against
+// pathological session ledgers (thousands of identical observations on one
+// endpoint) without re-capping per-event text. 8 is enough to land the most
+// recent observations per endpoint while keeping the slice well under the
+// 8KB cross_stack_composition budget for the 50-observation X.11 test case.
+const ENDPOINT_OBSERVATIONS_PER_SURFACE_CAP = 8;
+
+// `ADJACENT_TRANSITIONS_CAP`: when a Surface brief inlines a one-line
+// summary of each adjacent Transition (per X.11 Do step 2), cap the list
+// at this many entries. A Surface with ≥1 adjacent Transition is the
+// trigger (per spec); we surface up to 8 transitions per Surface to avoid
+// dominating the brief on dense graphs.
+const ADJACENT_TRANSITIONS_CAP = 8;
 
 // Plane X Cycle X.10 — generic agent shell + family-tagged labels.
 //
@@ -439,6 +463,235 @@ function resolveRecommendedReadSummary(targetDomain, artifactRef, ledgerEvents) 
   };
 }
 
+// ─── Plane X Cycle X.11 — cross-stack composition helpers ──────────────
+//
+// X.11 spec Do step 1: when the dispatched node is a Transition, the brief
+// surfaces a focused "cross-stack composition" slice that names:
+//   - both endpoint surfaces' summary-grade observations (per X-P9 these
+//     are already distilled at emit; the helper below picks up to
+//     ENDPOINT_OBSERVATIONS_PER_SURFACE_CAP per endpoint)
+//   - the transition_kind (one of the X-D3 closed enum)
+//   - the trust_assumption prose (capped at 512 chars per X-P9 at append)
+//   - per-kind hunting vocabulary from `web3_identity_handoff` — surfaced
+//     via `transitionKindBriefContent(kind).hunting_vocab`
+//   - a worked Contract template carrying a complete relational_value_match
+//     predicate skeleton the agent fills in — surfaced via
+//     `transitionKindBriefContent(kind).contract_template`
+//   - the endpoint_capability_packs[] union (already on pack.brief_emphasis)
+//     so the agent reads both stack families in the same slice
+//
+// X.11 spec Do step 2: when the dispatched node is a Surface AND has ≥1
+// adjacent Transition, the brief surfaces a one-line summary of each
+// adjacent transition (node_id, transition_kind, trust_assumption, the
+// other endpoint surface). The adjacent_hypotheses slice from X.8 stays
+// where it is — this slice is purely about adjacent Transitions.
+
+// Look up the transition proposal payload for a Transition node id. The
+// materializer doesn't carry transition_kind or trust_assumption on the
+// materialized node (it stays on the proposal event per X-D1); we pull
+// the payload here so the brief can surface them. Returns null when the
+// node id doesn't match any transition proposal (e.g., a synthetic node
+// emitted via raw node.transitioned without a proposal).
+function findTransitionProposal(targetDomain, nodeId) {
+  const proposals = readTransitionProposals(targetDomain);
+  for (const event of proposals) {
+    const payload = event.payload || {};
+    const proposalId = typeof payload.proposal_id === "string" ? payload.proposal_id : null;
+    // Materializer derives node id as `TG-T-<proposal_id>` (or
+    // `TG-T-<event_id>` when proposal_id is absent). Try both.
+    const derivedById = proposalId ? `TG-T-${proposalId}` : null;
+    const derivedByEvent = `TG-T-${event.event_id}`;
+    if (derivedById === nodeId || derivedByEvent === nodeId) {
+      return {
+        transition_kind: typeof payload.transition_kind === "string" ? payload.transition_kind : null,
+        trust_assumption: typeof payload.trust_assumption === "string" ? payload.trust_assumption : null,
+        from_surface: typeof payload.from_surface === "string" ? payload.from_surface : null,
+        to_surface: typeof payload.to_surface === "string" ? payload.to_surface : null,
+        proposal_id: proposalId,
+        event_id: event.event_id,
+      };
+    }
+  }
+  return null;
+}
+
+// Collect summary-grade observations for a single surface_id. Reuses the
+// adjacent-observations pattern but scopes to ONE surface (so a Transition
+// brief can show endpoint A's observations and endpoint B's observations
+// as separate buckets — the cross-stack readability advantage X.11
+// foregrounds). Returns up to ENDPOINT_OBSERVATIONS_PER_SURFACE_CAP most-
+// recent observation.recorded events whose surface_id matches.
+function collectObservationsForSurface(events, surfaceId) {
+  if (typeof surfaceId !== "string" || !surfaceId.length) return [];
+  const matched = [];
+  for (const event of events) {
+    if (!event || event.kind !== "observation.recorded") continue;
+    const sid = event.surface_id
+      || (event.payload && typeof event.payload.surface_id === "string" ? event.payload.surface_id : null);
+    if (sid && sid === surfaceId) {
+      matched.push({
+        event_id: event.event_id,
+        ts: event.ts,
+        surface_id: surfaceId,
+        payload: event.payload || {},
+      });
+    }
+  }
+  matched.sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
+  return matched.slice(0, ENDPOINT_OBSERVATIONS_PER_SURFACE_CAP);
+}
+
+// Collect adjacent Transition nodes for a Surface node. Walks the document's
+// edges and picks Transition nodes (kind === "transition") incident to the
+// dispatched Surface node. For each adjacent Transition, the proposal event
+// gives us the transition_kind + trust_assumption + the OTHER endpoint
+// surface id. Capped at ADJACENT_TRANSITIONS_CAP.
+function collectAdjacentTransitions(targetDomain, document, dispatchedNode) {
+  if (!dispatchedNode || dispatchedNode.kind !== "surface") return [];
+  if (!document || !Array.isArray(document.edges) || !Array.isArray(document.nodes)) return [];
+  const transitionsByNodeId = new Map();
+  for (const node of document.nodes) {
+    if (node && node.kind === "transition") {
+      transitionsByNodeId.set(node.node_id, node);
+    }
+  }
+  const wantSurfaces = new Set(
+    Array.isArray(dispatchedNode.surface_refs) ? dispatchedNode.surface_refs : [],
+  );
+  const adjacentTransitionIds = new Set();
+  for (const edge of document.edges) {
+    if (!edge) continue;
+    if (edge.from_node_id === dispatchedNode.node_id && transitionsByNodeId.has(edge.to_node_id)) {
+      adjacentTransitionIds.add(edge.to_node_id);
+    } else if (edge.to_node_id === dispatchedNode.node_id && transitionsByNodeId.has(edge.from_node_id)) {
+      adjacentTransitionIds.add(edge.from_node_id);
+    }
+  }
+  if (adjacentTransitionIds.size === 0) return [];
+  // Build the one-line summaries. For each adjacent Transition, look up its
+  // proposal payload to read transition_kind + trust_assumption, and pick
+  // the endpoint surface that ISN'T the dispatched Surface.
+  const out = [];
+  for (const transitionNodeId of adjacentTransitionIds) {
+    const transitionNode = transitionsByNodeId.get(transitionNodeId);
+    if (!transitionNode) continue;
+    const proposal = findTransitionProposal(targetDomain, transitionNodeId);
+    const transitionKind = proposal ? proposal.transition_kind : null;
+    const trustAssumption = proposal ? proposal.trust_assumption : null;
+    const surfaceRefs = Array.isArray(transitionNode.surface_refs)
+      ? transitionNode.surface_refs
+      : [];
+    const otherEndpointSurface = surfaceRefs.find((ref) => !wantSurfaces.has(ref)) || null;
+    out.push({
+      node_id: transitionNodeId,
+      state: transitionNode.state,
+      transition_kind: transitionKind,
+      trust_assumption: trustAssumption,
+      other_endpoint_surface: otherEndpointSurface,
+      surface_refs: surfaceRefs.slice().sort(),
+    });
+    if (out.length >= ADJACENT_TRANSITIONS_CAP) break;
+  }
+  // Stable ordering: most recently transitioned first via the node's
+  // ts_last; ties broken by node_id for determinism.
+  out.sort((a, b) => a.node_id.localeCompare(b.node_id));
+  return out;
+}
+
+// Build the cross_stack_composition slice for a Transition node. Per X.11
+// Do step 1 this is the Nike-fix-shaped slice: transition_kind + per-kind
+// hunting vocab + worked Contract template + both endpoints' tools +
+// both endpoints' summary-grade observations. Returns null when the node
+// is not a Transition.
+function buildCrossStackCompositionForTransition({
+  targetDomain,
+  dispatchedNode,
+  pack,
+  ledgerEvents,
+}) {
+  if (!dispatchedNode || dispatchedNode.kind !== "transition") return null;
+  const proposal = findTransitionProposal(targetDomain, dispatchedNode.node_id);
+  const transitionKind = proposal ? proposal.transition_kind : null;
+  const trustAssumption = proposal ? proposal.trust_assumption : null;
+  const fromSurface = proposal ? proposal.from_surface : (dispatchedNode.surface_refs || [])[0] || null;
+  const toSurface = proposal ? proposal.to_surface : (dispatchedNode.surface_refs || [])[1] || null;
+
+  // Pull per-kind hunting vocab + worked Contract template. When the
+  // transition_kind is unknown (synthetic / out-of-enum), surface a null
+  // hunting_vocab + null contract_template; the slice still inlines the
+  // endpoint observations + endpoint tools so the agent has cross-stack
+  // visibility even without the per-kind narrative.
+  const briefContent = transitionKindBriefContent(transitionKind);
+
+  const endpointCapabilityPacks = pack && pack.brief_emphasis
+    && Array.isArray(pack.brief_emphasis.endpoint_capability_packs)
+    ? pack.brief_emphasis.endpoint_capability_packs.slice()
+    : [];
+
+  // Both endpoints' summary-grade observations. Per X-P9 each event is
+  // already shape-bounded; the cap is per-surface (not per-event-text).
+  const fromObservations = collectObservationsForSurface(ledgerEvents, fromSurface);
+  const toObservations = collectObservationsForSurface(ledgerEvents, toSurface);
+
+  return {
+    transition_kind: transitionKind,
+    trust_assumption: trustAssumption,
+    endpoint_surfaces: {
+      from: fromSurface,
+      to: toSurface,
+    },
+    endpoint_capability_packs: endpointCapabilityPacks,
+    hunting_vocab: briefContent ? briefContent.hunting_vocab : null,
+    contract_template: briefContent ? briefContent.contract_template : null,
+    // Tools-from-both-endpoint-families per X.11 spec Do step 1. The
+    // pack's allowed_tools_for_node[] already carries the UNION of both
+    // endpoints' tools (deriveTransitionPack in X.5 unions them); the
+    // brief's `allowed_tools_for_node` slice will show the canonical
+    // constraint. This slice highlights that the constraint covers both
+    // endpoint families so the agent reads the cross-stack signal here.
+    cross_stack_tools_discipline: "Your allowed_tools_for_node[] carries the UNION of both endpoint families' evaluator-callable tools per X.5 deriveTransitionPack. Exercise BOTH stacks to capture the cross-artifact evidence the relational_value_match witness compares.",
+    endpoint_observations: {
+      [fromSurface || "_from"]: {
+        surface_id: fromSurface,
+        events: fromObservations,
+        count: fromObservations.length,
+        cap: ENDPOINT_OBSERVATIONS_PER_SURFACE_CAP,
+      },
+      [toSurface || "_to"]: {
+        surface_id: toSurface,
+        events: toObservations,
+        count: toObservations.length,
+        cap: ENDPOINT_OBSERVATIONS_PER_SURFACE_CAP,
+      },
+    },
+    discipline: "X.11 cross-stack brief composition: the transition_kind + hunting_vocab + contract_template together encode the Nike-fix invariant — an off-chain identity / value / state must bind to its on-chain counterpart. Use the contract_template as the predicate skeleton; replace the placeholder artifact_refs (e.g. http_record:<auth_token_response>, evm_call:<verify_signature>) with the real refs from your dispatched observations BEFORE re-attaching a refined Contract.",
+    transition_kinds_documented: Object.keys(TRANSITION_KIND_HUNTING_VOCAB).slice(),
+  };
+}
+
+// Build the cross_stack_composition slice for a Surface node with ≥1
+// adjacent Transition. Per X.11 Do step 2 this slice inlines a one-line
+// summary of each adjacent Transition so the Surface evaluator can see
+// the cross-stack handoffs that touch their surface. Returns null when
+// the Surface has no adjacent Transitions (the slice key gets dropped
+// by renderNodeBriefExtras).
+function buildCrossStackCompositionForSurface({
+  targetDomain,
+  document,
+  dispatchedNode,
+}) {
+  if (!dispatchedNode || dispatchedNode.kind !== "surface") return null;
+  const adjacentTransitions = collectAdjacentTransitions(targetDomain, document, dispatchedNode);
+  if (adjacentTransitions.length === 0) return null;
+  return {
+    surface_id: (dispatchedNode.surface_refs || [])[0] || null,
+    adjacent_transitions: adjacentTransitions,
+    count: adjacentTransitions.length,
+    cap: ADJACENT_TRANSITIONS_CAP,
+    discipline: "X.11 cross-stack visibility for Surface nodes: each adjacent_transition names a handoff that touches your surface. If your evaluation surfaces evidence that strengthens or contradicts a transition's trust_assumption, refine the Transition's Contract via bob_attach_contract and propose dispatch via the graph-scheduler.",
+  };
+}
+
 // Build the brief context bag the NODE_BRIEF_SLICE_REGISTRY consumes.
 function buildBriefContext({
   targetDomain,
@@ -537,6 +790,35 @@ function buildBriefContext({
     cap: ADJACENT_OBSERVATIONS_CAP,
   };
 
+  // Plane X Cycle X.11 — cross-stack brief composition (the Nike fix).
+  // For Transition nodes: surface both endpoints' summary-grade
+  // observations + per-kind hunting vocab + worked Contract template +
+  // both endpoints' tools (via endpoint_capability_packs). For Surface
+  // nodes with ≥1 adjacent Transition: surface a one-line summary of
+  // each adjacent transition. Returns null for all other shapes; the
+  // renderNodeBriefExtras helper drops the empty slice key per T-R1.
+  let crossStackComposition = "";
+  if (dispatchedNode.kind === "transition") {
+    const transitionComposition = buildCrossStackCompositionForTransition({
+      targetDomain,
+      dispatchedNode,
+      pack,
+      ledgerEvents,
+    });
+    if (transitionComposition) {
+      crossStackComposition = transitionComposition;
+    }
+  } else if (dispatchedNode.kind === "surface") {
+    const surfaceComposition = buildCrossStackCompositionForSurface({
+      targetDomain,
+      document,
+      dispatchedNode,
+    });
+    if (surfaceComposition) {
+      crossStackComposition = surfaceComposition;
+    }
+  }
+
   const priorAttemptsList = collectPriorAttempts(targetDomain, dispatchedNode.node_id);
   const priorAttempt = priorAttemptsList.length > 0
     ? {
@@ -582,6 +864,7 @@ function buildBriefContext({
     governance,
     nodeContext,
     contract: contractSlice,
+    crossStackComposition,
     allowedToolsForNode,
     recommendedReads,
     adjacentObservations,

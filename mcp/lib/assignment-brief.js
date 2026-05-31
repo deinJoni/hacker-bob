@@ -358,23 +358,32 @@ const OSS_BRIEF_SLICE_REGISTRY = Object.freeze([
 // and structured recall slices for prior_attempt + adjacent_hypotheses +
 // recommended_reads). Slices are listed in the spec's Do step 1 order:
 //
-//   1. governance               — common operator-facing context
-//   2. node_context             — node_id, kind, surface_refs, severity_floor,
-//                                 graph_context_hash
-//   3. contract                 — the FULL Contract inlined (already distilled
-//                                 per X-D4 + X-P9)
-//   4. allowed_tools_for_node   — the per-node tool-allow-list constraint
-//   5. recommended_reads        — distilled summary of each artifact_ref the
-//                                 agent should ground reasoning in
-//   6. adjacent_observations    — recent observation.recorded events at
-//                                 ≤1-hop; each already summary-grade per X-P9
-//   7. prior_attempt            — conditional: when a prior node.transitioned
-//                                 → failed exists for the node, surface its
-//                                 structured failure_reason + witness ids
-//   8. adjacent_hypotheses      — conditional for Surface + Transition: open
-//                                 Hypothesis nodes overlapping the dispatched
-//                                 node's surfaces
-//   9. recap_and_handoff        — handoff stanza
+//   1. governance                 — common operator-facing context
+//   2. node_context               — node_id, kind, surface_refs, severity_floor,
+//                                   graph_context_hash
+//   3. contract                   — the FULL Contract inlined (already distilled
+//                                   per X-D4 + X-P9)
+//   4. cross_stack_composition    — Plane X Cycle X.11. For Transition nodes:
+//                                   transition_kind + per-kind hunting vocab +
+//                                   worked Contract template + both endpoints'
+//                                   summary-grade observations + tools from
+//                                   BOTH endpoint families. For Surface nodes
+//                                   with ≥1 adjacent Transition: one-line
+//                                   summary of each adjacent transition. The
+//                                   Nike-fix "cross-stack visibility" slice
+//                                   per X.11 spec Do step 1 + 2.
+//   5. allowed_tools_for_node     — the per-node tool-allow-list constraint
+//   6. recommended_reads          — distilled summary of each artifact_ref the
+//                                   agent should ground reasoning in
+//   7. adjacent_observations      — recent observation.recorded events at
+//                                   ≤1-hop; each already summary-grade per X-P9
+//   8. prior_attempt              — conditional: when a prior node.transitioned
+//                                   → failed exists for the node, surface its
+//                                   structured failure_reason + witness ids
+//   9. adjacent_hypotheses        — conditional for Surface + Transition: open
+//                                   Hypothesis nodes overlapping the dispatched
+//                                   node's surfaces
+//  10. recap_and_handoff          — handoff stanza
 //
 // Conditional slices return an empty string when the condition does not hold;
 // the registry assembly drops empty-string slices so the brief stays absent
@@ -383,6 +392,7 @@ const NODE_BRIEF_SLICE_REGISTRY = Object.freeze([
   briefSliceEntry("governance", 1024, (context) => context.governance),
   briefSliceEntry("node_context", 1024, (context) => context.nodeContext),
   briefSliceEntry("contract", 4096, (context) => context.contract),
+  briefSliceEntry("cross_stack_composition", 8192, (context) => context.crossStackComposition || ""),
   briefSliceEntry("allowed_tools_for_node", 2048, (context) => context.allowedToolsForNode),
   briefSliceEntry("recommended_reads", 4096, (context) => context.recommendedReads),
   briefSliceEntry("adjacent_observations", 4096, (context) => context.adjacentObservations),
@@ -420,6 +430,12 @@ function briefSliceRegistryForProfile(profile) {
 // bob_prepare_node (X.8). Drops conditional slices that return an empty
 // string so an absent prior_attempt or adjacent_hypotheses section does not
 // carry an empty header into the brief.
+//
+// Plane X Cycle X.11 — the `cross_stack_composition` slice is conditional
+// too: emitted for Transition nodes ALWAYS and for Surface nodes ONLY when
+// there is ≥1 adjacent Transition (per X.11 spec Do step 2). The prepare-node
+// context sets it to "" when neither applies; we drop the empty key so the
+// brief stays absent rather than carrying an empty header (T-R1 guard).
 function renderNodeBriefExtras(context) {
   const extras = buildBriefExtrasFromRegistry(NODE_BRIEF_SLICE_REGISTRY, context);
   if (extras.prior_attempt === "" || extras.prior_attempt == null) {
@@ -427,6 +443,9 @@ function renderNodeBriefExtras(context) {
   }
   if (extras.adjacent_hypotheses === "" || extras.adjacent_hypotheses == null) {
     delete extras.adjacent_hypotheses;
+  }
+  if (extras.cross_stack_composition === "" || extras.cross_stack_composition == null) {
+    delete extras.cross_stack_composition;
   }
   return extras;
 }
