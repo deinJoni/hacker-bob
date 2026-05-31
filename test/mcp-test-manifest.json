@@ -73,5 +73,6 @@
   "test/transition-surface-kind.test.js",
   "test/contracts.test.js",
   "test/storage-distilled-emission-compliance.test.js",
-  "test/capability-pack-derivation.test.js"
+  "test/capability-pack-derivation.test.js",
+  "test/contract-verifier.test.js"
 ]
