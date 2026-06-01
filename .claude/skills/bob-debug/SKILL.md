@@ -44,7 +44,7 @@ Latest-session detection must pick the newest target directory by `pipeline-even
 
 ## Required First Calls
 After resolving `target_domain`, call both telemetry MCPs before drawing conclusions:
-```
+```text
 bounty_read_pipeline_analytics({ target_domain, include_events: true, limit: 100 })
 bounty_read_tool_telemetry({ target_domain, include_agent_runs: true, limit: 100 })
 bounty_read_session_summary({ target_domain })
