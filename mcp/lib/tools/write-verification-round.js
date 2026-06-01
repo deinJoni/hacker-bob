@@ -141,7 +141,6 @@ module.exports = Object.freeze({
           "required": [
             "finding_id",
             "disposition",
-            "severity",
             "reportable",
             "reasoning"
           ]

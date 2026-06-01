@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Kimi CLI adapter
+
+- Added a Kimi CLI adapter (`adapters/kimi/`) that mirrors the Codex adapter shape: six Bob skills (`bob-hunt`, `bob-debug`, `bob-status`, `bob-update`, `bob-export`, `bob-egress`), adapter config, and role rendering via `scripts/lib/kimi-role-renderer.js` + `scripts/generate-kimi-roles.js`.
+- Published a thin `hacker-bob-kimi` wrapper package (`packages/hacker-bob-kimi/`) that pins `--adapter kimi` and delegates to the canonical `hacker-bob` CLI, matching the existing `hacker-bob-cc` and `hacker-bob-codex` wrappers.
+- Wired Kimi into install + lifecycle plumbing: `scripts/install.js` and `scripts/lifecycle.js` now route to the Kimi adapter, `dev-sync.sh` covers the Kimi workspace, and `bin/hacker-bob.js` recognizes `--adapter kimi`.
+- Centralized the wrapper-package and install-metadata registries in `scripts/lib/package-policy.js` so `release-check.js`, `test/package.test.js`, and adapter detection see all three wrappers through a single source.
+- Added Kimi coverage to the adapter test surfaces (`test/adapter-detection.test.js`, `test/cli.test.js`, `test/install-smoke.test.js`, `test/mcp-server.test.js`, `test/package.test.js`, `test/prompt-contracts.test.js`) and documented the adapter in `docs/ADAPTERS.md`, `docs/FIRST_RUN.md`, and `docs/TROUBLESHOOTING.md`.
+- Restored the explicit `severity: null` schema entry in `mcp/lib/tools/write-verification-round.js` that regressed during the runtime-contracts refactor, so verification rounds that legitimately drop severity to null pass tool validation.
+
+### Outstanding v1.3.6 follow-ups
+
 - v1.3.6 follow-up: complete removal of the `legacy_unverified` handoff path. v1.3.5 keeps the path behind the per-session `handoff_provenance_required` flag so sessions initialised on v1.3.5+ already fail-closed; v1.3.6 will drop the legacy branch entirely from `wave-handoff-contracts.js`, `phase-gates.js`, `pipeline-session-artifacts.js`, and `wave-handoff-store.js`.
 - v1.3.6 follow-up: end-to-end live policy-replay smoke. v1.3.5 fixes SDK package + native-binary resolution from an installed workspace's `testing/policy-replay/replay.mjs`, but does not exercise `query()` invocation. v1.3.6 will add a Claude-OAuth-gated live-replay smoke test so binary lookup is verified beyond static resolution.
 

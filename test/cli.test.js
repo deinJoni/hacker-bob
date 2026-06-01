@@ -26,7 +26,7 @@ test("CLI help explains per-project installs and global CLI behavior", () => {
   assert.match(output, /default host adapter is Claude/);
   assert.match(output, /\$CLAUDE_PROJECT_DIR/);
   assert.match(output, /\$CODEX_HOME/);
-  assert.match(output, /--adapter claude\|codex\|generic-mcp\|all/);
+  assert.match(output, /--adapter claude\|codex\|generic-mcp\|kimi\|all/);
   assert.match(output, /Global npm install only adds this CLI to PATH/);
   assert.match(output, /Uninstall defaults to dry-run/);
   assert.match(output, /Dashboard is a local read-only view/);
@@ -268,6 +268,55 @@ test("CLI generic MCP adapter install and uninstall preserve unrelated MCP confi
   }
 });
 
+test("CLI installs and doctors the Kimi adapter without Claude or Codex files", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-kimi-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-home-"));
+  const workspace = path.join(tempRoot, "workspace");
+  fs.mkdirSync(workspace, { recursive: true });
+
+  try {
+    execFileSync(process.execPath, [CLI, "install", workspace, "--adapter", "kimi"], {
+      cwd: ROOT,
+      env: { ...process.env, HOME: tempHome },
+      stdio: "pipe",
+    });
+
+    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-hunt", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-status", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-debug", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-update", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-export", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-egress", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".codex")));
+
+    const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".kimi", "mcp.json"), "utf8"));
+    assert.ok(mcp.mcpServers.bountyagent, "kimi install must keep bountyagent");
+    assert.ok(mcp.mcpServers.brutalist, "kimi install must register the optional brutalist MCP server post-install");
+    assert.deepEqual(mcp.mcpServers.brutalist.args, ["-y", "@brutalist/mcp@latest"]);
+
+    const installMeta = JSON.parse(fs.readFileSync(path.join(workspace, ".hacker-bob", "install.json"), "utf8"));
+    assert.deepEqual(installMeta.installed_adapters, ["kimi"]);
+
+    const output = execFileSync(process.execPath, [CLI, "doctor", workspace, "--adapter", "kimi", "--json"], {
+      cwd: ROOT,
+      env: { ...process.env, HOME: tempHome },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const result = JSON.parse(output);
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.adapters, ["kimi"]);
+    assert.ok(result.checks.some((check) => check.id === "kimi_skills" && check.status === "ok"));
+    assert.ok(result.checks.some((check) => check.id === "kimi_mcp_server_config" && check.status === "ok"));
+    assert.ok(!result.checks.some((check) => check.id.startsWith("claude_")));
+    assert.ok(!result.checks.some((check) => check.id.startsWith("codex_")));
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
 test("CLI uninstall of one adapter preserves remaining adapters and shared runtime", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-all-"));
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-home-"));
@@ -289,7 +338,7 @@ test("CLI uninstall of one adapter preserves remaining adapters and shared runti
     });
     const result = JSON.parse(output);
     assert.equal(result.dry_run, false);
-    assert.deepEqual(result.remaining_adapters, ["claude", "generic-mcp"]);
+    assert.deepEqual(result.remaining_adapters, ["claude", "generic-mcp", "kimi"]);
     assert.equal(result.remove_shared, false);
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".mcp.json")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-hunt.md")));
@@ -306,10 +355,11 @@ test("CLI uninstall of one adapter preserves remaining adapters and shared runti
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-oss", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".hacker-bob", "generic-mcp", "hacker-bob.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-hunt", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, "mcp", "server.js")));
 
     const installMeta = JSON.parse(fs.readFileSync(path.join(workspace, ".hacker-bob", "install.json"), "utf8"));
-    assert.deepEqual(installMeta.installed_adapters, ["claude", "generic-mcp"]);
+    assert.deepEqual(installMeta.installed_adapters, ["claude", "generic-mcp", "kimi"]);
 
     const claudeOutput = execFileSync(process.execPath, [CLI, "uninstall", workspace, "--adapter", "claude", "--yes", "--json"], {
       cwd: ROOT,
@@ -318,18 +368,19 @@ test("CLI uninstall of one adapter preserves remaining adapters and shared runti
       stdio: ["ignore", "pipe", "pipe"],
     });
     const claudeResult = JSON.parse(claudeOutput);
-    assert.deepEqual(claudeResult.remaining_adapters, ["generic-mcp"]);
+    assert.deepEqual(claudeResult.remaining_adapters, ["generic-mcp", "kimi"]);
     assert.equal(claudeResult.remove_shared, false);
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob-update.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob-export.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-oss", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".hacker-bob", "generic-mcp", "hacker-bob.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-hunt", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, "mcp", "server.js")));
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
     assert.ok(mcp.mcpServers.bountyagent);
     const finalMeta = JSON.parse(fs.readFileSync(path.join(workspace, ".hacker-bob", "install.json"), "utf8"));
-    assert.deepEqual(finalMeta.installed_adapters, ["generic-mcp"]);
+    assert.deepEqual(finalMeta.installed_adapters, ["generic-mcp", "kimi"]);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(tempHome, { recursive: true, force: true });
@@ -403,7 +454,7 @@ test("CLI no-flag uninstall on multi-adapter install removes everything that was
       stdio: "pipe",
     });
     const installed = JSON.parse(fs.readFileSync(path.join(workspace, ".hacker-bob", "install.json"), "utf8"));
-    assert.deepEqual(installed.installed_adapters, ["claude", "codex", "generic-mcp"]);
+    assert.deepEqual(installed.installed_adapters, ["claude", "codex", "generic-mcp", "kimi"]);
 
     const cleanEnv = { ...process.env, HOME: tempHome };
     delete cleanEnv.CLAUDE_PROJECT_DIR;
@@ -416,7 +467,7 @@ test("CLI no-flag uninstall on multi-adapter install removes everything that was
     assert.equal(result.status, 0, `uninstall failed: ${result.stderr}`);
     assert.match(result.stderr, /reason: installed_adapters/);
     const parsed = JSON.parse(result.stdout);
-    assert.deepEqual(parsed.adapters.sort(), ["claude", "codex", "generic-mcp"]);
+    assert.deepEqual(parsed.adapters.sort(), ["claude", "codex", "generic-mcp", "kimi"]);
     assert.deepEqual(parsed.remaining_adapters, []);
     assert.equal(parsed.remove_shared, true);
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
@@ -455,7 +506,7 @@ test("CLI no-flag doctor on multi-adapter install runs checks for every installe
     assert.equal(result.status, 0, `doctor failed: ${result.stderr}`);
     assert.match(result.stderr, /reason: installed_adapters/);
     const parsed = JSON.parse(result.stdout);
-    assert.deepEqual(parsed.adapters.sort(), ["claude", "codex", "generic-mcp"]);
+    assert.deepEqual(parsed.adapters.sort(), ["claude", "codex", "generic-mcp", "kimi"]);
     const checkIds = new Set(parsed.checks.map((check) => check.id));
     // Each adapter should contribute at least one check id with its own prefix.
     assert.ok([...checkIds].some((id) => id.startsWith("claude_")), "expected at least one claude_* check");

@@ -50,7 +50,7 @@ function defaultLogLifecycleResolution(resolution, command) {
   const noun = resolution.ids.length > 1 ? "adapters" : "adapter";
   process.stderr.write(
     `hacker-bob ${command}: auto-selected ${noun} ${resolution.ids.join(", ")} (reason: ${resolution.reason})\n` +
-    `  Override with --adapter <claude|codex|generic-mcp|all>\n`,
+    `  Override with --adapter <claude|codex|generic-mcp|kimi|all>\n`,
   );
 }
 

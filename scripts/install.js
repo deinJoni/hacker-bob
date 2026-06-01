@@ -74,6 +74,12 @@ function detectInstalledAdapterIds(targetAbs) {
   if (fs.existsSync(path.join(targetAbs, ".codex", "plugins", "hacker-bob"))) {
     ids.push("codex");
   }
+  if (
+    fs.existsSync(path.join(targetAbs, ".kimi", "bob", "VERSION")) ||
+    fs.existsSync(path.join(targetAbs, ".kimi", "skills", "bob-hunt", "SKILL.md"))
+  ) {
+    ids.push("kimi");
+  }
   if (fs.existsSync(path.join(targetAbs, BOB_RESOURCE_DIR, "generic-mcp", "hacker-bob.md"))) {
     ids.push("generic-mcp");
   }
@@ -328,7 +334,7 @@ function defaultLogResolution(resolution) {
   const noun = resolution.ids.length > 1 ? "adapters" : "adapter";
   process.stderr.write(
     `hacker-bob: auto-selected ${noun} ${resolution.ids.join(", ")} (reason: ${resolution.reason})\n` +
-    `  Override with --adapter <claude|codex|generic-mcp|all>\n`,
+    `  Override with --adapter <claude|codex|generic-mcp|kimi|all>\n`,
   );
 }
 
@@ -414,6 +420,19 @@ function installProject(projectDir, options = {}) {
         readJsonIfExists,
         serverPath,
       });
+    } else if (adapterId === "kimi") {
+      adapterResults[adapterId] = adapter.install({
+        sourceRoot,
+        targetAbs,
+        copyDirFiles,
+        copyFile,
+        commitSha,
+        installedAt,
+        installerSource,
+        manifest,
+        packageName,
+        serverPath,
+      });
     } else {
       adapterResults[adapterId] = adapter.install({
         activate: options.activateCodex !== false && process.env.HACKER_BOB_CODEX_AUTO_INSTALL !== "0",
@@ -460,6 +479,7 @@ function installProject(projectDir, options = {}) {
     codexCommands: adapterResults.codex ? adapterResults.codex.commands : 0,
     codexActivation: adapterResults.codex ? adapterResults.codex.activation : null,
     genericPromptDocs: adapterResults["generic-mcp"] ? adapterResults["generic-mcp"].promptDocs : 0,
+    kimiSkills: adapterResults.kimi ? adapterResults.kimi.skills : 0,
     bypassTables: copiedResources.bypassTables.length,
     knowledge: copiedResources.knowledge.length,
     legacyResourcesRemoved,
@@ -495,6 +515,11 @@ function printInstallSummary(summary) {
   }
   if (summary.adapterResults["generic-mcp"]) {
     console.log(`  Generic MCP prompt docs (${summary.genericPromptDocs}) and .mcp.json merged`);
+  }
+  if (summary.adapterResults.kimi) {
+    console.log(`  Kimi skills (${summary.kimiSkills}) installed to .kimi/`);
+    console.log("  Kimi .kimi/mcp.json merged");
+    console.log("  .kimi/bob/VERSION and install.json compatibility metadata");
   }
   console.log(`  ${summary.bypassTables} neutral bypass tables`);
   console.log(`  ${summary.knowledge} neutral hunter knowledge files`);
@@ -548,6 +573,10 @@ function printInstallSummary(summary) {
     console.log(`Done. Restart Codex in ${summary.targetAbs}, then run: $bob-hunt target.com`);
   } else if (summary.adapters.length === 1 && summary.adapters[0] === "generic-mcp") {
     console.log(`Done. Connect your MCP host to ${path.join(summary.targetAbs, "mcp", "server.js")} and read .hacker-bob/generic-mcp/hacker-bob.md.`);
+  } else if (summary.adapters.length === 1 && summary.adapters[0] === "kimi") {
+    console.log(`Done. Launch Kimi CLI in ${summary.targetAbs} with:`);
+    console.log(`  kimi --mcp-config-file .kimi/mcp.json`);
+    console.log(`Then run: /skill:bob-hunt target.com`);
   } else {
     console.log(`Done. Restart the selected host CLIs in ${summary.targetAbs} before continuing.`);
   }

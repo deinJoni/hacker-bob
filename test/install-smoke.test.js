@@ -12,6 +12,7 @@ const CLI = path.join(ROOT, "bin", "hacker-bob.js");
 const PACKAGE_VERSION = require("../package.json").version;
 const CODEX_ADAPTER = getAdapter("codex");
 const GENERIC_MCP_ADAPTER = getAdapter("generic-mcp");
+const KIMI_ADAPTER = getAdapter("kimi");
 
 test("installer copies a require-able complete MCP runtime", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-install-"));
@@ -585,6 +586,78 @@ test("codex adapter installs direct skills and doctor checks MCP wiring", () => 
     } else {
       process.env.CODEX_HOME = originalCodexHome;
     }
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test("kimi adapter installs skills and MCP config", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-kimi-adapter-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-home-"));
+  const workspace = path.join(tempRoot, "workspace");
+  fs.mkdirSync(workspace, { recursive: true });
+
+  try {
+    execFileSync(process.execPath, [CLI, "install", workspace], {
+      cwd: ROOT,
+      env: { ...process.env, HOME: tempHome },
+      stdio: "pipe",
+    });
+    fs.rmSync(path.join(workspace, ".claude"), { recursive: true, force: true });
+
+    const install = KIMI_ADAPTER.install({
+      sourceRoot: ROOT,
+      targetAbs: workspace,
+      serverPath: path.join(workspace, "mcp", "server.js"),
+    });
+    assert.equal(install.skills, 6);
+    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-hunt", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-status", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-debug", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-update", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-export", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-egress", "SKILL.md")));
+    // Kimi adapter does NOT install hooks (see adapters/kimi/config.js header):
+    // the ~/.kimi/config.toml PreToolUse registration syntax is undocumented,
+    // so shipping the .sh scripts would be a security control that never runs.
+    assert.ok(!fs.existsSync(path.join(workspace, ".kimi", "hooks")), "kimi adapter must not install .kimi/hooks");
+
+    const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".kimi", "mcp.json"), "utf8"));
+    assert.deepEqual(mcp.mcpServers.bountyagent, {
+      command: "node",
+      args: [path.join(workspace, "mcp", "server.js")],
+    });
+    assert.ok(mcp.mcpServers.brutalist, "kimi install must register the optional brutalist MCP server");
+    assert.deepEqual(mcp.mcpServers.brutalist.args, ["-y", "@brutalist/mcp@latest"]);
+
+    const doctor = KIMI_ADAPTER.doctor({ targetAbs: workspace });
+    assert.equal(doctor.ok, true);
+    assert.ok(doctor.checks.some((check) => check.id === "kimi_skills" && check.status === "ok"));
+    assert.ok(doctor.checks.some((check) => check.id === "kimi_mcp_server_config" && check.status === "ok"));
+
+    const dryRun = KIMI_ADAPTER.uninstall({ sourceRoot: ROOT, targetAbs: workspace, dryRun: true });
+    assert.equal(dryRun.dry_run, true);
+    assert.ok(dryRun.actions.some((action) => action.path === path.join(".kimi", "skills", "bob-hunt", "SKILL.md")));
+    assert.ok(dryRun.actions.some((action) => action.path === path.join(".kimi", "mcp.json")));
+    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-hunt", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "mcp.json")));
+
+    const removed = KIMI_ADAPTER.uninstall({ sourceRoot: ROOT, targetAbs: workspace, dryRun: false });
+    assert.equal(removed.dry_run, false);
+    assert.ok(!fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-hunt", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-export", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-egress", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".kimi", "mcp.json")));
+    // Regression: managedDirs() must enumerate all six skill directories so
+    // uninstall removes them — earlier revisions only listed bob-hunt,
+    // bob-status, bob-debug and left bob-update/bob-export/bob-egress on disk.
+    for (const skill of ["bob-hunt", "bob-status", "bob-debug", "bob-update", "bob-export", "bob-egress"]) {
+      assert.ok(
+        !fs.existsSync(path.join(workspace, ".kimi", "skills", skill)),
+        `kimi uninstall must remove the ${skill} skill directory`,
+      );
+    }
+  } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(tempHome, { recursive: true, force: true });
   }
