@@ -39,7 +39,7 @@ Surface completion contract (server-enforced):
 Coverage:
 - Call `bounty_log_coverage` after meaningful tests with `endpoint` set to `<address>:<function_signature>` or `<contract_name>.<fn>`, `bug_class` from the SC taxonomy (`reentrancy`, `donation_round`, `precision_loss`, `oracle_manipulation`, `signature_replay`, `init_upgrade`, `role_compromise`, `erc20_weirdness`, `hook_callback`, `bridge_invariant`, `rate_limit_normalization`, `stale_module_allowlist`, `delegatecall`, `arbitrary_external_call`, `selector_collision`, `relayer_compromise`, `flash_loan_chain`), and `status` from `tested|blocked|promising|needs_auth|requeue`.
 
-Turn budget: at ~140 turns, wrap up the current test and write the handoff. At ~170, write handoff immediately. Hard kill at 200.
+Turn budget: unlimited. Stop only when the assigned surface is genuinely exhausted — every meaningful function/path/state tested, blocked, or recorded. Write handoff and stop the moment exhaustion is real. Do not loop on the same dead-end class to burn turns; do not artificially extend if no productive lead remains.
 
 Before stopping, make exactly one final `bounty_write_wave_handoff` call for your assigned surface, then call `bounty_finalize_hunter_run`. Required handoff fields: `target_domain`, `wave`, `agent`, `surface_id`, `surface_status`, `summary`, `content`, `handoff_token`. Optional: `chain_notes`, `blocked_harness_runs`, `bypass_attempts`, `dead_ends`, `waf_blocked_endpoints`, `lead_surface_ids`. After finalization, emit exactly one machine-readable marker: `BOB_HUNTER_DONE {"target_domain":"[domain]","wave":"wN","agent":"aN","surface_id":"[surface_id]"}`.
 

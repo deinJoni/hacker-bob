@@ -36,6 +36,7 @@ const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 const CROSS_SESSION_ANALYTICS_MAX_SESSIONS = 200;
 const STALE_PENDING_WAVE_MS = 2 * 60 * 60 * 1000;
+const DELAYED_WAVE_RECONCILIATION_MS = 15 * 60 * 1000;
 const HIGH_TOOL_FAILURE_RATE = 0.2;
 const HIGH_TOOL_FAILURE_MIN_FAILURES = 3;
 const AUTHORITY_DERIVED_EVENT_FIELDS = Object.freeze([
@@ -507,6 +508,79 @@ function computeChainPhaseDurationMs(events) {
   return null;
 }
 
+function delayedWaveReconciliation(events, artifacts) {
+  const waveStats = new Map();
+  const ensureWave = (waveNumber) => {
+    if (!Number.isInteger(waveNumber) || waveNumber <= 0) return null;
+    if (!waveStats.has(waveNumber)) {
+      waveStats.set(waveNumber, {
+        wave_number: waveNumber,
+        assignments: 0,
+        stopped_agents: new Map(),
+        merged_at_ms: 0,
+      });
+    }
+    return waveStats.get(waveNumber);
+  };
+
+  for (const wave of artifacts.waves || []) {
+    const stats = ensureWave(wave.wave_number);
+    if (!stats) continue;
+    if (Number.isInteger(wave.assignments_total) && wave.assignments_total > stats.assignments) {
+      stats.assignments = wave.assignments_total;
+    }
+  }
+
+  for (const event of events) {
+    const stats = ensureWave(event.wave_number);
+    if (!stats) continue;
+    if (
+      event.type === "wave_started" &&
+      event.counts &&
+      Number.isInteger(event.counts.assignments) &&
+      event.counts.assignments > stats.assignments
+    ) {
+      stats.assignments = event.counts.assignments;
+    }
+    if (event.type === "hunter_stopped" && typeof event.agent === "string" && event.agent.trim()) {
+      const stoppedMs = timestampMs(event.ts);
+      if (stoppedMs > 0) {
+        stats.stopped_agents.set(event.agent, Math.max(stats.stopped_agents.get(event.agent) || 0, stoppedMs));
+      }
+    }
+    if (event.type === "wave_merged" && event.status === "merged") {
+      const mergedMs = timestampMs(event.ts);
+      if (mergedMs > 0) {
+        stats.merged_at_ms = Math.max(stats.merged_at_ms, mergedMs);
+      }
+    }
+  }
+
+  return Array.from(waveStats.values())
+    .map((stats) => {
+      const allHuntersStoppedAtMs = stats.stopped_agents.size >= stats.assignments
+        ? Math.max(...stats.stopped_agents.values())
+        : 0;
+      const delayMs = stats.merged_at_ms > allHuntersStoppedAtMs && allHuntersStoppedAtMs > 0
+        ? stats.merged_at_ms - allHuntersStoppedAtMs
+        : 0;
+      return {
+        wave_number: stats.wave_number,
+        assignments: stats.assignments,
+        hunters_stopped: stats.stopped_agents.size,
+        all_hunters_stopped_at: allHuntersStoppedAtMs > 0 ? new Date(allHuntersStoppedAtMs).toISOString() : null,
+        merged_at: stats.merged_at_ms > 0 ? new Date(stats.merged_at_ms).toISOString() : null,
+        delay_ms: delayMs,
+      };
+    })
+    .filter((wave) => (
+      wave.assignments > 0 &&
+      wave.hunters_stopped >= wave.assignments &&
+      wave.delay_ms >= DELAYED_WAVE_RECONCILIATION_MS
+    ))
+    .sort((a, b) => b.delay_ms - a.delay_ms || a.wave_number - b.wave_number);
+}
+
 function issue(code, severity, message, evidence = {}) {
   return { code, severity, message, evidence };
 }
@@ -711,6 +785,13 @@ function analyzeSession(targetDomain, {
     }));
   }
 
+  const delayedReconciliations = delayedWaveReconciliation(allEvents, artifacts);
+  if (delayedReconciliations.length > 0) {
+    issues.push(issue("delayed_wave_reconciliation", "needs_attention", "Wave merge happened long after all hunters had stopped.", {
+      waves: delayedReconciliations.slice(0, limit),
+    }));
+  }
+
   const healthStatus = issues.some((item) => item.severity === "blocked")
     ? "blocked"
     : issues.some((item) => item.severity === "needs_attention")
@@ -899,6 +980,7 @@ function actionForBottleneck(bottleneck) {
     missing_report: "Write report.md or move the session out of REPORT if report writing is still pending.",
     report_pending_canonical_path: "Write or move the consolidated report to the canonical session report.md path, then call bounty_report_written.",
     stale_pending_wave: "Re-enter resume flow for the stale pending wave and reconcile handoffs.",
+    delayed_wave_reconciliation: "Audit and tighten the resume flow after hunter completion so wave reconciliation runs promptly.",
   };
   return {
     action: actionByCode[bottleneck.code] || "Inspect this bottleneck before continuing.",

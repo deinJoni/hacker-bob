@@ -10,10 +10,12 @@ const {
 const {
   findingsJsonlPath,
   findingsMarkdownPath,
+  repoCommandRunsJsonlPath,
 } = require("./paths.js");
 const {
   appendJsonlLine,
   appendMarkdownMirror,
+  DEFAULT_ARTIFACT_READ_MAX_BYTES,
   withSessionLock,
 } = require("./storage.js");
 const {
@@ -22,6 +24,10 @@ const {
 const {
   validateAssignedWaveAgentSurface,
 } = require("./assignments.js");
+const {
+  ERROR_CODES,
+  ToolError,
+} = require("./envelope.js");
 const {
   safeAppendPipelineEventDirect,
 } = require("./pipeline-events.js");
@@ -40,7 +46,95 @@ const FINDING_TEXT_LIMITS = Object.freeze({
   response_evidence: 4000,
   impact: 4000,
   auth_profile: 200,
+  file_path: 2000,
+  symbol: 500,
+  manifest: 2000,
+  affected_package: 500,
+  affected_version_range: 500,
+  repro_command: 2000,
 });
+
+function shellQuoteForDisplay(value) {
+  const text = String(value || "");
+  if (/^[A-Za-z0-9_./:=@%+,-]+$/.test(text)) return text;
+  return `'${text.replace(/'/g, "'\\''")}'`;
+}
+
+function repoRunCommandVariants(command) {
+  if (!Array.isArray(command)) return [];
+  const variants = new Set();
+  variants.add(command.join(" "));
+  variants.add(command.map(shellQuoteForDisplay).join(" "));
+  variants.add(JSON.stringify(command));
+  if (command.length >= 3 && command[0] === "sh" && command[1] === "-lc") {
+    variants.add(command.slice(2).join(" "));
+  }
+  return Array.from(variants).filter(Boolean);
+}
+
+function readRepoCommandRunRecords(domain) {
+  const filePath = repoCommandRunsJsonlPath(domain);
+  if (!fs.existsSync(filePath)) return [];
+  const stats = fs.statSync(filePath);
+  if (stats.size > DEFAULT_ARTIFACT_READ_MAX_BYTES) {
+    throw new ToolError(
+      ERROR_CODES.STATE_CONFLICT,
+      `repo-command-runs.jsonl exceeds read cap of ${DEFAULT_ARTIFACT_READ_MAX_BYTES} bytes: ${filePath}`,
+    );
+  }
+  const rows = [];
+  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      rows.push(JSON.parse(line));
+    } catch {
+      // Malformed run logs should not satisfy dynamic proof requirements.
+    }
+  }
+  return rows;
+}
+
+function repoRunMatchesReproCommand(record, reproCommand) {
+  const repro = String(reproCommand || "").trim();
+  if (!repro) return false;
+  if (!record || record.dry_run === true) return false;
+  if (record.runner !== "docker") return false;
+  if (record.timed_out === true || record.spawn_error) return false;
+  if (record.status === "ok") {
+    if (record.exit_code !== 0) return false;
+  } else if (record.status === "failed") {
+    if (!Number.isInteger(record.exit_code)) return false;
+    if ([125, 126, 127].includes(record.exit_code)) return false;
+  } else {
+    return false;
+  }
+  return repoRunCommandVariants(record.command).some((variant) => {
+    const normalized = String(variant || "").trim();
+    return normalized.includes(repro);
+  });
+}
+
+function assertOssDynamicProofRequirement({ domain, capabilityPack, severity, reproCommand, validated }) {
+  if (validated !== true) return;
+  if (capabilityPack !== "oss_native_code") return;
+  if (!["critical", "high"].includes(severity)) return;
+  const commandRunsPath = repoCommandRunsJsonlPath(domain);
+  if (!reproCommand) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `high/critical oss_native_code findings require repro_command backed by a non-dry-run bounty_repo_docker_run; checked ${commandRunsPath}; mark the surface partial with blocked_harness_runs if replay cannot run`,
+    );
+  }
+  const matchingRun = readRepoCommandRunRecords(domain)
+    .some((record) => repoRunMatchesReproCommand(record, reproCommand));
+  if (!matchingRun) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `high/critical oss_native_code findings require a matching non-dry-run bounty_repo_docker_run entry before recording; checked ${commandRunsPath}; static repo checks alone are insufficient for CVE-style native-code claims`,
+    );
+  }
+}
 
 function fileMtimeIso(filePath) {
   try {
@@ -168,6 +262,12 @@ function buildFindingRecord(args, context, id) {
     severity: args.severity,
     cwe: args.cwe,
     endpoint: args.endpoint,
+    file_path: args.file_path,
+    symbol: args.symbol,
+    manifest: args.manifest,
+    affected_package: args.affected_package,
+    affected_version_range: args.affected_version_range,
+    repro_command: args.repro_command,
     description: args.description,
     proof_of_concept: args.proof_of_concept,
     response_evidence: args.response_evidence,
@@ -258,6 +358,13 @@ function recordFinding(args) {
         written_jsonl: structuredPath,
       });
     }
+    assertOssDynamicProofRequirement({
+      domain,
+      capabilityPack,
+      severity: preliminary.severity,
+      reproCommand: preliminary.repro_command,
+      validated: preliminary.validated,
+    });
 
     const finding = buildFindingRecord(args, context, `F-${counter}`);
     validateFindingForPersistence(finding);

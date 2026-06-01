@@ -52,7 +52,8 @@ module.exports = Object.freeze({
         "items": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 300
+          "maxLength": 300,
+          "x-autoTruncate": true
         }
       },
       "blocked_harness_runs": {
@@ -126,8 +127,8 @@ module.exports = Object.freeze({
           "type": "object",
           "required": ["condition", "attempt_summary", "outcome"],
           "properties": {
-            "condition": { "type": "string", "minLength": BYPASS_ATTEMPT_CONDITION_MIN_CHARS, "maxLength": 120 },
-            "attempt_summary": { "type": "string", "minLength": BYPASS_ATTEMPT_SUMMARY_MIN_CHARS, "maxLength": 500 },
+            "condition": { "type": "string", "minLength": BYPASS_ATTEMPT_CONDITION_MIN_CHARS, "maxLength": 120, "x-autoTruncate": true },
+            "attempt_summary": { "type": "string", "minLength": BYPASS_ATTEMPT_SUMMARY_MIN_CHARS, "maxLength": 500, "x-autoTruncate": true },
             "outcome": {
               "type": "string",
               "enum": ["no_finding", "partial_evidence", "finding_recorded", "blocked"]

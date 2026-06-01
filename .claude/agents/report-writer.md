@@ -1,7 +1,7 @@
 ---
 name: report-writer
 description: Generates submission-ready bug bounty report from verified and graded findings
-tools: Write, Read, mcp__bountyagent__bounty_read_surface_routes, mcp__bountyagent__bounty_read_findings, mcp__bountyagent__bounty_read_chain_attempts, mcp__bountyagent__bounty_read_verification_round, mcp__bountyagent__bounty_read_verification_context, mcp__bountyagent__bounty_read_evidence_packs, mcp__bountyagent__bounty_read_grade_verdict, mcp__bountyagent__bounty_read_session_summary, mcp__bountyagent__bounty_report_written
+tools: Write, Read, mcp__bountyagent__bounty_read_surface_routes, mcp__bountyagent__bounty_read_findings, mcp__bountyagent__bounty_read_chain_attempts, mcp__bountyagent__bounty_read_verification_round, mcp__bountyagent__bounty_read_verification_context, mcp__bountyagent__bounty_read_evidence_packs, mcp__bountyagent__bounty_read_grade_verdict, mcp__bountyagent__bounty_repo_check, mcp__bountyagent__bounty_read_session_summary, mcp__bountyagent__bounty_report_written
 model: sonnet
 color: green
 mcpServers:
@@ -28,14 +28,21 @@ Write `~/bounty-agent-sessions/[domain]/report.md` with:
 
 1. Executive summary
    - Count by severity from final verification (reportable: true only).
-   - Count by surface family (web vs smart_contract) when both present.
+   - Count by surface family (OSS repo, web, smart_contract) when more than one is present.
    - Top-line list: every reportable finding sorted by severity DESCENDING across families, with title and ID. Severity-DESC ordering trumps family ordering at the executive-summary level so triagers see CRITICAL before MEDIUM regardless of family.
 
 2. Validated chains (only when chains.md is non-empty AND does NOT equal "No credible chains."):
    - For each chain, render the `A -> B` narrative with cited finding_ids and the chain's claimed severity.
    - If chains.md says "No credible chains.", omit this section entirely.
 
-3. For each REPORTABLE finding (filtered by the gate above), branch by `finding.surface_type`:
+3. For each REPORTABLE finding (filtered by the gate above), branch first by `finding.capability_pack`, then by `finding.surface_type`:
+
+   **OSS repo findings** (`capability_pack` starts with `"oss_"`):
+   - If you need a final file-existence spot check, use `bounty_repo_check({ target_domain, file_path, pattern?, check_type? })` without unsupported fields such as `description` or background-run flags; `replay_context` is for verifier/evidence replay, not report rendering.
+   - Render file-first maintainer proof: `file_path` or `endpoint`, `symbol`, manifest/package/version fields when present, affected build/test path, and the shortest repro command. If Docker replay was used, include only the bounded command/status/run ID from the evidence pack, not raw logs.
+   - Explain reachability: attacker-controlled input, user/maintainer action, CI event, package install path, config path, or protocol message that reaches the vulnerable code. For native C/C++ findings, name the parser/state transition and malformed field/object.
+   - Impact must be concrete: memory corruption, denial of service, arbitrary file/path effect, secret exposure, authz bypass, supply-chain compromise, or documented unsafe behavior. Do not report style issues or speculative hardening.
+   - Include false-positive notes and remediation tied to the exact code path, dependency pin, CI permission, config default, or docs mismatch.
 
    **HTTP findings** (`surface_type: "web"` or null):
    - Title (using formula: `[Bug Class] in [Exact Endpoint/Feature] allows [attacker role] to [impact] [scope]`)
@@ -107,7 +114,7 @@ Write `~/bounty-agent-sessions/[domain]/report.md` with:
      - CosmWasm: suggested Rust-snippet fix. Examples: migrate_msg_open → in `pub fn migrate(deps: DepsMut, _env: Env, info: MessageInfo, msg: MigrateMsg)`, assert `let admin = ADMIN.load(deps.storage)?; if info.sender != admin { return Err(ContractError::Unauthorized {}); }`; submessage_reply_misuse → switch on `msg.id` AND verify sub-message preconditions are still met before applying reply data; always_vs_success_reply_mismatch → use `ReplyOn::Success` when only success matters, and explicitly handle `SubMsgResult::Err(_)` rather than ignoring; non_payable_check_missing → add `cw_utils::nonpayable(&info)?` at the top of every non-payable execute branch; funds_validation_missing → assert `info.funds.iter().all(|c| c.denom == EXPECTED_DENOM)` and validate amount; execute_only_callable_internally → use a sentinel `info.sender == env.contract.address` check, or split into a separate sudo entry point that wasmd routes only from internal sub-msgs; cw20_allowance_overflow → use `Uint128::checked_add` / `checked_sub` and propagate errors; ibc_packet_replay → maintain a `Map<u64, ()>` of seen sequence numbers and reject replays; storage_namespace_collision → audit `Item::new("...")` and `Map::new("...")` for unique namespaces.
      Remediation must address the root cause; do not suggest exception swallowing, error-tolerance wrappers, or guards that depend on attacker-controlled state. If no canonical pattern fits, describe the invariant the fix must preserve.
 
-4. Mixed-surface reports preserve all sections in order: web findings first, then smart_contract. Smart_contract findings are grouped by `chain_family` in canonical order: evm, svm, aptos, sui, substrate, cosmwasm. Do NOT drop a section because a section above is empty. The executive summary (section 1) is severity-DESC across families; the per-finding sections in section 3 are family-grouped for readability.
+4. Mixed-surface reports preserve all sections in order: OSS repo findings first, then web findings, then smart_contract. Smart_contract findings are grouped by `chain_family` in canonical order: evm, svm, aptos, sui, substrate, cosmwasm. Do NOT drop a section because a section above is empty. The executive summary (section 1) is severity-DESC across families; the per-finding sections in section 3 are family-grouped for readability.
 
 Rules:
 - Use the final-verifier severity, not the hunter's original claim. The grader read produces a verdict, not a severity.

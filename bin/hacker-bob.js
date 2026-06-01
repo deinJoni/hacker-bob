@@ -13,6 +13,8 @@ const {
   printUninstallReport,
   uninstallProject,
 } = require("../scripts/lifecycle.js");
+const dashboard = require("../mcp/lib/dashboard.js");
+const { sessionsRoot } = require("../mcp/lib/paths.js");
 const update = require("../mcp/lib/update-check.js");
 
 function usageText() {
@@ -22,6 +24,7 @@ function usageText() {
   hacker-bob check-update <project-dir> [--json]
   hacker-bob doctor <project-dir> [--adapter claude|codex|generic-mcp|all] [--json]
   hacker-bob uninstall <project-dir> [--adapter claude|codex|generic-mcp|all] [--dry-run] [--yes] [--json]
+  hacker-bob dashboard [--host 127.0.0.1] [--port 4873] [--repo-only] [--window-days 30] [--limit 50] [--json]
 
 Installs Hacker Bob into one project directory per command. If --adapter is omitted,
 Bob auto-selects based on (1) prior install metadata, (2) host env markers
@@ -30,7 +33,8 @@ Bob auto-selects based on (1) prior install metadata, (2) host env markers
 The selected adapter and reason are logged to stderr; pass --adapter to override.
 Use --adapter codex, --adapter generic-mcp, or --adapter all for other host surfaces.
 Global npm install only adds this CLI to PATH; it does not install Bob into every project.
-Uninstall defaults to dry-run; pass --yes to remove Bob-managed files and config entries.`;
+Uninstall defaults to dry-run; pass --yes to remove Bob-managed files and config entries.
+Dashboard is a local read-only view over ~/bounty-agent-sessions; use --repo-only for OSS mode.`;
 }
 
 function usage(stream = process.stderr) {
@@ -108,6 +112,23 @@ async function main(argv) {
     } else {
       process.stdout.write(update.renderUpdateSummary(result));
     }
+    return;
+  }
+
+  if (command === "dashboard") {
+    const options = dashboard.parseDashboardArgs(args);
+    if (options.help) {
+      process.stdout.write(`${dashboard.dashboardUsageText()}\n`);
+      return;
+    }
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify(dashboard.buildDashboardSnapshot(options), null, 2)}\n`);
+      return;
+    }
+    const started = await dashboard.startDashboardServer(options);
+    process.stdout.write(`Hacker Bob dashboard listening on ${started.url}\n`);
+    process.stdout.write(`Sessions root: ${sessionsRoot()}\n`);
+    process.stdout.write("Press Ctrl+C to stop.\n");
     return;
   }
 

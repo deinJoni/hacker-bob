@@ -19,7 +19,7 @@ module.exports = Object.freeze({
       pack_id: { type: "string" },
       status: { type: "string", enum: TECHNIQUE_ATTEMPT_STATUS_VALUES },
       outcome: { type: "string" },
-      evidence: { type: "string" },
+      evidence: { type: "string", minLength: 1 },
     },
     required: ["target_domain", "surface_id", "pack_id", "status", "evidence"],
   },

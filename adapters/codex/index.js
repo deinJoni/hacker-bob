@@ -47,6 +47,12 @@ const COMMAND_SPECS = Object.freeze({
     description: "Run or resume a Hacker Bob bug bounty hunt.",
     argumentHint: "<target|resume target [force-merge]> [--no-auth|--normal|--paranoid|--yolo] [--deep] [--egress <profile>] [--block-internal-hosts|--allow-internal-hosts]",
   }),
+  oss: Object.freeze({
+    file: "bob-oss.md",
+    skill: "bob-oss",
+    description: "Run Hacker Bob OSS mode against a local open-source project checkout.",
+    argumentHint: "<repo-path|resume target_domain> [--target-id <id>]",
+  }),
   status: Object.freeze({
     file: "bob-status.md",
     skill: "bob-status",
@@ -352,6 +358,47 @@ function installDirectSkills(sourceRoot, home = codexHome()) {
   return copied.sort();
 }
 
+function directSkillFreshness(sourceRoot, home = codexHome()) {
+  const result = {
+    stale: [],
+    missingSource: [],
+  };
+  for (const spec of Object.values(CODEX_SKILL_SPECS)) {
+    const source = path.join(sourceRoot, spec.output_path);
+    const installed = directSkillTargetPath(spec, home);
+    if (!fileExists(source)) {
+      result.missingSource.push({
+        skill: spec.name,
+        reason: "source_missing",
+        source,
+        installed,
+      });
+      continue;
+    }
+    if (!fileExists(installed)) continue;
+    try {
+      const sourceText = fs.readFileSync(source, "utf8");
+      const installedText = fs.readFileSync(installed, "utf8");
+      if (sourceText === installedText) continue;
+      result.stale.push({
+        skill: spec.name,
+        reason: "content_mismatch",
+        source,
+        installed,
+      });
+    } catch (error) {
+      result.stale.push({
+        skill: spec.name,
+        reason: "read_error",
+        source,
+        installed,
+        error: error && error.message ? error.message : String(error),
+      });
+    }
+  }
+  return result;
+}
+
 function tomlString(value) {
   return `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
 }
@@ -547,6 +594,21 @@ function doctor({ targetAbs }) {
     });
   } else {
     addCheck(checks, "error", "codex_global_skills", "Codex Bob skills are missing", { missing: missingSkills });
+  }
+
+  const skillFreshness = directSkillFreshness(targetAbs);
+  if (skillFreshness.stale.length > 0) {
+    addCheck(checks, "error", "codex_global_skills_fresh", "Codex Bob global skills are stale", {
+      stale: skillFreshness.stale,
+      reinstall: "node bin/hacker-bob.js install . --adapter codex",
+    });
+  } else if (skillFreshness.missingSource.length > 0) {
+    addCheck(checks, "warn", "codex_global_skills_fresh", "Codex Bob source skills are unavailable, so freshness comparison was skipped", {
+      missing_source: skillFreshness.missingSource,
+      skillRoot: directSkillTargetRoot(),
+    });
+  } else {
+    addCheck(checks, "ok", "codex_global_skills_fresh", "Codex Bob global skills match this install target");
   }
 
   const stalePluginSkills = STALE_PLUGIN_SKILL_DIRS
@@ -815,6 +877,7 @@ module.exports = {
   commandIds,
   commandSpec,
   directSkillSourceRoot,
+  directSkillFreshness,
   directSkillTargetPath,
   directSkillTargetRoot,
   doctor,

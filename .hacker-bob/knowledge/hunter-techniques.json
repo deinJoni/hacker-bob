@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Curated read-only hunter guidance distilled from claude-bug-bounty methodology, web2 bug classes, advanced techniques, payload notes, and selected wordlist patterns. This file is reference material only; execution remains in hacker-bob MCP tools and agents.",
+  "description": "Curated read-only hunter guidance covering web2 bug classes, advanced techniques, payload notes, and selected wordlist patterns. Methodology influenced by open-source bug bounty projects including https://github.com/shuvonsec/claude-bug-bounty (MIT); content is original authorship by the Hacker Bob contributors. This file is reference material only; execution remains in hacker-bob MCP tools and agents.",
   "entries": [
     {
       "id": "generic-rest-api",
@@ -176,6 +176,73 @@
         "20 parallel identical redemption or transfer requests against one balance/coupon",
         "Replay invite or reset token after use; accept invite while changing role/org params",
         "Switch attacker/victim IDs in checkout, subscription, refund, invoice, or export routes"
+      ]
+    },
+    {
+      "id": "oss-dependency-supply-chain",
+      "title": "OSS dependency and supply-chain review",
+      "capability_packs": ["oss_dependency"],
+      "match": {
+        "tech": ["javascript", "node", "python", "go", "rust", "ruby", "php"],
+        "endpoints": ["package.json", "lock", "requirements", "pyproject", "go.mod", "cargo.toml"],
+        "params": ["install", "build", "postinstall", "prepare", "release"],
+        "hints": ["dependency_confusion", "vulnerable_dependency", "supply_chain"]
+      },
+      "techniques": [
+        "Review install/build/release scripts for shelling out to untrusted input, curl|bash patterns, token exposure, and publication-time surprises.",
+        "Compare manifests and lockfiles for unpinned dependencies, unexpected registry use, dependency confusion risk, and dangerous lifecycle scripts.",
+        "Treat known-vulnerable packages as findings only when the affected code path or reachable deployment mode is clear."
+      ],
+      "payload_hints": [
+        "package.json scripts: preinstall, install, postinstall, prepare, publish, release",
+        "Lockfile drift: manifest dependency not represented in the lockfile",
+        "Registry hints: publishConfig.registry, .npmrc, pip index-url, go replace"
+      ]
+    },
+    {
+      "id": "oss-native-code-protocol-memory",
+      "title": "OSS native-code parser, protocol, and memory-safety review",
+      "capability_packs": ["oss_native_code"],
+      "match": {
+        "tech": ["c/c++", "c", "c++", "cmake", "autotools", "rpc", "xdr", "nfs", "protocol", "parser"],
+        "endpoints": ["src", "lib", ".c", ".h", "xdr", "zdr", "rpc", "nfs", "mount", "portmap"],
+        "params": ["length", "size", "count", "offset", "path", "filename", "buffer", "callback"],
+        "hints": ["bounds_check", "integer_truncation", "signed_unsigned_mismatch", "parser_state_machine", "memory_lifetime", "path_handling"]
+      },
+      "techniques": [
+        "Trace attacker-controlled packet, file, URL, or API input to the exact parser/state transition before recording a finding.",
+        "Review length-prefixed buffers, opaque fields, arrays, strings, and allocation-size math for signed/unsigned truncation, wraparound, and missing bounds checks.",
+        "For protocol clients, treat malicious server replies as attacker-controlled; for servers, treat client requests and exported paths as attacker-controlled.",
+        "Check ownership/lifetime around async callbacks, PDU queues, reference counters, and cleanup paths for use-after-free, double-free, and stale pointer use.",
+        "Prefer ASAN/UBSAN, existing unit tests, or a minimal harness command; if repro is blocked, record the exact build or input blocker instead of overstating proof."
+      ],
+      "payload_hints": [
+        "Large XDR length: 0xffffffff or 0x80000000 against string/opaque/array fields",
+        "Boundary lengths: 0, 1, 3, 4, 7, 8, 1024, MAX_FRAGMENT_SIZE, MAX_FRAGMENT_SIZE+1",
+        "Path cases: embedded NUL, ../ traversal, absolute path, repeated slashes, long component, non-UTF8 bytes",
+        "Allocator cases: count * element_size overflow, size + header overflow, malloc/calloc failure path",
+        "Async lifetime: callback frees context while queued PDU or reconnect path still references it"
+      ]
+    },
+    {
+      "id": "oss-auth-api-config",
+      "title": "OSS auth, API, CI, and config review",
+      "capability_packs": ["oss_api_schema", "oss_authz", "oss_ci_cd", "oss_secrets_config", "oss_docs_behavior"],
+      "match": {
+        "tech": ["api", "routes", "auth", "middleware", "workflow", "docker", "config"],
+        "endpoints": ["routes", "api", "middleware", ".github/workflows", "docker", "env", "config", "security.md"],
+        "params": ["token", "secret", "role", "permission", "admin", "branch", "pull_request"],
+        "hints": ["authz", "jwt_oauth", "workflow_injection", "secret_exposure", "docs_vs_behavior"]
+      },
+      "techniques": [
+        "Trace route handlers to auth middleware and policy checks; prioritize endpoints where docs imply protection but the code allows direct access.",
+        "Review CI workflows for pull_request_target misuse, untrusted checkout/script execution, broad token permissions, and secret exposure to forks.",
+        "Review config and env examples for unsafe defaults, required secrets without rotation guidance, and behavior that contradicts SECURITY/README docs."
+      ],
+      "payload_hints": [
+        "GitHub Actions: pull_request_target plus checkout of attacker-controlled head ref",
+        "Middleware bypass: route group or API handler missing the auth wrapper used elsewhere",
+        "Config smell: default admin token, DEBUG=true, wildcard CORS, disabled CSRF"
       ]
     }
   ]
