@@ -2,6 +2,7 @@
 
 const fs = require("fs");
 const {
+  TARGET_KIND_VALUES,
   AUTH_STATUS_VALUES,
   PHASE_VALUES,
 } = require("./constants.js");
@@ -35,6 +36,7 @@ const {
 } = require("./scope.js");
 const {
   computeChainToVerifyGate,
+  computeGradeToReportGate,
   computeHuntToChainGate,
   computeVerifyToGradeGate,
   formatTransitionBlockers,
@@ -169,16 +171,29 @@ function resolveAndAssertSessionEgressIdentity(domain, requestedProfile = "defau
 
 function initSession(args) {
   let domain;
-  try {
-    domain = assertHttpScopeDomain(args.target_domain);
-  } catch (error) {
-    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, error.message || String(error));
+  const targetKind = args.target_kind == null
+    ? "web"
+    : assertEnumValue(args.target_kind, TARGET_KIND_VALUES, "target_kind");
+  if (targetKind === "repo") {
+    domain = assertNonEmptyString(args.target_domain, "target_domain");
+  } else {
+    try {
+      domain = assertHttpScopeDomain(args.target_domain);
+    } catch (error) {
+      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, error.message || String(error));
+    }
   }
   const targetUrl = assertNonEmptyString(args.target_url, "target_url");
-  try {
-    validateHttpScanScope(targetUrl, domain);
-  } catch (error) {
-    throw new ToolError(ERROR_CODES.SCOPE_BLOCKED, error.message || String(error), error.details);
+  if (targetKind === "repo") {
+    if (!targetUrl.startsWith("repo://")) {
+      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "repo sessions require target_url to start with repo://");
+    }
+  } else {
+    try {
+      validateHttpScanScope(targetUrl, domain);
+    } catch (error) {
+      throw new ToolError(ERROR_CODES.SCOPE_BLOCKED, error.message || String(error), error.details);
+    }
   }
   const deepMode = args.deep_mode == null ? false : assertBoolean(args.deep_mode, "deep_mode");
   let internalHostPolicy;
@@ -214,6 +229,8 @@ function initSession(args) {
       deepMode,
       egressProfile,
       blockInternalHostsPolicy: internalHostPolicy,
+      targetKind,
+      repo: args.repo,
     });
     writeFileAtomic(filePath, `${JSON.stringify(state, null, 2)}\n`);
     safeAppendPipelineEventDirect(domain, "session_started", {
@@ -221,6 +238,7 @@ function initSession(args) {
       source: "bounty_init_session",
       deep_mode: state.deep_mode,
       checkpoint_mode: state.checkpoint_mode,
+      target_kind: state.target_kind,
       block_internal_hosts: state.block_internal_hosts,
       block_internal_hosts_source: state.block_internal_hosts_source,
       ...egressFields,
@@ -358,7 +376,7 @@ function transitionPhase(args) {
       transitionGate = computeVerifyToGradeGate(domain, state);
       transitionGateLabel = "VERIFY -> GRADE";
     } else if (fromPhase === "GRADE" && toPhase === "REPORT") {
-      transitionGate = computeVerifyToGradeGate(domain, state);
+      transitionGate = computeGradeToReportGate(domain);
       transitionGateLabel = "GRADE -> REPORT";
     }
     if (transitionGate && transitionGate.transition_blockers.length > 0 && overrideReason == null) {
@@ -546,10 +564,16 @@ function reportWritten(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   const reportPath = require("./paths.js").reportMarkdownPath(domain);
   if (!fs.existsSync(reportPath)) {
-    throw new ToolError(
-      ERROR_CODES.STATE_CONFLICT,
-      `report.md is not present at ${reportPath}; call bounty_report_written only after writing the report`,
-    );
+    return JSON.stringify({
+      version: 1,
+      report_written: false,
+      present: false,
+      path: reportPath,
+      next_action: {
+        kind: "write_report",
+        path: reportPath,
+      },
+    });
   }
   const stats = fs.statSync(reportPath);
   safeAppendPipelineEventDirect(domain, "report_written", {

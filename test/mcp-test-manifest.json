@@ -1,5 +1,6 @@
 [
   "test/mcp-server.test.js",
+  "test/repo-target.test.js",
   "test/finding-contracts.test.js",
   "test/pipeline-events.test.js",
   "test/verification-contracts.test.js",

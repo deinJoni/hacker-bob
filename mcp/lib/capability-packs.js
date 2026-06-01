@@ -67,6 +67,40 @@ const WEB_CAPABILITY_PACK = Object.freeze({
   }),
 });
 
+function ossCapabilityPack(id, sampleType) {
+  return Object.freeze({
+    id,
+    capability_pack_version: 1,
+    hunter_agent: "hunter-agent",
+    brief_profile: "web",
+    role_bundles: Object.freeze(["hunter-shared", "hunter-web"]),
+    completion_gate: "web_wave_handoff",
+    context_budget: DEFAULT_CONTEXT_BUDGET,
+    verifier: Object.freeze({
+      replay_tool: "bounty_repo_check",
+      sample_type: sampleType,
+      fresh_state_omit_field: null,
+      disambiguation: null,
+      replay_safety: DEFAULT_REPLAY_SAFETY,
+    }),
+    evidence: Object.freeze({
+      runner: "bounty_repo_check",
+      sample_type: sampleType,
+    }),
+    spawn: Object.freeze({
+      profile: "web",
+    }),
+  });
+}
+
+const OSS_DEPENDENCY_CAPABILITY_PACK = ossCapabilityPack("oss_dependency", "repo_dependency_check");
+const OSS_NATIVE_CODE_CAPABILITY_PACK = ossCapabilityPack("oss_native_code", "repo_native_code_check");
+const OSS_API_SCHEMA_CAPABILITY_PACK = ossCapabilityPack("oss_api_schema", "repo_api_schema_check");
+const OSS_AUTHZ_CAPABILITY_PACK = ossCapabilityPack("oss_authz", "repo_authz_check");
+const OSS_CI_CD_CAPABILITY_PACK = ossCapabilityPack("oss_ci_cd", "repo_ci_cd_check");
+const OSS_SECRETS_CONFIG_CAPABILITY_PACK = ossCapabilityPack("oss_secrets_config", "repo_config_check");
+const OSS_DOCS_BEHAVIOR_CAPABILITY_PACK = ossCapabilityPack("oss_docs_behavior", "repo_docs_behavior_check");
+
 const SMART_CONTRACT_EVM_CAPABILITY_PACK = Object.freeze({
   id: "smart_contract_evm",
   capability_pack_version: 1,
@@ -304,6 +338,13 @@ const SMART_CONTRACT_COSMWASM_CAPABILITY_PACK = Object.freeze({
 
 const CAPABILITY_PACKS = Object.freeze({
   web: WEB_CAPABILITY_PACK,
+  oss_dependency: OSS_DEPENDENCY_CAPABILITY_PACK,
+  oss_native_code: OSS_NATIVE_CODE_CAPABILITY_PACK,
+  oss_api_schema: OSS_API_SCHEMA_CAPABILITY_PACK,
+  oss_authz: OSS_AUTHZ_CAPABILITY_PACK,
+  oss_ci_cd: OSS_CI_CD_CAPABILITY_PACK,
+  oss_secrets_config: OSS_SECRETS_CONFIG_CAPABILITY_PACK,
+  oss_docs_behavior: OSS_DOCS_BEHAVIOR_CAPABILITY_PACK,
   smart_contract_evm: SMART_CONTRACT_EVM_CAPABILITY_PACK,
   smart_contract_svm: SMART_CONTRACT_SVM_CAPABILITY_PACK,
   smart_contract_aptos: SMART_CONTRACT_APTOS_CAPABILITY_PACK,
@@ -385,6 +426,15 @@ const WEB_SURFACE_TYPES = Object.freeze([
 ]);
 
 const WEB_SURFACE_TYPE_SET = new Set(WEB_SURFACE_TYPES);
+const OSS_SURFACE_TYPE_TO_PACK = Object.freeze({
+  oss_dependency: OSS_DEPENDENCY_CAPABILITY_PACK,
+  oss_native_code: OSS_NATIVE_CODE_CAPABILITY_PACK,
+  oss_api_schema: OSS_API_SCHEMA_CAPABILITY_PACK,
+  oss_authz: OSS_AUTHZ_CAPABILITY_PACK,
+  oss_ci_cd: OSS_CI_CD_CAPABILITY_PACK,
+  oss_secrets_config: OSS_SECRETS_CONFIG_CAPABILITY_PACK,
+  oss_docs_behavior: OSS_DOCS_BEHAVIOR_CAPABILITY_PACK,
+});
 
 // Smart-contract surfaces are routed by `chain_family`. Aptos and Sui have
 // distinct packs (so verifier dispatch is one runner per pack) but both
@@ -510,6 +560,21 @@ function classifySurfaceCapability(surface) {
     throw new Error(
       `smart_contract surface ${surface && surface.id ? surface.id : "(unknown)"} is missing chain_family; capability routing requires it`,
     );
+  }
+
+  if (normalizedType && OSS_SURFACE_TYPE_TO_PACK[normalizedType]) {
+    const pack = OSS_SURFACE_TYPE_TO_PACK[normalizedType];
+    reasons.push(`oss_pack:${pack.id}`);
+    return {
+      surface_type: surfaceType,
+      capability_pack: pack.id,
+      capability_pack_version: pack.capability_pack_version,
+      hunter_agent: pack.hunter_agent,
+      brief_profile: pack.brief_profile,
+      context_budget: cloneContextBudget(pack.context_budget),
+      confidence: "high",
+      reasons,
+    };
   }
 
   const knownWebType = normalizedType == null || WEB_SURFACE_TYPE_SET.has(surfaceType);

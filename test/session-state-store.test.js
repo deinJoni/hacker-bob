@@ -1295,6 +1295,7 @@ test("state-writing surface lead helper is not exported unlocked", () => {
     runtimeSurfaceArtifactPathWrites.push(...surfaceArtifactWriteSummaries(relativePath, readSource(relativePath)));
   }
   assert.deepEqual(runtimeSurfaceArtifactPathWrites.sort(), [
+    "mcp/lib/repo-target.js:buildRepoInventory:writeFileAtomic:attackSurfacePath",
     "mcp/lib/surface-leads.js:promoteSurfaceLeadsInternal:writeFileAtomic:attackSurfacePath",
     "mcp/lib/surface-leads.js:writeSurfaceLeadsDocument:writeFileAtomic:surfaceLeadsPath",
   ]);

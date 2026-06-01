@@ -18,6 +18,7 @@ const {
 } = require("./coverage.js");
 const {
   readFindingsFromJsonl,
+  readGradeVerdict,
 } = require("./findings.js");
 const {
   requireVerificationCompleteForGrade,
@@ -442,6 +443,41 @@ function computeVerifyToGradeGate(domain) {
   };
 }
 
+function computeGradeToReportGate(domain) {
+  const blockers = [];
+  let grade = null;
+
+  try {
+    const document = JSON.parse(readGradeVerdict({ target_domain: domain }));
+    const feedback = typeof document.feedback === "string" ? document.feedback.trim() : "";
+    grade = {
+      valid: true,
+      verdict: document.verdict,
+      total_score: document.total_score,
+      findings_count: Array.isArray(document.findings) ? document.findings.length : 0,
+      feedback_present: feedback.length > 0,
+    };
+    if (!feedback) {
+      grade.valid = false;
+      blockers.push(blocker(
+        "grade_feedback_missing",
+        "grade verdict feedback is required before REPORT",
+      ));
+    }
+  } catch (error) {
+    blockers.push(blocker(
+      "grade_verdict_invalid",
+      "grade verdict is missing or invalid for REPORT",
+      { error: compactErrorMessage(error) },
+    ));
+  }
+
+  return {
+    grade,
+    transition_blockers: blockers,
+  };
+}
+
 function formatTransitionBlockers(blockers) {
   return blockers.map((item) => {
     if (Array.isArray(item.surface_ids) && item.surface_ids.length > 0) {
@@ -463,6 +499,7 @@ function formatTransitionBlockers(blockers) {
 module.exports = {
   computeChainRequirement,
   computeChainToVerifyGate,
+  computeGradeToReportGate,
   computeHuntToChainGate,
   computeOpenRequeueSurfaceIds,
   computeVerifyToGradeGate,

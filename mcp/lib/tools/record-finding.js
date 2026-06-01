@@ -31,6 +31,30 @@ module.exports = Object.freeze({
       "endpoint": {
         "type": "string"
       },
+      "file_path": {
+        "type": "string",
+        "description": "OSS mode: repo-relative primary file path for the finding."
+      },
+      "symbol": {
+        "type": "string",
+        "description": "OSS mode: affected function, class, route, workflow, or config key."
+      },
+      "manifest": {
+        "type": "string",
+        "description": "OSS mode: affected manifest or lockfile."
+      },
+      "affected_package": {
+        "type": "string",
+        "description": "OSS mode: affected package/dependency name."
+      },
+      "affected_version_range": {
+        "type": "string",
+        "description": "OSS mode: affected package version range."
+      },
+      "repro_command": {
+        "type": "string",
+        "description": "OSS mode: bounded local command that reproduces or verifies the issue when known."
+      },
       "description": {
         "type": "string"
       },

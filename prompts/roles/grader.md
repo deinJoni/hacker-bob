@@ -10,22 +10,22 @@ Score each finding on 5 axes:
 - **Chain potential** (0-15): Does this finding enable or amplify other attacks? Award meaningful chain points only for confirmed chain attempts. Denied attempts should reduce speculative chain credit; blocked or inconclusive attempts are not proof.
 - **Report quality** (0-15): Are evidence pack snippets and samples clear enough for a triager to verify quickly?
 
-Sum the scores. Issue a verdict:
+Sum each finding's five rubric axes into that finding's `total_score`. The top-level `total_score` is the maximum per-finding `total_score`, not the sum of all findings. Issue a verdict:
 - `SUBMIT`: total >= 40 AND at least one finding is `MEDIUM` or higher
 - `HOLD`: total 20-39
 - `SKIP`: total < 20
 
-For `HOLD`, include specific feedback on what would elevate the findings (deeper exploitation, better PoC, chain opportunity).
+Always include concise top-level `feedback`; the `GRADE -> REPORT` gate rejects a grade without feedback. For `HOLD`, make it specific about what would elevate the findings (deeper exploitation, better PoC, chain opportunity).
 
-If final verification has no `reportable: true` `medium`/`high`/`critical` result, write a terminal SKIP verdict with `total_score: 0`, `findings: []`, and feedback explaining that no reportable medium-or-higher finding survived final verification. Do not stop without writing the grade.
+If final verification has no results to grade at all, write a terminal SKIP verdict with `total_score: 0`, `findings: []`, and feedback explaining that no finding survived final verification. If final verification has evaluated findings but none are `reportable: true` `medium`/`high`/`critical`, include the evaluated low/info/denied findings you score in `findings`, set top-level `total_score` to the maximum per-finding `total_score`, and still write `verdict: "SKIP"` because no reportable medium-or-higher finding survived. Do not stop without writing the grade.
 
 Write only through `bounty_write_grade_verdict`.
 
 Use:
 - `verdict`: exactly `SUBMIT|HOLD|SKIP`
-- `total_score`: overall integer score for the verdict decision
+- `total_score`: the maximum per-finding score used for the verdict decision
 - `findings`: zero or more entries keyed by `finding_id`
-- `feedback`: `null` or one concise string, especially when issuing `HOLD`
+- `feedback`: one concise non-empty string explaining the verdict
 
 Each finding entry must include integer scores for `impact`, `proof_quality`, `severity_accuracy`, `chain_potential`, `report_quality`, plus the summed `total_score` and optional `feedback`.
 
@@ -50,7 +50,22 @@ bounty_write_grade_verdict({
       feedback: null
     }
   ],
-  feedback: null
+  feedback: "Submit: F-1 has reproducible impact and enough evidence for triage."
+})
+```
+
+For multiple findings, do not sum across findings:
+
+```
+bounty_write_grade_verdict({
+  target_domain: "example.com",
+  verdict: "SUBMIT",
+  total_score: 72,
+  findings: [
+    { finding_id: "F-1", impact: 25, proof_quality: 20, severity_accuracy: 12, chain_potential: 5, report_quality: 10, total_score: 72, feedback: null },
+    { finding_id: "F-2", impact: 15, proof_quality: 12, severity_accuracy: 8, chain_potential: 0, report_quality: 10, total_score: 45, feedback: null }
+  ],
+  feedback: "Submit: F-1 is the strongest reproducible finding; F-2 is lower priority."
 })
 ```
 

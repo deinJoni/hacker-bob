@@ -118,6 +118,7 @@ Claude Code commands:
 /bob-hunt target.com         # start a normal hunt
 /bob-hunt target.com --deep  # broader recon and deep lead follow-up
 /bob-hunt resume target.com  # resume an existing session
+/bob-oss /path/to/repo       # run local open-source project review mode
 /bob-status                  # show latest session status
 /bob-debug                   # inspect the latest local run
 /bob-update                  # preview and install the latest release
@@ -129,12 +130,21 @@ Codex uses the same command names with a `$` prefix:
 
 ```text
 $bob-hunt target.com
+$bob-oss /path/to/repo
 $bob-status
 $bob-debug
 $bob-update
 $bob-export
 $bob-egress
 ```
+
+OSS mode works from a local checkout. It inventories repo files, writes a
+session-scoped Docker plan, and keeps dependency installs/build repros inside a
+Docker image when explicitly requested. Docker command replay mounts the repo
+read-only by default and uses a session-owned writable work directory.
+Native C/C++ projects get a dedicated parser/protocol/memory-safety surface so
+hunters bias toward reachable file/function evidence instead of generic repo
+audit notes.
 
 For install diagnostics:
 
