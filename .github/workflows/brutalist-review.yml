@@ -1,49 +1,36 @@
 name: Brutalist Review
-
-# Multi-CLI adversarial code review on every PR, posted as inline comments.
-# Powered by ejmockler/brutalist-mcp (pinned to v1.14.5).
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-
 permissions:
   contents: read
   pull-requests: write
-
 jobs:
   brutalist:
     runs-on: ubuntu-latest
     if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
+        with: { fetch-depth: 0 }
       - uses: actions/setup-node@v6
-        with:
-          node-version: '20'
-
+        with: { node-version: '20' }
       - name: Install CLI critics
         run: |
-          npm install -g @brutalist/mcp@1.14.5 \
-                         @anthropic-ai/claude-code \
-                         @openai/codex
+          npm install -g @brutalist/mcp@1.14.5 @anthropic-ai/claude-code @openai/codex
           curl -fsSL https://antigravity.google/cli/install.sh | bash
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          # CONFIRMATION: redirect brutalist-mcp stderr to a file (NOT debug —
-          # just the redirect). If stderr pipe-backpressure was the deadlock,
-          # this goes green; if it's intermittent, it won't.
           REAL_BMCP="$(command -v brutalist-mcp)"
           mkdir -p /tmp/bin
           printf '#!/usr/bin/env bash\nexec "%s" "$@" 2>>/tmp/bmcp-stderr.log\n' "$REAL_BMCP" > /tmp/bin/brutalist-mcp
           chmod +x /tmp/bin/brutalist-mcp
           echo "/tmp/bin" >> "$GITHUB_PATH"
-
       - name: Brutalist review
         uses: ejmockler/brutalist-mcp/packages/github-action@v1.14.5
         env:
           BRUTALIST_TIMEOUT: "90000"
-          BRUTALIST_ORCHESTRATOR_TIMEOUT_MS: "900000"
+          BRUTALIST_LOG_LEVEL: "debug"
+          BRUTALIST_ORCHESTRATOR_TRACE: "1"
+          BRUTALIST_ORCHESTRATOR_TIMEOUT_MS: "600000"
         with:
           github-token: ${{ github.token }}
           anthropic-oauth-token: ${{ secrets.ANTHROPIC_OAUTH_TOKEN }}
