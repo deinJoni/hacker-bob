@@ -25,7 +25,7 @@ jobs:
           chmod +x /tmp/bin/brutalist-mcp
           echo "/tmp/bin" >> "$GITHUB_PATH"
       - name: Brutalist review
-        uses: ejmockler/brutalist-mcp/packages/github-action@v1.14.5
+        uses: ejmockler/brutalist-mcp/packages/github-action@90d77d503224896a5563c37accfd9b0cfd7831d0
         env:
           BRUTALIST_TIMEOUT: "90000"
           BRUTALIST_LOG_LEVEL: "debug"
@@ -37,3 +37,11 @@ jobs:
           codex-auth: ${{ secrets.CODEX_AUTH }}
           agy-oauth-token: ${{ secrets.AGY_OAUTH_TOKEN }}
           minimum-severity: medium
+      - name: Dump brutalist-mcp stderr
+        if: always()
+        run: |
+          echo "===== brutalist-mcp stderr (roast internals at the hang) ====="
+          if [ -f /tmp/bmcp-stderr.log ]; then
+            grep -iE "Executing|Released CLI|Waiting for|timed out|execution (failed|completed)|cli=|roast|Working directory|chunk|panel|slot" /tmp/bmcp-stderr.log | tail -120
+            echo "----- total lines: $(wc -l < /tmp/bmcp-stderr.log) -----"
+          else echo "(no log)"; fi
