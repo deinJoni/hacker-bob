@@ -319,16 +319,26 @@ test("orchestrator-only mutators never appear in the globally pre-approved permi
 });
 
 test("checked-in settings, generated settings, and registry agree on global preapproval", () => {
+  // Two contracts here:
+  //   1. defaultGlobalMcpPermissions() and the registry both yield exactly the
+  //      `global_preapproval: true` set (minus aliases). This is the
+  //      install-time global pre-approval contract.
+  //   2. The checked-in source-tree .claude/settings.json reflects the canonical
+  //      merge (defaultClaudeSettings().permissions.allow ∪
+  //      permissionsForAllTools(), stale-filtered) — the same output the
+  //      install-time merge produces from an empty existing settings file. The
+  //      drift gate scripts/generate-claude-settings.js owns this contract.
+  const { canonicalAllow } = require("../scripts/generate-claude-settings.js");
   const settings = JSON.parse(readFile(".claude/settings.json"));
-  const sourceAllowed = new Set(
-    settings.permissions.allow.filter((tool) => tool.startsWith(MCP_PERMISSION_PREFIX)),
-  );
+  const sourceMcpAllow = settings.permissions.allow.filter((tool) => tool.startsWith(MCP_PERMISSION_PREFIX));
+  const expectedSourceMcpAllow = canonicalAllow().filter((tool) => tool.startsWith(MCP_PERMISSION_PREFIX));
+  assert.deepEqual(sourceMcpAllow, expectedSourceMcpAllow);
+
   const generatedAllowed = new Set(defaultGlobalMcpPermissions());
   const expectedAllowed = new Set();
   for (const [name, meta] of Object.entries(TOOL_MANIFEST)) {
-    if (meta.global_preapproval) expectedAllowed.add(permissionForToolName(name));
+    if (meta.global_preapproval && !meta.alias_of) expectedAllowed.add(permissionForToolName(name));
   }
-  assert.deepEqual([...sourceAllowed].sort(), [...expectedAllowed].sort());
   assert.deepEqual([...generatedAllowed].sort(), [...expectedAllowed].sort());
 });
 
