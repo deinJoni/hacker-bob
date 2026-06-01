@@ -249,6 +249,26 @@ function evaluateTechniqueAttemptRequirement(marker, assignment) {
   };
 }
 
+function evaluateOssCompletionCoverage(marker, assignment, handoff) {
+  if (!assignment || !assignment.capability_pack || !assignment.capability_pack.startsWith("oss_")) {
+    return null;
+  }
+  if (!handoff || handoff.surface_status !== "complete") return null;
+
+  const coverage = summarizeCoverageForRun(marker);
+  const findings = summarizeFindingsForRun(marker);
+  if (coverage.total > 0 || findings.count > 0) return null;
+
+  return {
+    ok: false,
+    status: "blocked",
+    block_code: "missing_oss_coverage",
+    reason: `Hunter ${marker.wave}/${marker.agent} cannot mark OSS surface ${marker.surface_id} complete with zero coverage rows and zero findings; log concrete repo checks/build attempts or set surface_status to partial with blockers.`,
+    marker,
+    handoff: null,
+  };
+}
+
 function normalizeFinalizeArgs(args) {
   const targetDomain = assertNonEmptyString(args.target_domain, "target_domain");
   const wave = parseWaveId(args.wave);
@@ -345,6 +365,14 @@ function evaluateHunterCompletion(args) {
   if (techniqueAttemptBlock) {
     return {
       ...techniqueAttemptBlock,
+      handoff: handoffTelemetry(handoff),
+    };
+  }
+
+  const ossCoverageBlock = evaluateOssCompletionCoverage(marker, assignment, handoff);
+  if (ossCoverageBlock) {
+    return {
+      ...ossCoverageBlock,
       handoff: handoffTelemetry(handoff),
     };
   }

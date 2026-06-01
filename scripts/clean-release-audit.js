@@ -19,6 +19,7 @@ const EXCLUDED_RELEASE_CANDIDATE_PATHS = new Set([
 ]);
 const ALLOWED_UNTRACKED_RELEASE_CANDIDATE_FILES = new Set([
   "docs/PACKAGE_SURFACES.md",
+  "docs/releases/v1.3.5.md",
   "mcp/lib/finding-contracts.js",
   "mcp/lib/finding-store.js",
   "mcp/lib/grade-verdict-store.js",

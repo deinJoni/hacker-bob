@@ -404,6 +404,12 @@ function normalizeFindingRecord(record, { expectedDomain = null, lineNumber = nu
       severity: assertEnumValue(record.severity, SEVERITY_VALUES, "severity"),
       cwe: normalizeOptionalText(record.cwe, "cwe"),
       endpoint: assertRequiredText(record.endpoint, "endpoint"),
+      file_path: normalizeOptionalText(record.file_path, "file_path"),
+      symbol: normalizeOptionalText(record.symbol, "symbol"),
+      manifest: normalizeOptionalText(record.manifest, "manifest"),
+      affected_package: normalizeOptionalText(record.affected_package, "affected_package"),
+      affected_version_range: normalizeOptionalText(record.affected_version_range, "affected_version_range"),
+      repro_command: normalizeOptionalText(record.repro_command, "repro_command"),
       description: assertRequiredText(record.description, "description"),
       proof_of_concept: assertRequiredText(record.proof_of_concept, "proof_of_concept"),
       response_evidence: normalizeOptionalText(record.response_evidence, "response_evidence"),
@@ -470,6 +476,14 @@ function renderFindingMarkdownEntry(finding) {
     ? `\n- **Capability Pack:** ${finding.capability_pack}${finding.hunter_agent ? ` (${finding.hunter_agent})` : ""}`
     : "";
   const authProfile = finding.auth_profile ? `\n- **Auth Profile:** ${finding.auth_profile}` : "";
+  const repoFields = [
+    finding.file_path ? `\n- **File:** ${finding.file_path}` : "",
+    finding.symbol ? `\n- **Symbol:** ${finding.symbol}` : "",
+    finding.manifest ? `\n- **Manifest:** ${finding.manifest}` : "",
+    finding.affected_package ? `\n- **Affected Package:** ${finding.affected_package}` : "",
+    finding.affected_version_range ? `\n- **Affected Version Range:** ${finding.affected_version_range}` : "",
+    finding.repro_command ? `\n- **Repro Command:** \`${finding.repro_command}\`` : "",
+  ].join("");
   let scBlock = "";
   if (finding.sc_evidence) {
     const e = finding.sc_evidence;
@@ -519,6 +533,7 @@ function renderFindingMarkdownEntry(finding) {
     surface,
     routing,
     authProfile,
+    repoFields,
     scBlock,
     "---\n\n",
   ].join("\n");

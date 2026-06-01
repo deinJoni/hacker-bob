@@ -106,6 +106,26 @@ function publicIntelPath(domain) {
   return path.join(sessionDir(domain), "public-intel.json");
 }
 
+function repoInventoryPath(domain) {
+  return path.join(sessionDir(domain), "repo-inventory.json");
+}
+
+function repoChecksJsonlPath(domain) {
+  return path.join(sessionDir(domain), "repo-checks.jsonl");
+}
+
+function repoEnvPath(domain) {
+  return path.join(sessionDir(domain), "repo-env.json");
+}
+
+function repoDockerfilePath(domain) {
+  return path.join(sessionDir(domain), "Dockerfile.bob");
+}
+
+function repoCommandRunsJsonlPath(domain) {
+  return path.join(sessionDir(domain), "repo-command-runs.jsonl");
+}
+
 function bobSpecPath(domain) {
   return path.join(sessionDir(domain), "bob-spec.json");
 }
@@ -236,6 +256,11 @@ module.exports = {
   liveDeadEndsJsonlPath,
   pipelineEventsJsonlPath,
   publicIntelPath,
+  repoCommandRunsJsonlPath,
+  repoChecksJsonlPath,
+  repoDockerfilePath,
+  repoEnvPath,
+  repoInventoryPath,
   reportMarkdownPath,
   scopeWarningsPath,
   sessionDir,

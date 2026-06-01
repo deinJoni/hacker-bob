@@ -317,7 +317,12 @@ function writeVerificationRound(args) {
     verificationLib().assertExactFindingCoverage(results, v2Snapshot.finding_ids, round);
     results = sortVerificationResultsByFindingIds(results, v2Snapshot.finding_ids);
     if (round === "final") {
-      const adjudicationPlanHash = assertNonEmptyString(args.adjudication_plan_hash, "adjudication_plan_hash");
+      let adjudicationPlanHash;
+      try {
+        adjudicationPlanHash = assertNonEmptyString(args.adjudication_plan_hash, "adjudication_plan_hash");
+      } catch (error) {
+        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, error.message || String(error));
+      }
       v2Adjudication = verificationLib().requireCurrentAdjudication(domain, {
         adjudicationPlanHash,
         state: v2State,

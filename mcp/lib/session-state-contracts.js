@@ -5,6 +5,7 @@ const {
   CHECKPOINT_MODE_VALUES,
   PHASE_VALUES,
   SESSION_PUBLIC_STATE_FIELDS,
+  TARGET_KIND_VALUES,
 } = require("./constants.js");
 const {
   assertEnumValue,
@@ -310,6 +311,21 @@ function terminallyBlockedSurfaceIds(state) {
   return list.map((entry) => entry.surface_id);
 }
 
+function normalizeRepoMetadata(value, fieldName = "repo") {
+  if (value == null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${fieldName} must be an object`);
+  }
+  const result = {
+    root_path: assertNonEmptyString(value.root_path, `${fieldName}.root_path`),
+  };
+  for (const key of ["source_url", "branch", "commit", "default_branch"]) {
+    const normalized = normalizeOptionalText(value[key], `${fieldName}.${key}`);
+    if (normalized) result[key] = normalized;
+  }
+  return result;
+}
+
 function buildInitialSessionState(domain, targetUrl, {
   deepMode = false,
   egressProfile = null,
@@ -317,8 +333,18 @@ function buildInitialSessionState(domain, targetUrl, {
   blockInternalHosts = null,
   allowInternalHosts = null,
   blockInternalHostsPolicy = null,
+  targetKind = "web",
+  repo = null,
 } = {}) {
   const egressFields = egressProfileStateFields(egressProfile);
+  const normalizedTargetKind = assertEnumValue(targetKind, TARGET_KIND_VALUES, "target_kind");
+  const normalizedRepo = normalizeRepoMetadata(repo, "repo");
+  if (normalizedTargetKind === "repo" && !normalizedRepo) {
+    throw new Error("repo metadata is required when target_kind='repo'");
+  }
+  if (normalizedTargetKind !== "repo" && normalizedRepo) {
+    throw new Error("repo metadata is only allowed when target_kind='repo'");
+  }
   const internalHostPolicy = blockInternalHostsPolicy
     ? blockInternalHostsPolicyFields(blockInternalHostsPolicy)
     : deriveBlockInternalHostsPolicy({
@@ -330,6 +356,8 @@ function buildInitialSessionState(domain, targetUrl, {
   return {
     target: domain,
     target_url: targetUrl,
+    target_kind: normalizedTargetKind,
+    repo: normalizedRepo,
     deep_mode: deepMode,
     ...internalHostPolicy,
     phase: "RECON",
@@ -486,6 +514,8 @@ function publicSessionState(state) {
 function compactSessionState(state) {
   return {
     target: state.target,
+    target_kind: state.target_kind || "web",
+    repo: state.repo || null,
     deep_mode: state.deep_mode === true,
     checkpoint_mode: state.checkpoint_mode,
     block_internal_hosts: state.block_internal_hosts === true,
@@ -531,6 +561,10 @@ function normalizeSessionStateDocument(document, requestedDomain) {
   const normalized = {
     target: requestedDomain,
     target_url: assertNonEmptyString(document.target_url, "target_url"),
+    target_kind: document.target_kind == null
+      ? "web"
+      : assertEnumValue(document.target_kind, TARGET_KIND_VALUES, "target_kind"),
+    repo: normalizeRepoMetadata(document.repo, "repo"),
     deep_mode: document.deep_mode == null
       ? false
       : assertBoolean(document.deep_mode, "deep_mode"),
@@ -604,6 +638,12 @@ function normalizeSessionStateDocument(document, requestedDomain) {
       ? false
       : assertBoolean(document.handoff_provenance_required, "handoff_provenance_required"),
   };
+  if (normalized.target_kind === "repo" && !normalized.repo) {
+    throw new Error("repo metadata is required when target_kind='repo'");
+  }
+  if (normalized.target_kind !== "repo" && normalized.repo) {
+    throw new Error("repo metadata is only allowed when target_kind='repo'");
+  }
 
   // Disjointness invariant: a surface is either explored (hunter declared
   // complete) OR terminally_blocked (system promoted on stuck loop with no

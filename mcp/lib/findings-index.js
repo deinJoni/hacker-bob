@@ -429,6 +429,27 @@ function compactPriorRecord(record) {
   };
 }
 
+function uniquePriorMatchKey(record) {
+  return `${record && record.target_domain ? record.target_domain : ""}\0${record && record.finding_id ? record.finding_id : ""}`;
+}
+
+function mergePriorMatches(domain, sameTargetMatches, crossTargetMatches, limit) {
+  const byKey = new Map();
+  for (const record of [...sameTargetMatches, ...crossTargetMatches]) {
+    if (record == null || typeof record !== "object") continue;
+    byKey.set(uniquePriorMatchKey(record), record);
+  }
+  return Array.from(byKey.values())
+    .sort((a, b) => {
+      const aSame = a.target_domain === domain;
+      const bSame = b.target_domain === domain;
+      if (aSame !== bSame) return aSame ? -1 : 1;
+      if (b.similarity !== a.similarity) return b.similarity - a.similarity;
+      return String(a.finding_id || "").localeCompare(String(b.finding_id || ""));
+    })
+    .slice(0, limit);
+}
+
 function summarizePriorFindingsForSurface(domain, surfaceObj, options) {
   const opts = options || {};
   const requestedLimit = Number.isInteger(opts.limit) && opts.limit > 0
@@ -437,6 +458,19 @@ function summarizePriorFindingsForSurface(domain, surfaceObj, options) {
   const limit = Math.min(requestedLimit, PRIORS_SLICE_MAX_LIMIT);
   const queryText = indexableSurfaceQuery(surfaceObj);
   if (queryText.length === 0) return null;
+  let sameTarget = {
+    matches: [],
+    total_in_index: 0,
+    matched_total: 0,
+  };
+  try {
+    sameTarget = queryFindingsForTarget({
+      target_domain: domain,
+      query_text: queryText,
+      top_k: limit,
+    });
+  } catch (_err) {}
+
   let crossTarget;
   try {
     crossTarget = queryFindingsCrossTarget({
@@ -444,20 +478,27 @@ function summarizePriorFindingsForSurface(domain, surfaceObj, options) {
       top_k: limit,
     });
   } catch (_err) {
+    crossTarget = {
+      matches: [],
+      total_in_index: 0,
+      domains_scanned: 0,
+      matched_total: 0,
+    };
+  }
+  const priorMatches = mergePriorMatches(domain, sameTarget.matches, crossTarget.matches, limit);
+  if (priorMatches.length === 0) {
     return null;
   }
-  if (crossTarget.matches.length === 0) {
-    return null;
-  }
-  const sameTargetMatches = crossTarget.matches.filter((m) => m.target_domain === domain);
-  const otherTargetMatches = crossTarget.matches.filter((m) => m.target_domain !== domain);
+  const sameTargetMatches = priorMatches.filter((m) => m.target_domain === domain);
+  const otherTargetMatches = priorMatches.filter((m) => m.target_domain !== domain);
   return {
     total_in_corpus: crossTarget.total_in_index,
+    same_target_total_in_index: sameTarget.total_in_index,
     domains_scanned: crossTarget.domains_scanned,
-    matched_total: crossTarget.matched_total,
+    matched_total: Math.max(crossTarget.matched_total || 0, priorMatches.length),
     same_target_count: sameTargetMatches.length,
     other_target_count: otherTargetMatches.length,
-    priors: crossTarget.matches.slice(0, limit).map(compactPriorRecord).filter((entry) => entry != null),
+    priors: priorMatches.map(compactPriorRecord).filter((entry) => entry != null),
     limit,
   };
 }
