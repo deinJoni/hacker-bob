@@ -86,14 +86,13 @@ function handler(args) {
     );
   }
   if (!APPEND_CONTRACT_LEGAL_FROM_STATES.includes(existing.state)) {
-    // The X.4 attach path requires `proposed`; the rev-4 X.8
-    // retry-with-recall path adds `failed` as a re-contract entry so the
-    // operator can attach a refined Contract to a previously failed node
-    // without first abandoning it. All other states (contracted, ready,
-    // dispatched, executed, verified, finalized, abandoned) refuse with
-    // the structured node_not_proposed code so the operator-facing UI
-    // can render a clear domain-specific message instead of bubbling the
-    // lower-level invalid_node_transition error.
+    // The attach path requires the node in state `proposed`, OR `failed`
+    // (the re-contract entry per X.8) so the operator can attach a refined
+    // Contract to a failed node without first abandoning it. All other
+    // states (contracted, ready, dispatched, executed, verified, finalized,
+    // abandoned) refuse with the structured node_not_proposed code so the
+    // operator-facing UI can render a clear domain-specific message
+    // instead of bubbling the lower-level invalid_node_transition error.
     throw structuredError(
       "node_not_proposed",
       `node ${nodeId} is in state "${existing.state}"; attach-contract requires one of [${APPEND_CONTRACT_LEGAL_FROM_STATES.join(", ")}]`,
@@ -159,9 +158,9 @@ module.exports = Object.freeze({
   description:
     "Attach a hash-bound Contract to a TaskGraph node and transition the "
     + "node to \"contracted\". The default path is proposed → contracted; "
-    + "the rev-4 X.8 retry-with-recall path also allows failed → contracted "
-    + "(operator re-contracts a failed node with a refined Contract; prior "
-    + "failure events stay on the ledger so the next bob_prepare_node call's "
+    + "the X.8 re-contract path also allows failed → contracted (operator "
+    + "re-contracts a failed node with a refined Contract; prior failure "
+    + "events stay on the ledger so the next bob_prepare_node call's "
     + "`prior_attempt` brief slice surfaces the structured failure payload). "
     + "Validates the Contract schema (≥1 invariant + ≥1 witness + ≥1 "
     + `production_path per X-P2; invariant statements capped at ${INVARIANT_STATEMENT_MAX_CHARS} chars), `
@@ -179,7 +178,7 @@ module.exports = Object.freeze({
       node_id: {
         type: "string",
         description:
-          "TaskGraph node id (TG-<prefix>-<slug>). Must already be in the materialized graph with state \"proposed\" (default path) or \"failed\" (rev-4 X.8 retry-with-recall re-contract path).",
+          "TaskGraph node id (TG-<prefix>-<slug>). Must already be in the materialized graph with state \"proposed\" (default path) or \"failed\" (X.8 re-contract path).",
       },
       contract: {
         type: "object",

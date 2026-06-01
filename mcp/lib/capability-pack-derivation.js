@@ -492,7 +492,7 @@ function derivePackForNode(node, graph_context, observation_history, contract) {
     .map(techniquePackEntryForId)
     .filter((entry) => entry != null);
 
-  // recommended_reads_for_node[] (rev 4 — new):
+  // recommended_reads_for_node[]:
   //   (a) every artifact_ref surfaced by the Contract's witness predicates
   //       (left + right for relational_value_match; the single artifact_ref
   //       for hash_equals). Insertion order preserves Contract order so the

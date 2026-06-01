@@ -10,7 +10,7 @@
 //      succeeds; downstream nodes ready
 //   5. mechanical-fail flow → finalize emits failed with structured
 //      failure_reason; downstream not ready
-//   6. retry-with-recall (rev 4): operator re-contracts a failed node via
+//   6. retry-with-recall: operator re-contracts a failed node via
 //      bob_attach_contract (failed → contracted), re-prepares, the brief
 //      surfaces the prior failure via prior_attempt slice, and the second
 //      finalize succeeds against the refined Contract
@@ -358,14 +358,14 @@ test("finalize → failed when mechanical verifier rejects; failure_reason carri
 
 // ─── Do step 5 (6): re-prepare carries the prior_attempt slice ──────────
 //
-// End-to-end retry-with-recall workflow (rev 4 spec line 338 + X.12 line 425):
+// End-to-end retry-with-recall workflow (X.8 spec line 338 + X.12 line 425):
 //   1. Operator proposes a Hypothesis + attaches an initial Contract (state
 //      proposed → contracted).
 //   2. prepare_node → finalize_node fails the mechanical verifier (state
 //      contracted → ready → dispatched → executed → failed).
 //   3. Operator re-contracts the failed node with a refined Contract via
-//      bob_attach_contract. The rev-4 X.8 failed → contracted path lands
-//      the node back in `contracted` while the prior failed event stays on
+//      bob_attach_contract. The X.8 failed → contracted path lands the
+//      node back in `contracted` while the prior failed event stays on
 //      the ledger.
 //   4. A second prepare_node call succeeds and the brief's `prior_attempt`
 //      slice surfaces the prior failure's structured failure_reason
@@ -415,11 +415,11 @@ test("retry-with-recall: re-prepare after re-contracting a failed node inlines t
     assert.equal(liveNode.state, "failed");
 
     // (3) Operator re-contracts via bob_attach_contract with a refined
-    // Contract. The rev-4 X.8 failed → contracted path is the
-    // retry-with-recall re-contract entry. The refined Contract uses a
-    // DIFFERENT predicate (e.g., a different artifact_ref pair, per X.12)
-    // — here we tighten the status check to 200 OR 201 (still expects 200
-    // but the refined Contract is keyed on a new id so the hash differs).
+    // Contract. The X.8 failed → contracted path is the retry-with-recall
+    // re-contract entry. The refined Contract uses a DIFFERENT predicate
+    // (e.g., a different artifact_ref pair, per X.12) — here we tighten
+    // the status check to 200 OR 201 (still expects 200 but the refined
+    // Contract is keyed on a new id so the hash differs).
     const refinedContract = baseContractInput({
       contractId: "C-rwr-attempt-2-refined",
       witnessKind: "tool_output_match",

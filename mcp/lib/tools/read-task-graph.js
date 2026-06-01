@@ -11,9 +11,8 @@
 //                  recent finalizations + cross-stack Transitions + the most
 //                  recent structured failure_reason per failed node
 //
-// The summary mode is what rev 2's separate `bob_describe_task_graph`
-// became; folding it into this tool keeps the read surface at one entry
-// point for the X.5 / X.8 / X.11 cycles that consume it.
+// The summary mode keeps the read surface at one entry point for the
+// X.5 / X.8 / X.11 cycles that consume it.
 
 const {
   assertNonEmptyString,
@@ -49,8 +48,8 @@ module.exports = Object.freeze({
     + "node + edge document with optional {kind, state, node_id} filters; view: "
     + "\"summary\" returns per-state counts + top-10 ready nodes + open "
     + "Hypotheses + recent finalizations + cross-stack Transitions + the most "
-    + "recent structured failure_reason per failed node (folded in from rev 2's "
-    + "deleted bob_describe_task_graph). Reads bound to the session root.",
+    + "recent structured failure_reason per failed node. Reads bound to the "
+    + "session root.",
   inputSchema: {
     type: "object",
     properties: {

@@ -22,7 +22,7 @@
 //      failure_reason.reason == "relation_did_not_hold" carrying BOTH
 //      extracted values + BOTH artifact_refs. Downstream NOT ready.
 //
-//   3. Retry-with-recall subtest (rev 4) — operator re-contracts the
+//   3. Retry-with-recall subtest — operator re-contracts the
 //      failed node with a refined Contract (a different artifact_ref
 //      pair). New bob_prepare_node → brief's `prior_attempt` slice MUST
 //      contain the structured failure payload from the negative-subtest
@@ -810,8 +810,8 @@ test("X.12 retry-with-recall subtest: re-contract the failed node, new prepare_n
     // (2) Re-contract: operator inspects the failure (extracted values
     // surface in the failure payload), discovers a DIFFERENT artifact_ref
     // pair (the second http_record + evm_call) whose values do match,
-    // and attaches a refined Contract. The X.4 rev-4 failed → contracted
-    // path is the documented re-contract entry.
+    // and attaches a refined Contract. The X.8 failed → contracted path
+    // is the documented re-contract entry.
     const httpRequestId2 = "R-x12-rwr-attempt-2";
     const evmCallId2 = "E-x12-rwr-attempt-2";
     writeHttpFixtureRecord(domain, {
@@ -863,7 +863,7 @@ test("X.12 retry-with-recall subtest: re-contract the failed node, new prepare_n
       contract: refinedContract,
     }));
     assert.equal(reAttach.from_state, "failed",
-      "rev-4 retry-with-recall re-contracts from failed → contracted");
+      "X.8 retry-with-recall re-contracts from failed → contracted");
     assert.equal(reAttach.to_state, "contracted");
 
     // (3) prepare_node again — brief MUST surface the prior failure via

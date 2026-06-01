@@ -639,16 +639,16 @@ test("appendContract refuses to re-emit proposed → contracted when the node is
     assert.deepEqual(
       caught.details.legal_from_states,
       ["proposed", "failed"],
-      "structured error must surface the rev-4 legal_from_states list",
+      "structured error must surface the legal_from_states list",
     );
   });
 });
 
-// X.8 rev 4 retry-with-recall: appendContract emits failed → contracted
-// when the operator re-contracts a previously failed node. The prior
-// failure events stay on the ledger so the X.8 prepare_node brief's
-// `prior_attempt` slice can surface the structured failure payload.
-test("appendContract emits failed → contracted when re-contracting a failed node (rev-4 retry-with-recall)", () => {
+// X.8 retry-with-recall: appendContract emits failed → contracted when
+// the operator re-contracts a failed node. The prior failure events stay
+// on the ledger so the X.8 prepare_node brief's `prior_attempt` slice can
+// surface the structured failure payload.
+test("appendContract emits failed → contracted when re-contracting a failed node (X.8 retry-with-recall)", () => {
   withTempHome(() => {
     const domain = "x4-recontract-failed.example.com";
     const nodeId = seedProposedHypothesis(domain);
@@ -697,7 +697,7 @@ test("appendContract emits failed → contracted when re-contracting a failed no
     let node = doc.nodes.find((n) => n.node_id === nodeId);
     assert.equal(node.state, "failed");
 
-    // Re-contract with a refined Contract. The rev-4 X.8 retry-with-recall
+    // Re-contract with a refined Contract. The X.8 retry-with-recall
     // path emits failed → contracted; the result's from_state must match.
     const refined = baseContractInput({
       contractId: "C-refined",
@@ -731,9 +731,9 @@ test("appendContract emits failed → contracted when re-contracting a failed no
   });
 });
 
-// The rev-4 retry-with-recall path is the ONLY extension to the legal
-// from_states. All other non-proposed, non-failed states must continue
-// to refuse with the structured node_not_proposed error.
+// The X.8 retry-with-recall path is the ONLY non-`proposed` entry to
+// the legal from_states. All other non-proposed, non-failed states must
+// refuse with the structured node_not_proposed error.
 test("appendContract refuses to re-contract from states other than proposed or failed", () => {
   withTempHome(() => {
     const domain = "x4-recontract-other.example.com";
@@ -856,16 +856,16 @@ test("bob_attach_contract refuses re-attach with structured node_not_proposed er
     assert.deepEqual(
       caught.details.legal_from_states,
       ["proposed", "failed"],
-      "structured error surfaces the rev-4 legal_from_states list",
+      "structured error surfaces the legal_from_states list",
     );
   });
 });
 
-// X.8 rev 4 retry-with-recall via the bob_attach_contract tool surface:
-// the operator re-contracts a failed node with a refined Contract and
-// the tool's response surfaces from_state=failed so callers can detect
-// the retry path explicitly.
-test("bob_attach_contract accepts re-contracting a failed node and surfaces from_state=failed (rev-4 retry-with-recall)", () => {
+// X.8 retry-with-recall via the bob_attach_contract tool surface: the
+// operator re-contracts a failed node with a refined Contract and the
+// tool's response surfaces from_state=failed so callers can detect the
+// retry path explicitly.
+test("bob_attach_contract accepts re-contracting a failed node and surfaces from_state=failed (X.8 retry-with-recall)", () => {
   withTempHome(() => {
     const domain = "x4-tool-recontract-failed.example.com";
     const nodeId = seedProposedHypothesis(domain);

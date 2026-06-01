@@ -157,7 +157,7 @@ test("finalize_node emits tool_constraint_violation when agent_output names an o
     // surface should be null (the verifier was not called).
     assert.equal(result.mechanical_verdict, null);
     // The failed event lives on the ledger so the next prepare-node call
-    // surfaces it in the prior_attempt slice (rev-4 recall discipline).
+    // surfaces it in the prior_attempt slice (recall discipline per X.8).
     const transitions = readNodeTransitions(domain);
     const failedEvent = transitions.find(
       (e) => e.payload && e.payload.node_id === nodeId && e.payload.to_state === "failed",
@@ -314,7 +314,7 @@ test(".claude/agents/evaluator-spawn.md exists with the honest X-P7 framing pros
     "expected the shell body to point the agent at bob_resolve_body for body pulls",
   );
   // The graph_context_hash drift-check guidance is required per X-R15
-  // (rev 4 — agent awareness is the only mitigation).
+  // (agent awareness is the only mitigation).
   assert.ok(
     /graph_context_hash/i.test(body),
     "expected the shell body to surface the graph_context_hash drift check",

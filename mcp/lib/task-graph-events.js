@@ -52,18 +52,16 @@ const NODE_STATE_VALUES = Object.freeze([
   "abandoned",
 ]);
 
-// X.1 Do step 4 (extended by X.8 rev 4 for retry-with-recall): the
-// state-transition table. Append-time enforcement: any (from_state,
-// to_state) pair outside this table is refused with a structured
-// `invalid_node_transition` error.
+// X.1 Do step 4 + X.8 re-contract path: the state-transition table.
+// Append-time enforcement: any (from_state, to_state) pair outside this
+// table is refused with a structured `invalid_node_transition` error.
 //
-// Rev 4 (X.8) extension: `failed → contracted` is the operator
-// re-contract path that closes the rev-4 retry-with-recall loop. The
-// X.8 spec line 338 requires `bob_prepare_node` to succeed on a node
-// the operator has re-contracted from a prior failed attempt so the
-// brief's `prior_attempt` slice can surface the prior failure payload.
-// `finalized` and `abandoned` remain terminal — there is no rev-4
-// workflow that re-enters from those states.
+// `failed → contracted` is the operator re-contract path (X.8 spec
+// line 338): `bob_prepare_node` must succeed on a node the operator has
+// re-contracted from a prior failed attempt so the brief's
+// `prior_attempt` slice can surface the prior failure payload.
+// `finalized` and `abandoned` remain terminal — no workflow re-enters
+// from those states.
 const NODE_STATE_TRANSITIONS = Object.freeze({
   proposed: Object.freeze(["contracted", "abandoned"]),
   contracted: Object.freeze(["ready", "abandoned"]),
@@ -71,12 +69,11 @@ const NODE_STATE_TRANSITIONS = Object.freeze({
   dispatched: Object.freeze(["executed", "failed"]),
   executed: Object.freeze(["verified", "failed"]),
   verified: Object.freeze(["finalized", "failed"]),
-  // `failed` is no longer strictly terminal: the X.8 rev-4
-  // retry-with-recall workflow re-enters via `failed → contracted`
-  // (operator re-contracts with a refined Contract; the prior failure
-  // events stay on the ledger and the prepare_node brief inlines them
-  // via the `prior_attempt` slice). All other prior-rev terminals
-  // (finalized, abandoned) remain terminal.
+  // `failed` is non-terminal: the X.8 re-contract path re-enters via
+  // `failed → contracted` (operator re-contracts with a refined Contract;
+  // the prior failure events stay on the ledger and the prepare_node
+  // brief inlines them via the `prior_attempt` slice). `finalized` and
+  // `abandoned` remain terminal.
   finalized: Object.freeze([]),
   failed: Object.freeze(["contracted"]),
   abandoned: Object.freeze([]),
@@ -367,7 +364,7 @@ function expireStaleDispatchedNodes(targetDomain, materializedDocument, options 
 // Append a transition-proposed observation. Reuses observation.recorded
 // per X-D1 / X-P8. trust_assumption is the only free-form prose field;
 // capped at TRANSITION_TRUST_ASSUMPTION_MAX_CHARS (X.1 step 2) so the
-// rev-4 storage-distilled emission discipline (X-P9) holds at append time.
+// storage-distilled emission discipline (X-P9) holds at append time.
 function appendTransitionProposal(input, options = {}) {
   if (input == null || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("appendTransitionProposal input must be an object");

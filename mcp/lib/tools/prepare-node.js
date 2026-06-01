@@ -7,7 +7,7 @@
 // pack via X.5 (≤1-hop graph context per X-P5), renders the per-node brief
 // via the X.8 `node` profile slice registry (X.8 Do step 1), mints a
 // `prep_token` that binds the graph_context_hash so post-dispatch drift is
-// detectable (rev 4 X-R15 mitigation), and emits the
+// detectable (X-R15 mitigation), and emits the
 // `node.transitioned (contracted | ready) → dispatched` event with the token
 // inlined in the payload.
 //
@@ -89,11 +89,11 @@ const {
 // X.8 keeps both legal so the X.9 scheduler can dispatch without
 // re-emitting an interim transition.
 //
-// Rev 4 retry-with-recall workflow (spec line 338): when a prior attempt
+// Retry-with-recall workflow (X.8 spec line 338): when a prior attempt
 // landed the node in `failed`, the operator re-contracts via
-// bob_attach_contract (the rev-4 failed → contracted path) which lands
-// the node back in `contracted`. At that point prepare_node accepts it
-// here; the prior failure events stay on the ledger so
+// bob_attach_contract (the failed → contracted re-contract path) which
+// lands the node back in `contracted`. At that point prepare_node accepts
+// it here; the prior failure events stay on the ledger so
 // collectPriorAttempts surfaces them in the brief's `prior_attempt`
 // slice automatically.
 const PREPARE_NODE_LEGAL_STATES = Object.freeze(["contracted", "ready"]);
@@ -1049,12 +1049,12 @@ module.exports = Object.freeze({
     + "with prep_token in payload. Per X-P9 the brief inlines DISTILLED "
     + "SUMMARIES of recommended_reads — never bodies; the agent calls "
     + "bob_resolve_body for bodies. When the node has prior "
-    + "node.transitioned → failed events on the ledger (rev-4 retry-with-recall "
-    + "workflow: operator re-contracted a failed node via bob_attach_contract), "
+    + "node.transitioned → failed events on the ledger (operator re-contracted "
+    + "a failed node via bob_attach_contract per the X.8 re-contract path), "
     + "the brief surfaces the prior failure payloads in the `prior_attempt` "
     + "slice so the agent reasons against the prior verdict. Refuses on state "
     + "∉ {contracted, ready} or when no Contract is attached. Orchestrator + "
-    + "graph-scheduler only (X.9 ships the graph-scheduler bundle).",
+    + "graph-scheduler only.",
   inputSchema: {
     type: "object",
     properties: {
