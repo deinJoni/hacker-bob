@@ -2,24 +2,17 @@ name: Brutalist Review
 
 # Multi-CLI adversarial code review on every PR, posted as inline comments.
 # Powered by ejmockler/brutalist-mcp (pinned to v1.14.5).
-#
-# Critics: claude + codex + agy (Antigravity). Hard requirement is the
-# ANTHROPIC_OAUTH_TOKEN secret (claude). CODEX_AUTH (codex) and
-# AGY_OAUTH_TOKEN (agy) are optional — a critic whose auth secret is
-# absent is skipped with a warning rather than failing the run.
 on:
   pull_request:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: read          # actions/checkout
-  pull-requests: write    # post the review
+  contents: read
+  pull-requests: write
 
 jobs:
   brutalist:
     runs-on: ubuntu-latest
-    # Skip drafts and PRs from forks: forks can't read the OAuth secrets,
-    # so the preflight would fail noisily.
     if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v6
@@ -31,33 +24,44 @@ jobs:
           node-version: '20'
 
       - name: Install CLI critics
-        # claude + brutalist-mcp are hard preflight requirements; codex and
-        # agy are soft critics (warn if their auth secret is missing).
         run: |
           npm install -g @brutalist/mcp@1.14.5 \
                          @anthropic-ai/claude-code \
                          @openai/codex
-          # agy (Antigravity) installs to ~/.local/bin/agy; put it on PATH.
           curl -fsSL https://antigravity.google/cli/install.sh | bash
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          # DIAGNOSTIC (workflow-only, no package release): shadow brutalist-mcp
+          # with a wrapper that captures its stderr (swallowed by the MCP stdio
+          # transport in CI) to a file, so we can finally see per-critic timing,
+          # slot use, and timeouts inside the roast.
+          REAL_BMCP="$(command -v brutalist-mcp)"
+          echo "real brutalist-mcp: $REAL_BMCP"
+          mkdir -p /tmp/bin
+          printf '#!/usr/bin/env bash\nexec "%s" "$@" 2>>/tmp/bmcp-stderr.log\n' "$REAL_BMCP" > /tmp/bin/brutalist-mcp
+          chmod +x /tmp/bin/brutalist-mcp
+          echo "/tmp/bin" >> "$GITHUB_PATH"
 
       - name: Brutalist review
         uses: ejmockler/brutalist-mcp/packages/github-action@v1.14.5
         env:
-          # Per-critic spawn cap (brutalist-mcp). Real since v1.14.3.
-          # Tightened to 90s: the trace showed 3 parallel roasts (9 critic
-          # spawns) never returning in 12 min. If the cap works, 90s bounds
-          # each agy spawn so the roasts finish fast; if it still stalls, the
-          # cap isn't firing (deeper bug).
           BRUTALIST_TIMEOUT: "90000"
-          # DIAGNOSTIC (v1.14.4): trace each orchestrator-brain SDK message
-          # to stderr (which roast call, timings, where it hangs) and cap the
-          # orchestrator wall-clock low so a stall fails in 12 min, not 30.
+          BRUTALIST_LOG_LEVEL: "debug"            # verbose per-critic logs (timing/slots/timeouts)
           BRUTALIST_ORCHESTRATOR_TRACE: "1"
-          BRUTALIST_ORCHESTRATOR_TIMEOUT_MS: "720000"
+          BRUTALIST_ORCHESTRATOR_TIMEOUT_MS: "600000"   # 10 min — fail faster
         with:
           github-token: ${{ github.token }}
           anthropic-oauth-token: ${{ secrets.ANTHROPIC_OAUTH_TOKEN }}
           codex-auth: ${{ secrets.CODEX_AUTH }}
           agy-oauth-token: ${{ secrets.AGY_OAUTH_TOKEN }}
           minimum-severity: medium
+
+      - name: Dump brutalist-mcp stderr (diagnostic)
+        if: always()
+        run: |
+          echo "===== brutalist-mcp captured stderr (per-critic timing / slots / timeouts) ====="
+          if [ -f /tmp/bmcp-stderr.log ]; then
+            grep -iE "Executing|Released CLI|Waiting for|timed out|Default timeout|slot|Working directory|chunk received|execution failed|completed|roast|panel|stdout|stderr bytes" /tmp/bmcp-stderr.log | tail -200
+            echo "----- (full log line count: $(wc -l < /tmp/bmcp-stderr.log)) -----"
+          else
+            echo "(no /tmp/bmcp-stderr.log — wrapper not invoked)"
+          fi
