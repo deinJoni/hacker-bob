@@ -132,6 +132,28 @@ test("dashboard snapshot filters repo sessions and keeps compact repo metadata",
   });
 });
 
+test("dashboard snapshot totals use all matched sessions before display limit", () => {
+  withTempHome((home) => {
+    const firstRepoPath = path.join(home, "repo-one");
+    const secondRepoPath = path.join(home, "repo-two");
+    fs.mkdirSync(firstRepoPath, { recursive: true });
+    fs.mkdirSync(secondRepoPath, { recursive: true });
+    seedRepoSession("repo-dashboard-one.example", firstRepoPath);
+    seedRepoSession("repo-dashboard-two.example", secondRepoPath);
+    JSON.parse(initSession({
+      target_domain: "web-dashboard.example",
+      target_url: "https://web-dashboard.example",
+    }));
+
+    const snapshot = buildDashboardSnapshot({ repo_only: true, window_days: 30, limit: 1 });
+    assert.equal(snapshot.sessions.length, 1);
+    assert.equal(snapshot.analytics_bounds.sessions_matched, 2);
+    assert.equal(snapshot.analytics_bounds.sessions_displayed, 1);
+    assert.equal(snapshot.totals.sessions, 2);
+    assert.equal(snapshot.totals.repo_sessions, 2);
+  });
+});
+
 test("dashboard server serves HTML and API JSON", async () => {
   await withTempHome(async () => {
     const started = await startDashboardServer({ host: "127.0.0.1", port: 0, repo_only: true });
@@ -146,6 +168,31 @@ test("dashboard server serves HTML and API JSON", async () => {
       assert.equal(parsed.version, 1);
       assert.equal(parsed.filters.repo_only, true);
       assert.equal(parsed.filters.limit, 5);
+    } finally {
+      await new Promise((resolve, reject) => {
+        started.server.close((error) => error ? reject(error) : resolve());
+      });
+    }
+  });
+});
+
+test("dashboard server warns when binding outside loopback", async () => {
+  await withTempHome(async () => {
+    let warning = "";
+    const started = await startDashboardServer({
+      host: "0.0.0.0",
+      port: 0,
+      repo_only: true,
+    }, {
+      stderr: {
+        write(chunk) {
+          warning += chunk;
+        },
+      },
+    });
+    try {
+      assert.match(warning, /unauthenticated/);
+      assert.match(warning, /0\.0\.0\.0/);
     } finally {
       await new Promise((resolve, reject) => {
         started.server.close((error) => error ? reject(error) : resolve());

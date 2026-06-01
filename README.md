@@ -159,7 +159,7 @@ For a local read-only dashboard over multiple concurrent sessions:
 hacker-bob dashboard --repo-only
 ```
 
-The dashboard binds to `127.0.0.1` by default and reads
+The dashboard binds to `127.0.0.1:4873` by default and reads
 `~/bounty-agent-sessions`. It shows OSS/repo progress, pending handoffs,
 findings, verification/evidence/grade state, and cross-session bottlenecks.
 

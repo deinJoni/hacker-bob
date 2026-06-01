@@ -56,6 +56,18 @@ function parseHost(value) {
   return host;
 }
 
+function isLoopbackHost(host) {
+  const normalized = String(host || "").toLowerCase();
+  if (normalized === "localhost" || normalized === "::1" || normalized === "[::1]") {
+    return true;
+  }
+  const ipv4Match = normalized.match(/^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  return !!ipv4Match && ipv4Match.slice(1).every((part) => {
+    const value = Number(part);
+    return value >= 0 && value <= 255;
+  });
+}
+
 function normalizeDashboardOptions(options = {}) {
   return {
     host: parseHost(options.host || DEFAULT_HOST),
@@ -296,7 +308,7 @@ function buildDashboardSnapshot(options = {}, context = {}) {
     .map(compactDashboardSession)
     .filter((session) => !normalized.repo_only || session.repo.is_repo);
   const sessions = matchedSessions.slice(0, normalized.limit);
-  const bottlenecks = buildDashboardBottlenecks(sessions).slice(0, normalized.limit);
+  const bottlenecks = buildDashboardBottlenecks(matchedSessions).slice(0, normalized.limit);
   return {
     version: DASHBOARD_VERSION,
     generated_at: new Date().toISOString(),
@@ -306,7 +318,7 @@ function buildDashboardSnapshot(options = {}, context = {}) {
       window_days: normalized.window_days,
       limit: normalized.limit,
     },
-    totals: buildDashboardTotals(sessions),
+    totals: buildDashboardTotals(matchedSessions),
     bottlenecks,
     next_actions: buildDashboardNextActions(bottlenecks, normalized.limit),
     sessions,
@@ -530,7 +542,7 @@ function renderDashboardHtml(options) {
 </html>`;
 }
 
-function routeDashboardRequest(req, res, baseOptions) {
+function routeDashboardRequest(req, res, baseOptions, context = {}) {
   const headOnly = req.method === "HEAD";
   if (req.method !== "GET" && req.method !== "HEAD") {
     sendJson(res, 405, { error: "method_not_allowed" }, headOnly);
@@ -544,7 +556,7 @@ function routeDashboardRequest(req, res, baseOptions) {
   if (url.pathname === "/api/snapshot") {
     try {
       const options = optionsFromUrl(url, baseOptions);
-      sendJson(res, 200, buildDashboardSnapshot(options), headOnly);
+      sendJson(res, 200, buildDashboardSnapshot(options, context), headOnly);
     } catch (error) {
       sendJson(res, 400, { error: error && error.message ? error.message : String(error) }, headOnly);
     }
@@ -559,7 +571,15 @@ function hostForUrl(host) {
 
 function startDashboardServer(options = {}, context = {}) {
   const normalized = normalizeDashboardOptions(options);
-  const server = http.createServer((req, res) => routeDashboardRequest(req, res, normalized));
+  if (!isLoopbackHost(normalized.host)) {
+    const warning = `warning: dashboard is unauthenticated and bound to ${normalized.host}; session analytics may be reachable from the network\n`;
+    if (context.stderr && typeof context.stderr.write === "function") {
+      context.stderr.write(warning);
+    } else {
+      process.stderr.write(warning);
+    }
+  }
+  const server = http.createServer((req, res) => routeDashboardRequest(req, res, normalized, context));
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(normalized.port, normalized.host, () => {
