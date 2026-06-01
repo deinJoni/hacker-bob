@@ -2,23 +2,17 @@ name: Brutalist Review
 
 # Multi-CLI adversarial code review on every PR, posted as inline comments.
 # Powered by ejmockler/brutalist-mcp (pinned to v1.14.5).
-#
-# Critics: claude + codex + agy (Antigravity). Hard requirement is the
-# ANTHROPIC_OAUTH_TOKEN secret (claude). CODEX_AUTH (codex) and
-# AGY_OAUTH_TOKEN (agy) are optional — a critic whose auth secret is
-# absent is skipped with a warning rather than failing the run.
 on:
   pull_request:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: read          # actions/checkout
-  pull-requests: write    # post the review
+  contents: read
+  pull-requests: write
 
 jobs:
   brutalist:
     runs-on: ubuntu-latest
-    # Skip drafts and PRs from forks: forks can't read the OAuth secrets.
     if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v6
@@ -30,24 +24,25 @@ jobs:
           node-version: '20'
 
       - name: Install CLI critics
-        # claude + brutalist-mcp are hard preflight requirements; codex and
-        # agy are soft critics (warn if their auth secret is missing).
         run: |
           npm install -g @brutalist/mcp@1.14.5 \
                          @anthropic-ai/claude-code \
                          @openai/codex
-          # agy (Antigravity) installs to ~/.local/bin/agy; put it on PATH.
           curl -fsSL https://antigravity.google/cli/install.sh | bash
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          # CONFIRMATION: redirect brutalist-mcp stderr to a file (NOT debug —
+          # just the redirect). If stderr pipe-backpressure was the deadlock,
+          # this goes green; if it's intermittent, it won't.
+          REAL_BMCP="$(command -v brutalist-mcp)"
+          mkdir -p /tmp/bin
+          printf '#!/usr/bin/env bash\nexec "%s" "$@" 2>>/tmp/bmcp-stderr.log\n' "$REAL_BMCP" > /tmp/bin/brutalist-mcp
+          chmod +x /tmp/bin/brutalist-mcp
+          echo "/tmp/bin" >> "$GITHUB_PATH"
 
       - name: Brutalist review
         uses: ejmockler/brutalist-mcp/packages/github-action@v1.14.5
         env:
-          # Per-critic spawn cap: kill a stalled critic so the review still
-          # posts from the others (executeMultiCLI uses allSettled).
           BRUTALIST_TIMEOUT: "90000"
-          # Orchestrator wall-clock backstop. One scoped roast completes in
-          # ~3-4 min; 15 min is generous headroom that still fails fast.
           BRUTALIST_ORCHESTRATOR_TIMEOUT_MS: "900000"
         with:
           github-token: ${{ github.token }}
