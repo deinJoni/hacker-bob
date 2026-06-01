@@ -19,7 +19,7 @@ test("CLI help explains per-project installs and global CLI behavior", () => {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
-  for (const command of ["install", "update", "check-update", "doctor", "uninstall"]) {
+  for (const command of ["install", "update", "check-update", "doctor", "uninstall", "dashboard"]) {
     assert.match(output, new RegExp(`hacker-bob ${command}`));
   }
   assert.match(output, /Bob auto-selects/);
@@ -29,6 +29,26 @@ test("CLI help explains per-project installs and global CLI behavior", () => {
   assert.match(output, /--adapter claude\|codex\|generic-mcp\|all/);
   assert.match(output, /Global npm install only adds this CLI to PATH/);
   assert.match(output, /Uninstall defaults to dry-run/);
+  assert.match(output, /Dashboard is a local read-only view/);
+});
+
+test("CLI dashboard --json emits a cross-session snapshot without starting a server", () => {
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-dashboard-home-"));
+  try {
+    const output = execFileSync(process.execPath, [CLI, "dashboard", "--repo-only", "--json"], {
+      cwd: ROOT,
+      env: { ...process.env, HOME: tempHome },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const parsed = JSON.parse(output);
+    assert.equal(parsed.version, 1);
+    assert.equal(parsed.filters.repo_only, true);
+    assert.equal(parsed.totals.sessions, 0);
+    assert.deepEqual(parsed.sessions, []);
+  } finally {
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  }
 });
 
 test("CLI installs into a workspace", () => {
