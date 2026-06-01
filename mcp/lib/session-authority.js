@@ -6,6 +6,7 @@ const {
   ToolError,
 } = require("./envelope.js");
 const {
+  assertSafeDomain,
   statePath,
 } = require("./paths.js");
 const {
@@ -72,6 +73,7 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bounty_index_finding: "initialized_session_mutation",
   bounty_ingest_audit_report: "initialized_session_mutation",
   bounty_ingest_schema_doc: "initialized_session_mutation",
+  bounty_init_repo_session: "global_preapproval",
   bounty_init_session: "bootstrap_session",
   bounty_list_auth_profiles: "initialized_session_read",
   bounty_list_findings: "initialized_session_read",
@@ -111,6 +113,10 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bounty_record_finding: "initialized_session_mutation",
   bounty_record_surface_leads: "initialized_session_mutation",
   bounty_report_written: "initialized_session_mutation",
+  bounty_repo_check: "initialized_session_mutation",
+  bounty_repo_docker_run: "initialized_session_mutation",
+  bounty_repo_inventory: "initialized_session_mutation",
+  bounty_repo_prepare_env: "initialized_session_mutation",
   bounty_route_surfaces: "initialized_session_mutation",
   bounty_run_auth_differential: "scoped_http_network",
   bounty_run_doc_delta: "scoped_http_network",
@@ -186,6 +192,13 @@ const SHADOW_MISSING_SESSION_CLASSES = new Set([
   "cross_session_read",
 ]);
 
+const REPO_SESSION_TOOLS = new Set([
+  "bounty_repo_check",
+  "bounty_repo_docker_run",
+  "bounty_repo_inventory",
+  "bounty_repo_prepare_env",
+]);
+
 let shadowWarningEmitted = false;
 
 function hasOwn(value, key) {
@@ -201,7 +214,11 @@ function safeArgumentTargetDomain(args) {
   try {
     return assertHttpScopeDomain(args.target_domain);
   } catch {
-    return null;
+    try {
+      return assertSafeDomain(args.target_domain);
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -353,6 +370,14 @@ function baseRuleForTool(tool, args) {
       authority_source: "preapproval_global",
     };
   }
+  if (REPO_SESSION_TOOLS.has(tool && tool.name)) {
+    return {
+      authority_class: defaultClass,
+      target_domain: "repo_required",
+      target_url_policy: "validate_repo_session_target_url",
+      authority_source: "session_state",
+    };
+  }
   return {
     authority_class: defaultClass,
     target_domain: "required",
@@ -467,7 +492,7 @@ function shadowDecision(error, tool, rule) {
 }
 
 function normalizeArgumentTarget(rule, args) {
-  if (rule.target_domain !== "required") {
+  if (rule.target_domain !== "required" && rule.target_domain !== "repo_required") {
     return null;
   }
   if (!targetDomainPresent(args)) {
@@ -480,7 +505,9 @@ function normalizeArgumentTarget(rule, args) {
     });
   }
   try {
-    const normalized = assertHttpScopeDomain(args.target_domain);
+    const normalized = rule.target_domain === "repo_required"
+      ? assertSafeDomain(args.target_domain)
+      : assertHttpScopeDomain(args.target_domain);
     args.target_domain = normalized;
     return normalized;
   } catch (error) {
@@ -560,7 +587,9 @@ function readRawAuthorityState(authorityTargetDomain, rule, args) {
 
   let rawTarget;
   try {
-    rawTarget = assertHttpScopeDomain(raw.target);
+    rawTarget = rule.target_domain === "repo_required"
+      ? assertSafeDomain(raw.target)
+      : assertHttpScopeDomain(raw.target);
   } catch {
     throw blockedDecision(rule, args, {
       errorCode: "malformed_state",
@@ -594,17 +623,30 @@ function readRawAuthorityState(authorityTargetDomain, rule, args) {
     });
   }
 
-  try {
-    validateHttpScanScope(raw.target_url, authorityTargetDomain);
-  } catch {
-    throw blockedDecision(rule, args, {
-      errorCode: "target_url_drift",
-      envelopeCode: ERROR_CODES.SCOPE_BLOCKED,
-      message: `Session authority target_url drift for ${authorityTargetDomain}`,
-      authorityTargetDomain,
-      sessionPresent: true,
-      match: true,
-    });
+  if (raw.target_kind === "repo" || raw.target_url.startsWith("repo://")) {
+    if (raw.target_url !== `repo://${authorityTargetDomain}`) {
+      throw blockedDecision(rule, args, {
+        errorCode: "target_url_drift",
+        envelopeCode: ERROR_CODES.SCOPE_BLOCKED,
+        message: `Session authority target_url drift for ${authorityTargetDomain}`,
+        authorityTargetDomain,
+        sessionPresent: true,
+        match: true,
+      });
+    }
+  } else {
+    try {
+      validateHttpScanScope(raw.target_url, authorityTargetDomain);
+    } catch {
+      throw blockedDecision(rule, args, {
+        errorCode: "target_url_drift",
+        envelopeCode: ERROR_CODES.SCOPE_BLOCKED,
+        message: `Session authority target_url drift for ${authorityTargetDomain}`,
+        authorityTargetDomain,
+        sessionPresent: true,
+        match: true,
+      });
+    }
   }
 
   assertLegacyFailClosedFields(raw, rule, args, authorityTargetDomain);

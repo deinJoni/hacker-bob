@@ -192,6 +192,11 @@ function enforceGradeVerdictConsistency(document, { finalReportableSeveritySet: 
   }
 }
 
+function invalidGradeArguments(error) {
+  if (error instanceof ToolError) return error;
+  return new ToolError(ERROR_CODES.INVALID_ARGUMENTS, error.message || String(error));
+}
+
 function renderGradeVerdictMarkdown(document) {
   const lines = [
     "# Grade Verdict",
@@ -230,31 +235,43 @@ function writeGradeVerdict(args) {
   const totalScore = assertInteger(args.total_score, "total_score", { min: 0 });
   const feedback = normalizeOptionalText(args.feedback, "feedback");
   if (!Array.isArray(args.findings)) {
-    throw new Error("findings must be an array");
+    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "findings must be an array");
   }
 
   const findingIdSet = readFindingIdSet(domain);
-  const seenIds = new Set();
-  const findings = args.findings.map((finding) => {
-    const normalizedFinding = normalizeGradeFinding(finding, findingIdSet);
-    if (seenIds.has(normalizedFinding.finding_id)) {
-      throw new Error(`Duplicate finding_id in findings: ${normalizedFinding.finding_id}`);
-    }
-    seenIds.add(normalizedFinding.finding_id);
-    return normalizedFinding;
-  });
+  const document = (() => {
+    try {
+      const seenIds = new Set();
+      const findings = args.findings.map((finding) => {
+        const normalizedFinding = normalizeGradeFinding(finding, findingIdSet);
+        if (seenIds.has(normalizedFinding.finding_id)) {
+          throw new Error(`Duplicate finding_id in findings: ${normalizedFinding.finding_id}`);
+        }
+        seenIds.add(normalizedFinding.finding_id);
+        return normalizedFinding;
+      });
 
-  const document = {
-    version: 1,
-    target_domain: domain,
-    verdict,
-    total_score: totalScore,
-    findings,
-    feedback,
-  };
-  enforceGradeVerdictConsistency(document, {
-    finalReportableSeveritySet: requireFinalReportableSeveritySet(domain, findingIdSet),
-  });
+      const normalizedDocument = {
+        version: 1,
+        target_domain: domain,
+        verdict,
+        total_score: totalScore,
+        findings,
+        feedback,
+      };
+      return normalizedDocument;
+    } catch (error) {
+      throw invalidGradeArguments(error);
+    }
+  })();
+  const finalReportableSeveritySet = requireFinalReportableSeveritySet(domain, findingIdSet);
+  try {
+    enforceGradeVerdictConsistency(document, {
+      finalReportableSeveritySet,
+    });
+  } catch (error) {
+    throw invalidGradeArguments(error);
+  }
   verificationLib().requireVerificationCompleteForGrade(domain, { findingIdSet });
 
   const paths = gradeArtifactPaths(domain);
@@ -262,7 +279,7 @@ function writeGradeVerdict(args) {
 
   const response = {
     verdict,
-    findings_count: findings.length,
+    findings_count: document.findings.length,
     written_json: paths.json,
   };
   writeMarkdownMirror(paths.markdown, renderGradeVerdictMarkdown(document), response);
@@ -271,7 +288,7 @@ function writeGradeVerdict(args) {
     status: verdict,
     source: "bounty_write_grade_verdict",
     counts: {
-      findings: findings.length,
+      findings: document.findings.length,
       total_score: totalScore,
     },
   });

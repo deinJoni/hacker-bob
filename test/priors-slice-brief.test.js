@@ -24,6 +24,19 @@ function cleanupDomain(domain) {
   if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
 }
 
+function withTempHome(fn) {
+  const previousHome = process.env.HOME;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "bob-priors-home-"));
+  process.env.HOME = home;
+  try {
+    return fn(home);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
 test("summarizePriorFindingsForSurface returns null when surface has no indexable text", () => {
   const domain = uniqueDomain();
   try {
@@ -188,4 +201,44 @@ test("priors_slice indexable text covers smart-contract surface fields", () => {
   } finally {
     cleanupDomain(domain);
   }
+});
+
+test("priors_slice always includes same-target matches outside the cross-target scan window", () => {
+  withTempHome(() => {
+    const localFingerprint = `bobpriorsaturated${crypto.randomBytes(6).toString("hex")}`;
+    const domain = `zz-priors-anchor-${crypto.randomBytes(4).toString("hex")}.local`;
+    indexFinding({
+      target_domain: domain,
+      finding: {
+        finding_id: "F-anchor",
+        title: `${localFingerprint} Reentrancy in current target`,
+        description: `${localFingerprint} current target accounting update after external call`,
+        severity: "high",
+        attack_class: "reentrancy",
+      },
+    });
+
+    for (let i = 0; i < 205; i++) {
+      indexFinding({
+        target_domain: `aa-priors-saturated-${String(i).padStart(3, "0")}.local`,
+        finding: {
+          finding_id: "F-other",
+          title: `${localFingerprint} Reentrancy in other target ${i}`,
+          description: `${localFingerprint} other target external call before state update`,
+          severity: "high",
+          attack_class: "reentrancy",
+        },
+      });
+    }
+
+    const slice = summarizePriorFindingsForSurface(domain, {
+      surface_type: "smart_contract",
+      bug_classes: ["reentrancy"],
+      notes: localFingerprint,
+    });
+
+    assert.ok(slice);
+    assert.equal(slice.priors[0].finding_id, "F-anchor");
+    assert.ok(slice.same_target_count >= 1);
+  });
 });

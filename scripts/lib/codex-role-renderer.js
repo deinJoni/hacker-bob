@@ -48,6 +48,12 @@ const CODEX_SKILL_SPECS = Object.freeze({
     name: "bob-hunt",
     description: "Run or resume a Hacker Bob bug bounty hunt in Codex using the shared MCP runtime.",
   }),
+  oss: Object.freeze({
+    role_id: "oss-orchestrator",
+    output_path: path.join("adapters", "codex", "skills", "bob-oss", "SKILL.md"),
+    name: "bob-oss",
+    description: "Run Hacker Bob OSS mode against a local open-source project checkout.",
+  }),
   status: Object.freeze({
     role_id: "status",
     output_path: path.join("adapters", "codex", "skills", "bob-status", "SKILL.md"),
@@ -134,7 +140,8 @@ function codexLaunchTemplates() {
       "- Track the local mapping `host_agent_id -> w[wave]/a[agent]/surface_id`; Bob's `aN` value is authoritative even if Codex displays a different nickname.",
       "- Respect Codex capacity. Launch only as many workers as the host accepts, keep the rest queued, and start queued assignments only after completed agents are closed.",
       "- Do not set `fork_context: true` when also setting `agent_type`; use a direct worker spawn unless Codex requires a different host default.",
-      "Wait for worker completion notifications or `wait_agent` results. Do not merge in the launch turn.",
+      "- Spawn turn: after accepted workers launch, report spawned/queued/rejected workers and stop. The same launch turn must not merge.",
+      "- Later re-entry turn: worker completion notifications or `wait_agent` results mean first read the Bob state summary, then apply the pending wave merge. After all hunters complete, merge and continue instead of answering with only worker status.",
       "```",
     ].join("\n"),
     "{{SPAWN_CHAIN_AGENT}}": [
@@ -223,6 +230,7 @@ function applyCodexHostText(document) {
     .replace(/Do not use the `Task` tool by default\./g, "Do not spawn agents by default.")
     .replace(/Do not use `Task`\./g, "Do not spawn agents.")
     .replace(/\/bob-hunt/g, "$bob-hunt")
+    .replace(/\/bob-oss/g, "$bob-oss")
     .replace(/\/bob-status/g, "$bob-status")
     .replace(/\/bob-debug/g, "$bob-debug")
     .replace(/\/bob-update/g, "$bob-update")
@@ -304,7 +312,7 @@ function renderCodexPromptBody(roleId, body, options = {}) {
   document = substituteCapabilityPackVerifierTable(document);
   document = substituteCodexHunterPackCatalogue(document, codexWorkerLabelForPack);
   document = substituteHandoffFieldLimits(document);
-  if (roleId === "orchestrator") {
+  if (roleId === "orchestrator" || roleId === "oss-orchestrator") {
     document = document.replace("## Hard Rules\n", `${codexOrchestratorPreamble()}## Hard Rules\n`);
     document += `${renderCapabilityPlaybookAppendix(options)}${codexRoleContractAppendix(options)}\n`;
   }

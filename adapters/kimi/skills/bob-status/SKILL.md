@@ -23,19 +23,26 @@ Latest-session detection must pick the newest target directory by `pipeline-even
 
 ## Read Order
 First, read the passive update cache if the helper is installed:
-```bash
+```
 node -e "const update=require('./mcp/lib/update-check.js'); console.log(JSON.stringify(update.readUpdateCache(process.cwd()) || null, null, 2));"
 ```
 This command must only read the local update cache. Do not run network update checks from `/skill:bob-status`.
 
 After resolving `target_domain`, call:
-```text
+```
 bounty_read_pipeline_analytics({ target_domain, include_events: false, limit: 20 })
 bounty_read_session_summary({ target_domain })
 bounty_read_state_summary({ target_domain })
 bounty_wave_status({ target_domain })
 bounty_read_verification_context({ target_domain })
 ```
+
+If a read returns an authority error, report it as a session-integrity blocker.
+Do not treat the supplied `target_domain` as sufficient authority, and do not
+inspect or repair raw `state.json`; session-bound MCP tools must authorize
+against the initialized session record. Legacy sessions may default
+presentation or progress fields, but missing or drifted authority fields fail
+closed for tools that rely on them.
 
 Then use the following only if needed for concise status fields:
 - `bounty_read_wave_handoffs({ target_domain })` when a wave is pending or wave health is unclear.

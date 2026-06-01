@@ -96,12 +96,23 @@ const HUNTER_BRIEF_SURFACE_ARRAY_LIMITS = Object.freeze({
   high_value_flows: 20,
   evidence: 25,
   fork_rpc_pool: 6,
+  // Recently-patched security fixes whose sibling/adjacent code paths the
+  // patch may not have covered — the incomplete-fix residual hunting seed.
+  residual_hunt_targets: 20,
 });
 const HUNTER_BRIEF_SURFACE_SCALAR_LIMITS = Object.freeze({
   id: 120,
   priority: 40,
   original_priority: 40,
   surface_type: 80,
+  // Reachability/ceiling triage — tells the native hunter whether this surface
+  // is AV:N (CRITICAL-capable) or AV:L (MEDIUM-realistic) so it pursues the
+  // write/UAF/RCE primitive on network-reachable surfaces. All three are named
+  // in the hunter/orchestrator prompts as fields the surface carries, so all
+  // three must survive the slim whitelist (booleans coerce to "true"/"false").
+  attack_vector: 40,
+  severity_ceiling: 40,
+  network_reachable: 8,
   chain_family: 40,
   chain_id: 20,
   // Per-chain harness paths. Each smart-contract hunter prompt expects a
@@ -117,6 +128,38 @@ const HUNTER_BRIEF_SURFACE_SCALAR_LIMITS = Object.freeze({
   title: 160,
   description: 500,
 });
+// slimSurfaceForBrief copies every surface scalar/short-array BY DEFAULT, so a
+// new triage field added in makeSurface reaches the hunter automatically — the
+// failure mode that silently dropped network_reachable until it was whitelisted.
+// The *_LIMITS maps above are per-field cap OVERRIDES; unlisted fields get these
+// defaults. The denylist is the only thing that blocks a field — keep it to
+// secrets and bulky raw bodies that must never travel in a brief.
+const HUNTER_BRIEF_SURFACE_DEFAULT_SCALAR_CAP = 200;
+const HUNTER_BRIEF_SURFACE_DEFAULT_ARRAY_LIMIT = 12;
+const HUNTER_BRIEF_SURFACE_FIELD_DROP_EXACT = Object.freeze(new Set([
+  "ranking",          // slimmed separately via slimRankingForBrief
+  "raw", "raw_body", "request_body", "response_body", "body",
+  "headers", "cookies", "set_cookie",
+  "auth", "credentials", "secret", "secrets", "token", "tokens",
+  "api_key", "apikey", "private_key", "password",
+]));
+const HUNTER_BRIEF_SURFACE_SENSITIVE_FIELD_SEGMENTS = Object.freeze(new Set([
+  "auth",
+  "authorization",
+  "cookie",
+  "cookies",
+  "credential",
+  "credentials",
+  "password",
+  "passwords",
+  "secret",
+  "secrets",
+  "session",
+  "sessions",
+  "token",
+  "tokens",
+  "apikey",
+]));
 const HUNTER_BRIEF_ARRAY_ITEM_MAX_CHARS = 500;
 const HUNTER_BRIEF_RANKING_REASON_LIMIT = 10;
 const HUNTER_BRIEF_RANKING_REASON_MAX_CHARS = 160;
@@ -204,6 +247,36 @@ function isBriefScalar(value) {
   return value == null || ["string", "number", "boolean"].includes(typeof value);
 }
 
+function surfaceFieldNameSegments(field) {
+  return String(field)
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+function hasAdjacentSegments(segments, first, second) {
+  for (let i = 0; i < segments.length - 1; i += 1) {
+    if (segments[i] === first && segments[i + 1] === second) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function shouldDropSurfaceFieldForBrief(field) {
+  const normalizedField = String(field).toLowerCase();
+  if (HUNTER_BRIEF_SURFACE_FIELD_DROP_EXACT.has(normalizedField)) return true;
+
+  const segments = surfaceFieldNameSegments(field);
+  if (segments.some((segment) => HUNTER_BRIEF_SURFACE_SENSITIVE_FIELD_SEGMENTS.has(segment))) {
+    return true;
+  }
+  return hasAdjacentSegments(segments, "api", "key")
+    || hasAdjacentSegments(segments, "private", "key");
+}
+
 function capStringValue(value, maxChars) {
   if (typeof value !== "string" || value.length <= maxChars) {
     return { value, truncated: false, total_chars: typeof value === "string" ? value.length : null };
@@ -262,10 +335,9 @@ function slimSurfaceForBrief(surface) {
   const source = surface && typeof surface === "object" && !Array.isArray(surface) ? surface : {};
   const slimSurface = {};
   const surfaceLimits = {};
+  const handled = new Set(["ranking"]);
 
-  for (const [field, maxChars] of Object.entries(HUNTER_BRIEF_SURFACE_SCALAR_LIMITS)) {
-    const value = source[field];
-    if (!isBriefScalar(value) || value == null) continue;
+  const copyScalar = (field, value, maxChars) => {
     const normalizedValue = typeof value === "string" ? value : String(value);
     const capped = capStringValue(normalizedValue, maxChars);
     slimSurface[field] = capped.value;
@@ -276,6 +348,14 @@ function slimSurfaceForBrief(surface) {
         omitted_chars: capped.total_chars - capped.value.length,
       };
     }
+  };
+
+  for (const [field, maxChars] of Object.entries(HUNTER_BRIEF_SURFACE_SCALAR_LIMITS)) {
+    handled.add(field);
+    if (shouldDropSurfaceFieldForBrief(field)) continue;
+    const value = source[field];
+    if (!isBriefScalar(value) || value == null) continue;
+    copyScalar(field, value, maxChars);
   }
 
   const ranking = slimRankingForBrief(source.ranking);
@@ -284,9 +364,26 @@ function slimSurfaceForBrief(surface) {
   }
 
   for (const [field, limit] of Object.entries(HUNTER_BRIEF_SURFACE_ARRAY_LIMITS)) {
+    handled.add(field);
+    if (shouldDropSurfaceFieldForBrief(field)) continue;
     const capped = cappedSurfaceArray(source[field], limit);
     slimSurface[field] = capped.values;
     surfaceLimits[field] = capped.limits;
+  }
+
+  // Copy-by-default: any surface field not explicitly capped above still reaches
+  // the hunter, so a new triage field in makeSurface is never silently dropped.
+  // Only the denylist blocks a field; nested objects are skipped (flat briefs).
+  for (const [field, value] of Object.entries(source)) {
+    if (handled.has(field) || shouldDropSurfaceFieldForBrief(field)) continue;
+    if (isBriefScalar(value)) {
+      if (value == null) continue;
+      copyScalar(field, value, HUNTER_BRIEF_SURFACE_DEFAULT_SCALAR_CAP);
+    } else if (Array.isArray(value)) {
+      const capped = cappedSurfaceArray(value, HUNTER_BRIEF_SURFACE_DEFAULT_ARRAY_LIMIT);
+      slimSurface[field] = capped.values;
+      surfaceLimits[field] = capped.limits;
+    }
   }
 
   return {
