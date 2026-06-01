@@ -8,6 +8,7 @@ permissions:
 jobs:
   brutalist:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v6
@@ -29,10 +30,10 @@ jobs:
       - name: Brutalist review
         uses: ejmockler/brutalist-mcp/packages/github-action@422faf3013dfbe5c907be7d940a82bf53c524235
         env:
-          BRUTALIST_TIMEOUT: "240000"
+          BRUTALIST_TIMEOUT: "3600000"
           BRUTALIST_LOG_LEVEL: "debug"
           BRUTALIST_ORCHESTRATOR_TRACE: "1"
-          BRUTALIST_ORCHESTRATOR_TIMEOUT_MS: "900000"
+          BRUTALIST_ORCHESTRATOR_TIMEOUT_MS: "4200000"
         with:
           github-token: ${{ github.token }}
           anthropic-oauth-token: ${{ secrets.ANTHROPIC_OAUTH_TOKEN }}
