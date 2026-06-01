@@ -254,7 +254,7 @@ test("lifecycle state enum has the six target states in canonical order", () => 
 });
 
 test("orchestrator skill names every lifecycle state and routes through the lifecycle tool", () => {
-  const skill = readFile(".claude/skills/bob-evaluate/SKILL.md");
+  const skill = readFile(".claude/skills/bob-evaluate-runner/SKILL.md");
   for (const state of LIFECYCLE_STATE_VALUES) {
     assert.match(skill, new RegExp(`## STATE: ${state}`), `missing lifecycle state ${state}`);
   }
@@ -517,7 +517,7 @@ test("no rendered artifact leaks an unsubstituted {{...}} placeholder", () => {
     ...fs.readdirSync(path.join(ROOT, ".claude/agents"))
       .filter((name) => name.endsWith(".md"))
       .map((name) => `.claude/agents/${name}`),
-    ".claude/skills/bob-evaluate/SKILL.md",
+    ".claude/skills/bob-evaluate-runner/SKILL.md",
     "adapters/codex/skills/bob-evaluate/SKILL.md",
     "adapters/codex/skills/bob-status/SKILL.md",
     "adapters/codex/skills/bob-debug/SKILL.md",
@@ -713,15 +713,15 @@ test("evaluator-agent exposes claim-recording, handoff, coverage, and audit tool
 });
 
 test("orchestrator skill allowed-tools equal the orchestrator + auth permission bundles", () => {
-  const skill = readFile(".claude/skills/bob-evaluate/SKILL.md");
-  const allowedTools = parseYamlListFrontmatter(skill, "allowed-tools", "bob-evaluate/SKILL.md");
+  const skill = readFile(".claude/skills/bob-evaluate-runner/SKILL.md");
+  const allowedTools = parseYamlListFrontmatter(skill, "allowed-tools", "bob-evaluate-runner/SKILL.md");
   assert.deepEqual(allowedTools.slice().sort(), hackerBobSkillAllowedTools().slice().sort());
   const mcpOnly = allowedTools.filter((t) => t.startsWith(MCP_PERMISSION_PREFIX)).sort();
   assert.deepEqual(mcpOnly, permissionsForRoleBundles(["orchestrator", "auth"]).slice().sort());
 });
 
 test("orchestrator skill stays bounded and reflects the lifecycle topology", () => {
-  const lines = lineCount(".claude/skills/bob-evaluate/SKILL.md");
+  const lines = lineCount(".claude/skills/bob-evaluate-runner/SKILL.md");
   // Cycle O.1 added bob_init_repo_session to the orchestrator bundle, which
   // appends one line to the auto-generated allowed-tools block in SKILL.md.
   // Cycle O.2 added bob_repo_inventory to the same bundle (+1 line).
@@ -735,8 +735,8 @@ test("orchestrator skill stays bounded and reflects the lifecycle topology", () 
   // transition_kind enum so the orchestrator proposes Transition nodes before
   // dispatching Surface-node waves when ≥2 stack families share a target
   // (+2 lines). Cap bumped 360 → 365.
-  assert.ok(lines <= 365, `bob-evaluate skill is ${lines} lines (cap 365)`);
-  const skill = readFile(".claude/skills/bob-evaluate/SKILL.md");
+  assert.ok(lines <= 365, `bob-evaluate-runner skill is ${lines} lines (cap 365)`);
+  const skill = readFile(".claude/skills/bob-evaluate-runner/SKILL.md");
   assert.match(
     skill,
     /SETUP\s*->\s*OPEN_FRONTIER\s*->\s*CLAIM_FREEZE\s*->\s*VERIFY\s*->\s*GRADE\s*->\s*REPORT/,
@@ -891,7 +891,7 @@ test("identifier_hint and bypass_attempt min lengths match between schema and ru
 });
 
 test("rendered orchestrator catalogue lists every smart-contract pack exactly once", () => {
-  const rendered = readFile(".claude/skills/bob-evaluate/SKILL.md");
+  const rendered = readFile(".claude/skills/bob-evaluate-runner/SKILL.md");
   for (const pack of Object.values(CAPABILITY_PACKS)) {
     if (pack.spawn.profile !== "smart_contract") continue;
     const escaped = pack.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1195,7 +1195,7 @@ test("renderers do not inline per-chain workflow strings (pack.spawn is the only
 });
 
 test("rendered orchestrator catalogue surfaces every SC pack route", () => {
-  const rendered = readFile(".claude/skills/bob-evaluate/SKILL.md");
+  const rendered = readFile(".claude/skills/bob-evaluate-runner/SKILL.md");
   for (const pack of Object.values(CAPABILITY_PACKS)) {
     if (pack.spawn.profile !== "smart_contract") continue;
     const escaped = pack.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1226,12 +1226,15 @@ test("installer and dev-sync ship the Claude command + skill set with no legacy 
     "\\.claude/hooks/bob-export\\.js",
     "\\.claude/skills/bob-status/SKILL\\.md",
     "\\.claude/skills/bob-debug/SKILL\\.md",
-    "\\.claude/skills/bob-evaluate/SKILL\\.md",
+    "\\.claude/skills/bob-evaluate-runner/SKILL\\.md",
   ]) {
     assert.match(devSync, new RegExp(file));
   }
   // Legacy slash-command paths are pruned in the dev-sync workflow.
   assert.match(devSync, /rm -f "\$CLAUDE_DIR\/commands\/bob\/evaluate\.md"/);
+  // Legacy skill dirs (bob-evaluate, bob-hunt) are swept in the dev-sync workflow
+  // so they cannot resurface as duplicate /bob-evaluate slash-picker entries.
+  assert.match(devSync, /rm -rf .*skills\/bob-hunt.*skills\/bob-evaluate"/);
 });
 
 test("dev-sync accepts adapters and gates Claude-specific sync paths", () => {
@@ -1342,7 +1345,7 @@ test("README and offline guide describe session authority", () => {
 test("auth.json is never instructed for direct read in user-facing prompts", () => {
   const files = [
     ".claude/commands/bob-update.md",
-    ".claude/skills/bob-evaluate/SKILL.md",
+    ".claude/skills/bob-evaluate-runner/SKILL.md",
     ".claude/skills/bob-status/SKILL.md",
     ".claude/skills/bob-debug/SKILL.md",
     ...allMarkdown(".claude/agents"),
@@ -1416,7 +1419,7 @@ test("the claim-recording tool's schema requires sc_evidence sub-fields for SC f
 
 test("generated surfaces describe central session authority and target_domain semantics", () => {
   const surfaces = [
-    ".claude/skills/bob-evaluate/SKILL.md",
+    ".claude/skills/bob-evaluate-runner/SKILL.md",
     ".claude/skills/bob-status/SKILL.md",
     ".claude/skills/bob-debug/SKILL.md",
     ".claude/agents/evaluator-agent.md",

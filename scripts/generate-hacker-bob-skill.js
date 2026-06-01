@@ -1,45 +1,23 @@
 #!/usr/bin/env node
 "use strict";
 
-const fs = require("fs");
 const path = require("path");
 const {
-  hackerBobSkillAllowedTools,
-} = require("../adapters/claude/config.js");
-const {
+  CLAUDE_ROLE_SPECS,
   renderClaudeRole,
   updateClaudeRoleFile,
 } = require("./lib/claude-role-renderer.js");
 
 const ROOT = path.join(__dirname, "..");
-const SKILL_PATH = path.join(ROOT, ".claude", "skills", "bob-evaluate", "SKILL.md");
+const SKILL_PATH = path.join(ROOT, CLAUDE_ROLE_SPECS.orchestrator.output_path);
 
-function splitFrontmatter(document) {
-  const match = document.match(/^---\n[\s\S]*?\n---\n/);
-  if (!match) return { body: document };
-  return { body: document.slice(match[0].length) };
-}
-
-function renderFrontmatter() {
-  const allowedTools = hackerBobSkillAllowedTools()
-    .map((tool) => `  - ${tool}`)
-    .join("\n");
-  return [
-    "---",
-    "name: bob-evaluate",
-    "disable-model-invocation: true",
-    'argument-hint: "[target-url | resume <domain> [force-merge]] [--no-auth] [--normal|--paranoid|--yolo] [--deep] [--egress <profile>] [--block-internal-hosts|--allow-internal-hosts]"',
-    "allowed-tools:",
-    allowedTools,
-    "---",
-    "",
-  ].join("\n");
-}
-
-function renderSkill(document) {
-  if (document === undefined) return renderClaudeRole("orchestrator");
-  const { body } = splitFrontmatter(document);
-  return `${renderFrontmatter()}${body.replace(/^\n+/, "")}`;
+// Single-skill regenerator preserved for backwards-compat (`npm run check:skill`
+// targets this script). All rendering must go through claude-role-renderer.js
+// so the frontmatter description/name stays canonical — a previous local
+// renderFrontmatter() here drifted from the canonical renderer and shipped
+// description-less SKILL.md files into target installs.
+function renderSkill() {
+  return renderClaudeRole("orchestrator");
 }
 
 function updateSkill({ check = false } = {}) {
@@ -49,7 +27,7 @@ function updateSkill({ check = false } = {}) {
 function main() {
   const check = process.argv.includes("--check");
   const changed = updateSkill({ check });
-  if (changed && !check) console.log("updated bob-evaluate skill frontmatter");
+  if (changed && !check) console.log("updated bob-evaluate-runner skill frontmatter");
 }
 
 if (require.main === module) {

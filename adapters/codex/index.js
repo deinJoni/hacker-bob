@@ -25,6 +25,9 @@ const LEGACY_SKILL_DIRS = Object.freeze([
   "hacker-bob-debug",
   "hacker-bob-update",
   "hacker-bob-export",
+  // v1.x hunt→evaluate rename leftover. Survives in ~/.codex/skills on
+  // workspaces that were installed before the rename; sweep on every install.
+  "bob-hunt",
 ]);
 const STALE_PLUGIN_SKILL_DIRS = Object.freeze([
   "evaluate",
@@ -39,6 +42,8 @@ const STALE_COMMAND_FILES = Object.freeze([
   "status.md",
   "debug.md",
   "update.md",
+  // v1.x hunt→evaluate rename leftover under .codex/plugins/hacker-bob/commands/.
+  "bob-hunt.md",
 ]);
 const COMMAND_SPECS = Object.freeze({
   evaluate: Object.freeze({

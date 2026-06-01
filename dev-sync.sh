@@ -104,7 +104,7 @@ sync_shared_runtime() {
 }
 
 sync_claude_adapter() {
-  mkdir -p "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/commands" "$CLAUDE_DIR/bob" "$CLAUDE_DIR/skills/bob-evaluate" "$CLAUDE_DIR/skills/bob-status" "$CLAUDE_DIR/skills/bob-debug"
+  mkdir -p "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/commands" "$CLAUDE_DIR/bob" "$CLAUDE_DIR/skills/bob-evaluate-runner" "$CLAUDE_DIR/skills/bob-status" "$CLAUDE_DIR/skills/bob-debug"
   rm -f "$CLAUDE_DIR/hooks/bob-update-lib.js"
   cp "$SCRIPT_DIR/.claude/hooks/session-write-guard.sh" "$CLAUDE_DIR/hooks/"
   cp "$SCRIPT_DIR/.claude/hooks/agent-run-stop.js" "$CLAUDE_DIR/hooks/"
@@ -121,11 +121,18 @@ sync_claude_adapter() {
   rm -f "$CLAUDE_DIR/commands/bountyagent.md" "$CLAUDE_DIR/commands/bountyagentdebug.md"
   rm -f "$CLAUDE_DIR/commands/bob/evaluate.md" "$CLAUDE_DIR/commands/bob/status.md" "$CLAUDE_DIR/commands/bob/debug.md" "$CLAUDE_DIR/commands/bob/update.md"
   rmdir "$CLAUDE_DIR/commands/bob" 2>/dev/null || true
-  rm -rf "$CLAUDE_DIR/skills/bountyagent" "$CLAUDE_DIR/skills/bountyagentstatus" "$CLAUDE_DIR/skills/bountyagentdebug"
+  # Sweep legacy Claude skill dirs. `bob-evaluate` and `bob-hunt` predate the
+  # rename to bob-evaluate-runner; they otherwise survive across reinstalls and
+  # register duplicate /bob-evaluate slash-picker entries with orchestrator-prose
+  # descriptions (skills without `description:` fall back to body lede).
+  rm -rf "$CLAUDE_DIR/skills/bountyagent" "$CLAUDE_DIR/skills/bountyagentstatus" "$CLAUDE_DIR/skills/bountyagentdebug" "$CLAUDE_DIR/skills/bob-hunt" "$CLAUDE_DIR/skills/bob-evaluate"
   cp "$SCRIPT_DIR/.claude/commands/bob-update.md" "$CLAUDE_DIR/commands/"
   cp "$SCRIPT_DIR/.claude/commands/bob-egress.md" "$CLAUDE_DIR/commands/"
   cp "$SCRIPT_DIR/.claude/commands/bob-export.md" "$CLAUDE_DIR/commands/"
-  cp "$SCRIPT_DIR/.claude/skills/bob-evaluate/SKILL.md" "$CLAUDE_DIR/skills/bob-evaluate/"
+  # bob-evaluate.md is normally install-only, but the rename of its target skill
+  # means the shim's body must propagate to dev-synced workspaces; copy it here.
+  cp "$SCRIPT_DIR/.claude/commands/bob-evaluate.md" "$CLAUDE_DIR/commands/"
+  cp "$SCRIPT_DIR/.claude/skills/bob-evaluate-runner/SKILL.md" "$CLAUDE_DIR/skills/bob-evaluate-runner/"
   cp "$SCRIPT_DIR/.claude/skills/bob-status/SKILL.md" "$CLAUDE_DIR/skills/bob-status/"
   cp "$SCRIPT_DIR/.claude/skills/bob-debug/SKILL.md" "$CLAUDE_DIR/skills/bob-debug/"
 

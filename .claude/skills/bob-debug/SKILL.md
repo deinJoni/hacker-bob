@@ -1,5 +1,6 @@
 ---
 name: bob-debug
+description: Debug a completed or stuck Hacker Bob session — pipeline quality, drift, failures, improvements.
 disable-model-invocation: true
 argument-hint: "[--last | <target_domain>] [--deep]"
 allowed-tools:

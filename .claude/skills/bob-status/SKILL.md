@@ -1,5 +1,6 @@
 ---
 name: bob-status
+description: Read Hacker Bob session state, wave status, findings, verification, and grade summaries.
 disable-model-invocation: true
 argument-hint: "[--last | <target_domain>]"
 allowed-tools:

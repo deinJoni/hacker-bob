@@ -1,5 +1,6 @@
 ---
-name: bob-evaluate
+name: bob-evaluate-runner
+description: Hacker Bob orchestrator runtime — invoked by /bob-evaluate. Do not call directly.
 disable-model-invocation: true
 argument-hint: "[target-url | resume <domain> [force-merge]] [--no-auth] [--normal|--paranoid|--yolo] [--deep] [--egress <profile>] [--block-internal-hosts|--allow-internal-hosts]"
 allowed-tools:

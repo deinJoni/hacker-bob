@@ -67,6 +67,10 @@ function detectInstalledAdapterIds(targetAbs) {
     fs.existsSync(path.join(targetAbs, ".claude", "bob", "VERSION")) ||
     fs.existsSync(path.join(targetAbs, ".claude", "commands", "bob-update.md")) ||
     fs.existsSync(path.join(targetAbs, ".claude", "commands", "bob", "evaluate.md")) ||
+    fs.existsSync(path.join(targetAbs, ".claude", "skills", "bob-evaluate-runner", "SKILL.md")) ||
+    // Legacy detection: prior installs created bob-evaluate (or bob-hunt) skill
+    // dirs before the rename to bob-evaluate-runner. Detect those so reinstall
+    // metadata still resolves to the Claude adapter.
     fs.existsSync(path.join(targetAbs, ".claude", "skills", "bob-evaluate", "SKILL.md"))
   ) {
     ids.push("claude");
@@ -496,7 +500,7 @@ function printInstallSummary(summary) {
   if (summary.adapterResults.claude) {
     console.log(`  ${summary.agents} Claude agent definitions`);
     console.log("  Claude command shims (/bob-update, /bob-egress, /bob-export)");
-    console.log("  Claude bob-evaluate + bob-status + bob-debug skills");
+    console.log("  Claude bob-evaluate-runner + bob-status + bob-debug skills");
     console.log(`  ${summary.rules} Claude rules`);
     console.log("  Claude session guard hooks, update/export helpers, and status line");
     console.log("  Claude .mcp.json and settings.json merged");

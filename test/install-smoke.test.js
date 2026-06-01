@@ -59,9 +59,13 @@ test("installer copies a require-able complete MCP runtime", () => {
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "update.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bountyagent.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bountyagentdebug.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate-runner", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-status", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-debug", "SKILL.md")));
+    // Legacy skill dirs must not be present — they would surface as duplicate
+    // /bob-evaluate slash-picker entries with orchestrator-prose descriptions.
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bountyagent", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bountyagentstatus", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bountyagentdebug", "SKILL.md")));
@@ -419,7 +423,9 @@ test("installer merges existing MCP/settings config idempotently", () => {
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bountyagent", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bountyagentstatus", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bountyagentdebug", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate-runner", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-status", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-debug", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "knowledge", "custom.json")));
@@ -463,7 +469,7 @@ test("install doctor uninstall dry-run uninstall and reinstall workflow works", 
       stdio: "pipe",
     });
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob-update.md")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate-runner", "SKILL.md")));
 
     execFileSync(process.execPath, [CLI, "uninstall", workspace, "--yes"], {
       cwd: ROOT,

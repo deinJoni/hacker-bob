@@ -51,7 +51,9 @@ test("CLI installs into a workspace", () => {
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-update.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-egress.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-export.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate-runner", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "update.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-check-update.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-egress.js")));
@@ -281,7 +283,7 @@ test("CLI uninstall of one adapter preserves remaining adapters and shared runti
     assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "plugins", "cache", "hacker-bob-local", "hacker-bob")));
     assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "config.toml")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-update.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate-runner", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".hacker-bob", "generic-mcp", "hacker-bob.md")));
     assert.ok(fs.existsSync(path.join(workspace, "mcp", "server.js")));
 
@@ -299,7 +301,7 @@ test("CLI uninstall of one adapter preserves remaining adapters and shared runti
     assert.equal(claudeResult.remove_shared, false);
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob-update.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob-export.md")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate-runner", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".hacker-bob", "generic-mcp", "hacker-bob.md")));
     assert.ok(fs.existsSync(path.join(workspace, "mcp", "server.js")));
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
@@ -396,7 +398,7 @@ test("CLI no-flag uninstall on multi-adapter install removes everything that was
     assert.deepEqual(parsed.adapters.sort(), ["claude", "codex", "generic-mcp"]);
     assert.deepEqual(parsed.remaining_adapters, []);
     assert.equal(parsed.remove_shared, true);
-    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate-runner", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-evaluate", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".hacker-bob", "generic-mcp", "hacker-bob.md")));
     assert.ok(!fs.existsSync(path.join(workspace, "mcp", "server.js")));
@@ -467,7 +469,7 @@ test("CLI no-flag update on a previously-installed codex project keeps codex (do
     assert.match(result.stderr, /reason: reinstall_metadata/);
     const meta = JSON.parse(fs.readFileSync(path.join(workspace, ".hacker-bob", "install.json"), "utf8"));
     assert.deepEqual(meta.installed_adapters, ["codex"]);
-    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate-runner", "SKILL.md")));
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(tempHome, { recursive: true, force: true });
@@ -527,7 +529,7 @@ test("CLI reinstall with no --adapter preserves previously-installed adapter mix
     assert.match(reinstall.stderr, /reason: reinstall_metadata/);
     const finalMeta = JSON.parse(fs.readFileSync(path.join(workspace, ".hacker-bob", "install.json"), "utf8"));
     assert.deepEqual(finalMeta.installed_adapters, ["codex"]);
-    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate-runner", "SKILL.md")));
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(tempHome, { recursive: true, force: true });

@@ -73,15 +73,23 @@ const COMMAND_SPECS = Object.freeze({
 });
 
 const BOB_SKILLS = Object.freeze([
-  "bob-evaluate",
+  "bob-evaluate-runner",
   "bob-status",
   "bob-debug",
 ]);
 
+// Legacy Claude skill directory names that prior installer generations created
+// under .claude/skills/ and must be swept on install/upgrade. `bob-evaluate`
+// was the orchestrator skill name before it was renamed to bob-evaluate-runner
+// to keep Claude Code's slash-command picker from showing two /bob-evaluate
+// entries (one for the command file, one for the skill). `bob-hunt` was the
+// v1.x hunt→evaluate rename predecessor.
 const LEGACY_BOB_SKILLS = Object.freeze([
   "bountyagent",
   "bountyagentdebug",
   "bountyagentstatus",
+  "bob-hunt",
+  "bob-evaluate",
 ]);
 
 // Legacy agent files left behind by prior rename generations. The "hunter-*"
@@ -151,9 +159,12 @@ function managedDirs() {
   return [
     path.join(".claude", "commands", "bob"),
     path.join(".claude", "commands"),
-    path.join(".claude", "skills", "bob-evaluate"),
+    path.join(".claude", "skills", "bob-evaluate-runner"),
     path.join(".claude", "skills", "bob-status"),
     path.join(".claude", "skills", "bob-debug"),
+    // Legacy skill directories — managed for cleanup on uninstall/upgrade.
+    path.join(".claude", "skills", "bob-evaluate"),
+    path.join(".claude", "skills", "bob-hunt"),
     path.join(".claude", "skills", "bountyagent"),
     path.join(".claude", "skills", "bountyagentdebug"),
     path.join(".claude", "skills", "bountyagentstatus"),

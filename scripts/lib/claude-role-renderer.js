@@ -115,8 +115,14 @@ const CLAUDE_ROLE_SPECS = Object.freeze({
   orchestrator: Object.freeze({
     role_id: "orchestrator",
     kind: "skill",
-    output_path: path.join(".claude", "skills", "bob-evaluate", "SKILL.md"),
-    name: "bob-evaluate",
+    // Skill directory is intentionally distinct from the /bob-evaluate command
+    // slash name so Claude Code's picker does not register two entries under
+    // the same /bob-evaluate label. The command file owns the operator-facing
+    // /bob-evaluate slot; this skill is a callable subroutine the command
+    // invokes via the Skill tool.
+    output_path: path.join(".claude", "skills", "bob-evaluate-runner", "SKILL.md"),
+    name: "bob-evaluate-runner",
+    description: "Hacker Bob orchestrator runtime — invoked by /bob-evaluate. Do not call directly.",
     disable_model_invocation: true,
     argument_hint: "[target-url | resume <domain> [force-merge]] [--no-auth] [--normal|--paranoid|--yolo] [--deep] [--egress <profile>] [--block-internal-hosts|--allow-internal-hosts]",
     local_tools: Object.freeze(["Task", "Read"]),
@@ -126,6 +132,7 @@ const CLAUDE_ROLE_SPECS = Object.freeze({
     kind: "skill",
     output_path: path.join(".claude", "skills", "bob-status", "SKILL.md"),
     name: "bob-status",
+    description: "Read Hacker Bob session state, wave status, findings, verification, and grade summaries.",
     disable_model_invocation: true,
     argument_hint: "[--last | <target_domain>]",
     local_tools: Object.freeze([
@@ -143,6 +150,7 @@ const CLAUDE_ROLE_SPECS = Object.freeze({
     kind: "skill",
     output_path: path.join(".claude", "skills", "bob-debug", "SKILL.md"),
     name: "bob-debug",
+    description: "Debug a completed or stuck Hacker Bob session — pipeline quality, drift, failures, improvements.",
     disable_model_invocation: true,
     argument_hint: "[--last | <target_domain>] [--deep]",
     local_tools: Object.freeze([
@@ -353,10 +361,14 @@ function claudeAllowedToolsForRole(roleId) {
 }
 
 function renderSkillFrontmatter(spec) {
+  if (!spec.description) {
+    throw new Error(`Claude skill ${spec.name} is missing a description; Claude Code's slash-command picker falls back to the body lede otherwise.`);
+  }
   const allowedTools = claudeAllowedToolsForRole(spec.role_id);
   return [
     "---",
     `name: ${spec.name}`,
+    `description: ${spec.description}`,
     `disable-model-invocation: ${spec.disable_model_invocation ? "true" : "false"}`,
     `argument-hint: ${JSON.stringify(spec.argument_hint)}`,
     "allowed-tools:",
