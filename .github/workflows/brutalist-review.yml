@@ -17,18 +17,17 @@ jobs:
       - name: Install CLI critics
         run: |
           npm install -g @anthropic-ai/claude-code @openai/codex
-          # patched brutalist-mcp from branch, committed dist, no build:
-          npm install -g --ignore-scripts "github:ejmockler/brutalist-mcp#746897dfb7da0b635027dc6574eb0e1d34850748"
+          npm install -g "github:ejmockler/brutalist-mcp#f401e085a60952fe70d70981d257ad72d6670e0d"
           curl -fsSL https://antigravity.google/cli/install.sh | bash
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           REAL_BMCP="$(command -v brutalist-mcp)"
-          echo "brutalist-mcp resolved: $REAL_BMCP -> $(node -e "console.log(require('@brutalist/mcp/package.json').version)" 2>/dev/null || echo '?')"
+          echo "brutalist-mcp resolved: $REAL_BMCP"
           mkdir -p /tmp/bin
           printf '#!/usr/bin/env bash\nexec "%s" "$@" 2>>/tmp/bmcp-stderr.log\n' "$REAL_BMCP" > /tmp/bin/brutalist-mcp
           chmod +x /tmp/bin/brutalist-mcp
           echo "/tmp/bin" >> "$GITHUB_PATH"
       - name: Brutalist review
-        uses: ejmockler/brutalist-mcp/packages/github-action@746897dfb7da0b635027dc6574eb0e1d34850748
+        uses: ejmockler/brutalist-mcp/packages/github-action@f401e085a60952fe70d70981d257ad72d6670e0d
         env:
           BRUTALIST_TIMEOUT: "90000"
           BRUTALIST_LOG_LEVEL: "debug"
@@ -43,7 +42,7 @@ jobs:
       - name: Dump brutalist-mcp stderr
         if: always()
         run: |
-          echo "===== brutalist-mcp stderr ====="
           if [ -f /tmp/bmcp-stderr.log ]; then
+            echo "===== brutalist-mcp stderr ====="
             grep -iE "analysis with timeout|Executing|Released CLI|timed out|execution (failed|completed)" /tmp/bmcp-stderr.log | tail -50
           else echo "(no log)"; fi
