@@ -34,6 +34,23 @@ module.exports = Object.freeze({
       "deep_mode": {
         "type": "boolean"
       },
+      "target_kind": {
+        "type": "string",
+        "enum": ["web", "repo"],
+        "description": "Defaults to web. Repo sessions should normally use bounty_init_repo_session."
+      },
+      "repo": {
+        "type": "object",
+        "description": "Repo metadata for target_kind=repo.",
+        "properties": {
+          "root_path": { "type": "string" },
+          "source_url": { "type": "string" },
+          "branch": { "type": "string" },
+          "commit": { "type": "string" },
+          "default_branch": { "type": "string" }
+        },
+        "required": ["root_path"]
+      },
       "checkpoint_mode": {
         "type": "string",
         "enum": ["normal", "paranoid", "yolo"],

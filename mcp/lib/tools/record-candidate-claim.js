@@ -167,6 +167,15 @@ function buildFindingPayloadRecord(args, context, findingId) {
     severity: args.severity,
     cwe: args.cwe,
     endpoint: args.endpoint,
+    // OSS-mode locator fields. The validators in finding-contracts.js cap
+    // length and reject empty strings; recorders that omit them keep the
+    // legacy web-shaped finding payload unchanged.
+    file_path: args.file_path,
+    symbol: args.symbol,
+    manifest: args.manifest,
+    affected_package: args.affected_package,
+    affected_version_range: args.affected_version_range,
+    repro_command: args.repro_command,
     description: args.description,
     proof_of_concept: args.proof_of_concept,
     response_evidence: args.response_evidence,
@@ -243,6 +252,12 @@ function buildClaimPayloadFromFinding(finding, findingContentHash, args) {
     "severity",
     "cwe",
     "endpoint",
+    "file_path",
+    "symbol",
+    "manifest",
+    "affected_package",
+    "affected_version_range",
+    "repro_command",
     "description",
     "proof_of_concept",
     "response_evidence",
@@ -472,6 +487,30 @@ module.exports = Object.freeze({
       },
       "endpoint": {
         "type": "string"
+      },
+      "file_path": {
+        "type": "string",
+        "description": "OSS mode: repo-relative primary file path for the finding."
+      },
+      "symbol": {
+        "type": "string",
+        "description": "OSS mode: affected function, class, route, workflow, or config key."
+      },
+      "manifest": {
+        "type": "string",
+        "description": "OSS mode: affected manifest or lockfile."
+      },
+      "affected_package": {
+        "type": "string",
+        "description": "OSS mode: affected package/dependency name."
+      },
+      "affected_version_range": {
+        "type": "string",
+        "description": "OSS mode: affected package version range."
+      },
+      "repro_command": {
+        "type": "string",
+        "description": "OSS mode: bounded local command that reproduces or verifies the issue when known. High/critical native-code claims must additionally cite the run as an evidence_refs[] entry of kind \"repo_command_run\" backed by a non-dry-run row in repo-command-runs.jsonl."
       },
       "description": {
         "type": "string"

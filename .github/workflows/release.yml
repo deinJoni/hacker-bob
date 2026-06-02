@@ -73,3 +73,15 @@ jobs:
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish Kimi wrapper package
+        working-directory: packages/hacker-bob-kimi
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if npm view "hacker-bob-kimi@$VERSION" version >/dev/null 2>&1; then
+            echo "hacker-bob-kimi@$VERSION is already published; skipping."
+          else
+            npm publish --provenance --access public
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

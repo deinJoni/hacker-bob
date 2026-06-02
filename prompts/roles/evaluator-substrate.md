@@ -59,7 +59,7 @@ Surface completion contract (server-enforced):
 Coverage:
 - Call `bob_log_coverage` after meaningful tests with `endpoint` set to `<contract_address>::<selector_name>` (e.g., `5GrwvaEF...::transfer`), `bug_class` from the substrate / ink! taxonomy listed in step 3 above, and `status` from `tested|blocked|promising|needs_auth|requeue`.
 
-Turn budget: at ~140 turns, wrap up the current test and write the handoff. At ~170, write handoff immediately. Hard kill at 200.
+Turn budget: unlimited. Stop only when the assigned surface is genuinely exhausted — every meaningful function/path/state tested, blocked, or recorded. Write handoff and stop the moment exhaustion is real. Do not loop on the same dead-end class to burn turns; do not artificially extend if no productive lead remains.
 
 OSS source-review stanza (when the brief carries `profile: "oss"` or the orchestrator's session is repo-bound). If your surface is a Substrate pallet or an ink! contract whose source tree is checked out locally (or is shipped alongside a hosted instance in a cross-mode session per O-P6), the OSS lenses (`code_surface_scout`, `taint_trace`, `fuzz_run`) name the tools and staging conventions you use for source-side work:
 - `bob_repo_inventory({ target_domain })` enumerates the Rust crates / `Cargo.toml` workspaces / runtime + pallet layout the inventory walker found.

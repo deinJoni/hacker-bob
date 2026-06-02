@@ -6,6 +6,7 @@
 
 v2.0.0 realizes the frontier-topology hypergraph against the live codebase. The session model is no longer a phase-ordered FIFO mutating a single `state.json`; it is four append-only planes (governance, frontier, scheduler, claim) coordinated by a six-state lifecycle FSM.
 
+- Absorbs PR #58 (kimi adapter + PSL warn), PR #59 (OSS hunting mode → ported), PR #60 (CVE feed matching).
 - New planes:
   - Governance plane (`session-nucleus.json`, `session-events.jsonl`) — authoritative scope policy, egress identity, operator constraints, lifecycle state. Mutations append events with `prior_nucleus_hash → nucleus_hash` transitions.
   - Frontier plane (`frontier-events.jsonl` + materialized `surface-index.json` / `task-queue.json`) — append-only discovery progress: seeded surfaces, lead enqueues, observations, closures, blockers.

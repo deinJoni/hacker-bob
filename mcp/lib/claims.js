@@ -1,5 +1,6 @@
 "use strict";
 
+const fs = require("fs");
 const {
   assertEnumValue,
   normalizeOptionalText,
@@ -7,10 +8,12 @@ const {
 const {
   assertSafeDomain,
   claimsJsonlPath,
+  repoCommandRunsJsonlPath,
 } = require("./paths.js");
 const {
   appendJsonlLine,
   withSessionLock,
+  DEFAULT_ARTIFACT_READ_MAX_BYTES,
 } = require("./storage.js");
 const {
   hashCanonicalJson,
@@ -358,6 +361,54 @@ function claimSurfaceLanguageMap(domain, surfaceIds) {
   return result;
 }
 
+function readRepoCommandRunRecords(domain) {
+  // Read the append-only ledger of bob_repo_docker_run executions. The records
+  // are the live-side evidence that a repro command actually ran (rather than
+  // being merely cited in an evidence_ref). Missing ledger collapses to an
+  // empty list so non-repo sessions short-circuit cleanly; an oversized file
+  // raises a hard error rather than silently truncating.
+  const filePath = repoCommandRunsJsonlPath(domain);
+  if (!fs.existsSync(filePath)) return [];
+  const stats = fs.statSync(filePath);
+  if (DEFAULT_ARTIFACT_READ_MAX_BYTES != null && stats.size > DEFAULT_ARTIFACT_READ_MAX_BYTES) {
+    throw new ToolError(
+      ERROR_CODES.STATE_CONFLICT,
+      `repo-command-runs.jsonl exceeds read cap of ${DEFAULT_ARTIFACT_READ_MAX_BYTES} bytes: ${filePath}`,
+    );
+  }
+  const rows = [];
+  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      rows.push(JSON.parse(line));
+    } catch {
+      // Malformed run-log lines never satisfy the cross-check below; they are
+      // silently skipped here so a single corrupt row cannot DoS claim
+      // recording for the whole session.
+    }
+  }
+  return rows;
+}
+
+function repoCommandRunRowSatisfiesEvidence(row, ref) {
+  // The cross-check (additive to the evidence_ref shape gate): the row must
+  // exist, be a live execution (not a dry-run plan), and bind back to the
+  // evidence_ref via run_id + command_hash. exit_code on the ledger row must
+  // also agree with the evidence_ref's claimed exit code so a flaky reviewer
+  // cannot cite a different run.
+  if (!row || typeof row !== "object") return false;
+  if (row.dry_run === true) return false;
+  if (row.timed_out === true) return false;
+  if (typeof row.run_id !== "string" || row.run_id !== ref.run_id) return false;
+  if (typeof row.command_hash !== "string" || row.command_hash !== ref.command_hash) return false;
+  // exit_code on the row must be a concrete integer (live execution produced
+  // a result). If the evidence_ref also pinned a value, it must match.
+  if (!Number.isInteger(row.exit_code)) return false;
+  if (Number.isInteger(ref.exit_code) && row.exit_code !== ref.exit_code) return false;
+  return true;
+}
+
 function assertNotStaticOnlyNativeHighSeverity(claim) {
   if (!O_P4_TRIGGERING_SEVERITIES.has(claim.severity)) return;
   const surfaceIds = Array.isArray(claim.surface_ids) ? claim.surface_ids : [];
@@ -373,17 +424,51 @@ function assertNotStaticOnlyNativeHighSeverity(claim) {
   }
   if (nativeSurfaces.length === 0) return;
   const evidenceRefs = Array.isArray(claim.evidence_refs) ? claim.evidence_refs : [];
-  const hasRepoCommandRun = evidenceRefs.some((ref) => ref && ref.kind === "repo_command_run");
-  if (hasRepoCommandRun) return;
-  throw new ToolError(
-    ERROR_CODES.INVALID_ARGUMENTS,
-    "high/critical native-code claims must include at least one evidence_refs[] entry with kind: \"repo_command_run\"; static-only claims (repo_file / source review) cannot stand alone for C/C++/Rust-unsafe/asm at this severity.",
-    {
-      code: "O_P4_static_only_native_code_high_severity",
-      severity: claim.severity,
-      native_surfaces: nativeSurfaces,
-    },
-  );
+  const repoCommandRunRefs = evidenceRefs.filter((ref) => ref && ref.kind === "repo_command_run");
+  if (repoCommandRunRefs.length === 0) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "high/critical native-code claims must include at least one evidence_refs[] entry with kind: \"repo_command_run\"; static-only claims (repo_file / source review) cannot stand alone for C/C++/Rust-unsafe/asm at this severity.",
+      {
+        code: "O_P4_static_only_native_code_high_severity",
+        severity: claim.severity,
+        native_surfaces: nativeSurfaces,
+      },
+    );
+  }
+  // Cross-check the ledger: each repo_command_run evidence_ref must resolve
+  // to a non-dry-run row in repo-command-runs.jsonl whose run_id +
+  // command_hash agree. The shape validator already ensured the evidence_ref
+  // carries those identifiers; this step verifies the row actually exists
+  // and was executed, so a static-only claim cannot pass simply by minting a
+  // synthetic evidence_ref. Static repo checks alone remain insufficient for
+  // CVE-style native-code claims even when an evidence_ref is fabricated.
+  const ledgerRows = readRepoCommandRunRecords(claim.target_domain);
+  const ledgerByRunId = new Map();
+  for (const row of ledgerRows) {
+    if (row && typeof row.run_id === "string") {
+      ledgerByRunId.set(row.run_id, row);
+    }
+  }
+  const unsatisfied = [];
+  for (const ref of repoCommandRunRefs) {
+    const row = ledgerByRunId.get(ref.run_id);
+    if (!row || !repoCommandRunRowSatisfiesEvidence(row, ref)) {
+      unsatisfied.push(ref.run_id);
+    }
+  }
+  if (unsatisfied.length === repoCommandRunRefs.length) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `high/critical native-code claims require at least one evidence_refs[] entry of kind \"repo_command_run\" backed by a non-dry-run row in ${repoCommandRunsJsonlPath(claim.target_domain)} whose run_id and command_hash match; no cited run resolved to a live execution. Mark the surface partial with blocked_harness_runs if replay cannot run.`,
+      {
+        code: "O_P4_repo_command_run_evidence_unbacked",
+        severity: claim.severity,
+        native_surfaces: nativeSurfaces,
+        unsatisfied_run_ids: unsatisfied,
+      },
+    );
+  }
 }
 
 function appendCandidateClaim(input, options = {}) {

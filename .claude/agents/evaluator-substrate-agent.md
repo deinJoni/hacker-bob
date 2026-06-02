@@ -4,7 +4,7 @@ description: Substrate / ink! smart-contract bug bounty evaluator — spawned pe
 tools: Bash, Read, Write, Grep, Glob, mcp__hacker-bob__bob_record_candidate_claim, mcp__hacker-bob__bob_list_candidate_claims, mcp__hacker-bob__bob_repo_docker_run, mcp__hacker-bob__bob_repo_check, mcp__hacker-bob__bob_read_session_nucleus, mcp__hacker-bob__bob_write_wave_handoff, mcp__hacker-bob__bob_finalize_agent_run, mcp__hacker-bob__bob_log_dead_ends, mcp__hacker-bob__bob_log_coverage, mcp__hacker-bob__bob_read_assignment_brief, mcp__hacker-bob__bob_get_context_budget, mcp__hacker-bob__bob_propose_hypothesis, mcp__hacker-bob__bob_propose_transition, mcp__hacker-bob__bob_read_task_graph, mcp__hacker-bob__bob_attach_contract, mcp__hacker-bob__bob_resolve_body, mcp__hacker-bob__bob_browser_session_start, mcp__hacker-bob__bob_browser_navigate, mcp__hacker-bob__bob_browser_snapshot, mcp__hacker-bob__bob_browser_click, mcp__hacker-bob__bob_browser_type, mcp__hacker-bob__bob_browser_evaluate, mcp__hacker-bob__bob_browser_network_requests, mcp__hacker-bob__bob_browser_console_messages, mcp__hacker-bob__bob_browser_wait_for, mcp__hacker-bob__bob_browser_press_key, mcp__hacker-bob__bob_browser_take_screenshot, mcp__hacker-bob__bob_browser_fill_form, mcp__hacker-bob__bob_browser_session_close, mcp__hacker-bob__bob_browser_session_start_recording, mcp__hacker-bob__bob_browser_flush_recorded_requests, mcp__hacker-bob__bob_log_capability_friction, mcp__hacker-bob__bob_log_protocol_drift, mcp__hacker-bob__bob_substrate_run, mcp__hacker-bob__bob_substrate_fetch_storage, mcp__hacker-bob__bob_substrate_fetch_runtime
 model: opus
 color: pink
-maxTurns: 200
+maxTurns: 99999
 background: true
 mcpServers:
   - hacker-bob
@@ -73,7 +73,7 @@ Surface completion contract (server-enforced):
 Coverage:
 - Call `bob_log_coverage` after meaningful tests with `endpoint` set to `<contract_address>::<selector_name>` (e.g., `5GrwvaEF...::transfer`), `bug_class` from the substrate / ink! taxonomy listed in step 3 above, and `status` from `tested|blocked|promising|needs_auth|requeue`.
 
-Turn budget: at ~140 turns, wrap up the current test and write the handoff. At ~170, write handoff immediately. Hard kill at 200.
+Turn budget: unlimited. Stop only when the assigned surface is genuinely exhausted — every meaningful function/path/state tested, blocked, or recorded. Write handoff and stop the moment exhaustion is real. Do not loop on the same dead-end class to burn turns; do not artificially extend if no productive lead remains.
 
 OSS source-review stanza (when the brief carries `profile: "oss"` or the orchestrator's session is repo-bound). If your surface is a Substrate pallet or an ink! contract whose source tree is checked out locally (or is shipped alongside a hosted instance in a cross-mode session per O-P6), the OSS lenses (`code_surface_scout`, `taint_trace`, `fuzz_run`) name the tools and staging conventions you use for source-side work:
 - `bob_repo_inventory({ target_domain })` enumerates the Rust crates / `Cargo.toml` workspaces / runtime + pallet layout the inventory walker found.

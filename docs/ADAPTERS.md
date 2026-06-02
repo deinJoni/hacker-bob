@@ -13,7 +13,7 @@ Runtime code should prefer these neutral environment variables:
 
 - `BOB_PROJECT_DIR`: project root where Bob is installed or operating.
 - `BOB_RESOURCE_DIR`: root for Bob resources such as knowledge and bypass tables.
-- `BOB_CLIENT`: adapter name, for example `claude`, `codex`, or `generic-mcp`.
+- `BOB_CLIENT`: adapter name, for example `claude`, `codex`, `generic-mcp`, or `kimi`.
 
 Claude compatibility remains supported through `CLAUDE_PROJECT_DIR` and existing
 legacy `.claude/` resource locations. New installs write canonical Bob resources
@@ -42,6 +42,14 @@ Adapters own host-specific packaging and ergonomics:
 - Codex adapter: direct `$bob-*` skills in `~/.codex/skills`, Codex plugin
   metadata, plugin command wrappers, `.codex` configuration, repo-local plugin
   marketplace metadata, Codex cache/config activation, and MCP config.
+- Kimi adapter: `.kimi/skills`, `.kimi/mcp.json`, and `.kimi/bob`
+  compatibility metadata. Kimi skills are invoked as `/skill:bob-hunt`,
+  `/skill:bob-status`, `/skill:bob-debug`, `/skill:bob-update`,
+  `/skill:bob-export`, and `/skill:bob-egress`. The Kimi adapter does not
+  install PreToolUse hooks; session enforcement currently relies on prompt
+  discipline plus MCP-side validation, matching the Codex adapter's model.
+  Kimi hook source files live under `adapters/kimi/hooks/` for a future PR
+  that wires them via `~/.kimi/config.toml`.
 - Generic MCP adapter: MCP server configuration and prompt documentation only.
 
 Adapters may generate files from a shared role and policy model, but generated

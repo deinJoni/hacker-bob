@@ -342,6 +342,14 @@ function repoChecksJsonlPath(domain) {
   return path.join(sessionDir(domain), "repo-checks.jsonl");
 }
 
+function repoEnvPath(domain) {
+  return path.join(sessionDir(domain), "repo-env.json");
+}
+
+function repoDockerfilePath(domain) {
+  return path.join(sessionDir(domain), "Dockerfile.bob");
+}
+
 // Y.3 Stage b — Y-P13 audit-graded path registry.
 //
 // An *audit-graded session path* is one whose content is hash-bound, immutable,
@@ -497,6 +505,8 @@ module.exports = {
   resolveEvidencePath,
   repoChecksJsonlPath,
   repoCommandRunsJsonlPath,
+  repoDockerfilePath,
+  repoEnvPath,
   repoInventoryPath,
   repoRunsDir,
   repoWorkDir,

@@ -55,6 +55,12 @@ function governanceContextForDomain(domain) {
 }
 
 function replaySafetyForTool(toolName) {
+  if (toolName === "bob_repo_docker_run") {
+    return {
+      capability_pack: "oss_native_code",
+      replay_safety: DEFAULT_REPLAY_SAFETY,
+    };
+  }
   for (const pack of Object.values(CAPABILITY_PACKS)) {
     if (!pack || !pack.verifier) continue;
     if (pack.verifier.replay_tool === toolName || (pack.evidence && pack.evidence.runner === toolName)) {

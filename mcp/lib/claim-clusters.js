@@ -100,12 +100,51 @@ function readClaimClusters(targetDomain) {
   );
 }
 
+function uniquePriorClaimKey(record) {
+  const targetDomain = record && record.target_domain ? record.target_domain : "";
+  const claimId = record && (record.claim_id || record.finding_id) ? (record.claim_id || record.finding_id) : "";
+  return `${targetDomain}\0${claimId}`;
+}
+
+// Saturation guard: when a cross-target scan window (e.g. 200 most-recent
+// domains) excludes the current target_domain because the index is saturated
+// with unrelated cross-target priors, the same-target query result must still
+// surface ahead of cross-target matches. Returns a deduped, ordered slice with
+// same-target priors first, then by descending similarity, then by claim id
+// for deterministic ordering.
+function mergePriorClaimMatches(domain, sameTargetMatches, crossTargetMatches, limit) {
+  const byKey = new Map();
+  const sameSrc = Array.isArray(sameTargetMatches) ? sameTargetMatches : [];
+  const crossSrc = Array.isArray(crossTargetMatches) ? crossTargetMatches : [];
+  for (const record of [...sameSrc, ...crossSrc]) {
+    if (record == null || typeof record !== "object") continue;
+    byKey.set(uniquePriorClaimKey(record), record);
+  }
+  const merged = Array.from(byKey.values()).sort((a, b) => {
+    const aSame = a.target_domain === domain;
+    const bSame = b.target_domain === domain;
+    if (aSame !== bSame) return aSame ? -1 : 1;
+    const aSim = typeof a.similarity === "number" ? a.similarity : 0;
+    const bSim = typeof b.similarity === "number" ? b.similarity : 0;
+    if (bSim !== aSim) return bSim - aSim;
+    const aId = String((a && (a.claim_id || a.finding_id)) || "");
+    const bId = String((b && (b.claim_id || b.finding_id)) || "");
+    return aId.localeCompare(bId);
+  });
+  if (Number.isInteger(limit) && limit > 0) {
+    return merged.slice(0, limit);
+  }
+  return merged;
+}
+
 module.exports = {
   CLAIM_CLUSTERS_MAX_RECORDS,
   CLAIM_CLUSTER_STATUSES,
   CLAIM_CLUSTER_VERSION,
   appendClaimCluster,
   generatedClaimClusterId,
+  mergePriorClaimMatches,
   normalizeClaimCluster,
   readClaimClusters,
+  uniquePriorClaimKey,
 };

@@ -20,6 +20,13 @@ const WRAPPER_PACKAGE_SPECS = Object.freeze([
     adapter: "codex",
     label: "Codex wrapper",
   }),
+  Object.freeze({
+    name: "hacker-bob-kimi",
+    relativeRoot: path.join("packages", "hacker-bob-kimi"),
+    bin: "bin/hacker-bob-kimi.js",
+    adapter: "kimi",
+    label: "Kimi CLI wrapper",
+  }),
 ]);
 
 const LOCAL_INSTALL_METADATA_FILES = new Set([
@@ -28,6 +35,8 @@ const LOCAL_INSTALL_METADATA_FILES = new Set([
   ".claude/bob/VERSION",
   ".claude/bob/install.json",
   ".claude/bob/egress-profiles.json",
+  ".kimi/bob/VERSION",
+  ".kimi/bob/install.json",
   // Operator-local Claude Code session overrides; excluded from package.json's
   // files glob (only settings.json ships) so npm pack never includes it. The
   // expectedCanonicalFiles walker should not require it either.

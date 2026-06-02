@@ -11,7 +11,7 @@ hacker-bob doctor /path/to/your/project --json
 
 The command is read-only. It checks Node.js, installed Bob files, neutral install metadata, selected adapter config, and whether `mcp/server.js` can load.
 
-Use `--adapter claude`, `--adapter codex`, `--adapter generic-mcp`, or `--adapter all` when checking a non-default install:
+Use `--adapter claude`, `--adapter codex`, `--adapter generic-mcp`, `--adapter kimi`, or `--adapter all` when checking a non-default install:
 
 ```bash
 hacker-bob doctor /path/to/your/project --adapter codex --json
@@ -19,7 +19,7 @@ hacker-bob doctor /path/to/your/project --adapter codex --json
 
 ## MCP Server Is Not Listed
 
-Bob writes a `hacker-bob` server entry into the selected host config. Claude and generic MCP use the project `.mcp.json`; Codex uses `.codex/plugins/hacker-bob/.mcp.json`. Existing v1.x installs (which used the legacy `bountyagent` server key) are auto-migrated to `hacker-bob` on next install or update — operator-managed sibling servers and custom permissions are preserved. Make sure you installed into the same directory you run the host CLI from:
+Bob writes a `hacker-bob` server entry into the selected host config. Claude and generic MCP use the project `.mcp.json`; Codex uses `.codex/plugins/hacker-bob/.mcp.json`; Kimi uses `.kimi/mcp.json` and reads skills from `.kimi/skills/bob-{evaluate,status,debug,update,export,egress}/SKILL.md`. Existing v1.x installs (which used the legacy `bountyagent` server key) are auto-migrated to `hacker-bob` on next install or update — operator-managed sibling servers and custom permissions are preserved. Make sure you installed into the same directory you run the host CLI from:
 
 ```bash
 npx -y hacker-bob@latest install /path/to/your/project --adapter claude
@@ -29,7 +29,7 @@ claude mcp list
 
 If `hacker-bob doctor` reports a missing or mismatched `.mcp.json` entry, rerun the install command for that project directory.
 
-For Codex installs, check that `.codex/plugins/hacker-bob/.codex-plugin/plugin.json`, `.codex/plugins/hacker-bob/.mcp.json`, `~/.codex/skills/bob-{evaluate,status,debug,update,export,egress}/SKILL.md`, `.agents/plugins/marketplace.json`, and the doctor `codex_plugin_activation` and `codex_global_skills` checks are present. For generic MCP installs, check `.hacker-bob/generic-mcp/hacker-bob.md` and the root `.mcp.json`.
+For Codex installs, check that `.codex/plugins/hacker-bob/.codex-plugin/plugin.json`, `.codex/plugins/hacker-bob/.mcp.json`, `~/.codex/skills/bob-{evaluate,status,debug,update,export,egress}/SKILL.md`, `.agents/plugins/marketplace.json`, and the doctor `codex_plugin_activation` and `codex_global_skills` checks are present. For Kimi installs, check `.kimi/skills/bob-{evaluate,status,debug,update,export,egress}/SKILL.md`, `.kimi/mcp.json`, and the doctor `kimi_skills` and `kimi_mcp_server_config` checks are present. For generic MCP installs, check `.hacker-bob/generic-mcp/hacker-bob.md` and the root `.mcp.json`.
 
 ## Codex Skills Are Missing
 
@@ -47,6 +47,24 @@ The install should print `Codex plugin cache/config activated for MCP discovery`
 hacker-bob doctor /path/to/your/project --adapter codex --json
 ```
 
+## Kimi Skills Are Missing
+
+Kimi CLI reads Bob skills from `.kimi/skills` and MCP wiring from `.kimi/mcp.json`. Rerun the Kimi adapter install in the exact project directory you start Kimi from:
+
+```bash
+npx -y hacker-bob@latest install /path/to/your/project --adapter kimi
+cd /path/to/your/project
+kimi --mcp-config-file .kimi/mcp.json
+```
+
+Then look for `/skill:bob-evaluate`, `/skill:bob-status`, `/skill:bob-debug`, `/skill:bob-update`, `/skill:bob-export`, and `/skill:bob-egress`. If they still do not appear, run:
+
+```bash
+hacker-bob doctor /path/to/your/project --adapter kimi --json
+```
+
+Kimi relies on prompt-side enforcement; no PreToolUse hooks ship until `~/.kimi/config.toml` wiring lands.
+
 ## Claude Restart Required
 
 Claude Code reads project MCP and settings during startup. After installing or updating Bob, fully restart Claude Code in that project before running `/bob-evaluate`.
@@ -61,7 +79,7 @@ npx -y hacker-bob@latest install /path/to/your/project
 
 Then restart Claude Code in that project.
 
-For Codex installs, use `$bob-update`. For generic MCP installs, run `hacker-bob update /path/to/your/project --adapter generic-mcp` from a shell and reload the host config.
+For Codex installs, use `$bob-update`. For Kimi installs, use `/skill:bob-update`. For generic MCP installs, run `hacker-bob update /path/to/your/project --adapter generic-mcp` from a shell and reload the host config.
 
 ## Egress Command Is Missing
 

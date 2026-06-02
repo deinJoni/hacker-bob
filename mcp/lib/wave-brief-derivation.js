@@ -122,14 +122,77 @@ function resolveTargetClassForBrief({ explicitTargetClass, queuePolicy }) {
   return null;
 }
 
+// Per-field caps for the synthetic-node surface_metadata triage scalars.
+// Mirrors the ASSIGNMENT_BRIEF_SURFACE_SCALAR_LIMITS entries in
+// assignment-brief.js so the synthetic node never inflates unboundedly even
+// if a surface field carries an oversized scalar — same drop-in cap
+// discipline the brief slim function applies (Y.5 caller-side, X-D4 bound).
+const SYNTHETIC_SURFACE_TRIAGE_SCALAR_LIMITS = Object.freeze({
+  surface_type: 80,
+  attack_vector: 40,
+  severity_ceiling: 40,
+  network_reachable: 8,
+});
+
+const SYNTHETIC_SURFACE_TRIAGE_ARRAY_LIMITS = Object.freeze({
+  // residual_hunt_targets is the incomplete-fix seed stamped by
+  // repo-target.js. Threading it onto the synthetic node keeps the
+  // derivation context faithful to the assignment surface; arrays are
+  // capped at the same 20 the assignment-brief surface array limit uses.
+  residual_hunt_targets: 20,
+});
+
+function isBriefScalar(value) {
+  return value == null || ["string", "number", "boolean"].includes(typeof value);
+}
+
+function cappedSyntheticScalar(value, maxChars) {
+  if (!isBriefScalar(value) || value == null) return null;
+  const text = typeof value === "string" ? value : String(value);
+  return text.length > maxChars ? text.slice(0, maxChars) : text;
+}
+
+function cappedSyntheticArray(value, limit) {
+  if (!Array.isArray(value)) return null;
+  const out = [];
+  for (const item of value) {
+    if (item == null) continue;
+    if (out.length >= limit) break;
+    out.push(typeof item === "string" ? item : String(item));
+  }
+  return out;
+}
+
 // Materialize a synthetic Surface node + wave-scoped 1-hop graph context
 // for `derivePackForNode`. The context is intentionally minimal (no
 // adjacent nodes, no incident edges) because the wave-scheduler does not
 // own a TaskGraph slice — Y-P5 says the wave scope IS the bound. The
 // derivation function tolerates an empty graph_context and falls back to
 // the default per-kind tool set.
+//
+// `surface_metadata` carries the triage scalars (`surface_type`,
+// `attack_vector`, `severity_ceiling`, `network_reachable`) plus the
+// `residual_hunt_targets` array when the assignment surface stamped them
+// (OSS native-code surfaces from repo-target.js). Threading these keeps
+// the synthetic node faithful to the assignment surface — without them a
+// future derivation reader that branched on `network_reachable` would see
+// `undefined` and silently misroute. Caps mirror the assignment-brief
+// slim discipline so an oversized scalar never inflates the synthetic
+// node.
 function buildSyntheticSurfaceNode({ surfaceObj, surfaceId, waveNumber }) {
   const surfaceRefs = [surfaceId];
+  const source = surfaceObj && typeof surfaceObj === "object" && !Array.isArray(surfaceObj)
+    ? surfaceObj
+    : {};
+  const metadata = {};
+  for (const [field, maxChars] of Object.entries(SYNTHETIC_SURFACE_TRIAGE_SCALAR_LIMITS)) {
+    const value = cappedSyntheticScalar(source[field], maxChars);
+    metadata[field] = value;
+  }
+  for (const [field, limit] of Object.entries(SYNTHETIC_SURFACE_TRIAGE_ARRAY_LIMITS)) {
+    const value = cappedSyntheticArray(source[field], limit);
+    if (value != null) metadata[field] = value;
+  }
   return {
     node_id: syntheticSurfaceNodeId(waveNumber, surfaceId),
     kind: "surface",
@@ -138,9 +201,7 @@ function buildSyntheticSurfaceNode({ surfaceObj, surfaceId, waveNumber }) {
     // without reaching into the assignment surface; matches the X.5
     // contract that node.surface_metadata may live alongside surface_refs.
     surface_metadata: {
-      [surfaceId]: {
-        surface_type: surfaceObj && typeof surfaceObj === "object" ? surfaceObj.surface_type : null,
-      },
+      [surfaceId]: metadata,
     },
   };
 }
