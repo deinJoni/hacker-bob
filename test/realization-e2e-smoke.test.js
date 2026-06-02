@@ -274,6 +274,9 @@ function driveRealizationFlow(domain) {
         severity: findingId === findingIds[0] ? "high" : "medium",
         reportable: true,
         reasoning: "Fresh replay confirmed the finding against the current target state.",
+        // Y.1 B1 lift — repro_steps + evidence_refs are inputSchema.required.
+        repro_steps: ["Smoke replay step 1 confirmed the finding."],
+        evidence_refs: [`frontier_event:${findingId}`],
       })),
     });
   }

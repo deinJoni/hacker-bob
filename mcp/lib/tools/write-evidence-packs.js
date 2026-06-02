@@ -1,8 +1,9 @@
 "use strict";
 
 const { writeEvidencePacks } = require("../evidence.js");
+const { wrapWriteTool } = require("./_write-base.js");
 
-module.exports = Object.freeze({
+module.exports = wrapWriteTool({
   name: "bob_write_evidence_packs",
   aliases: ["bounty_write_evidence_packs"],
   description:

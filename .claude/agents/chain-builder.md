@@ -1,7 +1,7 @@
 ---
 name: chain-builder
 description: Analyzes proven findings for credible impact chains that elevate severity
-tools: Write, mcp__hacker-bob__bob_http_scan, mcp__hacker-bob__bob_read_http_audit, mcp__hacker-bob__bob_read_surface_routes, mcp__hacker-bob__bob_read_candidate_claims, mcp__hacker-bob__bob_write_chain_attempt, mcp__hacker-bob__bob_read_chain_attempts, mcp__hacker-bob__bob_read_wave_handoffs, mcp__hacker-bob__bob_list_auth_profiles, mcp__hacker-bob__bob_log_capability_friction, mcp__hacker-bob__bob_log_protocol_drift
+tools: mcp__hacker-bob__bob_http_scan, mcp__hacker-bob__bob_read_http_audit, mcp__hacker-bob__bob_read_surface_routes, mcp__hacker-bob__bob_read_candidate_claims, mcp__hacker-bob__bob_write_chain_attempt, mcp__hacker-bob__bob_read_chain_attempts, mcp__hacker-bob__bob_read_wave_handoffs, mcp__hacker-bob__bob_list_auth_profiles, mcp__hacker-bob__bob_write_chain_rollup, mcp__hacker-bob__bob_log_capability_friction, mcp__hacker-bob__bob_log_protocol_drift
 model: opus
 color: purple
 mcpServers:
@@ -76,6 +76,6 @@ Outcome convention:
 
 For SC pivots specifically, the `proof_reference` field on the chain attempt MUST cite the verifier's `match_test` (per `sc_evidence.match_test`) or the family fetch read (e.g., `bob_evm_role_table` showing the granted role, `bob_sui_fetch_object` showing the transferred owner) — not a free-text claim. Cross-family chains record one chain attempt per pivot edge, with the SC-side proof anchored on `sc_evidence` and the web-side proof anchored on a `bob_http_scan` request ID from `bob_read_http_audit`.
 
-If there is no credible chain, write exactly `No credible chains.` to `~/hacker-bob-sessions/[domain]/chains.md` AND record `bob_write_chain_attempt` with `outcome: not_applicable` so the orchestrator's gate clears. Skipping the tool call leaves the session stuck in CHAIN.
+`chains.md` is MCP-rendered by `bob_write_chain_rollup` (Y-P13 / Y-D15c) — you do NOT call the Write tool on `~/hacker-bob-sessions/[domain]/chains.md`. For each credible chain, emit a structured rollup in your handoff (chain_id, narrative ≤4096ch, finding_refs as `frontier_event:<id>` or `verification_round:<id>`, confidence) so the orchestrator can call `bob_write_chain_rollup` on receipt. If there is no credible chain, record `bob_write_chain_attempt` with `outcome: not_applicable` so the orchestrator's gate clears AND emit a structured rollup of "No credible chains." with empty finding_refs and confidence: "low". Skipping the chain-attempt tool call leaves the session stuck in CHAIN.
 
 After your final `bob_write_chain_attempt`, read back `bob_read_chain_attempts` to confirm the durable summary. Your final response must be compact summary-only, must not include raw requests, raw responses, cookies, tokens, authorization headers, or other secrets, and must end with `BOB_CHAIN_DONE`.

@@ -409,6 +409,9 @@ function driveReportSnapshotChain(domain, {
         severity: "high",
         reportable: true,
         reasoning: "Cross-stack relational evidence confirmed; replay holds in fresh window.",
+        // Y.1 B1 lift — repro_steps + evidence_refs are inputSchema.required.
+        repro_steps: ["Replay step 1 confirmed cross-stack evidence."],
+        evidence_refs: [`frontier_event:${findingId}`],
       })),
     });
   }

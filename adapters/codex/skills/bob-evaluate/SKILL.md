@@ -257,7 +257,7 @@ Read `bob_read_grade_verdict.data`. On `SUBMIT` or `SKIP`, advance with `bob_adv
 **Exit conditions.** Verdict is SUBMIT or SKIP. Advance to `REPORT`.
 
 ## STATE: REPORT
-**Entry conditions.** Final `GradeVerdict` is SUBMIT or SKIP; frozen claim batch, verification snapshot, evidence pack, and grade verdict are all hash-resolvable. **Lenses likely requested:** `evidence_capture` (post-report amplification); the report itself is a snapshot, not a lens. **MCP tools:** `bob_read_session_summary`, `bob_finalize_report` (where available; legacy alias `bounty_report_written`), `bob_advance_session` (target `OPEN_FRONTIER`).
+**Entry conditions.** Final `GradeVerdict` is SUBMIT or SKIP; frozen claim batch, verification snapshot, evidence pack, and grade verdict are all hash-resolvable. **Lenses likely requested:** `evidence_capture` (post-report amplification); the report itself is a snapshot, not a lens. **MCP tools:** `bob_read_session_summary`, `bob_compose_report` (renders report.md server-side from structured sections — Y-D15b / Y-P13), `bob_finalize_report` (binds the 5-hash ReportSnapshot row; legacy alias `bounty_report_written`), `bob_write_chain_rollup` (renders chains.md server-side when chain-builder returns a structured rollup — Y-D15c), `bob_amend_report` (operator amendment path — Y-P13a), `bob_advance_session` (target `OPEN_FRONTIER`). `report.md` and `chains.md` are MCP-owned audit-graded paths (see `mcp/lib/paths.js` AUDIT_GRADED_PATHS); no subagent calls Write on them.
 
 Spawn:
 ```text
@@ -1571,7 +1571,7 @@ Outcome convention:
 
 For SC pivots specifically, the `proof_reference` field on the chain attempt MUST cite the verifier's `match_test` (per `sc_evidence.match_test`) or the family fetch read (e.g., `bob_evm_role_table` showing the granted role, `bob_sui_fetch_object` showing the transferred owner) — not a free-text claim. Cross-family chains record one chain attempt per pivot edge, with the SC-side proof anchored on `sc_evidence` and the web-side proof anchored on a `bob_http_scan` request ID from `bob_read_http_audit`.
 
-If there is no credible chain, write exactly `No credible chains.` to `~/hacker-bob-sessions/[domain]/chains.md` AND record `bob_write_chain_attempt` with `outcome: not_applicable` so the orchestrator's gate clears. Skipping the tool call leaves the session stuck in CHAIN.
+`chains.md` is MCP-rendered by `bob_write_chain_rollup` (Y-P13 / Y-D15c) — you do NOT call the Write tool on `~/hacker-bob-sessions/[domain]/chains.md`. For each credible chain, emit a structured rollup in your handoff (chain_id, narrative ≤4096ch, finding_refs as `frontier_event:<id>` or `verification_round:<id>`, confidence) so the orchestrator can call `bob_write_chain_rollup` on receipt. If there is no credible chain, record `bob_write_chain_attempt` with `outcome: not_applicable` so the orchestrator's gate clears AND emit a structured rollup of "No credible chains." with empty finding_refs and confidence: "low". Skipping the chain-attempt tool call leaves the session stuck in CHAIN.
 
 After your final `bob_write_chain_attempt`, read back `bob_read_chain_attempts` to confirm the durable summary. Your final response must be compact summary-only, must not include raw requests, raw responses, cookies, tokens, authorization headers, or other secrets, and must end with `BOB_CHAIN_DONE`.
 END chain CONTRACT
@@ -2159,7 +2159,7 @@ END grader CONTRACT
 
 ### reporter
 BEGIN reporter CONTRACT
-You are the report writer. Read findings through `bob_read_candidate_claims`, read final verification through `bob_read_verification_round(round="final")`, and read grading through `bob_read_grade_verdict` (verdict only — final-verifier severity is authoritative; the grader read here is for SUBMIT/HOLD/SKIP, not for severity). Read `~/hacker-bob-sessions/[domain]/chains.md` via the Read tool to surface validated chains.
+You are the report writer. Read findings through `bob_read_candidate_claims`, read final verification through `bob_read_verification_round(round="final")`, and read grading through `bob_read_grade_verdict` (verdict only — final-verifier severity is authoritative; the grader read here is for SUBMIT/HOLD/SKIP, not for severity). Read `~/hacker-bob-sessions/[domain]/chains.md` via the Read tool to surface validated chains (chains.md is MCP-rendered by `bob_write_chain_rollup`; do NOT Write it).
 
 The orchestrator provides the domain in the spawn prompt.
 
@@ -2167,13 +2167,13 @@ REPORTABILITY GATE (hard rule, applied before rendering anything):
 - A finding is rendered ONLY if its row in `bob_read_verification_round(round="final")` has `reportable: true`.
 - Findings with `reportable: false` (denied, downgraded out, non-reportable per balanced) are NEVER rendered, regardless of how attractive their `response_evidence` looks. Skip silently.
 
-If `bob_read_grade_verdict` returns `SKIP` or final verification has no reportable findings, still write `report.md` as a no-findings closeout. Include a concise summary of scope covered, verification result, terminal chain attempts, and blockers such as geofencing or unreachable hosts. Do not invent vulnerability sections.
+If `bob_read_grade_verdict` returns `SKIP` or final verification has no reportable findings, still compose `report.md` as a no-findings closeout. Include a concise summary of scope covered, verification result, terminal chain attempts, and blockers such as geofencing or unreachable hosts. Do not invent vulnerability sections.
 
 For closeouts, distinguish "exhausted" from "blocked by missing prereqs". Read `bob_read_session_summary({ target_domain }).summary.blocked_prereqs` — if `total_blocked_surfaces > 0`, write a "Blocked by missing prerequisites" section listing each `by_kind[]` entry with its kind, identifier_hint (when set), surface_count, surface_ids, and example_reason. The operator's next action is registering the missing material and calling `bob_clear_terminal_block` per surface. Without this section, a no-findings report reads as "exhausted" when reality is "blocked, classified, requires operator action".
 
-After writing the canonical session report at `~/hacker-bob-sessions/[domain]/report.md`, call `bob_finalize_report({ target_domain })` so the runtime appends a hash-bound ReportSnapshot row binding the claim-freeze, final-verification, evidence-pack, grade-verdict, and report.md content hashes; the legacy `bounty_report_written` shim still works during the deprecation window but `bob_finalize_report` is the canonical entry. If you also write per-finding files under a target workspace, still write the consolidated canonical `report.md` first; a pointer to those files is acceptable only as extra content inside the canonical report.
+`report.md` is MCP-rendered — you do NOT call the Write tool on `~/hacker-bob-sessions/[domain]/report.md`. Compose by calling `bob_compose_report({ target_domain, sections, severity_summary, repro_steps_by_finding })` with closed-shape sections (Y-P13 / Y-D15b). MCP renders the markdown server-side, prepends the operator-edit-warning banner (Y-P13a), enforces provenance on `bob_verified` sections (Y-P13c — each `bob_verified` section's `evidence_refs[]` must include at least one `verification_round:<result_id>` whose `reportable=true`), and caps prose per section at 4096 chars (Y-P13b). After composing, call `bob_finalize_report({ target_domain })` so the runtime appends a hash-bound ReportSnapshot row binding the claim-freeze, final-verification, evidence-pack, grade-verdict, and report.md content hashes; the legacy `bounty_report_written` shim still works during the deprecation window but `bob_compose_report` + `bob_finalize_report` is the canonical entry. Operators who need to amend an already-rendered section call `bob_amend_report({ target_domain, section_id, new_prose, rationale })` — hand-edits to report.md are not preserved across renders.
 
-Write `~/hacker-bob-sessions/[domain]/report.md` with:
+Compose `~/hacker-bob-sessions/[domain]/report.md` via `bob_compose_report` with these sections (heading / prose pairs feed `sections[].heading` + `sections[].prose`; `provenance: "bob_verified"` MUST be backed by a verification_round ref with reportable=true — otherwise use `external_research` or `operator_osint`):
 
 1. Executive summary
    - Count by severity from final verification (reportable: true only).
@@ -2264,5 +2264,5 @@ Rules:
 - Omit methodology sections — triagers don't need to know how you found it.
 - Use concrete language: "An attacker can [action] by [method]". Never use "could potentially", "may allow", or "might be possible".
 - For SC findings, never claim a verification reference that the final-verifier did not provide. The default per family is `block reference unavailable` (EVM, Substrate, CosmWasm), `slot reference unavailable` (SVM), `version reference unavailable` (Aptos), or `checkpoint reference unavailable` (Sui).
-- After writing `report.md`, final response must be compact summary-only, must not include full report text, raw requests, raw responses, cookies, tokens, authorization headers, or other secrets, and must end with `BOB_REPORT_DONE`.
+- After calling `bob_compose_report` and `bob_finalize_report`, final response must be compact summary-only, must not include full report text, raw requests, raw responses, cookies, tokens, authorization headers, or other secrets, and must end with `BOB_REPORT_DONE`.
 END reporter CONTRACT

@@ -403,6 +403,10 @@ const EXPECTED_TOOL_NAMES = [
   "bob_clear_terminal_block",
   "bounty_report_written",
   "bob_finalize_report",
+  "bob_compose_report",
+  "bob_amend_report",
+  "bob_write_chain_rollup",
+  "bob_set_friction_scanners",
   "bob_read_assignment_brief",
   "bob_read_capability_playbook",
   "bob_get_context_budget",
@@ -1836,6 +1840,10 @@ test("MCP tool registry exposes capability metadata for metric and eval tools", 
     // entry. All three share the Y_self_reporting capability_id so operators
     // can grep telemetry by source.
     Y_self_reporting: [
+      "bob_compose_report",
+      "bob_amend_report",
+      "bob_write_chain_rollup",
+      "bob_set_friction_scanners",
       "bob_log_capability_friction",
       "bob_log_protocol_drift",
       "bob_emit_runtime_drift",

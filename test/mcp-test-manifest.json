@@ -78,5 +78,11 @@
   "test/prepare-finalize-node.test.js",
   "test/capability-observation-shape.test.js",
   "test/log-capability-friction.test.js",
-  "test/emit-runtime-drift.test.js"
+  "test/emit-runtime-drift.test.js",
+  "test/write-base.test.js",
+  "test/audit-graded-paths.test.js",
+  "test/compose-report.test.js",
+  "test/amend-report.test.js",
+  "test/write-chain-rollup.test.js",
+  "test/tool-error-remediation.test.js"
 ]

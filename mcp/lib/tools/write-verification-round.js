@@ -1,8 +1,9 @@
 "use strict";
 
 const { writeVerificationRound } = require("../verification-round-store.js");
+const { wrapWriteTool } = require("./_write-base.js");
 
-module.exports = Object.freeze({
+module.exports = wrapWriteTool({
   name: "bob_write_verification_round",
   aliases: ["bounty_write_verification_round"],
   description:
@@ -186,3 +187,4 @@ module.exports = Object.freeze({
   sensitive_output: false,
   session_artifacts_written: ["brutalist.json","balanced.json","verified-final.json","verification-manifest.json"],
 });
+

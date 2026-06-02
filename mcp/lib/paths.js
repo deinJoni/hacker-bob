@@ -292,6 +292,19 @@ function reportMarkdownPath(domain) {
   return path.join(sessionDir(domain), "report.md");
 }
 
+// Y.2.5 Stage c — chains.md is now MCP-rendered alongside chain-attempts.jsonl.
+// Authored by `bob_write_chain_rollup`; agents no longer Write here directly.
+function chainsMarkdownPath(domain) {
+  return path.join(sessionDir(domain), "chains.md");
+}
+
+// Y.2.5 Stage c — append-only operator-amendment ledger backing
+// `bob_amend_report` (Y-P13a). Each line: {section_id, new_prose, rationale,
+// timestamp, operator_attestation?}.
+function reportAmendmentsJsonlPath(domain) {
+  return path.join(sessionDir(domain), "report-amendments.jsonl");
+}
+
 // Cycle O.2: repo-inventory.json is materialized by bob_repo_inventory.
 // Lives alongside attack_surface.json so the same target_domain key
 // addresses both web and OSS surface-axis projections.
@@ -329,7 +342,116 @@ function repoChecksJsonlPath(domain) {
   return path.join(sessionDir(domain), "repo-checks.jsonl");
 }
 
+// Y.2.5 Stage b — Y-P13 audit-graded path registry.
+//
+// An *audit-graded session path* is one whose content is hash-bound, immutable,
+// or chain-anchored. Agents NEVER call the Write tool on these paths. MCP
+// renders them server-side via `bob_compose_report` (report.md),
+// `bob_write_chain_rollup` (chains.md), `bob_write_evidence_packs`
+// (evidence-packs.md), `bob_write_grade_verdict` (grade.md),
+// `bob_write_verification_round` (verification-round mirrors), and
+// `bob_write_wave_handoff` (wave-handoff mirrors). Y.9 subtest D-2 runs a
+// mechanical negative-grep that fails CI on any agent Write whose absolute
+// path matches `isAuditGradedPath(file_path, target_domain)`.
+//
+// Scratch artifacts (subdomains.txt, attack_surface.json, family_seeds.txt,
+// surface-discovery-tools.txt, plus the entire static-imports/ tree) are
+// explicitly NOT audit-graded and remain agent-writable. The positive-list
+// model means: every new hash-bound or chain-anchored artifact MUST be added
+// here to inherit Y-P13 enforcement. Y-R22 acknowledgement: this scope is
+// intentionally narrower than the conceptual class; expansion lives in future
+// Plane Z if scratch ever becomes audit-graded.
+//
+// Each entry is either a fixed basename (matched against `path.basename`) or a
+// directory prefix (matched against relative path under sessionDir). The
+// renderer-bound prefixes cover:
+//   * verification-attempts/<file>  — round JSON + markdown mirrors
+//   * verification-replay-leases/   — replay lease snapshots
+//   * verification-input-snapshot   — frozen verifier input
+//   * Plus any future hash-bound artifact added to AUDIT_GRADED_PATHS.
+const AUDIT_GRADED_BASENAMES = Object.freeze([
+  "report.md",
+  "chains.md",
+  "evidence-packs.md",
+  "evidence-packs.json",
+  "grade.md",
+  "grade.json",
+  "claim-freeze.json",
+  "verification-manifest.json",
+  "verification-input-snapshot.json",
+  "verification-adjudication.json",
+  "report-snapshots.jsonl",
+  "report-amendments.jsonl",
+  "chain-attempts.jsonl",
+  // Verification-round mirrors live at the session root with fixed names.
+  "brutalist.json",
+  "brutalist.md",
+  "balanced.json",
+  "balanced.md",
+  "verified-final.json",
+  "verified-final.md",
+]);
+
+const AUDIT_GRADED_RELATIVE_DIRS = Object.freeze([
+  "verification-attempts",
+  "verification-replay-leases",
+  "wave-handoffs",
+  "claim-freeze",
+]);
+
+// Wave-handoff per-agent files live at the session root and follow the
+// pattern `handoff-w<N>-a<N>.json` / `.md`. Match the prefix mechanically so
+// future renaming (e.g., wave-handoffs/ subdirectory) inherits the registry
+// automatically.
+const AUDIT_GRADED_FILENAME_PATTERNS = Object.freeze([
+  /^handoff-w[1-9][0-9]*-a[1-9][0-9]*\.json$/,
+  /^handoff-w[1-9][0-9]*-a[1-9][0-9]*\.md$/,
+]);
+
+const AUDIT_GRADED_PATHS = Object.freeze({
+  basenames: AUDIT_GRADED_BASENAMES,
+  relative_dirs: AUDIT_GRADED_RELATIVE_DIRS,
+  filename_patterns: AUDIT_GRADED_FILENAME_PATTERNS,
+});
+
+// Predicate consumed by:
+//   * `_write-base.js` for defense-in-depth (future use)
+//   * `scripts/check-single-spawner-topology` Y-P13d frontmatter guard (Y.8)
+//   * Y.9 subtest D-2 mechanical negative-grep
+//
+// Returns true if `absolutePath` lives under the session root for
+// `target_domain` AND matches a known audit-graded basename, directory prefix,
+// or filename pattern. Scratch paths return false. Non-session paths return
+// false (defensive — the predicate is session-scoped).
+function isAuditGradedPath(absolutePath, target_domain) {
+  if (typeof absolutePath !== "string" || !absolutePath) return false;
+  if (typeof target_domain !== "string" || !target_domain) return false;
+  let root;
+  try {
+    root = sessionDir(target_domain);
+  } catch {
+    return false;
+  }
+  const normalized = path.resolve(absolutePath);
+  const normalizedRoot = path.resolve(root);
+  if (!normalized.startsWith(`${normalizedRoot}${path.sep}`) && normalized !== normalizedRoot) {
+    return false;
+  }
+  const rel = path.relative(normalizedRoot, normalized);
+  if (!rel || rel.startsWith("..")) return false;
+  const basename = path.basename(normalized);
+  if (AUDIT_GRADED_BASENAMES.includes(basename)) return true;
+  for (const pattern of AUDIT_GRADED_FILENAME_PATTERNS) {
+    if (pattern.test(basename)) return true;
+  }
+  for (const prefix of AUDIT_GRADED_RELATIVE_DIRS) {
+    if (rel === prefix || rel.startsWith(`${prefix}${path.sep}`)) return true;
+  }
+  return false;
+}
+
 module.exports = {
+  AUDIT_GRADED_PATHS,
   TELEMETRY_DIR_NAME,
   TELEMETRY_TOOL_INVOCATIONS_FILE_NAME,
   assertSafeDomain,
@@ -337,6 +459,7 @@ module.exports = {
   attackSurfacePath,
   bobSpecPath,
   chainAttemptsJsonlPath,
+  chainsMarkdownPath,
   coverageJsonlPath,
   evidencePackPaths,
   gradeArtifactPaths,
@@ -373,7 +496,9 @@ module.exports = {
   docDeltaResultsPath,
   frontierEventsJsonlPath,
   invariantRunsJsonlPath,
+  isAuditGradedPath,
   legacySessionsRoot,
+  reportAmendmentsJsonlPath,
   reportSnapshotsJsonlPath,
   schedulerDecisionsJsonlPath,
   schemaContractsJsonlPath,

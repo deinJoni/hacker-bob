@@ -1,8 +1,9 @@
 "use strict";
 
 const { writeChainAttempt } = require("../chain-attempts.js");
+const { wrapWriteTool } = require("./_write-base.js");
 
-module.exports = Object.freeze({
+module.exports = wrapWriteTool({
   name: "bob_write_chain_attempt",
   aliases: ["bounty_write_chain_attempt"],
   description:

@@ -116,6 +116,11 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_advance_session: "initialized_session_mutation",
   bob_append_frontier_event: "initialized_session_mutation",
   bob_finalize_report: "initialized_session_mutation",
+  // Plane Y Cycle Y.2.5 — Y-D15b / Y-P13 MCP-rendered audit-graded artifacts.
+  bob_compose_report: "initialized_session_mutation",
+  bob_amend_report: "initialized_session_mutation",
+  bob_write_chain_rollup: "initialized_session_mutation",
+  bob_set_friction_scanners: "initialized_session_mutation",
   bob_materialize_frontier: "initialized_session_mutation",
   bob_materialize_task_graph: "initialized_session_mutation",
   bob_read_queue_policy: "initialized_session_read",

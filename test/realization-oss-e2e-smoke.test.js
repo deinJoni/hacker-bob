@@ -410,6 +410,9 @@ async function driveOssRealizationFlow({
         severity: "medium",
         reportable: true,
         reasoning: "OSS smoke replay confirmed the finding against the synthesized fixture.",
+        // Y.1 B1 lift — repro_steps + evidence_refs are inputSchema.required.
+        repro_steps: ["OSS smoke replay step 1 confirmed the finding."],
+        evidence_refs: [`frontier_event:${findingId}`],
       })),
     });
   }

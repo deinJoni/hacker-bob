@@ -258,7 +258,12 @@ const CLAUDE_ROLE_SPECS = Object.freeze({
     model: "opus",
     color: "purple",
     mcp_server: true,
-    local_tools: Object.freeze(["Write"]),
+    // Y.2.5 Stage d (Y-P13 enforcement at source) — Write removed; chains.md
+    // is MCP-rendered via bob_write_chain_rollup. The agent returns the
+    // structured rollup in its handoff; the orchestrator calls
+    // bob_write_chain_rollup on receipt. Y.8 adds a CI guard that fails the
+    // build if Write/Edit reappears in this frontmatter.
+    local_tools: Object.freeze([]),
   }),
   "brutalist-verifier": Object.freeze({
     role_id: "brutalist-verifier",
@@ -336,9 +341,12 @@ const CLAUDE_ROLE_SPECS = Object.freeze({
     model: "sonnet",
     color: "green",
     mcp_server: true,
-    // Read is needed so the reporter can pick up validated chain narratives
-    // from chains.md (chain-builder writes prose; no MCP tool exposes it).
-    local_tools: Object.freeze(["Write", "Read"]),
+    // Y.2.5 Stage d (Y-P13 enforcement at source) — Write removed; report.md
+    // is MCP-rendered via bob_compose_report (with structured sections +
+    // bounded narrative caps + provenance enforcement). Read remains so the
+    // agent can ingest MCP-rendered chains.md when composing the report.
+    // Y.8 adds a CI guard that fails the build if Write/Edit reappears here.
+    local_tools: Object.freeze(["Read"]),
   }),
 });
 

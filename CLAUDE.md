@@ -43,6 +43,18 @@ Maintainer workflow:
 - Markdown mirrors are human/debug artifacts. Chain evidence is MCP-owned in
   `chain-attempts.jsonl`; `report.md` remains the final human-facing
   agent-written report.
+- Audit-graded session paths are MCP-rendered (Y-P13). `mcp/lib/paths.js`
+  exports `AUDIT_GRADED_PATHS` (positive list — `report.md`, `chains.md`,
+  `evidence-packs.md`, `grade.md`, verification-round mirrors, wave-handoff
+  mirrors, claim-freeze snapshots, and the hash-bound JSONL ledgers) and the
+  `isAuditGradedPath(absolutePath, target_domain)` predicate. Agents never
+  call the Write tool on these paths; structured composition flows through
+  `bob_compose_report` (Y-D15b), `bob_write_chain_rollup` (Y-D15c),
+  `bob_amend_report` (Y-P13a operator-amendment path), `bob_write_evidence_packs`,
+  `bob_write_grade_verdict`, `bob_write_verification_round`, and
+  `bob_write_wave_handoff`. Scratch artifacts (`subdomains.txt`,
+  `attack_surface.json`, `family_seeds.txt`, `surface-discovery-tools.txt`)
+  are explicitly NOT in `AUDIT_GRADED_PATHS` and remain agent-writable.
 - Evaluator briefs must stay bounded: array counts are capped, scalar strings are
   capped or omitted, and agents should use auth through `bob_list_auth_profiles`
   rather than reading secret files directly.

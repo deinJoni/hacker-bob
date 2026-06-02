@@ -34,7 +34,61 @@ const DEFAULT_QUEUE_POLICY = Object.freeze({
   deep_wave_max: 8,
   default_wave_task_lens: "surface_scout",
   default_wave_task_budget: { ...DEFAULT_WAVE_TASK_BUDGET },
+  // Y.2.5 (D16) — operator-extensible friction scanners. Default empty;
+  // bob_set_friction_scanners persists additions here. Default registry of
+  // closed-prefix scanners lives in `mcp/lib/friction-scanners.js` (Y.6) and
+  // is unioned with this list at scan time. Order-preserving.
+  friction_scanners: [],
 });
+
+const FRICTION_KIND_VALUES = Object.freeze(["tool_absent", "tool_inadequate"]);
+
+function normalizeFrictionScanner(value, fieldName) {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${fieldName} must be an object`);
+  }
+  const name = typeof value.name === "string" ? value.name.trim() : "";
+  if (!name) throw new Error(`${fieldName}.name must be a non-empty string`);
+  if (name.length > 64) throw new Error(`${fieldName}.name must be at most 64 characters`);
+  if (!/^[a-z][a-z0-9_]*$/.test(name)) {
+    throw new Error(`${fieldName}.name must match ^[a-z][a-z0-9_]*$`);
+  }
+  const pattern = typeof value.pattern === "string" ? value.pattern : "";
+  if (!pattern) throw new Error(`${fieldName}.pattern must be a non-empty string`);
+  if (pattern.length > 256) throw new Error(`${fieldName}.pattern must be at most 256 characters`);
+  try {
+    // Validate the regex compiles. Stored as string so it survives JSON
+    // round-trips; consumed via `new RegExp(stored)`.
+    new RegExp(pattern);
+  } catch (error) {
+    throw new Error(`${fieldName}.pattern must be a valid regex: ${error.message || String(error)}`);
+  }
+  const fallbackUsed = typeof value.fallback_used === "string" ? value.fallback_used.trim() : "";
+  if (!fallbackUsed) throw new Error(`${fieldName}.fallback_used must be a non-empty string`);
+  if (fallbackUsed.length > 64) throw new Error(`${fieldName}.fallback_used must be at most 64 characters`);
+  const frictionKind = typeof value.friction_kind === "string" ? value.friction_kind : "tool_absent";
+  if (!FRICTION_KIND_VALUES.includes(frictionKind)) {
+    throw new Error(`${fieldName}.friction_kind must be one of ${FRICTION_KIND_VALUES.join(", ")}`);
+  }
+  return Object.freeze({ name, pattern, fallback_used: fallbackUsed, friction_kind: frictionKind });
+}
+
+function normalizeFrictionScanners(value, fieldName = "friction_scanners") {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw new Error(`${fieldName} must be an array`);
+  if (value.length > 32) throw new Error(`${fieldName} must contain at most 32 entries`);
+  const seen = new Set();
+  const out = [];
+  for (let i = 0; i < value.length; i += 1) {
+    const scanner = normalizeFrictionScanner(value[i], `${fieldName}[${i}]`);
+    if (seen.has(scanner.name)) {
+      throw new Error(`${fieldName} contains duplicate scanner name ${scanner.name}`);
+    }
+    seen.add(scanner.name);
+    out.push(scanner);
+  }
+  return out;
+}
 
 function normalizeTaskPriority(value, fieldName = "priority") {
   return assertEnumValue(value == null ? "medium" : value, TASK_PRIORITY_VALUES, fieldName);
@@ -96,6 +150,7 @@ function normalizeQueuePolicy(input = {}) {
       ? DEFAULT_QUEUE_POLICY.default_wave_task_lens
       : normalizeTaskLens(input.default_wave_task_lens, "default_wave_task_lens"),
     default_wave_task_budget: normalizeWaveTaskBudget(input.default_wave_task_budget),
+    friction_scanners: normalizeFrictionScanners(input.friction_scanners),
   };
   policy.priority_order = Array.from(new Set(policy.priority_order));
   if (policy.standard_wave_max < policy.standard_wave_target) {
@@ -153,10 +208,13 @@ function writeQueuePolicy(domain, policy) {
 module.exports = {
   DEFAULT_QUEUE_POLICY,
   DEFAULT_WAVE_TASK_BUDGET,
+  FRICTION_KIND_VALUES,
   QUEUE_STATUS_VALUES,
   TASK_PRIORITY_VALUES,
   compareQueuedTasks,
   loadQueuePolicy,
+  normalizeFrictionScanner,
+  normalizeFrictionScanners,
   normalizeQueuePolicy,
   normalizeQueueStatus,
   normalizeTaskPriority,

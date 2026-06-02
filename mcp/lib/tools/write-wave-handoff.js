@@ -8,8 +8,9 @@ const {
   BYPASS_ATTEMPT_SUMMARY_MIN_CHARS,
   WAVE_HANDOFF_CONTENT_MAX_CHARS,
 } = require("../wave-handoff-contracts.js");
+const { wrapWriteTool } = require("./_write-base.js");
 
-module.exports = Object.freeze({
+module.exports = wrapWriteTool({
   name: "bob_write_wave_handoff",
   aliases: ["bounty_write_wave_handoff"],
   description:

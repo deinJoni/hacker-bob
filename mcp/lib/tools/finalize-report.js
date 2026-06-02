@@ -22,6 +22,7 @@ const {
 const {
   safeGovernanceContextForDomain,
 } = require("../governance-context.js");
+const { wrapWriteTool } = require("./_write-base.js");
 
 function handler(args) {
   // Resolve the four upstream hashes + report content hash. Each missing
@@ -104,7 +105,7 @@ function handler(args) {
   });
 }
 
-module.exports = Object.freeze({
+module.exports = wrapWriteTool({
   name: "bob_finalize_report",
   description:
     "Finalize the canonical session report.md by appending a hash-bound " +

@@ -69,6 +69,7 @@ async function executeTool(name, args) {
       error.code && Object.values(ERROR_CODES).includes(error.code) ? error.code : ERROR_CODES.INVALID_ARGUMENTS,
       error.message || String(error),
       error.details,
+      typeof error.remediation === "string" ? { remediation: error.remediation } : undefined,
     ));
   }
 
@@ -80,7 +81,13 @@ async function executeTool(name, args) {
     }
     return finish(okEnvelope(name, data));
   } catch (error) {
-    return finish(errorEnvelope(name, classifyException(error), shadowSafeErrorMessage(error, authority), error.details));
+    return finish(errorEnvelope(
+      name,
+      classifyException(error),
+      shadowSafeErrorMessage(error, authority),
+      error.details,
+      typeof error.remediation === "string" ? { remediation: error.remediation } : undefined,
+    ));
   }
 }
 

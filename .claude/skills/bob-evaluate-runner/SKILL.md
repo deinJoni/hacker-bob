@@ -51,6 +51,10 @@ allowed-tools:
   - mcp__hacker-bob__bob_clear_operator_note
   - mcp__hacker-bob__bob_clear_terminal_block
   - mcp__hacker-bob__bounty_report_written
+  - mcp__hacker-bob__bob_compose_report
+  - mcp__hacker-bob__bob_amend_report
+  - mcp__hacker-bob__bob_write_chain_rollup
+  - mcp__hacker-bob__bob_set_friction_scanners
   - mcp__hacker-bob__bob_read_capability_playbook
   - mcp__hacker-bob__bob_get_context_budget
   - mcp__hacker-bob__bob_select_technique_packs
@@ -337,7 +341,7 @@ Read `bob_read_grade_verdict.data`. On `SUBMIT` or `SKIP`, advance with `bob_adv
 **Exit conditions.** Verdict is SUBMIT or SKIP. Advance to `REPORT`.
 
 ## STATE: REPORT
-**Entry conditions.** Final `GradeVerdict` is SUBMIT or SKIP; frozen claim batch, verification snapshot, evidence pack, and grade verdict are all hash-resolvable. **Lenses likely requested:** `evidence_capture` (post-report amplification); the report itself is a snapshot, not a lens. **MCP tools:** `bob_read_session_summary`, `bob_finalize_report` (where available; legacy alias `bounty_report_written`), `bob_advance_session` (target `OPEN_FRONTIER`).
+**Entry conditions.** Final `GradeVerdict` is SUBMIT or SKIP; frozen claim batch, verification snapshot, evidence pack, and grade verdict are all hash-resolvable. **Lenses likely requested:** `evidence_capture` (post-report amplification); the report itself is a snapshot, not a lens. **MCP tools:** `bob_read_session_summary`, `bob_compose_report` (renders report.md server-side from structured sections — Y-D15b / Y-P13), `bob_finalize_report` (binds the 5-hash ReportSnapshot row; legacy alias `bounty_report_written`), `bob_write_chain_rollup` (renders chains.md server-side when chain-builder returns a structured rollup — Y-D15c), `bob_amend_report` (operator amendment path — Y-P13a), `bob_advance_session` (target `OPEN_FRONTIER`). `report.md` and `chains.md` are MCP-owned audit-graded paths (see `mcp/lib/paths.js` AUDIT_GRADED_PATHS); no subagent calls Write on them.
 
 Spawn:
 ```
