@@ -88,5 +88,8 @@
   "test/plane-y-cycle-0-hotfix.test.js",
   "test/friction-prompt-fragments.test.js",
   "test/write-chain-rollup-evidence-refs-validator.test.js",
-  "test/write-verification-round-sha256.test.js"
+  "test/write-verification-round-sha256.test.js",
+  "test/derive-pack-with-friction.test.js",
+  "test/derive-pack-with-target-class.test.js",
+  "test/derivation-purity.test.js"
 ]

@@ -43,6 +43,12 @@ const {
 const {
   TASK_GRAPH_NODE_ID_PREFIX,
 } = require("./task-graph-events.js");
+const {
+  deriveAuxiliaryToolsForTargetClass,
+} = require("./target-class-pack-derivation.js");
+const {
+  assertTargetClass,
+} = require("./target-classes.js");
 // tool-registry.js eagerly loads every tool module via tools/index.js;
 // tools that themselves require capability-pack-derivation (e.g. X.8's
 // prepare-node) create a module-load cycle when this file requires
@@ -94,6 +100,13 @@ const EVALUATOR_ROLE_BUNDLES_BY_CAPABILITY_PACK = Object.freeze({
 // only pack whose `allowed_tools` covers the cross-cutting Bob tools (read
 // session state, read coverage, etc) that every evaluator needs.
 const DEFAULT_CAPABILITY_PACK_ID = "web";
+
+// Plane Y Cycle Y.4 — `friction_history` bounded input (Y-P4 + Y-P6).
+// `derivePackForNode` accepts at most this many friction records; the
+// caller-side selector (`friction-selection.js`) caps the slice it threads
+// in. Mirroring the value here lets the derivation function reject a
+// caller that ignored the contract.
+const FRICTION_HISTORY_HARD_CAP = 32;
 
 // ─── Internal helpers ────────────────────────────────────────────────────
 
@@ -427,7 +440,7 @@ function deriveHypothesisPack(node, graph_context, contract) {
 
 // ─── Top-level derivePackForNode ─────────────────────────────────────────
 
-function derivePackForNode(node, graph_context, observation_history, contract) {
+function derivePackForNode(node, graph_context, observation_history, contract, options) {
   if (!isPlainObject(node)) {
     throw new Error("derivePackForNode: node must be an object");
   }
@@ -449,6 +462,26 @@ function derivePackForNode(node, graph_context, observation_history, contract) {
     : { adjacent_nodes: [], incident_edges: [], surface_metadata_by_id: {} };
   const history = Array.isArray(observation_history) ? observation_history : [];
   const normalizedContract = isPlainObject(contract) ? contract : null;
+
+  // Plane Y Cycle Y.4 — optional bounded inputs (Y-P4 + Y-P6 + O5).
+  //
+  // `friction_history` is the caller-side selector output (see
+  // `friction-selection.js#selectRelevantFrictions`). We accept either
+  // `options.friction_history` (preferred) or fall back to no history.
+  // Hard-cap at FRICTION_HISTORY_HARD_CAP so a buggy caller cannot blow
+  // the Y-P4 bound.
+  const opts = isPlainObject(options) ? options : {};
+  let frictionHistory = Array.isArray(opts.friction_history) ? opts.friction_history : [];
+  if (frictionHistory.length > FRICTION_HISTORY_HARD_CAP) {
+    frictionHistory = frictionHistory.slice(0, FRICTION_HISTORY_HARD_CAP);
+  }
+  // `target_class` is a closed enum (Y.4 O5). When supplied it MUST satisfy
+  // assertTargetClass; an unknown value throws synchronously so a stray
+  // free-form string from queue-policy cannot smuggle in a side-channel.
+  let targetClass = null;
+  if (opts.target_class !== undefined && opts.target_class !== null) {
+    targetClass = assertTargetClass(opts.target_class);
+  }
 
   let perKind;
   if (kind === "surface") {
@@ -514,15 +547,47 @@ function derivePackForNode(node, graph_context, observation_history, contract) {
     ...observationRefs,
   ]).slice(0, RECOMMENDED_READS_HARD_CAP);
 
+  // Plane Y Cycle Y.4 — UNION friction-wanted tools + target_class auxiliaries
+  // into `allowed_tools_for_node[]` (Y-P6 + O5). Both sources are caller-
+  // bounded already; this block only de-dupes and stable-sorts the result.
+  //
+  // (1) `friction_history[*].wanted_tool` — the tool the agent declared it
+  //     needed. Y-P6 widens the Contract via this set so the next dispatch
+  //     of the same surface lands with the tool present.
+  // (2) `deriveAuxiliaryToolsForTargetClass(target_class)` — per-target-class
+  //     auxiliary tools (e.g., phishing kit triage surfacing OSINT + 3
+  //     browser tools).
+  //
+  // Both unions defend against pack-bypass: the Y.5 scheduler MUST emit
+  // the underlying `wanted_tool` strings through the closed TOOL_REGISTRY,
+  // so a friction record can never smuggle a non-registered tool name.
+  const frictionWantedTools = [];
+  for (const record of frictionHistory) {
+    if (!isPlainObject(record)) continue;
+    if (typeof record.wanted_tool === "string" && record.wanted_tool.length > 0) {
+      frictionWantedTools.push(record.wanted_tool);
+    }
+  }
+  const targetClassAuxTools = targetClass
+    ? deriveAuxiliaryToolsForTargetClass(targetClass).slice()
+    : [];
+  const unionedAllowedTools = dedupeSorted([
+    ...perKind.allowed_tools,
+    ...frictionWantedTools,
+    ...targetClassAuxTools,
+  ]);
+
   return Object.freeze({
     technique_packs: Object.freeze(techniquePacks),
     cli_tool_packs: Object.freeze([]),
-    allowed_tools_for_node: Object.freeze(perKind.allowed_tools.slice()),
+    allowed_tools_for_node: Object.freeze(unionedAllowedTools),
     recommended_reads_for_node: Object.freeze(recommendedReads),
     brief_emphasis: Object.freeze({
       ...perKind.brief_emphasis,
       capability_pack_ids: perKind.capability_pack_ids.slice(),
       technique_pack_ids: Array.from(techniquePackIds).sort(),
+      target_class: targetClass,
+      friction_history_count: frictionHistory.length,
     }),
   });
 }
@@ -598,6 +663,7 @@ function derivePackForNode(node, graph_context, observation_history, contract) {
 module.exports = {
   DEFAULT_CAPABILITY_PACK_ID,
   EVALUATOR_ROLE_BUNDLES_BY_CAPABILITY_PACK,
+  FRICTION_HISTORY_HARD_CAP,
   RECOMMENDED_READS_HARD_CAP,
   RECOMMENDED_READS_PER_SURFACE,
   WEB3_IDENTITY_HANDOFF_PACK_ID,
