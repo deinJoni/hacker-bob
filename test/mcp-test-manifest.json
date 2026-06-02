@@ -91,5 +91,9 @@
   "test/write-verification-round-sha256.test.js",
   "test/derive-pack-with-friction.test.js",
   "test/derive-pack-with-target-class.test.js",
-  "test/derivation-purity.test.js"
+  "test/derivation-purity.test.js",
+  "test/wave-brief-derivation.test.js",
+  "test/wave-brief-respects-scorer.test.js",
+  "test/wave-brief-target-class.test.js",
+  "test/wave-brief-trace-expectations.test.js"
 ]

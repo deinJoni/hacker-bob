@@ -64,6 +64,18 @@ const {
   normalizeAssignmentRouteMetadata,
 } = require("./capability-packs.js");
 const {
+  readFrontierEvents,
+} = require("./frontier-events.js");
+// Plane Y Cycle Y.5 — wave-side derivation helper (friction history + target
+// class threading per Y-P5 / Y-P6 / rev-4 O5) and the trace-reading
+// expectations composer (Y-P14d / W1).
+const {
+  buildWaveBriefDerivation,
+} = require("./wave-brief-derivation.js");
+const {
+  composeTraceReadingExpectationsForRole,
+} = require("./trace-reading-composer.js");
+const {
   EVALUATOR_KNOWLEDGE_MAX_CHARS,
   evaluatorKnowledgeCandidatePaths,
   resolveEvaluatorKnowledge,
@@ -633,6 +645,49 @@ function readAssignmentBrief(args) {
     routeMetadata,
   });
 
+  // Plane Y Cycle Y.5 — wave-scheduler derivation slice (Y-P5 / Y-P6 / O5).
+  // The synthetic Surface node + friction history + target_class flow purely
+  // through `derivePackForNode`; we attach the bounded summary at the brief
+  // top level so wave-dispatched evaluators see the per-spawn narrowing
+  // surface alongside the existing profile extras. Frontier-event /
+  // queue-policy reads happen here (caller side, Y-P4) and fail soft — a
+  // missing frontier-events log or queue-policy.json yields zero frictions
+  // and a null target_class rather than aborting brief composition.
+  let waveBriefDerivation = null;
+  try {
+    const frontierEvents = (() => {
+      try { return readFrontierEvents(domain); } catch { return []; }
+    })();
+    waveBriefDerivation = buildWaveBriefDerivation({
+      surfaceObj,
+      surfaceId: assignment.surface_id,
+      waveNumber,
+      frontierEvents,
+      // queuePolicy intentionally omitted — the derivation helper reads
+      // the raw policy JSON via `domain` so the rev-4 `target_class_default`
+      // field surfaces even before Y.6 lands the normalizer support.
+      queuePolicy: null,
+      domain,
+      explicitTargetClass: null,
+      // Y-P11 quarantine: voluntary tool_inadequate frictions are excluded
+      // by default; operator opts in via include_inadequacy on the
+      // selector. The wave brief honors the default (false) — operator
+      // override lands on the promotion-tool path (Y.6).
+      includeInadequacy: false,
+    });
+  } catch {
+    waveBriefDerivation = null;
+  }
+
+  // Plane Y Cycle Y.5 (W1 — Y-P14d) — role-specific trace-reading
+  // expectations slice. The composer joins Y.2's
+  // FRICTION_PROMPT_FRAGMENTS to Y.6's ROLE_TRACE_EXPECTATIONS. When the
+  // Y.6 module is absent the composer returns null and we omit the slice
+  // entirely (drop-empty-keys discipline mirrors WEB_BRIEF_SLICE_REGISTRY).
+  const traceReadingExpectations = composeTraceReadingExpectationsForRole(
+    routeMetadata.evaluator_agent,
+  );
+
   return JSON.stringify({
     run_context: {
       target_domain: domain,
@@ -669,6 +724,16 @@ function readAssignmentBrief(args) {
     },
     coverage_summary: coverageSummary,
     ranking_summary: surfaceObj.ranking || null,
+    // Plane Y Cycle Y.5 — top-level slice carrying the wave-side
+    // derivation summary (friction-widened allowed tools, target_class
+    // auxiliaries, technique pack ids). Distinct from `technique_packs`
+    // inside profile extras because it reflects the Y.4 PURE
+    // derivation, not the technique-pack scorer narrative.
+    wave_brief_derivation: waveBriefDerivation,
+    // Plane Y Cycle Y.5 (W1) — role-trace expectations composed per
+    // Y-P14d. Null until Y.6 lands role-trace-expectations.js OR when
+    // the assignment's evaluator_agent has no mapped entry.
+    ...(traceReadingExpectations ? { trace_reading_expectations: traceReadingExpectations } : {}),
     ...profileExtras,
   }, null, 2);
 }
@@ -1165,4 +1230,7 @@ module.exports = {
   // Plane X cycle X.8 — TaskGraph node profile slice registry + renderer.
   NODE_BRIEF_SLICE_REGISTRY,
   renderNodeBriefExtras,
+  // Plane Y cycle Y.5 — re-export for tests.
+  buildWaveBriefDerivation,
+  composeTraceReadingExpectationsForRole,
 };
