@@ -1,5 +1,7 @@
 "use strict";
 
+// chain+evaluator-shared justified: chain-builder needs graph mutation/query authority via the chain bundle (rev 4.1 defect 3 absorption); single-spawner topology preserved per Y.9 chain-bundle audit
+//
 // Plane X Cycle X.4 — bob_attach_contract.
 //
 // Attaches a normalized Contract to a TaskGraph node and emits the
@@ -261,8 +263,13 @@ module.exports = Object.freeze({
   // X-D10: Contract attachment is allowed for orchestrator + evaluator +
   // operator. In v1 the operator bundle is realized as orchestrator (the
   // bundle wired to the operator-facing slash command), so the dedup'd
-  // pair is [orchestrator, evaluator-shared].
-  role_bundles: ["orchestrator", "evaluator-shared"],
+  // pair is [orchestrator, evaluator-shared]. Y.11 (rev 4.1 defect 3)
+  // extends with "chain" so chain-builder can attach Contracts to
+  // chain-proposed Hypothesis nodes via the graph apparatus. The chain
+  // bundle grants tool access, not dispatch authority — Y-P8
+  // single-spawner topology is preserved by the Y.9 chain-bundle audit +
+  // single-spawner check.
+  role_bundles: ["orchestrator", "evaluator-shared", "chain"],
   mutating: true,
   global_preapproval: false,
   network_access: false,

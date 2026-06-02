@@ -756,7 +756,14 @@ test("orchestrator skill stays bounded and reflects the lifecycle topology", () 
   // (bob_compose_report, bob_write_chain_rollup, bob_amend_report,
   // bob_write_wave_handoff) plus a blank-line separator. Cap bumped
   // 372 → 380.
-  assert.ok(lines <= 380, `bob-evaluate-runner skill is ${lines} lines (cap 380)`);
+  // Plane Y Cycle Y.11 (rev 4.1 Plane X hypergraph adoption) extended
+  // the OPEN_FRONTIER impact-correlation-drain block with one prose
+  // line routing the chain-builder through the graph apparatus
+  // (bob_propose_hypothesis / bob_propose_transition / bob_attach_contract
+  // / bob_append_chain_node / bob_query_chain_tree) and extended the
+  // REPORT block to name bob_query_chain_tree alongside the existing
+  // bob_write_chain_rollup. Cap bumped 380 → 382.
+  assert.ok(lines <= 382, `bob-evaluate-runner skill is ${lines} lines (cap 382)`);
   const skill = readFile(".claude/skills/bob-evaluate-runner/SKILL.md");
   assert.match(
     skill,

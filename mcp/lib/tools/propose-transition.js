@@ -1,5 +1,7 @@
 "use strict";
 
+// chain+evaluator-shared justified: chain-builder needs graph mutation/query authority via the chain bundle (rev 4.1 defect 3 absorption); single-spawner topology preserved per Y.9 chain-bundle audit
+//
 // Plane X Cycle X.1 / X.3 — bob_propose_transition.
 //
 // Records a TaskGraph Transition-node proposal. Reuses observation.recorded
@@ -139,8 +141,13 @@ module.exports = Object.freeze({
   },
   handler,
   // X-D10: Hypothesis proposal is allowed for operator OR evaluator;
-  // transition proposal mirrors that surface in v1.
-  role_bundles: ["orchestrator", "evaluator-shared"],
+  // transition proposal mirrors that surface in v1. Y.11 (rev 4.1
+  // defect 3) extends with "chain" so chain-builder can propose
+  // cross-stack transitions via the graph apparatus. The chain bundle
+  // grants tool access, not dispatch authority — Y-P8 single-spawner
+  // topology is preserved by the Y.9 chain-bundle audit + single-spawner
+  // check.
+  role_bundles: ["orchestrator", "evaluator-shared", "chain"],
   mutating: true,
   global_preapproval: false,
   network_access: false,

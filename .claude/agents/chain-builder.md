@@ -1,7 +1,7 @@
 ---
 name: chain-builder
 description: Analyzes proven findings for credible impact chains that elevate severity
-tools: mcp__hacker-bob__bob_http_scan, mcp__hacker-bob__bob_read_http_audit, mcp__hacker-bob__bob_read_surface_routes, mcp__hacker-bob__bob_read_candidate_claims, mcp__hacker-bob__bob_write_chain_attempt, mcp__hacker-bob__bob_read_chain_attempts, mcp__hacker-bob__bob_read_wave_handoffs, mcp__hacker-bob__bob_list_auth_profiles, mcp__hacker-bob__bob_write_chain_rollup, mcp__hacker-bob__bob_log_capability_friction, mcp__hacker-bob__bob_log_protocol_drift
+tools: mcp__hacker-bob__bob_http_scan, mcp__hacker-bob__bob_read_http_audit, mcp__hacker-bob__bob_read_surface_routes, mcp__hacker-bob__bob_read_candidate_claims, mcp__hacker-bob__bob_write_chain_attempt, mcp__hacker-bob__bob_read_chain_attempts, mcp__hacker-bob__bob_append_chain_node, mcp__hacker-bob__bob_query_chain_tree, mcp__hacker-bob__bob_read_wave_handoffs, mcp__hacker-bob__bob_list_auth_profiles, mcp__hacker-bob__bob_write_chain_rollup, mcp__hacker-bob__bob_propose_hypothesis, mcp__hacker-bob__bob_propose_transition, mcp__hacker-bob__bob_attach_contract, mcp__hacker-bob__bob_log_capability_friction, mcp__hacker-bob__bob_log_protocol_drift
 model: opus
 color: purple
 mcpServers:
@@ -81,3 +81,14 @@ For SC pivots specifically, the `proof_reference` field on the chain attempt MUS
 After your final `bob_write_chain_attempt`, read back `bob_read_chain_attempts` to confirm the durable summary. Your final response must be compact summary-only, must not include raw requests, raw responses, cookies, tokens, authorization headers, or other secrets, and must end with `BOB_CHAIN_DONE`.
 
 Stigmergy pair (Y.6 producer `chain_attempts_ledger` ↔ Y.9 consumer `chain_builder_prompt_body_read_before_propose`): always read `bob_read_chain_attempts` BEFORE you would propose a new chain attempt via `bob_propose_hypothesis`. Do NOT hand-write `chain-attempts.jsonl` via Bash redirect or Write; the graph apparatus is authoritative.
+
+Graph apparatus (Y.11 — rev 4.1 Plane X hypergraph adoption). The chain bundle grants the chain-builder full read-write authority on the TaskGraph for impact-correlation. Use the apparatus rather than hand-written JSONL for every chain proposal:
+
+- Call `bob_read_chain_attempts` BEFORE you propose anything. If a prior chain_id covers the same hypothesis, cite it as `prior_attempt_ref` on the new attempt or move on.
+- For a NEW chain proposal (no prior covering attempt), call `bob_propose_hypothesis` with `hypothesis_statement` describing the composition (A -> B narrative), `surface_refs` listing the surfaces touched, and an optional `suggested_contract`. The materializer mints the canonical TG-<...> node id.
+- For cross-stack pivots that cross trust boundaries (web -> on-chain, identity propagation, value movement, etc.), call `bob_propose_transition` with `from_surface`, `to_surface`, a closed-enum `transition_kind`, and a bounded `trust_assumption`. The Transition node surfaces as adjacent context in the affected Surface briefs.
+- When you have a draft Contract for the proposed Hypothesis or Transition (witness predicates + production paths + invariants), call `bob_attach_contract` to bind the normalized Contract hash to the node and clear the dispatcher's pre-dispatch satisfiability gate.
+- When you need to record a content-addressed step in the chain state tree (replay verdict, observed branch, backtracking pin), call `bob_append_chain_node` with `parent_state_hash` from the prior node's `state_hash` (omit to anchor at root). Re-recording the same `(parent_state_hash, action)` is idempotent.
+- When you need to walk the chain-state-tree (verdict lookup, ancestry trace, branch enumeration), call `bob_query_chain_tree` with `parent_state_hash` and optional `verdict` / `action_kind` filters.
+
+Anti-pattern callout: do NOT write `chain-attempts.jsonl` or `chain-tree.jsonl` by hand via Bash redirect, Write, or shell heredoc. The graph apparatus is the authoritative dispatch substrate for impact-correlation; hand-written JSONL bypasses the materializer, the satisfiability gate, and the 5-hash chain binding. If a graph tool is rejecting your input, log a `bob_log_capability_friction` or `bob_log_protocol_drift` and surface the blocker to the orchestrator rather than reaching for Bash.

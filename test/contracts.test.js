@@ -1048,11 +1048,20 @@ test("bob_attach_contract supports the optional allowed_tools_for_node argument 
 
 // ─── Registered tool metadata ────────────────────────────────────────────
 
-test("bob_attach_contract has role_bundles per X-D10 (orchestrator + evaluator-shared)", () => {
+test("bob_attach_contract has role_bundles per X-D10 (orchestrator + evaluator-shared + chain after Y.11)", () => {
   const { TOOL_REGISTRY } = require("../mcp/lib/tool-registry.js");
   const tool = TOOL_REGISTRY.find((t) => t.name === "bob_attach_contract");
   assert.ok(tool, "bob_attach_contract must be registered");
-  assert.deepEqual(tool.role_bundles.slice().sort(), ["evaluator-shared", "orchestrator"]);
+  // Y.11 (rev 4.1 defect 3) widens role_bundles[] with `chain` so the
+  // chain-builder can attach Contracts to chain-proposed Hypothesis
+  // nodes via the graph apparatus. Y-P8 single-spawner topology
+  // preserved via the Y.9 chain-bundle audit (the `// chain+evaluator-
+  // shared justified:` header comment is asserted by
+  // test/single-spawner-topology.test.js).
+  assert.deepEqual(
+    tool.role_bundles.slice().sort(),
+    ["chain", "evaluator-shared", "orchestrator"],
+  );
   assert.equal(tool.mutating, true);
   assert.equal(tool.network_access, false);
   assert.equal(tool.browser_access, false);

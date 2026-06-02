@@ -1,5 +1,7 @@
 "use strict";
 
+// chain+evaluator-shared justified: chain-builder needs graph mutation/query authority via the chain bundle (rev 4.1 defect 3 absorption); single-spawner topology preserved per Y.9 chain-bundle audit
+//
 // Plane X Cycle X.1 — bob_propose_hypothesis.
 //
 // Records a TaskGraph Hypothesis-node proposal. Reuses the existing
@@ -87,7 +89,12 @@ module.exports = Object.freeze({
   handler,
   // X-D10: Hypothesis proposal is allowed for operator OR evaluator. In
   // the v1 bundle taxonomy that maps to orchestrator + evaluator-shared.
-  role_bundles: ["orchestrator", "evaluator-shared"],
+  // Y.11 (rev 4.1 defect 3) extends with "chain" so chain-builder can
+  // propose new chain-attempt nodes via the graph apparatus rather than
+  // hand-writing chain-attempts.jsonl. The chain bundle grants tool
+  // access, not dispatch authority — Y-P8 single-spawner topology is
+  // preserved by the Y.9 chain-bundle audit + single-spawner check.
+  role_bundles: ["orchestrator", "evaluator-shared", "chain"],
   mutating: true,
   global_preapproval: false,
   network_access: false,

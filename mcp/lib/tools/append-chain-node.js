@@ -1,5 +1,7 @@
 "use strict";
 
+// chain+evaluator-shared justified: chain-builder needs graph mutation/query authority via the chain bundle (rev 4.1 defect 3 absorption); single-spawner topology preserved per Y.9 chain-bundle audit. This tool only grants `chain` + `orchestrator` (no evaluator-shared); the justification comment is recorded here for the Y.11 chain-bundle authority absorption audit trail.
+
 const { appendChainNode } = require("../chain-state-tree.js");
 
 function appendChainNodeHandler(args) {
@@ -53,7 +55,12 @@ module.exports = Object.freeze({
     required: ["target_domain", "action"],
   },
   handler: appendChainNodeHandler,
-  role_bundles: ["orchestrator"],
+  // Y.11 (rev 4.1 defect 3): "chain" added so chain-builder can append
+  // chain-state-tree nodes via the graph apparatus rather than
+  // hand-writing chain-tree.jsonl. Y-P8 single-spawner topology
+  // preserved — the chain bundle grants tool access, not dispatch
+  // authority.
+  role_bundles: ["orchestrator", "chain"],
   mutating: true,
   global_preapproval: false,
   network_access: false,
