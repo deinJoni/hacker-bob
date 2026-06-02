@@ -1419,6 +1419,19 @@ function isOssObservationKind(value) {
   return typeof value === "string" && OSS_OBSERVATION_KIND_VALUES.includes(value);
 }
 
+// Cycle Y.1 — Capability observation kinds register at the same
+// `observation.recorded` dispatch point as OSS kinds and the T.5
+// jwt_observed precedent. They are SIBLINGS of OSS_OBSERVATION_KIND_VALUES
+// — no top-level FRONTIER_EVENT_KIND is added (Y-P1 / X-P8). The shape +
+// witness validators live in capability-observations.js; this module
+// re-exports the closed-enum predicate so producers that already filter
+// `observation.recorded` payloads by kind family can branch on capability
+// kinds without crossing module boundaries.
+const {
+  CAPABILITY_OBSERVATION_KIND_VALUES,
+  isCapabilityObservationKind,
+} = require("./capability-observations.js");
+
 // Field-shape validators per observation kind. Each returns the normalized
 // payload (after a deep-clone-and-validate pass) or throws a structured
 // ToolError when the shape is wrong. The validator does NOT enrich the
@@ -1640,6 +1653,10 @@ module.exports = {
   isOssObservationKind,
   buildOssObservationPayload,
   recordOssObservation,
+  // Cycle Y.1 capability observation kinds (siblings of OSS kinds; both
+  // ride observation.recorded — Y-P1 / X-P8 honored).
+  CAPABILITY_OBSERVATION_KIND_VALUES,
+  isCapabilityObservationKind,
 };
 
 // Quieter shadow imports kept for parity with other session-init paths.

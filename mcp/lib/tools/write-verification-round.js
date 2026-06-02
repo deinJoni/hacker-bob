@@ -56,13 +56,13 @@ module.exports = Object.freeze({
               ]
             },
             "severity": {
+              "type": "string",
               "enum": [
                 "critical",
                 "high",
                 "medium",
                 "low",
-                "info",
-                null
+                "info"
               ]
             },
             "reportable": {
@@ -70,6 +70,24 @@ module.exports = Object.freeze({
             },
             "reasoning": {
               "type": "string"
+            },
+            "repro_steps": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              }
+            },
+            "evidence_refs": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
             },
             "confidence": {
               "type": "string",
@@ -144,7 +162,9 @@ module.exports = Object.freeze({
             "disposition",
             "severity",
             "reportable",
-            "reasoning"
+            "reasoning",
+            "repro_steps",
+            "evidence_refs"
           ]
         }
       }
