@@ -750,7 +750,13 @@ test("orchestrator skill stays bounded and reflects the lifecycle topology", () 
   // bob_set_friction_scanners — Y-D15b / Y-D15c / D16). Auto-generated
   // allowed-tools block gained four lines. REPORT-state prose rewritten to
   // name the new tools (Y-P13 markdown-ownership). Cap bumped 366 → 372.
-  assert.ok(lines <= 372, `bob-evaluate-runner skill is ${lines} lines (cap 372)`);
+  // Plane Y Cycle Y.8 (Y-D7c structural containment) auto-injects
+  // `<!-- @schema_ref: <tool> -->` markers into every STATE block that
+  // names a registered write tool. The REPORT block gains four markers
+  // (bob_compose_report, bob_write_chain_rollup, bob_amend_report,
+  // bob_write_wave_handoff) plus a blank-line separator. Cap bumped
+  // 372 → 380.
+  assert.ok(lines <= 380, `bob-evaluate-runner skill is ${lines} lines (cap 380)`);
   const skill = readFile(".claude/skills/bob-evaluate-runner/SKILL.md");
   assert.match(
     skill,

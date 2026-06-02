@@ -360,6 +360,11 @@ Post-REPORT user intent stays flexible:
 
 Final reminder: agents own seed mapping, behavior probes, control checks, claim development, impact correlation, reproduction checks, evidence capture, grade, and report work; the root orchestrator coordinates MCP lifecycle state and never performs ad-hoc target testing outside SETUP auth capture.
 
+<!-- @schema_ref: bob_compose_report -->
+<!-- @schema_ref: bob_write_chain_rollup -->
+<!-- @schema_ref: bob_amend_report -->
+<!-- @schema_ref: bob_write_wave_handoff -->
+
 ## Optional: Differential Workflows
 Orchestrator-driven differentials run outside the wave/evaluator loop and feed `severity_class: "security"` rows into `bob_record_candidate_claim`.
 

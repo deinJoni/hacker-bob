@@ -18,6 +18,72 @@ const {
   renderCapabilityPlaybookAppendix,
 } = require("../../mcp/lib/capability-playbooks.js");
 const { evaluatorRoleSpecs } = require("../../mcp/lib/capability-packs.js");
+const { TOOL_REGISTRY } = require("../../mcp/lib/tool-registry.js");
+const { parseSkillText } = require("./skill-parser.js");
+
+// Y.8 Do step 0b — `@schema_ref` directive auto-injection. The
+// generator scans each STATE block of the orchestrator source body
+// after all other substitutions, identifies write-tool tokens that
+// resolve to a real TOOL_REGISTRY entry, and appends one
+// `<!-- @schema_ref: <tool> -->` HTML-comment marker per unique
+// write tool at the END of the state block (right before the next
+// H2 heading or EOF). This satisfies the Y-D7c structural
+// containment heuristic ("a `bob_write_*` token's `@schema_ref` MUST
+// appear in the same state-block") mechanically — operators do not
+// hand-author the markers, the generator derives them from
+// TOOL_REGISTRY. The check script
+// `scripts/check-skill-protocol-coherence.js` consumes the resulting
+// rendered SKILL.md and asserts the structural-containment predicate.
+const REGISTERED_TOOL_NAMES = new Set(
+  TOOL_REGISTRY.filter((tool) => !tool.alias_of).map((tool) => tool.name),
+);
+
+function injectSchemaRefDirectives(document, { filePath = "<orchestrator-render>" } = {}) {
+  const parsed = parseSkillText(document, { filePath });
+  const stateBlocks = parsed.blocks.filter((block) => block.kind === "state");
+  if (stateBlocks.length === 0) return document;
+  const lines = document.split(/\r?\n/);
+  const insertions = []; // { lineIndex, lines: string[] }
+  for (const block of stateBlocks) {
+    const seen = new Set();
+    const refs = [];
+    for (const token of block.tokens.write_tools) {
+      if (token.in_code_block) continue;
+      if (!REGISTERED_TOOL_NAMES.has(token.token)) continue;
+      if (seen.has(token.token)) continue;
+      seen.add(token.token);
+      refs.push(token.token);
+    }
+    if (refs.length === 0) continue;
+    // Avoid double-injection on re-render: skip if any of the refs
+    // already has an `@schema_ref` directive somewhere in the block.
+    const existing = new Set(block.tokens.schema_refs.map((r) => r.token));
+    const missing = refs.filter((ref) => !existing.has(ref));
+    if (missing.length === 0) continue;
+    // Insert at the line just past the block's last content line. The
+    // parser stores 1-indexed `content_end_line` as the line index of
+    // the NEXT block's header (or lines.length if EOF). We splice
+    // BEFORE that index in 0-indexed terms.
+    const insertAt = block.content_end_line;
+    const markerLines = missing.map((ref) => `<!-- @schema_ref: ${ref} -->`);
+    // Add a blank-line separator before the markers when the previous
+    // line isn't already blank, so the rendered SKILL.md stays
+    // readable.
+    insertions.push({ lineIndex: insertAt, lines: markerLines });
+  }
+  if (insertions.length === 0) return document;
+  // Apply insertions from highest index to lowest so earlier indices
+  // remain stable.
+  insertions.sort((a, b) => b.lineIndex - a.lineIndex);
+  for (const insertion of insertions) {
+    const idx = insertion.lineIndex;
+    const previousLine = idx > 0 ? lines[idx - 1] : "";
+    const prefix = previousLine === "" ? [] : [""];
+    const suffix = idx < lines.length && lines[idx] !== "" ? [""] : [];
+    lines.splice(idx, 0, ...prefix, ...insertion.lines, ...suffix);
+  }
+  return lines.join("\n");
+}
 
 const DEFAULT_ROOT = path.join(__dirname, "..", "..");
 
@@ -441,11 +507,19 @@ function renderClaudePromptBody(roleId, body, { root = DEFAULT_ROOT } = {}) {
   if (roleId === "orchestrator") {
     document += renderCapabilityPlaybookAppendix({ root });
   }
-  return document
+  document = document
     .replace(/\/bob:evaluate/g, "/bob-evaluate")
     .replace(/\/bob:status/g, "/bob-status")
     .replace(/\/bob:debug/g, "/bob-debug")
     .replace(/\/bob:update/g, "/bob-update");
+  // Y.8 Do step 0b — inject auto-derived `@schema_ref` directives
+  // into every state block of skills that carry state-block dispatch
+  // text (orchestrator). Agent prompts and helper skills (status,
+  // debug) don't carry STATE: blocks so the injector is a no-op for
+  // them, but we run it unconditionally so any future role that
+  // adopts state blocks picks up the same coherence machinery.
+  document = injectSchemaRefDirectives(document, { filePath: `<render:${roleId}>` });
+  return document;
 }
 
 function renderClaudeRole(roleId, options = {}) {
