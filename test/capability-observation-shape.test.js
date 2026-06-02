@@ -17,6 +17,14 @@
 //   * B1 — bob_write_verification_round.inputSchema lifts severity +
 //     repro_steps + evidence_refs into the per-result `required[]` so AJV
 //     catches missing attempt-binding fields at the dispatch layer.
+//
+// Cycle Y.1 EXTEND (rev 4.1): cap-threshold regression test that imports
+// CLAIM_TEXT_LIMITS live from mcp/lib/tools/record-candidate-claim.js (set
+// by Y.0 hotfix 1) and asserts the post-O2 caps are large enough to
+// accommodate the field-observed failing payload retained in
+// test/fixtures/o2-field-observed-payload.js. The payload + cap thresholds
+// are sourced from live modules so there are no duplicated literals in
+// this test.
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -47,6 +55,13 @@ const {
 
 const writeVerificationRoundTool = require("../mcp/lib/tools/write-verification-round.js");
 const { validateAgainstSchema } = require("../mcp/lib/tool-validation.js");
+
+const {
+  CLAIM_TEXT_LIMITS,
+} = require("../mcp/lib/tools/record-candidate-claim.js");
+const {
+  fieldObservedPayload,
+} = require("./fixtures/o2-field-observed-payload.js");
 
 function baseFrictionPayload(overrides = {}) {
   return {
@@ -462,5 +477,54 @@ test("B1: dispatch-layer schema rejects severity: null after the lift", () => {
   assert.throws(
     () => validateAgainstSchema(args, writeVerificationRoundTool.inputSchema, []),
     /severity must be string/,
+  );
+});
+
+// ── Y.1 EXTEND (rev 4.1) — O2 hotfix cap-threshold regression-test reference
+// Confirms the live caps in mcp/lib/tools/record-candidate-claim.js
+// (set by Y.0 hotfix 1) accommodate the field-observed failing payload
+// retained at test/fixtures/o2-field-observed-payload.js. Both the cap
+// thresholds and the payload are imported from source — no duplicated
+// literals in this test.
+
+test("Y.1 EXTEND: live CLAIM_TEXT_LIMITS accommodate the Y.0 field-observed payload (no duplicated literals)", () => {
+  // Sanity: caps come from the live record-candidate-claim.js module.
+  assert.ok(CLAIM_TEXT_LIMITS && typeof CLAIM_TEXT_LIMITS === "object", "CLAIM_TEXT_LIMITS must be imported from the live source");
+  assert.ok(Object.isFrozen(CLAIM_TEXT_LIMITS), "CLAIM_TEXT_LIMITS must be Object.freeze'd in source");
+
+  // Build the field-observed payload from the shared fixture so the Y.1
+  // extension reads the same payload the Y.0 hotfix regression test asserts
+  // against. Neither the payload prose nor the cap numeric values are
+  // duplicated in this file.
+  const payload = fieldObservedPayload("y1-extend.example.com");
+
+  // For every text field exercised by the field-observed payload, the live
+  // cap MUST be at least as large as the payload's actual content length.
+  // If a future cap change drops below the field-observed footprint, this
+  // test fails immediately and surfaces the regression.
+  for (const field of ["description", "proof_of_concept", "response_evidence", "impact"]) {
+    const value = payload[field];
+    assert.equal(typeof value, "string", `payload.${field} must be a string`);
+    const cap = CLAIM_TEXT_LIMITS[field];
+    assert.equal(typeof cap, "number", `CLAIM_TEXT_LIMITS.${field} must be a number in source`);
+    assert.ok(
+      cap >= value.length,
+      `CLAIM_TEXT_LIMITS.${field} (${cap}) must accommodate the Y.0 field-observed payload length (${value.length})`,
+    );
+  }
+
+  // The post-O2 description cap must be strictly larger than the legacy
+  // 4000-char cap the hotfix raised, since the field-observed PoC narrative
+  // exceeds it. Asserting the inequality (not a magic number) keeps the
+  // intent stable across future cap-raise rounds without duplicating the
+  // literal value.
+  const LEGACY_DESCRIPTION_CAP = 4000;
+  assert.ok(
+    CLAIM_TEXT_LIMITS.description > LEGACY_DESCRIPTION_CAP,
+    "post-O2 description cap must exceed the pre-hotfix 4000-char cap",
+  );
+  assert.ok(
+    payload.description.length > LEGACY_DESCRIPTION_CAP,
+    "field-observed payload must exceed the pre-hotfix 4000-char cap (proves the hotfix is load-bearing)",
   );
 });
