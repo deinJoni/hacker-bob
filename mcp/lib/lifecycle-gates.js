@@ -39,6 +39,7 @@ const ALLOWED_TRANSITIONS = Object.freeze({
 const TRANSITION_GATES = Object.freeze({
   "VERIFY->GRADE": gateVerifyToGrade,
   "GRADE->REPORT": gateGradeToReport,
+  "OPEN_FRONTIER->CLAIM_FREEZE": gateOpenFrontierToClaimFreeze,
 });
 
 function compactError(error) {
@@ -83,6 +84,74 @@ function gateGradeToReport(context) {
       error: message,
     });
   }
+  return blockers;
+}
+
+// Y.10 (Y-P12) — partial-surface runtime gate. Refuses
+// OPEN_FRONTIER -> CLAIM_FREEZE while the latest merged wave-handoff has
+// any surface in `surface_status: "partial"` AND the operator has not
+// extended bob_set_queue_policy({partial_surface_advance_acknowledgements: [...]}).
+// Reads partial_surface_ids via mcp/lib/scheduler-preconditions.js
+// (partial_surfaces_drained), which consults the latest merge snapshot
+// persisted by mergeWaveHandoffs to <sessionDir>/wave-handoffs/
+// wave-<N>-merge-snapshot.json.
+function gateOpenFrontierToClaimFreeze(context) {
+  const blockers = [];
+  let evaluation;
+  try {
+    evaluation = require("./scheduler-preconditions.js").evaluateSchedulerPrecondition(
+      "partial_surfaces_drained",
+      { target_domain: context.target_domain },
+    );
+  } catch (error) {
+    blockers.push({
+      code: "scheduler_precondition_error",
+      blocked_by: "scheduler_precondition_error",
+      message: `OPEN_FRONTIER -> CLAIM_FREEZE precondition evaluation failed: ${compactError(error)}`,
+      error: compactError(error),
+    });
+    return blockers;
+  }
+  if (evaluation.satisfied) return blockers;
+
+  const partialSurfaceIds = Array.isArray(evaluation.blocked_surface_ids)
+    ? evaluation.blocked_surface_ids.slice()
+    : [];
+
+  // Operator may pre-acknowledge specific partial surfaces via queue-policy.
+  // We intersect the acknowledged set with the partial set and report only
+  // the leftover (unacknowledged) surfaces as blockers.
+  let acknowledgedSurfaceIds = [];
+  try {
+    const { loadQueuePolicy } = require("./queue-policy.js");
+    const policy = loadQueuePolicy(context.target_domain);
+    const acks = Array.isArray(policy.partial_surface_advance_acknowledgements)
+      ? policy.partial_surface_advance_acknowledgements
+      : [];
+    acknowledgedSurfaceIds = acks
+      .filter((entry) => entry && typeof entry.surface_id === "string"
+        && typeof entry.attestation_token === "string"
+        && entry.attestation_token.length > 0)
+      .map((entry) => entry.surface_id);
+  } catch {
+    acknowledgedSurfaceIds = [];
+  }
+  const acknowledgedSet = new Set(acknowledgedSurfaceIds);
+  const remaining = partialSurfaceIds.filter((id) => !acknowledgedSet.has(id));
+
+  if (remaining.length === 0) return blockers;
+
+  blockers.push({
+    code: "partial_surfaces_remaining",
+    blocked_by: "partial_surfaces_remaining",
+    surfaces: remaining,
+    message:
+      `OPEN_FRONTIER -> CLAIM_FREEZE blocked: ${remaining.length} partial surface(s) remain`
+      + ` in the latest merged wave (${remaining.join(", ")})`,
+    remediation:
+      "call bob_set_queue_policy({partial_surface_advance_acknowledgements: [...]}) "
+      + "with operator_attested token or schedule wave-N+1 via bob_start_next_wave",
+  });
   return blockers;
 }
 

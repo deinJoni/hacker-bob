@@ -445,10 +445,85 @@ function mergeWaveHandoffsInternal(domain, waveNumber) {
   };
 }
 
+// Y.10 (Y-P12) — merge-snapshot persistence so the runtime gate at
+// bob_advance_session(OPEN_FRONTIER -> CLAIM_FREEZE) can read the latest
+// merged wave's partial_surface_ids without re-running mergeWaveHandoffsInternal.
+// Snapshot lives at <sessionDir>/wave-handoffs/wave-<N>-merge-snapshot.json and
+// is append-only (each successful merge writes a new snapshot file; older
+// snapshots are retained for audit). The wave-handoffs/ directory is already
+// in AUDIT_GRADED_RELATIVE_DIRS (mcp/lib/paths.js) so the snapshot is
+// MCP-owned audit-graded artifact content (Y-P13).
+function waveHandoffsSnapshotDir(domain) {
+  return path.join(sessionDir(domain), "wave-handoffs");
+}
+
+function waveMergeSnapshotPath(domain, waveNumber) {
+  return path.join(waveHandoffsSnapshotDir(domain), `wave-${waveNumber}-merge-snapshot.json`);
+}
+
+function writeWaveMergeSnapshot(domain, waveNumber, snapshot) {
+  const dir = waveHandoffsSnapshotDir(domain);
+  fs.mkdirSync(dir, { recursive: true });
+  const filePath = waveMergeSnapshotPath(domain, waveNumber);
+  const body = `${JSON.stringify(snapshot, null, 2)}\n`;
+  fs.writeFileSync(filePath, body);
+}
+
+// Returns the partial_surface_ids of the highest-numbered merge snapshot for
+// the target's session; empty array if no merges have happened or the
+// snapshot directory is missing. Used by the Y-P12 runtime gate in
+// mcp/lib/tools/advance-session.js and by mcp/lib/scheduler-preconditions.js.
+function getLatestMergedWavePartialSurfaceIds(targetDomain) {
+  const domain = assertNonEmptyString(targetDomain, "target_domain");
+  const dir = waveHandoffsSnapshotDir(domain);
+  if (!fs.existsSync(dir)) return [];
+  let entries;
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const snapshotPattern = /^wave-([1-9][0-9]*)-merge-snapshot\.json$/;
+  const numbers = [];
+  for (const entry of entries) {
+    const match = entry.match(snapshotPattern);
+    if (match) numbers.push(Number(match[1]));
+  }
+  if (numbers.length === 0) return [];
+  const highest = Math.max.apply(null, numbers);
+  let parsed;
+  try {
+    parsed = readJsonFile(waveMergeSnapshotPath(domain, highest));
+  } catch {
+    return [];
+  }
+  if (!parsed || typeof parsed !== "object") return [];
+  const partial = parsed.partial_surface_ids;
+  if (!Array.isArray(partial)) return [];
+  return partial.filter((id) => typeof id === "string" && id.length > 0);
+}
+
 function mergeWaveHandoffs(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   const waveNumber = parseWaveNumber(args.wave_number);
   const { readiness, merge } = mergeWaveHandoffsInternal(domain, waveNumber);
+
+  // Y.10 (Y-P12) — persist a merge snapshot so the partial-surface runtime
+  // gate at bob_advance_session can consult the latest merged wave without
+  // recomputing. Failures here do NOT block the merge itself (the merge
+  // result is the primary contract); the gate falls back to "no partial
+  // surfaces known" when the snapshot is missing, which is the safer default.
+  try {
+    writeWaveMergeSnapshot(domain, waveNumber, {
+      wave_number: waveNumber,
+      merged_at_iso: new Date().toISOString(),
+      partial_surface_ids: merge.partial_surface_ids.slice(),
+      completed_surface_ids: merge.completed_surface_ids.slice(),
+      missing_surface_ids: merge.missing_surface_ids.slice(),
+    });
+  } catch {
+    // Intentionally swallow — snapshot persistence is best-effort.
+  }
 
   return JSON.stringify({
     assignments_total: readiness.assignments_total,
@@ -624,6 +699,7 @@ module.exports = {
   buildWaveHandoffFileIndex,
   buildWaveHandoffsDocument,
   buildWaveReadiness,
+  getLatestMergedWavePartialSurfaceIds,
   listWaveAssignmentNumbers,
   listWaveHandoffFiles,
   loadWaveArtifacts,
@@ -632,4 +708,6 @@ module.exports = {
   readSigningKeyForArtifacts,
   readWaveHandoffs,
   waveHandoffStatus,
+  waveMergeSnapshotPath,
+  waveHandoffsSnapshotDir,
 };

@@ -493,6 +493,10 @@ function advanceSession(args) {
 
     if (evaluation.blockers.length > 0 && override !== "operator_force") {
       const first = evaluation.blockers[0];
+      // Y.10 (Y-D12 / Y-P12) — propagate the blocker's structured
+      // remediation string through the ToolError so MCP callers see it
+      // verbatim in the response envelope (mcp/lib/envelope.js).
+      const remediation = typeof first.remediation === "string" ? first.remediation : null;
       throw new ToolError(
         ERROR_CODES.STATE_CONFLICT,
         `lifecycle transition blocked: ${first.message || first.code || first.blocked_by}`,
@@ -504,8 +508,10 @@ function advanceSession(args) {
           allowed: first.allowed || (first.blocked_by === "no_transition"
             ? require("./lifecycle-gates.js").allowedTargetsFor(fromState)
             : undefined),
+          surfaces: Array.isArray(first.surfaces) ? first.surfaces.slice() : undefined,
           blockers: evaluation.blockers,
         },
+        remediation ? { remediation } : null,
       );
     }
 

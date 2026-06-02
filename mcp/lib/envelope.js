@@ -13,8 +13,11 @@ const ERROR_CODES = Object.freeze({
 // Y.3 (Y-D12 / D15): ToolError optionally carries a structured `remediation`
 // string so STATE_CONFLICT (and any other) call sites can tell the caller
 // exactly which tool to invoke to clear the conflict. The field is reflected
-// uniformly through errorEnvelope() — six audit-listed STATE_CONFLICT sites
-// will be backfilled in Y.11 step 5 with concrete remediation strings.
+// uniformly through errorEnvelope(). Y.10 (Y-P12) lands the first concrete
+// backfill: the OPEN_FRONTIER -> CLAIM_FREEZE partial_surfaces_remaining
+// blocker propagates remediation through advanceSession() so MCP callers
+// see the structured "call bob_set_queue_policy({partial_surface_advance_
+// acknowledgements: [...]})" hint verbatim.
 class ToolError extends Error {
   constructor(code, message, details = null, options = null) {
     super(message);

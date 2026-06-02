@@ -63,6 +63,18 @@ const DEFAULT_QUEUE_POLICY = Object.freeze({
   // leads. Default FALSE preserves Y.2-shipped surface-leads recording
   // behavior; operator opt-in via bob_set_queue_policy.
   lead_rationale_required_when_below_threshold: false,
+  // Y.10 (Y-D12 / Y-P12 / D6 + D14) — operator attestation that the
+  // listed partial surfaces are acknowledged and may pass the
+  // OPEN_FRONTIER -> CLAIM_FREEZE runtime gate. Each entry is a
+  // {surface_id, attestation_token, rationale?} object. The runtime
+  // gate consults the latest merged wave's partial_surface_ids
+  // (via mcp/lib/scheduler-preconditions.js partial_surfaces_drained)
+  // and intersects them with the surface_ids in this list; a surface
+  // is gated until acknowledged. The attestation_token is matched
+  // against the operator nonce at ~/.bob/session-cap when that file
+  // exists (mode 0600 enforced); when the file is absent the token
+  // must still be a non-empty string and is recorded for audit.
+  partial_surface_advance_acknowledgements: [],
 });
 
 const FRICTION_KIND_VALUES = Object.freeze(["tool_absent", "tool_inadequate"]);
@@ -95,6 +107,45 @@ function normalizeFrictionScanner(value, fieldName) {
     throw new Error(`${fieldName}.friction_kind must be one of ${FRICTION_KIND_VALUES.join(", ")}`);
   }
   return Object.freeze({ name, pattern, fallback_used: fallbackUsed, friction_kind: frictionKind });
+}
+
+function normalizePartialSurfaceAcknowledgement(value, fieldName) {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${fieldName} must be an object`);
+  }
+  const surfaceId = typeof value.surface_id === "string" ? value.surface_id.trim() : "";
+  if (!surfaceId) throw new Error(`${fieldName}.surface_id must be a non-empty string`);
+  if (surfaceId.length > 128) throw new Error(`${fieldName}.surface_id must be at most 128 characters`);
+  const attestationToken = typeof value.attestation_token === "string" ? value.attestation_token.trim() : "";
+  if (!attestationToken) throw new Error(`${fieldName}.attestation_token must be a non-empty string`);
+  if (attestationToken.length > 256) throw new Error(`${fieldName}.attestation_token must be at most 256 characters`);
+  const result = { surface_id: surfaceId, attestation_token: attestationToken };
+  if (value.rationale != null) {
+    if (typeof value.rationale !== "string") {
+      throw new Error(`${fieldName}.rationale must be a string when provided`);
+    }
+    const rationale = value.rationale.trim();
+    if (rationale.length > 512) throw new Error(`${fieldName}.rationale must be at most 512 characters`);
+    if (rationale) result.rationale = rationale;
+  }
+  return Object.freeze(result);
+}
+
+function normalizePartialSurfaceAcknowledgements(value, fieldName = "partial_surface_advance_acknowledgements") {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw new Error(`${fieldName} must be an array`);
+  if (value.length > 64) throw new Error(`${fieldName} must contain at most 64 entries`);
+  const seen = new Set();
+  const out = [];
+  for (let i = 0; i < value.length; i += 1) {
+    const entry = normalizePartialSurfaceAcknowledgement(value[i], `${fieldName}[${i}]`);
+    if (seen.has(entry.surface_id)) {
+      throw new Error(`${fieldName} contains duplicate surface_id ${entry.surface_id}`);
+    }
+    seen.add(entry.surface_id);
+    out.push(entry);
+  }
+  return out;
 }
 
 function normalizeFrictionScanners(value, fieldName = "friction_scanners") {
@@ -201,6 +252,8 @@ function normalizeQueuePolicy(input = {}) {
           input.lead_rationale_required_when_below_threshold,
           "lead_rationale_required_when_below_threshold",
         ),
+    partial_surface_advance_acknowledgements:
+      normalizePartialSurfaceAcknowledgements(input.partial_surface_advance_acknowledgements),
   };
   policy.priority_order = Array.from(new Set(policy.priority_order));
   if (policy.standard_wave_max < policy.standard_wave_target) {
@@ -265,6 +318,8 @@ module.exports = {
   loadQueuePolicy,
   normalizeFrictionScanner,
   normalizeFrictionScanners,
+  normalizePartialSurfaceAcknowledgement,
+  normalizePartialSurfaceAcknowledgements,
   normalizeQueuePolicy,
   normalizeQueueStatus,
   normalizeTaskPriority,
