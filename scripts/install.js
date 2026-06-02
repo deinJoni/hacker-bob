@@ -470,6 +470,28 @@ function installProject(projectDir, options = {}) {
 
   fs.mkdirSync(path.join(os.homedir(), "hacker-bob-sessions"), { recursive: true });
 
+  // Y.10 (Y-D12 / D6 + D14) — provision the operator session-cap nonce at
+  // ~/.bob/session-cap (mode 0600) so bob_set_queue_policy({partial_surface_
+  // advance_acknowledgements: [...]}) acknowledgements have a real nonce to
+  // match against. The runtime gate (mcp/lib/lifecycle-gates.js) consults
+  // verifyAttestationToken; without an install-managed nonce the gate would
+  // fall back to non-empty-string validation and offer no operator-attest
+  // authority. Idempotent: existing nonces are preserved and the mode is
+  // re-enforced.
+  let sessionCap = null;
+  try {
+    const { ensureSessionCapNonce, sessionCapPath } = require(
+      path.join(targetAbs, "mcp", "lib", "session-cap.js"),
+    );
+    ensureSessionCapNonce();
+    sessionCap = sessionCapPath();
+  } catch {
+    // Best-effort: the runtime gate degrades gracefully when the nonce file
+    // is absent (cap_status: "uninitialized"); we never block install on
+    // session-cap provisioning errors.
+    sessionCap = null;
+  }
+
   return {
     adapters: adapterIds,
     installedAdapters: metadataAdapters,

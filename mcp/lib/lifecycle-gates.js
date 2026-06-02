@@ -121,27 +121,45 @@ function gateOpenFrontierToClaimFreeze(context) {
   // Operator may pre-acknowledge specific partial surfaces via queue-policy.
   // We intersect the acknowledged set with the partial set and report only
   // the leftover (unacknowledged) surfaces as blockers.
+  //
+  // Each acknowledgement carries an `attestation_token`. When the operator
+  // has provisioned `~/.bob/session-cap` (mode 0600) the token MUST equal
+  // that nonce; when the nonce file is absent we accept any non-empty token
+  // (the audit trail records `cap_status: "uninitialized"`). A mismatched
+  // token causes the acknowledgement to be ignored, so the surface remains
+  // blocked — Y-D12/D6 require that the gate refuse to advance on a forged
+  // token rather than treat any non-empty string as authority.
   let acknowledgedSurfaceIds = [];
+  let mismatchedAcks = [];
   try {
     const { loadQueuePolicy } = require("./queue-policy.js");
+    const { verifyAttestationToken } = require("./session-cap.js");
     const policy = loadQueuePolicy(context.target_domain);
     const acks = Array.isArray(policy.partial_surface_advance_acknowledgements)
       ? policy.partial_surface_advance_acknowledgements
       : [];
-    acknowledgedSurfaceIds = acks
-      .filter((entry) => entry && typeof entry.surface_id === "string"
-        && typeof entry.attestation_token === "string"
-        && entry.attestation_token.length > 0)
-      .map((entry) => entry.surface_id);
+    for (const entry of acks) {
+      if (!entry || typeof entry.surface_id !== "string") continue;
+      const verification = verifyAttestationToken(entry.attestation_token);
+      if (verification.ok) {
+        acknowledgedSurfaceIds.push(entry.surface_id);
+      } else {
+        mismatchedAcks.push({
+          surface_id: entry.surface_id,
+          cap_status: verification.cap_status,
+        });
+      }
+    }
   } catch {
     acknowledgedSurfaceIds = [];
+    mismatchedAcks = [];
   }
   const acknowledgedSet = new Set(acknowledgedSurfaceIds);
   const remaining = partialSurfaceIds.filter((id) => !acknowledgedSet.has(id));
 
   if (remaining.length === 0) return blockers;
 
-  blockers.push({
+  const blocker = {
     code: "partial_surfaces_remaining",
     blocked_by: "partial_surfaces_remaining",
     surfaces: remaining,
@@ -150,8 +168,13 @@ function gateOpenFrontierToClaimFreeze(context) {
       + ` in the latest merged wave (${remaining.join(", ")})`,
     remediation:
       "call bob_set_queue_policy({partial_surface_advance_acknowledgements: [...]}) "
-      + "with operator_attested token or schedule wave-N+1 via bob_start_next_wave",
-  });
+      + "with operator_attested token (matching ~/.bob/session-cap) "
+      + "or schedule wave-N+1 via bob_start_next_wave",
+  };
+  if (mismatchedAcks.length > 0) {
+    blocker.mismatched_acknowledgements = mismatchedAcks;
+  }
+  blockers.push(blocker);
   return blockers;
 }
 

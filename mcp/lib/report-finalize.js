@@ -66,10 +66,15 @@ const HASH_HEX_RE = /^[0-9a-f]{64}$/i;
 function readReportFileContent(domain) {
   const reportPath = reportMarkdownPath(domain);
   if (!fs.existsSync(reportPath)) {
+    // Y.10 (Y-D12 / D15) — STATE_CONFLICT remediation backfill #2 of 6:
+    // report.md is the audit-graded markdown rendered by bob_compose_report
+    // (Y-P13). If it is missing the operator must compose the report
+    // server-side before attempting to bind the 5-hash chain.
     throw new ToolError(
       ERROR_CODES.STATE_CONFLICT,
       `report.md is not present at ${reportPath}; call bob_finalize_report only after writing the report`,
       { missing_artifact: "report.md", report_path: reportPath },
+      { remediation: "call bob_compose_report with sections[] and severity_summary to render report.md, then re-invoke bob_finalize_report" },
     );
   }
   return {
@@ -88,10 +93,15 @@ function sha256Hex(input) {
 function loadClaimFreezeHash(domain) {
   const freeze = readCurrentClaimFreeze(domain);
   if (!freeze || typeof freeze !== "object") {
+    // Y.10 (Y-D12 / D15) — STATE_CONFLICT remediation backfill #3 of 6:
+    // claim-freeze.json is the freeze artifact produced when the session
+    // transitions OPEN_FRONTIER -> CLAIM_FREEZE. Without it the 5-hash
+    // chain cannot bind. Direct callers to bob_advance_session.
     throw new ToolError(
       ERROR_CODES.STATE_CONFLICT,
       `no claim-freeze.json for ${domain}; advance to CLAIM_FREEZE and freeze the claim batch before finalizing the report`,
       { missing_artifact: "claim-freeze.json" },
+      { remediation: "call bob_advance_session({target_domain, to_state: \"CLAIM_FREEZE\"}) to freeze the claim batch, then re-invoke bob_finalize_report" },
     );
   }
   const hash = typeof freeze.freeze_hash === "string" ? freeze.freeze_hash : null;
@@ -116,10 +126,14 @@ function loadClaimFreezeHash(domain) {
 function loadFinalVerificationHash(domain) {
   const paths = verificationRoundPaths(domain, "final");
   if (!fs.existsSync(paths.json)) {
+    // Y.10 (Y-D12 / D15) — STATE_CONFLICT remediation backfill #4 of 6:
+    // the final V2 verification round binds the freeze to the evidence.
+    // Direct callers to bob_write_verification_round with round: "final".
     throw new ToolError(
       ERROR_CODES.STATE_CONFLICT,
       `final verification round is not present at ${paths.json}; write a V2 final verification round before finalizing the report`,
       { missing_artifact: "verification round (final)" },
+      { remediation: "call bob_write_verification_round({target_domain, round: \"final\", ...}) bound to the current claim freeze before re-invoking bob_finalize_report" },
     );
   }
   let document;
@@ -155,10 +169,15 @@ function loadFinalVerificationHash(domain) {
 function loadEvidencePackHash(domain) {
   const paths = evidencePackPaths(domain);
   if (!fs.existsSync(paths.json)) {
+    // Y.10 (Y-D12 / D15) — STATE_CONFLICT remediation backfill #5 of 6:
+    // evidence packs are the content layer of the 5-hash binding; their
+    // hash is computed over the canonical JSON of packs[]. Direct callers
+    // to bob_write_evidence_packs.
     throw new ToolError(
       ERROR_CODES.STATE_CONFLICT,
       `evidence packs are not present at ${paths.json}; write evidence packs before finalizing the report`,
       { missing_artifact: "evidence-packs.json" },
+      { remediation: "call bob_write_evidence_packs({target_domain, packs: [...]}) bound to the current V2 final verification round before re-invoking bob_finalize_report" },
     );
   }
   let document;
@@ -189,10 +208,14 @@ function loadEvidencePackHash(domain) {
 function loadGradeVerdictHash(domain) {
   const paths = gradeArtifactPaths(domain);
   if (!fs.existsSync(paths.json)) {
+    // Y.10 (Y-D12 / D15) — STATE_CONFLICT remediation backfill #6 of 6:
+    // the grade verdict carries the severity decision; its canonical-JSON
+    // hash is the last upstream that bob_finalize_report binds.
     throw new ToolError(
       ERROR_CODES.STATE_CONFLICT,
       `grade verdict is not present at ${paths.json}; write the grade verdict before finalizing the report`,
       { missing_artifact: "grade.json" },
+      { remediation: "call bob_write_grade_verdict({target_domain, finding_grades: [...]}) gate-bound to the final verification round, then re-invoke bob_finalize_report" },
     );
   }
   let document;

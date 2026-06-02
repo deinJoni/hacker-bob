@@ -115,6 +115,18 @@ test("installer copies a require-able complete MCP runtime", () => {
     assert.equal(neutralInstallMeta.package_name, "hacker-bob");
     assert.equal(neutralInstallMeta.install_target, workspace);
     assert.deepEqual(neutralInstallMeta.installed_adapters, ["claude"]);
+    // Y.10 (Y-D12 / D6 + D14) — install provisions the operator session-cap
+    // nonce at $HOME/.bob/session-cap (mode 0600) so partial-surface
+    // acknowledgement attestation_tokens have an authoritative nonce to
+    // match against. Without this, the OPEN_FRONTIER -> CLAIM_FREEZE gate
+    // would accept any non-empty token as authority.
+    const sessionCapFile = path.join(tempHome, ".bob", "session-cap");
+    assert.ok(fs.existsSync(sessionCapFile), "install must provision ~/.bob/session-cap nonce");
+    const sessionCapStat = fs.statSync(sessionCapFile);
+    assert.equal(sessionCapStat.mode & 0o777, 0o600, "session-cap file mode must be 0600");
+    const sessionCapValue = fs.readFileSync(sessionCapFile, "utf8").trim();
+    assert.match(sessionCapValue, /^[0-9a-f]{64}$/, "session-cap nonce must be 64-char hex");
+
     assert.equal(fs.readFileSync(path.join(workspace, ".claude", "bob", "VERSION"), "utf8").trim(), PACKAGE_VERSION);
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "bob", "egress-profiles.example.json")));
     const egressConfig = JSON.parse(fs.readFileSync(path.join(workspace, ".claude", "bob", "egress-profiles.json"), "utf8"));
