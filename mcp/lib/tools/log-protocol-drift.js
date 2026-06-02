@@ -150,6 +150,8 @@ module.exports = Object.freeze({
           "missing_schema_ref",
           "write_arg_schema_mismatch",
           "runtime_constraint_collision",
+          "producer_trace_dropped",
+          "silent_lead_threshold_drop",
         ],
       },
       detected_by: {

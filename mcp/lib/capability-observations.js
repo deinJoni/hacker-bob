@@ -120,6 +120,14 @@ const DETECTED_BY_VALUES = Object.freeze([
 // wrong-mode tool calls, hook denials on Bob-owned hooks, partial-surface
 // advance acknowledgements. CI dimensions (Y.7 a/b/c) emit static-drift
 // signatures so a single observation feed unifies all coherence telemetry.
+// Cycle Y.7 (rev 4 W2 + rev 4.1 defect 1) adds two scanner-synthesized
+// signatures emitted by `bob_scan_transcript_for_friction`:
+//   * `producer_trace_dropped` — handoff summary asserts ranked_leads but
+//     the run made zero `bob_record_surface_leads` calls (Y-P14a producer
+//     trace dropped).
+//   * `silent_lead_threshold_drop` — handoff summary asserts N ranked_leads
+//     while surface-leads.json records M < N entries for the same run
+//     (rev-4.1 producer-side runtime tripwire complement).
 const DRIFT_SIGNATURE_VALUES = Object.freeze([
   "write_arg_schema_mismatch_recovered",
   "wrong_mode_tool_call",
@@ -130,6 +138,8 @@ const DRIFT_SIGNATURE_VALUES = Object.freeze([
   "missing_schema_ref",
   "write_arg_schema_mismatch",
   "runtime_constraint_collision",
+  "producer_trace_dropped",
+  "silent_lead_threshold_drop",
 ]);
 
 function isCapabilityObservationKind(value) {

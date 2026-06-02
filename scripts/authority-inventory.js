@@ -98,6 +98,9 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   // Orchestrator-only at the role-bundle layer; threads friction_history
   // into the proposal's suggested_contract BEFORE bob_attach_contract.
   bob_propose_friction_promotion: "initialized_session_mutation",
+  // Plane Y Cycle Y.7 — adversarial transcript scan (Y-D6 + Y-P9). Pure
+  // read; returns synthesized friction + drift records without appending.
+  bob_scan_transcript_for_friction: "initialized_session_read",
   bob_propose_hypothesis: "initialized_session_mutation",
   bob_propose_transition: "initialized_session_mutation",
   bob_public_intel: "scoped_http_network",

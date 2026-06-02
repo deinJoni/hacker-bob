@@ -95,6 +95,7 @@ allowed-tools:
   - mcp__hacker-bob__bob_log_protocol_drift
   - mcp__hacker-bob__bob_emit_runtime_drift
   - mcp__hacker-bob__bob_propose_friction_promotion
+  - mcp__hacker-bob__bob_scan_transcript_for_friction
   - mcp__hacker-bob__bob_http_scan
   - mcp__hacker-bob__bob_temp_email
   - mcp__hacker-bob__bob_signup_detect

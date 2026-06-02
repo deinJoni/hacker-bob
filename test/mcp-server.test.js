@@ -490,6 +490,10 @@ const EXPECTED_TOOL_NAMES = [
   // (Y-P6 + Y-P11). Threads friction_history into suggested_contract
   // BEFORE bob_attach_contract runs.
   "bob_propose_friction_promotion",
+  // Plane Y Cycle Y.7 — adversarial transcript scan (Y-D6 + Y-P9).
+  // Orchestrator-only pure read returning synthetic capability_friction +
+  // protocol_drift records (W2 + rev-4.1 silent_lead_threshold_drop).
+  "bob_scan_transcript_for_friction",
 ];
 
 function withTempHome(fn) {
@@ -1851,6 +1855,7 @@ test("MCP tool registry exposes capability metadata for metric and eval tools", 
       "bob_log_capability_friction",
       "bob_log_protocol_drift",
       "bob_emit_runtime_drift",
+      "bob_scan_transcript_for_friction",
     ],
   });
 });

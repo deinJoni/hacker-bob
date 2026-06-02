@@ -103,6 +103,9 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_merge_wave_handoffs: "initialized_session_read",
   bob_promote_surface_leads: "initialized_session_mutation",
   bob_propose_friction_promotion: "initialized_session_mutation",
+  // Plane Y Cycle Y.7 — adversarial transcript scan (Y-D6 + Y-P9). Pure
+  // read; returns synthesized friction + drift records without appending.
+  bob_scan_transcript_for_friction: "initialized_session_read",
   bob_propose_hypothesis: "initialized_session_mutation",
   bob_propose_transition: "initialized_session_mutation",
   bob_public_intel: "scoped_http_network",

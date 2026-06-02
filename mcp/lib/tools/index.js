@@ -190,6 +190,15 @@ const TOOL_MODULES = Object.freeze([
   // suggested_contract BEFORE bob_attach_contract runs so the pack
   // widening lands BEFORE the X-D11 satisfiability gate.
   require("./propose-friction-promotion.js"),
+  // Plane Y Cycle Y.7 — adversarial transcript scan (Y-D6 + Y-P9 + W2 +
+  // rev-4.1 defect 1). Orchestrator-only post-run pass returning synthetic
+  // capability_friction + protocol_drift records (producer_trace_dropped,
+  // silent_lead_threshold_drop, large_response_body_unimported, etc.). The
+  // tool is pure-read: it does not append events. The orchestrator
+  // forwards each record through bob_log_capability_friction /
+  // bob_log_protocol_drift so the Y-P3 5-tuple idempotency key remains
+  // authoritative.
+  require("./scan-transcript-for-friction.js"),
 ]);
 
 module.exports = {
