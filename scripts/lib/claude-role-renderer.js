@@ -258,7 +258,7 @@ const CLAUDE_ROLE_SPECS = Object.freeze({
     model: "opus",
     color: "purple",
     mcp_server: true,
-    // Y.2.5 Stage d (Y-P13 enforcement at source) — Write removed; chains.md
+    // Y.3 Stage d (Y-P13 enforcement at source) — Write removed; chains.md
     // is MCP-rendered via bob_write_chain_rollup. The agent returns the
     // structured rollup in its handoff; the orchestrator calls
     // bob_write_chain_rollup on receipt. Y.8 adds a CI guard that fails the
@@ -341,7 +341,7 @@ const CLAUDE_ROLE_SPECS = Object.freeze({
     model: "sonnet",
     color: "green",
     mcp_server: true,
-    // Y.2.5 Stage d (Y-P13 enforcement at source) — Write removed; report.md
+    // Y.3 Stage d (Y-P13 enforcement at source) — Write removed; report.md
     // is MCP-rendered via bob_compose_report (with structured sections +
     // bounded narrative caps + provenance enforcement). Read remains so the
     // agent can ingest MCP-rendered chains.md when composing the report.

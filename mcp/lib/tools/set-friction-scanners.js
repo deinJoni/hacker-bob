@@ -1,6 +1,6 @@
 "use strict";
 
-// Y.2.5 Stage c — `bob_set_friction_scanners` (Y-D6 / D16).
+// Y.3 Stage c — `bob_set_friction_scanners` (Y-D6 / D16).
 //
 // Operator-extensible friction-scanner registry. Defaults (`bash_curl`,
 // `bash_wget`, `bash_raw_http`, `bash_cat_ledger`, and the rev-3

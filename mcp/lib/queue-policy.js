@@ -34,7 +34,7 @@ const DEFAULT_QUEUE_POLICY = Object.freeze({
   deep_wave_max: 8,
   default_wave_task_lens: "surface_scout",
   default_wave_task_budget: { ...DEFAULT_WAVE_TASK_BUDGET },
-  // Y.2.5 (D16) — operator-extensible friction scanners. Default empty;
+  // Y.3 (D16) — operator-extensible friction scanners. Default empty;
   // bob_set_friction_scanners persists additions here. Default registry of
   // closed-prefix scanners lives in `mcp/lib/friction-scanners.js` (Y.6) and
   // is unioned with this list at scan time. Order-preserving.

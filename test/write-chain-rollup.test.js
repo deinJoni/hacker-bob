@@ -1,6 +1,6 @@
 "use strict";
 
-// Y.2.5 Stage c — bob_write_chain_rollup (Y-D15c / Y-P13 / Y-P13b). Asserts:
+// Y.3 Stage c — bob_write_chain_rollup (Y-D15c / Y-P13 / Y-P13b). Asserts:
 //   * Renders chains.md with the operator-edit-warning banner
 //   * Validates chain_id against chain-attempts.jsonl — unknown chain_id
 //     returns NOT_FOUND with structured remediation

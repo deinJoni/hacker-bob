@@ -1,6 +1,6 @@
 "use strict";
 
-// Y.2.5 Stage b — AUDIT_GRADED_PATHS registry. Asserts:
+// Y.3 Stage b — AUDIT_GRADED_PATHS registry. Asserts:
 //   * AUDIT_GRADED_PATHS is Object.freeze'd
 //   * Scratch artifacts (subdomains.txt, attack_surface.json, etc.) are NOT
 //     in the list (Y-R22 — scope intentionally narrow)

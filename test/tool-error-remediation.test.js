@@ -1,6 +1,6 @@
 "use strict";
 
-// Y.2.5 Stage a (Y-D12 / D15) — ToolError optionally carries `remediation`,
+// Y.3 Stage a (Y-D12 / D15) — ToolError optionally carries `remediation`,
 // errorEnvelope propagates it, and dispatch.executeTool surfaces it through
 // the MCP response envelope. Asserts:
 //   * ToolError(... { remediation }) stores the field

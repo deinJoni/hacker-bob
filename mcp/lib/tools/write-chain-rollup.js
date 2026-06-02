@@ -1,6 +1,6 @@
 "use strict";
 
-// Y.2.5 Stage c — `bob_write_chain_rollup` (Y-D15c / Y-P13 / Y-P13b).
+// Y.3 Stage c — `bob_write_chain_rollup` (Y-D15c / Y-P13 / Y-P13b / Y-P14b).
 //
 // Replaces the chain-builder Write-on-chains.md leak. Chain-builder returns
 // structured rollup text in its handoff; the orchestrator calls this tool to
@@ -20,9 +20,11 @@ const {
   ToolError,
 } = require("../envelope.js");
 const {
+  LARGE_BODY_THRESHOLD_BYTES,
   assertSafeDomain,
   chainAttemptsJsonlPath,
   chainsMarkdownPath,
+  resolveEvidencePath,
   sessionDir,
 } = require("../paths.js");
 const {
@@ -34,6 +36,21 @@ const CONFIDENCE_VALUES = Object.freeze(["low", "medium", "high"]);
 const FINDING_REF_PREFIXES = Object.freeze(["frontier_event:", "verification_round:"]);
 const MAX_FINDING_REFS = 32;
 const MAX_FINDING_REF_LEN = 256;
+
+// Y.3 Stage c (Y-P14b / O4) — MCP-owned binding-handle prefixes accepted in
+// the NEW `evidence_refs[]` field below. These are the canonical body-binding
+// handles for a recorded HTTP response (`bob_import_http_traffic`), a storage-
+// distilled body retrieval (`bob_resolve_body`), or a static-scan-recorded
+// artifact (`bob_static_scan`). `bob_import_static_artifact` is content-only
+// for evm/solana token contracts and is NOT a body-binding handle, so its
+// prefix is intentionally absent from this set.
+const EVIDENCE_REF_HANDLE_PREFIXES = Object.freeze([
+  "bob_import_http_traffic:",
+  "bob_resolve_body:",
+  "bob_static_scan:",
+]);
+const MAX_EVIDENCE_REFS = 50;
+const MAX_EVIDENCE_REF_LEN = 512;
 
 function assertString(value, fieldName, { maxLength, minLength = 1 } = {}) {
   if (typeof value !== "string") {
@@ -86,6 +103,91 @@ function validateFindingRefs(refs) {
   return refs.slice();
 }
 
+// Y.3 Stage c (Y-P14b / O4) — validator for the NEW top-level `evidence_refs[]`
+// field. Each entry MUST EITHER (a) start with one of EVIDENCE_REF_HANDLE_PREFIXES,
+// OR (b) be a literal `evidence/<path>` whose on-disk size is at most
+// LARGE_BODY_THRESHOLD_BYTES. Entries that point at large raw bodies are
+// rejected with a remediation string that names all three accepted body-binding
+// handles literally; entries that match neither shape are rejected with the
+// closed prefix list. This complement to FINDING_REF_PREFIXES enforces stigmergic
+// producer-consumer coherence between body-binding tools and the chain rollup
+// (Y-D19 producer #5 "mcp_owned_body_binding_handles").
+function validateEvidenceRefs(refs, domain) {
+  if (refs == null) return [];
+  if (!Array.isArray(refs)) {
+    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "evidence_refs must be an array");
+  }
+  if (refs.length > MAX_EVIDENCE_REFS) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `evidence_refs must contain at most ${MAX_EVIDENCE_REFS} entries`,
+    );
+  }
+  for (let i = 0; i < refs.length; i += 1) {
+    const ref = refs[i];
+    if (typeof ref !== "string" || !ref) {
+      throw new ToolError(
+        ERROR_CODES.INVALID_ARGUMENTS,
+        `evidence_refs[${i}] must be a non-empty string`,
+      );
+    }
+    if (ref.length > MAX_EVIDENCE_REF_LEN) {
+      throw new ToolError(
+        ERROR_CODES.INVALID_ARGUMENTS,
+        `evidence_refs[${i}] must be at most ${MAX_EVIDENCE_REF_LEN} characters`,
+      );
+    }
+    if (EVIDENCE_REF_HANDLE_PREFIXES.some((prefix) => ref.startsWith(prefix))) {
+      continue;
+    }
+    if (ref.startsWith("evidence/")) {
+      let absolutePath;
+      try {
+        absolutePath = resolveEvidencePath(domain, ref);
+      } catch (resolveErr) {
+        throw new ToolError(
+          ERROR_CODES.INVALID_ARGUMENTS,
+          `evidence_refs[${i}] resolution failed: ${resolveErr.message}`,
+          { ref },
+        );
+      }
+      let stat;
+      try {
+        stat = fs.statSync(absolutePath);
+      } catch (statErr) {
+        throw new ToolError(
+          ERROR_CODES.NOT_FOUND,
+          `evidence_refs[${i}] cites ${ref} but the file does not exist under the session root`,
+          { ref, absolutePath },
+          {
+            remediation: "ensure the evidence file is committed under sessionDir(<target_domain>)/evidence/ before citing it, or bind via bob_import_http_traffic / bob_resolve_body / bob_static_scan",
+          },
+        );
+      }
+      if (stat.size > LARGE_BODY_THRESHOLD_BYTES) {
+        throw new ToolError(
+          ERROR_CODES.INVALID_ARGUMENTS,
+          `evidence_refs[${i}] cites ${ref} (${stat.size} bytes > LARGE_BODY_THRESHOLD_BYTES=${LARGE_BODY_THRESHOLD_BYTES})`,
+          { ref, size_bytes: stat.size, threshold_bytes: LARGE_BODY_THRESHOLD_BYTES },
+          {
+            remediation: `evidence_refs[${i}] cites ${ref} (${stat.size} bytes > ${LARGE_BODY_THRESHOLD_BYTES} LARGE_BODY_THRESHOLD_BYTES); bind the response body via bob_import_http_traffic, bob_resolve_body, or bob_static_scan and cite the returned handle (e.g., bob_resolve_body:<event_id>) instead of the raw evidence/ path`,
+          },
+        );
+      }
+      continue;
+    }
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `evidence_refs[${i}] must start with one of ${EVIDENCE_REF_HANDLE_PREFIXES.join(", ")} OR be a literal evidence/<path> within LARGE_BODY_THRESHOLD_BYTES=${LARGE_BODY_THRESHOLD_BYTES}`,
+      { ref },
+      {
+        remediation: `evidence_refs[${i}] must start with one of ${EVIDENCE_REF_HANDLE_PREFIXES.join(", ")} OR be a literal evidence/<path> within LARGE_BODY_THRESHOLD_BYTES=${LARGE_BODY_THRESHOLD_BYTES}`,
+      },
+    );
+  }
+  return refs.slice();
+}
+
 function renderChainsMarkdown(rollup) {
   const banner = [
     "<!--",
@@ -109,6 +211,14 @@ function renderChainsMarkdown(rollup) {
     }
     parts.push("");
   }
+  if (rollup.evidence_refs.length > 0) {
+    parts.push("## Evidence References");
+    parts.push("");
+    for (const ref of rollup.evidence_refs) {
+      parts.push(`- \`${ref}\``);
+    }
+    parts.push("");
+  }
   return parts.join("\n");
 }
 
@@ -127,6 +237,7 @@ function handler(args) {
     );
   }
   const findingRefs = validateFindingRefs(args.finding_refs);
+  const evidenceRefs = validateEvidenceRefs(args.evidence_refs, domain);
 
   if (!chainAttemptIdExists(domain, chainId)) {
     throw new ToolError(
@@ -147,6 +258,7 @@ function handler(args) {
       chain_id: chainId,
       narrative,
       finding_refs: findingRefs,
+      evidence_refs: evidenceRefs,
       confidence,
       rendered_at: new Date().toISOString(),
     };
@@ -162,6 +274,7 @@ function handler(args) {
       chains_content_hash: contentHash,
       chains_size_bytes: Buffer.byteLength(markdown, "utf8"),
       finding_refs_count: findingRefs.length,
+      evidence_refs_count: evidenceRefs.length,
     });
   });
 }
@@ -171,7 +284,7 @@ const { wrapWriteTool } = require("./_write-base.js");
 module.exports = wrapWriteTool({
   name: "bob_write_chain_rollup",
   description:
-    "Render chains.md from a structured chain rollup (Y-D15c / Y-P13). Validates chain_id against chain-attempts.jsonl; renders chains.md alongside the JSONL ledger; agents no longer Write chains.md directly. Bounded narrative cap (≤4096ch) per Y-P13b; finding_refs[] limited to frontier_event:/verification_round: prefixes.",
+    "Render chains.md from a structured chain rollup (Y-D15c / Y-P13 / Y-P14b). Validates chain_id against chain-attempts.jsonl; renders chains.md alongside the JSONL ledger; agents no longer Write chains.md directly. Bounded narrative cap (≤4096ch) per Y-P13b; finding_refs[] limited to frontier_event:/verification_round: prefixes; evidence_refs[] limited to bob_import_http_traffic:/bob_resolve_body:/bob_static_scan: handle prefixes OR literal evidence/<path> within LARGE_BODY_THRESHOLD_BYTES.",
   inputSchema: {
     type: "object",
     properties: {
@@ -182,6 +295,11 @@ module.exports = wrapWriteTool({
         type: "array",
         maxItems: MAX_FINDING_REFS,
         items: { type: "string", maxLength: MAX_FINDING_REF_LEN },
+      },
+      evidence_refs: {
+        type: "array",
+        maxItems: MAX_EVIDENCE_REFS,
+        items: { type: "string", maxLength: MAX_EVIDENCE_REF_LEN },
       },
       confidence: { type: "string", enum: [...CONFIDENCE_VALUES] },
     },
@@ -198,5 +316,9 @@ module.exports = wrapWriteTool({
   sensitive_output: false,
   session_artifacts_written: ["chains.md"],
   CONFIDENCE_VALUES,
+  EVIDENCE_REF_HANDLE_PREFIXES,
+  FINDING_REF_PREFIXES,
+  MAX_EVIDENCE_REFS,
+  MAX_EVIDENCE_REF_LEN,
   NARRATIVE_MAX,
 });

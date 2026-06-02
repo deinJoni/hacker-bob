@@ -17,10 +17,10 @@
 //
 // Rev 3 Y-D13 explicitly states the write-tool auto-emit path goes through
 // a SERVER-INTERNAL caller bundle constructed inside _write-base.js (which
-// ships atomically in Y.2.5); the `mcp_server_internal` bundle is NOT
+// ships atomically in Y.3); the `mcp_server_internal` bundle is NOT
 // grantable to any agent role and is CI-asserted absent from
 // mcp/lib/role-bundles.js exports. This Y.2 cycle ships ONLY the
-// orchestrator-facing entry; the internal caller context lands in Y.2.5.
+// orchestrator-facing entry; the internal caller context lands in Y.3.
 
 const {
   appendFrontierEvent,
@@ -237,7 +237,7 @@ module.exports = Object.freeze({
   handler,
   // Y-D13: orchestrator-only at the role-bundle layer. The
   // mcp_server_internal synthetic caller context that lets _write-base.js
-  // auto-emit on INVALID_ARGUMENTS retry success lands in Y.2.5 and is
+  // auto-emit on INVALID_ARGUMENTS retry success lands in Y.3 and is
   // explicitly NOT a grantable role bundle. CI guard in Y.8 asserts
   // mcp_server_internal is not exported from mcp/lib/role-bundles.js.
   role_bundles: ["orchestrator"],
@@ -252,7 +252,7 @@ module.exports = Object.freeze({
   scope_required: false,
   sensitive_output: false,
   session_artifacts_written: ["frontier-events.jsonl"],
-  // Exposed for Y.2.5 + Y.8 + tests so the runtime-emit drift signature set
+  // Exposed for Y.3 + Y.8 + tests so the runtime-emit drift signature set
   // stays a single source of truth.
   RUNTIME_EMIT_DRIFT_SIGNATURES,
 });

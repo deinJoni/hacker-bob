@@ -1,11 +1,11 @@
 "use strict";
 
-// Y.2.5 Stage a — shared write-base wrapper (Y-D15a).
+// Y.3 Stage a — shared write-base wrapper (Y-D15a).
 //
 // This module wraps a write-tool handler so the six audit-graded writers
 // (`bob_write_verification_round`, `bob_write_evidence_packs`,
 // `bob_write_grade_verdict`, `bob_write_wave_handoff`, `bob_write_chain_attempt`,
-// `bob_finalize_report`) — plus the Y.2.5 newcomers `bob_compose_report` and
+// `bob_finalize_report`) — plus the Y.3 newcomers `bob_compose_report` and
 // `bob_write_chain_rollup` — share three concerns:
 //
 //   1. Payload validation (the same shape the dispatch layer's

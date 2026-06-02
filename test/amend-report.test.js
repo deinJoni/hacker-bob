@@ -1,6 +1,6 @@
 "use strict";
 
-// Y.2.5 Stage c — bob_amend_report (Y-D15b / Y-P13a). Asserts:
+// Y.3 Stage c — bob_amend_report (Y-D15b / Y-P13a). Asserts:
 //   * Append-only append to report-amendments.jsonl
 //   * Re-render via bob_compose_report includes the amendment block
 //   * Calling amend before any compose throws STATE_CONFLICT with structured

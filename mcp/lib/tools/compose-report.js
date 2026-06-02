@@ -1,6 +1,6 @@
 "use strict";
 
-// Y.2.5 Stage c — `bob_compose_report` (Y-D15b / Y-P13 / Y-P13a / Y-P13b / Y-P13c).
+// Y.3 Stage c — `bob_compose_report` (Y-D15b / Y-P13 / Y-P13a / Y-P13b / Y-P13c).
 //
 // This is the MCP-owned authoritative composer for `~/hacker-bob-sessions/
 // <target>/report.md`. Agents emit structured sections + bounded prose; MCP
@@ -125,7 +125,7 @@ function validateFrontierEventRef(domain, id) {
   if (!fs.existsSync(file)) return false;
   // Cheap line scan — frontier-events is the append-only ledger and bounded by
   // session retention; we look for the event_id literal as substring after
-  // newline. For the Y.2.5 cycle this is the correct level of strictness —
+  // newline. For the Y.3 cycle this is the correct level of strictness —
   // the negative-grep + tests cover the happy/sad paths.
   const text = fs.readFileSync(file, "utf8");
   return text.includes(`"event_id":"${id}"`);
@@ -134,7 +134,7 @@ function validateFrontierEventRef(domain, id) {
 function validateHttpRecordRef(domain, id) {
   // http_record:R<N> — pattern check only. The traffic ledger holds these as
   // structured records; full existence-check is best left to a dedicated
-  // resolver in a later cycle. For Y.2.5 we accept structurally-valid ids.
+  // resolver in a later cycle. For Y.3 we accept structurally-valid ids.
   return /^R\d+$/.test(id) || /^[A-Za-z0-9_-]+$/.test(id);
 }
 

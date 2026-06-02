@@ -180,7 +180,7 @@ const TOOL_MODULES = Object.freeze([
   // (Y-P3); drift is per-(run_id, skill_path, drift_signature) idempotent;
   // runtime-drift is per-(run_id, drift_signature, details.tool) idempotent
   // (Y-R20). bob_emit_runtime_drift is orchestrator-only at the
-  // role-bundle layer — the Y.2.5 _write-base.js auto-emit path uses a
+  // role-bundle layer — the Y.3 _write-base.js auto-emit path uses a
   // server-internal caller bundle that is NEVER grantable to agents.
   require("./log-capability-friction.js"),
   require("./log-protocol-drift.js"),

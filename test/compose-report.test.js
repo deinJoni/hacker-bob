@@ -1,6 +1,6 @@
 "use strict";
 
-// Y.2.5 Stage c — bob_compose_report (Y-D15b / Y-P13 / Y-P13a / Y-P13c).
+// Y.3 Stage c — bob_compose_report (Y-D15b / Y-P13 / Y-P13a / Y-P13c).
 // Asserts:
 //   * Renderer produces report.md server-side with the operator-edit-warning
 //     banner (Y-P13a)

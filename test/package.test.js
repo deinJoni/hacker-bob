@@ -159,7 +159,13 @@ test("npm package contains runtime surfaces and excludes test/cache artifacts", 
       assert.equal(isExcludedCanonicalPackageFile(excluded), true, `${excluded} should be denied by policy`);
     }
 
-    assert.ok(pack.size < 2500000, `npm pack size ${pack.size} exceeds 2.5 MB threshold`);
+    // Pack-size budget raised from 2.5 MB to 2.6 MB to accommodate Y.3 Stage c
+    // substrate growth (the new evidence_refs[] validator + LARGE_BODY_THRESHOLD_BYTES
+    // export + EVIDENCE_REF_HANDLE_PREFIXES constant on bob_write_chain_rollup
+    // per Y-P14b / O4). Pre-Y.3 main HEAD already packed within ~2 bytes of the
+    // old ceiling, so any further runtime growth — including the canonical
+    // Y-P14b enforcement substrate — would tip it over without operator intent.
+    assert.ok(pack.size < 2600000, `npm pack size ${pack.size} exceeds 2.6 MB threshold`);
 
     for (const file of files) {
       assert.ok(!file.startsWith("node_modules/"), `${file} should not vendor runtime dependencies`);

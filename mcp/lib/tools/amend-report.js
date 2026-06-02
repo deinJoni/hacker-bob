@@ -1,6 +1,6 @@
 "use strict";
 
-// Y.2.5 Stage c — `bob_amend_report` (Y-D15b / Y-P13a).
+// Y.3 Stage c — `bob_amend_report` (Y-D15b / Y-P13a).
 //
 // Operator amendment path on `report.md`. CLAUDE.md previously sanctioned
 // hand-edits; rev 3 supersedes (policy choice A — hand-edit unsupported).

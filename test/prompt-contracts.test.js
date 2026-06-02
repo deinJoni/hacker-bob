@@ -745,7 +745,7 @@ test("orchestrator skill stays bounded and reflects the lifecycle topology", () 
   // Plane Y Cycle Y.2 added bob_emit_runtime_drift to the orchestrator
   // bundle (Y-D13 — the orchestrator-facing runtime drift telemetry entry).
   // Auto-generated allowed-tools block gained one line. Cap bumped 365 → 366.
-  // Plane Y Cycle Y.2.5 added four MCP tools to the orchestrator bundle
+  // Plane Y Cycle Y.3 added four MCP tools to the orchestrator bundle
   // (bob_compose_report, bob_amend_report, bob_write_chain_rollup,
   // bob_set_friction_scanners — Y-D15b / Y-D15c / D16). Auto-generated
   // allowed-tools block gained four lines. REPORT-state prose rewritten to

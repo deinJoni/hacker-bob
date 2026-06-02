@@ -4,7 +4,7 @@
 //
 // Asserts:
 //   * Tool is orchestrator-only at the role-bundle layer (Y-D13).
-//     The Y.2.5 _write-base.js auto-emit path will route through a
+//     The Y.3 _write-base.js auto-emit path will route through a
 //     mcp_server_internal synthetic caller bundle that is NOT exported
 //     by mcp/lib/role-bundles.js — but THIS cycle ships only the
 //     orchestrator entry; we assert that NO non-orchestrator role bundle

@@ -292,13 +292,13 @@ function reportMarkdownPath(domain) {
   return path.join(sessionDir(domain), "report.md");
 }
 
-// Y.2.5 Stage c — chains.md is now MCP-rendered alongside chain-attempts.jsonl.
+// Y.3 Stage c — chains.md is now MCP-rendered alongside chain-attempts.jsonl.
 // Authored by `bob_write_chain_rollup`; agents no longer Write here directly.
 function chainsMarkdownPath(domain) {
   return path.join(sessionDir(domain), "chains.md");
 }
 
-// Y.2.5 Stage c — append-only operator-amendment ledger backing
+// Y.3 Stage c — append-only operator-amendment ledger backing
 // `bob_amend_report` (Y-P13a). Each line: {section_id, new_prose, rationale,
 // timestamp, operator_attestation?}.
 function reportAmendmentsJsonlPath(domain) {
@@ -342,7 +342,7 @@ function repoChecksJsonlPath(domain) {
   return path.join(sessionDir(domain), "repo-checks.jsonl");
 }
 
-// Y.2.5 Stage b — Y-P13 audit-graded path registry.
+// Y.3 Stage b — Y-P13 audit-graded path registry.
 //
 // An *audit-graded session path* is one whose content is hash-bound, immutable,
 // or chain-anchored. Agents NEVER call the Write tool on these paths. MCP
@@ -414,6 +414,30 @@ const AUDIT_GRADED_PATHS = Object.freeze({
   filename_patterns: AUDIT_GRADED_FILENAME_PATTERNS,
 });
 
+// Y.3 Stage c (Y-P14b / O4) — threshold above which a cited response body MUST
+// be bound to an MCP-owned import handle (`bob_import_http_traffic`,
+// `bob_resolve_body`, or `bob_static_scan`) rather than referenced as a raw
+// `evidence/<path>` string. Consumers:
+//   * `mcp/lib/tools/write-chain-rollup.js` `evidence_refs[]` validator
+//   * `mcp/lib/friction-scanners.js` `large_response_body_unimported` scanner
+// Threshold value is committed here so callers import a single constant; no
+// duplicated literals across validator + scanner.
+const LARGE_BODY_THRESHOLD_BYTES = 262144;
+
+// Y.3 Stage c (Y-P14b / O4) — resolve a relative `evidence/<path>` reference
+// against the session directory. Returns an absolute path; throws ToolError-
+// equivalent guard if the reference would escape the session root. Callers are
+// expected to wrap in their own error envelope.
+function resolveEvidencePath(domain, evidenceRef) {
+  const root = sessionDir(domain);
+  const normalizedRoot = path.resolve(root);
+  const resolved = path.resolve(normalizedRoot, evidenceRef);
+  if (resolved !== normalizedRoot && !resolved.startsWith(`${normalizedRoot}${path.sep}`)) {
+    throw new Error(`evidence reference '${evidenceRef}' escapes session root`);
+  }
+  return resolved;
+}
+
 // Predicate consumed by:
 //   * `_write-base.js` for defense-in-depth (future use)
 //   * `scripts/check-single-spawner-topology` Y-P13d frontmatter guard (Y.8)
@@ -452,6 +476,7 @@ function isAuditGradedPath(absolutePath, target_domain) {
 
 module.exports = {
   AUDIT_GRADED_PATHS,
+  LARGE_BODY_THRESHOLD_BYTES,
   TELEMETRY_DIR_NAME,
   TELEMETRY_TOOL_INVOCATIONS_FILE_NAME,
   assertSafeDomain,
@@ -469,6 +494,7 @@ module.exports = {
   publicIntelPath,
   queuePolicyPath,
   reportMarkdownPath,
+  resolveEvidencePath,
   repoChecksJsonlPath,
   repoCommandRunsJsonlPath,
   repoInventoryPath,

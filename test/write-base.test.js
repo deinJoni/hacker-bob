@@ -1,6 +1,6 @@
 "use strict";
 
-// Y.2.5 Stage a — _write-base.js wrapper. Asserts:
+// Y.3 Stage a — _write-base.js wrapper. Asserts:
 //   * wrapWriteTool preserves the spec shape (name, role_bundles, etc.)
 //   * INVALID_ARGUMENTS thrown by the wrapper carry ToolError code
 //   * mcp_server_internal synthetic caller bundle is constructed inside the

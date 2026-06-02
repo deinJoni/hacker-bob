@@ -97,7 +97,7 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_log_protocol_drift: "initialized_session_mutation",
   bob_log_technique_attempt: "initialized_session_mutation",
   // Plane Y Cycle Y.2 — Y-D13 runtime drift telemetry entry. Orchestrator-
-  // only at the role-bundle layer; Y.2.5 will add a server-internal caller
+  // only at the role-bundle layer; Y.3 added a server-internal caller
   // bundle for _write-base.js auto-emit on INVALID_ARGUMENTS retry success.
   bob_emit_runtime_drift: "initialized_session_mutation",
   bob_merge_wave_handoffs: "initialized_session_read",
@@ -124,7 +124,7 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_advance_session: "initialized_session_mutation",
   bob_append_frontier_event: "initialized_session_mutation",
   bob_finalize_report: "initialized_session_mutation",
-  // Plane Y Cycle Y.2.5 — Y-D15b / Y-P13 MCP-rendered audit-graded artifacts.
+  // Plane Y Cycle Y.3 — Y-D15b / Y-P13 MCP-rendered audit-graded artifacts.
   bob_compose_report: "initialized_session_mutation",
   bob_amend_report: "initialized_session_mutation",
   bob_write_chain_rollup: "initialized_session_mutation",

@@ -10,7 +10,7 @@ const ERROR_CODES = Object.freeze({
   INTERNAL_ERROR: "INTERNAL_ERROR",
 });
 
-// Y.2.5 (Y-D12 / D15): ToolError optionally carries a structured `remediation`
+// Y.3 (Y-D12 / D15): ToolError optionally carries a structured `remediation`
 // string so STATE_CONFLICT (and any other) call sites can tell the caller
 // exactly which tool to invoke to clear the conflict. The field is reflected
 // uniformly through errorEnvelope() — six audit-listed STATE_CONFLICT sites
@@ -53,7 +53,7 @@ function errorEnvelope(toolName, code, message, details = undefined, options = u
   if (details !== undefined) {
     error.details = details;
   }
-  // Y.2.5 (Y-D12 / D15): propagate the optional structured remediation string
+  // Y.3 (Y-D12 / D15): propagate the optional structured remediation string
   // through the response envelope so MCP callers can present it verbatim. The
   // field is only emitted when the throwing site or caller explicitly attached
   // one; legacy STATE_CONFLICT sites without remediation continue to render
