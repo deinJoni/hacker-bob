@@ -101,5 +101,6 @@
   "test/friction-promotion.test.js",
   "test/adversarial-scan.test.js",
   "test/adversarial-scan-w2-extensions.test.js",
-  "test/plane-x-hypergraph-adoption.test.js"
+  "test/plane-x-hypergraph-adoption.test.js",
+  "test/surface-leads-auto-promotion.test.js"
 ]

@@ -88,6 +88,10 @@ function normalizeSurfaceLead(input, context = {}) {
       ? null
       : assertNonEmptyString(input.promoted_surface_id, "promoted_surface_id"),
     promoted_at: input.promoted_at == null ? null : assertNonEmptyString(input.promoted_at, "promoted_at"),
+    // Y.12 (rev 4.1 defect 1) — producer-side rationale captured at record
+    // time. The Y.7 silent_lead_threshold_drop scanner reads this field
+    // alongside the queue-policy toggle to compute `rationale_required_but_missing`.
+    rationale: normalizeOptionalString(input.rationale, "rationale", { maxChars: 512 }),
     ...arrays,
   };
   const score = normalizeScore(input.score == null ? evidenceScore(initial) : input.score);
@@ -126,6 +130,11 @@ function mergeSurfaceLead(existing, incoming) {
     source_surface_id: existing.source_surface_id || incoming.source_surface_id,
     surface_type: existing.surface_type || incoming.surface_type,
     promote: existing.promote || incoming.promote,
+    // Y.12 (rev 4.1 defect 1) — rationale on merge: incoming wins when the
+    // existing entry lacked one, otherwise keep the existing rationale so
+    // earlier producer-side reasoning is not overwritten by a later
+    // re-record that omitted the field.
+    rationale: existing.rationale || incoming.rationale,
     confidence: LEAD_CONFIDENCE_VALUES.indexOf(incoming.confidence) < LEAD_CONFIDENCE_VALUES.indexOf(existing.confidence)
       ? incoming.confidence
       : existing.confidence,

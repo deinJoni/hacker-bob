@@ -763,7 +763,15 @@ test("orchestrator skill stays bounded and reflects the lifecycle topology", () 
   // / bob_append_chain_node / bob_query_chain_tree) and extended the
   // REPORT block to name bob_query_chain_tree alongside the existing
   // bob_write_chain_rollup. Cap bumped 380 → 382.
-  assert.ok(lines <= 382, `bob-evaluate-runner skill is ${lines} lines (cap 382)`);
+  // Plane Y Cycle Y.12 (rev 4.1 defect 1 — producer-side surface-leads
+  // rationale) added the handoff-receipt handler paragraph to the
+  // OPEN_FRONTIER state, naming bob_record_surface_leads as the
+  // producer-side enforcement site and bob_promote_surface_leads as
+  // unchanged (closes the Y.9 stigmergy pair
+  // surface_discovery_ranked_leads ↔
+  // orchestrator_handoff_receipt_record_surface_leads). Cap bumped
+  // 382 → 383.
+  assert.ok(lines <= 383, `bob-evaluate-runner skill is ${lines} lines (cap 383)`);
   const skill = readFile(".claude/skills/bob-evaluate-runner/SKILL.md");
   assert.match(
     skill,

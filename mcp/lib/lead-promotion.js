@@ -31,9 +31,12 @@ const {
   buildPromotionEnvelope,
   buildPromotionPreview,
   isAssignableSurfaceLead,
+  normalizePromotionOptions,
   selectPromotableSurfaceLeads,
   sortLeadsByScore,
 } = require("./lead-scoring.js");
+const { ERROR_CODES, ToolError } = require("./envelope.js");
+const { loadQueuePolicy } = require("./queue-policy.js");
 
 const PROMOTED_SURFACE_LEAD_LABEL = "promoted_surface_lead";
 
@@ -138,6 +141,41 @@ function emitFrontierEnqueued(domain, lead) {
   }
 }
 
+// Y.12 (rev 4.1 defect 1) — producer-side rationale enforcement on
+// bob_record_surface_leads. When queue-policy.lead_rationale_required_when_below_threshold
+// is TRUE and a recorded lead's score is below queue-policy min_score
+// (default 60 from lead-scoring.normalizePromotionOptions), the lead MUST
+// carry a non-empty rationale (≤512 chars). Validator runs BEFORE write so
+// no partial state is persisted. Structural complement to the Y.7
+// silent_lead_threshold_drop runtime tripwire (mcp/lib/friction-scanners.js).
+function enforceLeadRationalePolicy(domain, normalizedLeads) {
+  let policy;
+  try {
+    policy = loadQueuePolicy(domain);
+  } catch {
+    return;
+  }
+  if (!policy || policy.lead_rationale_required_when_below_threshold !== true) {
+    return;
+  }
+  const { minScore } = normalizePromotionOptions({});
+  for (let i = 0; i < normalizedLeads.length; i += 1) {
+    const lead = normalizedLeads[i];
+    const score = typeof lead.score === "number" ? lead.score : 0;
+    if (score >= minScore) continue;
+    const rationale = typeof lead.rationale === "string" ? lead.rationale.trim() : "";
+    if (rationale) continue;
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `leads[${i}] has score ${score} below queue-policy min_score ${minScore} but lacks rationale`,
+      { index: i, score, min_score: minScore },
+      {
+        remediation: `lead at index ${i} has score ${score} below min_score ${minScore} but lacks rationale; provide a non-empty rationale (≤512 chars) explaining why this lead is being recorded despite being below threshold, OR raise the lead's score, OR set queue-policy.lead_rationale_required_when_below_threshold: false to disable the gate`,
+      },
+    );
+  }
+}
+
 function recordSurfaceLeadsInternal(domain, leads, context = {}) {
   if (!Array.isArray(leads) || leads.length === 0) {
     return { recorded: 0, lead_ids: [], path: surfaceLeadsPath(domain) };
@@ -147,8 +185,12 @@ function recordSurfaceLeadsInternal(domain, leads, context = {}) {
   const leadIds = [];
   const ledgerEntries = [];
   let recorded = 0;
-  for (const leadInput of leads) {
-    const incoming = normalizeSurfaceLead(leadInput, context);
+  // Pre-normalize all leads so the rationale-policy validator can read the
+  // computed `score` (evidenceScore fallback when input.score is absent)
+  // before any partial state is persisted.
+  const normalizedLeads = leads.map((leadInput) => normalizeSurfaceLead(leadInput, context));
+  enforceLeadRationalePolicy(domain, normalizedLeads);
+  for (const incoming of normalizedLeads) {
     const existing = byKey.get(incoming.key);
     const lead = existing
       ? mergeSurfaceLead(existing, incoming)
