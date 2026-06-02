@@ -1,76 +1,42 @@
 name: Brutalist Review
+
+# Multi-CLI adversarial code review on every PR (claude + agy), posted as
+# inline comments. Codex is intentionally NOT used in CI on public repos:
+# OpenAI's CI auth guide forbids ChatGPT-plan auth.json on public/open-source
+# repos, and codex-action is API-key-only (billing). Codex stays a local
+# critic; see docs/brutalist-review-setup.md to enable it on a private runner.
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+
 permissions:
   contents: read
   pull-requests: write
-# Serialize runs: codex/OpenAI uses refresh-token reuse-detection (RTR). Two
-# concurrent runs refreshing the same token would revoke the whole token
-# family. cancel-in-progress:false so an in-flight run finishes (and writes
-# back its rotated token) before the next starts.
-concurrency:
-  group: brutalist-review-codex-auth
-  cancel-in-progress: false
+
 jobs:
   brutalist:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 35
     if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
     steps:
-      - uses: actions/checkout@v6
-        with: { fetch-depth: 0 }
-      - uses: actions/setup-node@v6
-        with: { node-version: '20' }
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
       - name: Install CLI critics
         run: |
-          npm install -g @anthropic-ai/claude-code @openai/codex
-          npm install -g "https://raw.githubusercontent.com/ejmockler/brutalist-mcp/422faf3013dfbe5c907be7d940a82bf53c524235/brutalist-mcp-1.14.5.tgz"   # patched brutalist-mcp (config.defaultTimeout honors BRUTALIST_TIMEOUT)
+          npm install -g @brutalist/mcp@1.14.7 @anthropic-ai/claude-code
           curl -fsSL https://antigravity.google/cli/install.sh | bash
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          REAL_BMCP="$(command -v brutalist-mcp)"
-          mkdir -p /tmp/bin
-          printf '#!/usr/bin/env bash\nexec "%s" "$@" 2>>/tmp/bmcp-stderr.log\n' "$REAL_BMCP" > /tmp/bin/brutalist-mcp
-          chmod +x /tmp/bin/brutalist-mcp
-          echo "/tmp/bin" >> "$GITHUB_PATH"
       - name: Brutalist review
-        uses: ejmockler/brutalist-mcp/packages/github-action@422faf3013dfbe5c907be7d940a82bf53c524235
+        uses: ejmockler/brutalist-mcp/packages/github-action@v1.14.7
         env:
-          BRUTALIST_TIMEOUT: "600000"                 # 10 min per critic
-          BRUTALIST_ORCHESTRATOR_TIMEOUT_MS: "1200000" # 20 min brain budget
-          BRUTALIST_LOG_LEVEL: "debug"
-          BRUTALIST_ORCHESTRATOR_TRACE: "1"
+          BRUTALIST_TIMEOUT: "900000"
+          BRUTALIST_ORCHESTRATOR_TIMEOUT_MS: "1500000"
         with:
           github-token: ${{ github.token }}
           anthropic-oauth-token: ${{ secrets.ANTHROPIC_OAUTH_TOKEN }}
-          codex-auth: ${{ secrets.CODEX_AUTH }}
           agy-oauth-token: ${{ secrets.AGY_OAUTH_TOKEN }}
           minimum-severity: medium
-      - name: Persist refreshed codex OAuth token (self-healing)
-        # codex rotates its OAuth token in place when the access_token expires
-        # (~every 10 days). Write the refreshed ~/.codex/auth.json back to the
-        # CODEX_AUTH secret so the next run starts fresh — indefinite OAuth, no
-        # API key, no manual re-capture. Safely no-ops until CODEX_AUTH_WRITER_PAT
-        # (a fine-grained PAT with Secrets:write on this repo) is provisioned.
-        if: always()
-        env:
-          GH_TOKEN: ${{ secrets.CODEX_AUTH_WRITER_PAT }}
-        run: |
-          if [ -z "$GH_TOKEN" ]; then echo "No CODEX_AUTH_WRITER_PAT — skipping token write-back."; exit 0; fi
-          AUTH="$HOME/.codex/auth.json"
-          if [ ! -f "$AUTH" ]; then echo "No $AUTH — skipping."; exit 0; fi
-          if ! node -e "const t=require('$AUTH')?.tokens?.refresh_token; if(!t)process.exit(1)" 2>/dev/null; then
-            echo "auth.json has no refresh_token (codex may have failed) — skipping write-back."; exit 0
-          fi
-          if gh secret set CODEX_AUTH --repo "${{ github.repository }}" < "$AUTH"; then
-            echo "Persisted refreshed CODEX_AUTH for the next run."
-          else
-            echo "::warning::Failed to persist refreshed CODEX_AUTH (check CODEX_AUTH_WRITER_PAT scope)."
-          fi
-      - name: Dump brutalist-mcp stderr (diagnostic)
-        if: always()
-        run: |
-          if [ -f /tmp/bmcp-stderr.log ]; then
-            echo "===== brutalist-mcp stderr ====="
-            grep -iE "analysis with timeout|Executing|Released CLI|timed out|execution (failed|completed)" /tmp/bmcp-stderr.log | tail -50
-          else echo "(no log)"; fi
