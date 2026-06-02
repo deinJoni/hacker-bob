@@ -1,5 +1,12 @@
 "use strict";
 
+// chain+evaluator-shared justified: friction logging is a cross-cutting
+// telemetry channel — every agent role (chain-builder, evaluator-shared
+// subagents, surface-discovery, orchestrator) emits capability friction
+// at recognized inadequacy points. The wide role_bundles[] grant is the
+// Y-P9 voluntary-emission discipline (Y.9 chain-bundle audit rev 4.1
+// defect 3 absorption); single-spawner topology preserved.
+
 // Cycle Y.2 — bob_log_capability_friction.
 //
 // Thin wrapper over bob_append_frontier_event that:

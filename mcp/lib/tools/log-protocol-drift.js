@@ -1,5 +1,13 @@
 "use strict";
 
+// chain+evaluator-shared justified: protocol-drift logging is a
+// cross-cutting telemetry channel — every agent role (chain-builder,
+// evaluator-shared subagents, surface-discovery, orchestrator) may emit
+// drift records on write-arg INVALID_ARGUMENTS retries, wrong-mode tool
+// calls, or hook denials. The wide role_bundles[] grant is the Y-P7
+// advisory-channel discipline (Y.9 chain-bundle audit rev 4.1 defect 3
+// absorption); single-spawner topology preserved.
+
 // Cycle Y.2 — bob_log_protocol_drift.
 //
 // Thin wrapper over bob_append_frontier_event for protocol_drift_observed.
