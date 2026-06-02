@@ -13,6 +13,9 @@ const {
 const {
   normalizeTaskLens,
 } = require("./task-lenses.js");
+const {
+  TARGET_CLASS_VALUES,
+} = require("./target-classes.js");
 
 const TASK_PRIORITY_VALUES = Object.freeze(["critical", "high", "medium", "low"]);
 const QUEUE_STATUS_VALUES = Object.freeze(["queued", "assigned", "running", "blocked", "closed", "dismissed"]);
@@ -39,6 +42,27 @@ const DEFAULT_QUEUE_POLICY = Object.freeze({
   // closed-prefix scanners lives in `mcp/lib/friction-scanners.js` (Y.6) and
   // is unioned with this list at scan time. Order-preserving.
   friction_scanners: [],
+  // Y.6 (Y-D5 + Y-D9) — Friction-to-Hypothesis promotion threshold.
+  // bob_propose_friction_promotion uses this as the default
+  // min_frictions when the caller does not pass min_frictions. Per-call
+  // override is allowed; the policy is the operator-tunable floor.
+  friction_promotion_threshold: 2,
+  // Y.6 (Y-D9 rev 4) — default target_class threaded into Surface/Claim
+  // brief derivation by Y.5 wave-scheduler when the session metadata
+  // does not declare one. null leaves derivation target-class-agnostic.
+  target_class_default: null,
+  // Y.6 (Y-D9 rev 4) — subdomain-enumeration circuit-breaker threshold
+  // placeholder. The Y.7 scanner family will consume this when an
+  // operator dials in a per-target ceiling on synthetic subdomain
+  // enumeration.
+  subdomain_enum_circuit_breaker_threshold: null,
+  // Y.6 (Y-D9 rev 4.1 defect 1) — producer-side rationale enforcement
+  // toggle. When TRUE, bob_record_surface_leads (Y.12) requires a
+  // rationale per lead AND the Y.7 silent_lead_threshold_drop scanner
+  // sets rationale_required_but_missing: true on missing-rationale
+  // leads. Default FALSE preserves Y.2-shipped surface-leads recording
+  // behavior; operator opt-in via bob_set_queue_policy.
+  lead_rationale_required_when_below_threshold: false,
 });
 
 const FRICTION_KIND_VALUES = Object.freeze(["tool_absent", "tool_inadequate"]);
@@ -151,6 +175,32 @@ function normalizeQueuePolicy(input = {}) {
       : normalizeTaskLens(input.default_wave_task_lens, "default_wave_task_lens"),
     default_wave_task_budget: normalizeWaveTaskBudget(input.default_wave_task_budget),
     friction_scanners: normalizeFrictionScanners(input.friction_scanners),
+    friction_promotion_threshold: normalizePositiveInteger(
+      input.friction_promotion_threshold,
+      "friction_promotion_threshold",
+      {
+        defaultValue: DEFAULT_QUEUE_POLICY.friction_promotion_threshold,
+        max: 128,
+      },
+    ),
+    target_class_default: input.target_class_default == null
+      ? DEFAULT_QUEUE_POLICY.target_class_default
+      : assertEnumValue(input.target_class_default, TARGET_CLASS_VALUES, "target_class_default"),
+    subdomain_enum_circuit_breaker_threshold:
+      input.subdomain_enum_circuit_breaker_threshold == null
+        ? DEFAULT_QUEUE_POLICY.subdomain_enum_circuit_breaker_threshold
+        : normalizePositiveInteger(
+          input.subdomain_enum_circuit_breaker_threshold,
+          "subdomain_enum_circuit_breaker_threshold",
+          { max: 65536 },
+        ),
+    lead_rationale_required_when_below_threshold:
+      input.lead_rationale_required_when_below_threshold == null
+        ? DEFAULT_QUEUE_POLICY.lead_rationale_required_when_below_threshold
+        : assertBoolean(
+          input.lead_rationale_required_when_below_threshold,
+          "lead_rationale_required_when_below_threshold",
+        ),
   };
   policy.priority_order = Array.from(new Set(policy.priority_order));
   if (policy.standard_wave_max < policy.standard_wave_target) {

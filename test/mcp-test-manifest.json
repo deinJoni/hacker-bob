@@ -95,5 +95,8 @@
   "test/wave-brief-derivation.test.js",
   "test/wave-brief-respects-scorer.test.js",
   "test/wave-brief-target-class.test.js",
-  "test/wave-brief-trace-expectations.test.js"
+  "test/wave-brief-trace-expectations.test.js",
+  "test/stigmergic-producers-shape.test.js",
+  "test/role-trace-expectations.test.js",
+  "test/friction-promotion.test.js"
 ]

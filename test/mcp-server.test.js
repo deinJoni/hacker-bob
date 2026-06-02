@@ -486,6 +486,10 @@ const EXPECTED_TOOL_NAMES = [
   "bob_log_capability_friction",
   "bob_log_protocol_drift",
   "bob_emit_runtime_drift",
+  // Plane Y Cycle Y.6 — orchestrator-only friction-to-Hypothesis promotion
+  // (Y-P6 + Y-P11). Threads friction_history into suggested_contract
+  // BEFORE bob_attach_contract runs.
+  "bob_propose_friction_promotion",
 ];
 
 function withTempHome(fn) {

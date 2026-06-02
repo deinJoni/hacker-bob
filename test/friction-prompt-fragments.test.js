@@ -105,13 +105,19 @@ test("getFragmentText returns the registered text for known ids and null otherwi
   assert.equal(getFragmentText("nope_not_a_fragment"), null);
 });
 
-// Forward-compat cross-reference against role-trace-expectations.js (Y.6).
-// Y.2 blocks Y.6 per the cycle dependency graph (Part IV), so until Y.6
-// lands this is a no-op. Once role-trace-expectations.js ships, both
-// directions of the set-difference MUST be empty (Y.6's own shape test
-// asserts the producer_id direction; this test asserts the fragment_id
-// direction so a Y.2 fragment removal cannot orphan a Y.6 consumer).
-test("cross-reference role-trace-expectations.js (Y.6) when present: no orphan fragment ids in either direction", () => {
+// Cross-reference against role-trace-expectations.js (Y.6).
+//
+// The Y-D19 canonical vocabulary (rev 4.1) is 9 fragments = 4 rev-4
+// originals injected at recognized friction points (NOT via the role
+// registry) + 5 used by ROLE_TRACE_EXPECTATIONS in Y.6. So the only
+// orphan check that survives the design is the role-side direction:
+// every role-referenced fragment_id MUST exist in
+// FRICTION_PROMPT_FRAGMENTS. The inverse (every fragment must appear in
+// the role registry) is NOT a design invariant — the 4 originals
+// (internal_error_retry, invalid_arguments_retry,
+// bash_curl_on_target_detected, setup_setup_rejection) are injected at
+// dispatch-layer friction points and have no per-role expectation entry.
+test("cross-reference role-trace-expectations.js (Y.6) when present: role-referenced fragment_ids resolve mechanically", () => {
   const expectationsPath = path.resolve(
     __dirname,
     "..",
@@ -144,9 +150,9 @@ test("cross-reference role-trace-expectations.js (Y.6) when present: no orphan f
     }
   }
 
-  // Direction A: every role-referenced fragment_id MUST exist in
+  // Every role-referenced fragment_id MUST exist in
   // FRICTION_PROMPT_FRAGMENTS (no consumer references a non-manifested
-  // producer fragment).
+  // producer fragment). This is the one direction the design enforces.
   for (const fragmentId of referencedFragmentIds) {
     assert.ok(
       isKnownFragmentId(fragmentId),
@@ -154,19 +160,24 @@ test("cross-reference role-trace-expectations.js (Y.6) when present: no orphan f
     );
   }
 
-  // Direction B: every fragment_id in FRICTION_PROMPT_FRAGMENTS MUST be
-  // referenced by at least one role. Orphan fragments indicate the
-  // canonical Y-D19 vocabulary has drifted from the role registry.
-  const manifestedIds = new Set(Object.keys(FRICTION_PROMPT_FRAGMENTS));
-  const orphans = [];
-  for (const id of manifestedIds) {
-    if (!referencedFragmentIds.has(id)) {
-      orphans.push(id);
-    }
-  }
+  // The 5 role-mapped fragments MUST be exactly the rev-4.1 canonical
+  // mapping per Y-D19. The remaining 4 (rev-4 originals) live in the
+  // dispatch-layer injection paths and are deliberately NOT in
+  // ROLE_TRACE_EXPECTATIONS.
+  const REV4_DISPATCH_LAYER_FRAGMENTS = new Set([
+    "internal_error_retry",
+    "invalid_arguments_retry",
+    "bash_curl_on_target_detected",
+    "setup_setup_rejection",
+  ]);
+  const expectedRoleMapped = new Set(
+    Object.keys(FRICTION_PROMPT_FRAGMENTS).filter(
+      (id) => !REV4_DISPATCH_LAYER_FRAGMENTS.has(id),
+    ),
+  );
   assert.deepEqual(
-    orphans,
-    [],
-    `FRICTION_PROMPT_FRAGMENTS has orphan fragment_ids (no role consumer references them): ${orphans.join(", ")}`,
+    [...referencedFragmentIds].sort(),
+    [...expectedRoleMapped].sort(),
+    "role-mapped fragment set must match the 5 Y-D19 role-mapped fragments (rev-4 dispatch-layer fragments stay unreferenced by roles)",
   );
 });

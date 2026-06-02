@@ -185,6 +185,11 @@ const TOOL_MODULES = Object.freeze([
   require("./log-capability-friction.js"),
   require("./log-protocol-drift.js"),
   require("./emit-runtime-drift.js"),
+  // Plane Y Cycle Y.6 — friction-to-Hypothesis promotion (Y-P6 + Y-P11).
+  // Orchestrator-only. Threads friction_history into the proposal's
+  // suggested_contract BEFORE bob_attach_contract runs so the pack
+  // widening lands BEFORE the X-D11 satisfiability gate.
+  require("./propose-friction-promotion.js"),
 ]);
 
 module.exports = {

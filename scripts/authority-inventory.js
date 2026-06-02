@@ -94,6 +94,10 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_emit_runtime_drift: "initialized_session_mutation",
   bob_merge_wave_handoffs: "initialized_session_read",
   bob_promote_surface_leads: "initialized_session_mutation",
+  // Plane Y Cycle Y.6 — friction-to-Hypothesis promotion (Y-P6 + Y-P11).
+  // Orchestrator-only at the role-bundle layer; threads friction_history
+  // into the proposal's suggested_contract BEFORE bob_attach_contract.
+  bob_propose_friction_promotion: "initialized_session_mutation",
   bob_propose_hypothesis: "initialized_session_mutation",
   bob_propose_transition: "initialized_session_mutation",
   bob_public_intel: "scoped_http_network",

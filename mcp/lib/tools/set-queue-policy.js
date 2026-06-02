@@ -64,6 +64,23 @@ module.exports = Object.freeze({
               max_context_tokens: { type: "integer" },
             },
           },
+          // Y.6 (Y-D5 + Y-D9) — operator-tunable knobs for the
+          // friction-to-Hypothesis promotion path AND the rev-4 / rev-4.1
+          // target-class + lead-rationale extensions.
+          friction_promotion_threshold: { type: "integer" },
+          target_class_default: {
+            type: "string",
+            enum: [
+              "web_application",
+              "smart_contract",
+              "phishing_fraud",
+              "mobile_app",
+              "infrastructure",
+              "other",
+            ],
+          },
+          subdomain_enum_circuit_breaker_threshold: { type: "integer" },
+          lead_rationale_required_when_below_threshold: { type: "boolean" },
         },
       },
     },

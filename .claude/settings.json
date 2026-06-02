@@ -159,7 +159,8 @@
       "mcp__hacker-bob__bob_browser_session_start_recording",
       "mcp__hacker-bob__bob_browser_flush_recorded_requests",
       "mcp__hacker-bob__bob_set_pack_telemetry_config",
-      "mcp__hacker-bob__bob_emit_runtime_drift"
+      "mcp__hacker-bob__bob_emit_runtime_drift",
+      "mcp__hacker-bob__bob_propose_friction_promotion"
     ]
   },
   "hooks": {
