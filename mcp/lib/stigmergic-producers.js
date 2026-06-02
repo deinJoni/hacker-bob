@@ -29,7 +29,7 @@ const STIGMERGIC_PRODUCERS = Object.freeze([
     producer_id: "technique_pack_scorer",
     mcp_tool_or_artifact: "bob_select_technique_packs",
     trace_shape_ref:
-      "mcp/lib/capability-packs.js#selectTechniquePacksForSurface",
+      "mcp/lib/technique-packs.js#selectTechniquePacksForSurface",
     registered_consumers: Object.freeze([
       "assignment_brief_technique_section_renderer",
     ]),
@@ -38,7 +38,7 @@ const STIGMERGIC_PRODUCERS = Object.freeze([
     producer_id: "surface_discovery_ranked_leads",
     mcp_tool_or_artifact:
       "deep-surface-discovery handoff summary ranked_leads[] OR bob_record_surface_leads invocation",
-    trace_shape_ref: "mcp/lib/wave-handoff-contracts.js#ranked_leads",
+    trace_shape_ref: "mcp/lib/wave-handoff-contracts.js#lead_surface_ids",
     registered_consumers: Object.freeze([
       "orchestrator_handoff_receipt_record_surface_leads",
     ]),

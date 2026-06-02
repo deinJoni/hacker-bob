@@ -32,7 +32,7 @@ const path = require("path");
 // Write tools the orchestrator-side dispatch is allowed to call. The
 // check scripts use these as the grep predicate when scanning bodies.
 // `bob_write_*` is the catch-all canonical prefix; `bob_compose_*` and
-// `bob_amend_*` cover the Y.2.5 / Y.3 structured-composition writers
+// `bob_amend_*` cover the pre-rev-4.1 / Y.3 structured-composition writers
 // (Y-D15b) that do not carry the `bob_write_` prefix.
 const WRITE_TOOL_TOKEN_PATTERN = /\b(bob_write_[a-z][a-z0-9_]*|bob_compose_[a-z][a-z0-9_]*|bob_amend_[a-z][a-z0-9_]*)\b/g;
 

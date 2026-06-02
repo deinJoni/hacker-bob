@@ -17,6 +17,8 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("fs");
+const path = require("path");
 
 const {
   STIGMERGIC_PRODUCERS,
@@ -24,6 +26,8 @@ const {
   getProducer,
   isKnownProducerId,
 } = require("../mcp/lib/stigmergic-producers.js");
+
+const REPO_ROOT = path.join(__dirname, "..");
 
 const CANONICAL_PRODUCER_IDS = [
   "technique_pack_scorer",
@@ -116,4 +120,36 @@ test("lookup helpers resolve canonical ids and return null for unknown", () => {
   assert.equal(getProducer("not_a_real_producer"), null);
   assert.equal(isKnownProducerId("verification_round_ledger"), true);
   assert.equal(isKnownProducerId(""), false);
+});
+
+// Rev 4.1 closure — brutalist Y.6 defect: trace_shape_ref strings pointed at
+// phantom symbols (`mcp/lib/capability-packs.js#selectTechniquePacksForSurface`,
+// `mcp/lib/wave-handoff-contracts.js#ranked_leads`). The shape test asserted
+// `typeof trace_shape_ref === "string"` but never verified the path or the
+// symbol resolved on disk. Add the mechanical ground-truth assertion here so
+// any future drift between the manifest and the implementation is caught at
+// CI rather than at runtime.
+test("every trace_shape_ref `path#symbol` resolves on disk (mechanical ground-truth)", () => {
+  for (const entry of STIGMERGIC_PRODUCERS) {
+    const ref = entry.trace_shape_ref;
+    // Accept either "path#symbol" or "path" (path-only refs are valid for
+    // artifact-level producers whose shape is the whole file).
+    const hashIndex = ref.indexOf("#");
+    const filePath = hashIndex === -1 ? ref : ref.slice(0, hashIndex);
+    const symbol = hashIndex === -1 ? null : ref.slice(hashIndex + 1);
+
+    const absPath = path.join(REPO_ROOT, filePath);
+    assert.ok(
+      fs.existsSync(absPath),
+      `${entry.producer_id}: trace_shape_ref path "${filePath}" does not exist on disk`,
+    );
+
+    if (symbol) {
+      const content = fs.readFileSync(absPath, "utf8");
+      assert.ok(
+        content.includes(symbol),
+        `${entry.producer_id}: trace_shape_ref symbol "${symbol}" not found in ${filePath}`,
+      );
+    }
+  }
 });

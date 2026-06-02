@@ -355,6 +355,69 @@ test("second promotion call with the SAME covered friction event_ids returns ide
   });
 });
 
+test("findPriorPromotion returns the LATEST prior — 3+ sequential identical calls stay idempotent", () => {
+  // Regression for the Y.6 brutalist defect: a first-match iteration of
+  // `findPriorPromotion` returned the oldest promotion whose covered
+  // friction_event_ids set was a strict subset of the later (extended)
+  // promotion, so a 3rd or 4th identical call would re-promote because the
+  // oldest cover-set check returned `allCovered: false`. Reverse-iteration
+  // (latest-wins) keeps the Y-P6 idempotency contract under repeated calls.
+  withTempHome(() => {
+    const domain = "promote-3plus-idempotent.example.com";
+    ensureSessionDir(domain);
+
+    logAbsentFriction(domain, { run_id: "run-A" });
+    logAbsentFriction(domain, { run_id: "run-B" });
+
+    const first = JSON.parse(proposeFrictionPromotionTool.handler({
+      target_domain: domain,
+      wanted_tool: "bob_http_scan",
+      friction_kind: "tool_absent",
+      surface_id: "surface:billing-admin",
+    }));
+    assert.equal(first.promoted, true);
+
+    // Add a third friction; this WIDENS the group beyond the first
+    // promotion's cover set, so the 2nd call legitimately re-promotes.
+    logAbsentFriction(domain, { run_id: "run-C" });
+    const second = JSON.parse(proposeFrictionPromotionTool.handler({
+      target_domain: domain,
+      wanted_tool: "bob_http_scan",
+      friction_kind: "tool_absent",
+      surface_id: "surface:billing-admin",
+    }));
+    assert.equal(second.promoted, true);
+
+    // 3rd call with NO new frictions MUST be idempotent against the LATEST
+    // (2nd) promotion — which covers all 3 frictions. A first-match scan
+    // would compare against the FIRST promotion (covers 2/3) and incorrectly
+    // re-promote.
+    const third = JSON.parse(proposeFrictionPromotionTool.handler({
+      target_domain: domain,
+      wanted_tool: "bob_http_scan",
+      friction_kind: "tool_absent",
+      surface_id: "surface:billing-admin",
+    }));
+    assert.equal(third.promoted, false);
+    assert.equal(third.idempotent, true);
+    assert.equal(third.prior_event_id, second.event_id);
+
+    // 4th call (still no new frictions) stays idempotent.
+    const fourth = JSON.parse(proposeFrictionPromotionTool.handler({
+      target_domain: domain,
+      wanted_tool: "bob_http_scan",
+      friction_kind: "tool_absent",
+      surface_id: "surface:billing-admin",
+    }));
+    assert.equal(fourth.promoted, false);
+    assert.equal(fourth.idempotent, true);
+    assert.equal(fourth.prior_event_id, second.event_id);
+
+    // Only the two genuine promotions landed.
+    assert.equal(readHypothesisProposals(domain).length, 2);
+  });
+});
+
 test("a new friction extending the group AFTER a prior promotion allows a fresh promotion", () => {
   withTempHome(() => {
     const domain = "promote-extend.example.com";

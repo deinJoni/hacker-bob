@@ -771,7 +771,15 @@ test("orchestrator skill stays bounded and reflects the lifecycle topology", () 
   // surface_discovery_ranked_leads ↔
   // orchestrator_handoff_receipt_record_surface_leads). Cap bumped
   // 382 → 383.
-  assert.ok(lines <= 383, `bob-evaluate-runner skill is ${lines} lines (cap 383)`);
+  // Plane Y rev 4.1 completion closure — wired four dormant tools into
+  // orchestrator.md prose: bob_emit_runtime_drift (hook_denial Hard Rule
+  // + partial_advance_acknowledged + wrong_mode_tool_call drift
+  // signatures), bob_propose_friction_promotion + bob_scan_transcript_for_friction
+  // (post-merge wave-settlement instructions), bob_set_friction_scanners
+  // (Friction-Scanner Extension subsection between Optional Workflow
+  // Playbooks and STATE: OPEN_FRONTIER). Closes the leverage_audit
+  // gaps_present verdict. Cap bumped 383 → 387.
+  assert.ok(lines <= 387, `bob-evaluate-runner skill is ${lines} lines (cap 387)`);
   const skill = readFile(".claude/skills/bob-evaluate-runner/SKILL.md");
   assert.match(
     skill,

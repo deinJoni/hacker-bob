@@ -198,7 +198,7 @@ test("LARGE_BODY_THRESHOLD_BYTES is exported from paths.js with value 262144", (
   assert.equal(LARGE_BODY_THRESHOLD_BYTES, 262144);
 });
 
-test("evidence_refs[] absent defaults to empty array (back-compat with shipped Y.2.5 schema)", () => {
+test("evidence_refs[] absent defaults to empty array (back-compat with shipped pre-rev-4.1 schema)", () => {
   withTempHome(() => {
     const domain = "erefs-omitted.example.com";
     seedChainAttempt(domain, "CH-1");
