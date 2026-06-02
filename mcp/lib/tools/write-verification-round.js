@@ -122,7 +122,8 @@ module.exports = wrapWriteTool({
               "maxProperties": 20,
               "additionalProperties": {
                 "type": "string",
-                "pattern": "^[a-f0-9]{64}$"
+                "description": "Y.0 hotfix 2 (O3): lower-case md5 (32 hex) OR sha256 (64 hex). md5 acceptance is additive for back-compat with third-party tooling whose only emitted hash is md5; sha256 remains the canonical default.",
+                "pattern": "^(?:[a-f0-9]{32}|[a-f0-9]{64})$"
               }
             },
             "inherited_confidence_reasons": {

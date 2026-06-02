@@ -41,7 +41,7 @@ function normalizeIsoTimestamp(value, fieldName = "ts", fallback = new Date()) {
   return new Date(parsedMs).toISOString();
 }
 
-function normalizePlainObject(value, fieldName, { defaultValue = undefined } = {}) {
+function normalizePlainObject(value, fieldName, { defaultValue = undefined, maxTextChars, bypassValuePaths } = {}) {
   if (value == null && defaultValue !== undefined) {
     return cloneJson(defaultValue);
   }
@@ -49,13 +49,20 @@ function normalizePlainObject(value, fieldName, { defaultValue = undefined } = {
     throw new Error(`${fieldName} must be an object`);
   }
   const cloned = cloneJson(value);
-  validateNoSensitiveMaterial(cloned, fieldName);
+  const validatorOptions = {};
+  if (maxTextChars != null) validatorOptions.maxTextChars = maxTextChars;
+  if (bypassValuePaths != null) validatorOptions.bypassValuePaths = bypassValuePaths;
+  validateNoSensitiveMaterial(
+    cloned,
+    fieldName,
+    Object.keys(validatorOptions).length > 0 ? validatorOptions : undefined,
+  );
   return cloned;
 }
 
-function normalizeOptionalObject(value, fieldName) {
+function normalizeOptionalObject(value, fieldName, options = {}) {
   if (value == null) return null;
-  return normalizePlainObject(value, fieldName);
+  return normalizePlainObject(value, fieldName, options);
 }
 
 function normalizeReferenceArray(value, fieldName = "refs") {

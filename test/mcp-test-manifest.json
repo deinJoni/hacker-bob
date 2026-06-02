@@ -84,5 +84,6 @@
   "test/compose-report.test.js",
   "test/amend-report.test.js",
   "test/write-chain-rollup.test.js",
-  "test/tool-error-remediation.test.js"
+  "test/tool-error-remediation.test.js",
+  "test/plane-y-cycle-0-hotfix.test.js"
 ]

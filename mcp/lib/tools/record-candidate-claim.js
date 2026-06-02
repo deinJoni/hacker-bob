@@ -42,16 +42,66 @@ const { hashCanonicalJson } = require("../verification-contracts.js");
 // The finding_id identifier is preserved as the stable handle for verification
 // and grade rounds; it is minted by scanning the existing claims ledger.
 
+// Y.0 hotfix 1 (O2): field evidence showed bob_record_candidate_claim returning
+// INTERNAL_ERROR ~71% of the time because field-observed payloads exceeded the
+// per-field text caps and triggered the sensitive-material validator on benign
+// matches (e.g. a victim_token surfaced inside a proof-of-concept narrative).
+// The caps are raised here and a per-call secret_detection_bypass list lets the
+// caller declare specific fields as benign with a recorded rationale; the live
+// values below are the single source of truth — tests import this constant
+// (no duplicated literals) so any future cap change is caught immediately.
 const CLAIM_TEXT_LIMITS = Object.freeze({
   title: 300,
   cwe: 120,
   endpoint: 2000,
-  description: 4000,
-  proof_of_concept: 4000,
-  response_evidence: 4000,
-  impact: 4000,
+  description: 16000,
+  proof_of_concept: 16000,
+  response_evidence: 16000,
+  impact: 8000,
   auth_profile: 200,
 });
+
+const SECRET_DETECTION_BYPASS_FIELDS = Object.freeze(new Set([
+  "description",
+  "proof_of_concept",
+  "response_evidence",
+  "impact",
+]));
+const SECRET_DETECTION_BYPASS_RATIONALE_MAX = 512;
+const SECRET_DETECTION_BYPASS_MAX_ENTRIES = SECRET_DETECTION_BYPASS_FIELDS.size;
+
+function normalizeSecretDetectionBypass(raw) {
+  if (raw == null) return new Map();
+  const entries = Array.isArray(raw) ? raw : [raw];
+  if (entries.length > SECRET_DETECTION_BYPASS_MAX_ENTRIES) {
+    throw new Error(
+      `secret_detection_bypass must contain at most ${SECRET_DETECTION_BYPASS_MAX_ENTRIES} entries`,
+    );
+  }
+  const bypass = new Map();
+  for (const entry of entries) {
+    if (entry == null || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error("secret_detection_bypass entries must be objects with {field, rationale}");
+    }
+    const field = assertNonEmptyString(entry.field, "secret_detection_bypass.field");
+    if (!SECRET_DETECTION_BYPASS_FIELDS.has(field)) {
+      throw new Error(
+        `secret_detection_bypass.field must be one of: ${Array.from(SECRET_DETECTION_BYPASS_FIELDS).sort().join(", ")}`,
+      );
+    }
+    const rationale = assertNonEmptyString(entry.rationale, "secret_detection_bypass.rationale");
+    if (rationale.length > SECRET_DETECTION_BYPASS_RATIONALE_MAX) {
+      throw new Error(
+        `secret_detection_bypass.rationale must be at most ${SECRET_DETECTION_BYPASS_RATIONALE_MAX} chars`,
+      );
+    }
+    if (bypass.has(field)) {
+      throw new Error(`secret_detection_bypass.field ${field} listed twice`);
+    }
+    bypass.set(field, rationale);
+  }
+  return bypass;
+}
 
 function findingIdNumber(findingId) {
   const match = typeof findingId === "string" ? findingId.match(/^F-([1-9]\d*)$/) : null;
@@ -93,9 +143,18 @@ function scanExistingFindingFootprint(domain) {
   return { maxNumber, total, dedupeIndex };
 }
 
-function validateClaimForPersistence(finding) {
+function validateClaimForPersistence(finding, secretBypass = new Map()) {
   for (const [field, maxTextChars] of Object.entries(CLAIM_TEXT_LIMITS)) {
     if (finding[field] == null) continue;
+    if (secretBypass.has(field)) {
+      // Caller asserted this field is a benign match (e.g. a victim token
+      // surfaced inside a PoC narrative). Cap is still enforced; sensitive-
+      // material structural detection is skipped for this field only.
+      if (typeof finding[field] === "string" && finding[field].length > maxTextChars) {
+        throw new Error(`${field} is too large; do not persist raw large response bodies`);
+      }
+      continue;
+    }
     validateNoSensitiveMaterial(finding[field], field, { maxTextChars });
   }
 }
@@ -279,8 +338,9 @@ function recordCandidateClaimHandler(args) {
       evaluatorAgent,
       briefProfile,
     };
+    const secretBypass = normalizeSecretDetectionBypass(args.secret_detection_bypass);
     const preliminary = buildFindingPayloadRecord(args, context, "F-1");
-    validateClaimForPersistence(preliminary);
+    validateClaimForPersistence(preliminary, secretBypass);
 
     const scan = scanExistingFindingFootprint(domain);
     const existing = scan.dedupeIndex.get(preliminary.dedupe_key) || null;
@@ -299,11 +359,28 @@ function recordCandidateClaimHandler(args) {
 
     const counter = scan.maxNumber + 1;
     const finding = buildFindingPayloadRecord(args, context, `F-${counter}`);
-    validateClaimForPersistence(finding);
+    validateClaimForPersistence(finding, secretBypass);
 
     const findingContentHash = hashCanonicalJson(finding);
     const claimInput = buildClaimPayloadFromFinding(finding, findingContentHash, args || {});
-    const claim = appendCandidateClaim(claimInput);
+    // Y.0 hotfix 1 (O2): expand the per-field bypass into the exact deep
+    // paths the claims-layer validator will see. The embedded finding lives
+    // at payload.finding.<field>; the top-level summary is sourced from
+    // description, so a description-level bypass also covers the top-level
+    // summary; impact is mirrored to claim.impact.
+    const payloadBypassValuePaths = new Set();
+    for (const field of secretBypass.keys()) {
+      payloadBypassValuePaths.add(`payload.finding.${field}`);
+      if (field === "description") {
+        payloadBypassValuePaths.add("summary");
+      }
+      if (field === "impact") {
+        payloadBypassValuePaths.add("impact");
+      }
+    }
+    const claim = appendCandidateClaim(claimInput, {
+      payloadBypassValuePaths: payloadBypassValuePaths.size > 0 ? payloadBypassValuePaths : null,
+    });
 
     appendFrontierEvent({
       target_domain: domain,
@@ -429,6 +506,27 @@ module.exports = Object.freeze({
         "type": "boolean",
         "description": "Intentionally record a duplicate candidate claim instead of returning the existing finding ID."
       },
+      "secret_detection_bypass": {
+        "type": "array",
+        "maxItems": 4,
+        "description": "Y.0 hotfix 1 (O2): list of {field, rationale} entries declaring that a specific finding text field carries a benign match the sensitive-material validator should skip (e.g. a victim_token surfaced inline in a PoC narrative). Length cap on the field is still enforced; the rationale is required for audit. Allowed fields: description, proof_of_concept, response_evidence, impact.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "field": {
+              "type": "string",
+              "enum": ["description", "proof_of_concept", "response_evidence", "impact"]
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          "required": ["field", "rationale"],
+          "additionalProperties": false
+        }
+      },
       "sc_evidence": {
         "type": "object",
         "description": "Structured re-run handle for smart-contract candidate claims. Required when the assigned surface is a smart contract; rejected otherwise so the verifier can re-run via bob_foundry_run (EVM) or bob_anchor_run (SVM) with no string-parsing of the prose PoC.",
@@ -504,4 +602,6 @@ module.exports = Object.freeze({
   session_artifacts_written: ["claims.jsonl","frontier-events.jsonl"],
   findingPayloadsFromClaims,
   computeFindingDedupeKey,
+  CLAIM_TEXT_LIMITS,
+  SECRET_DETECTION_BYPASS_FIELDS,
 });

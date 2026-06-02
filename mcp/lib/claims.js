@@ -245,13 +245,18 @@ function normalizeLensArray(value) {
   return Array.from(new Set(value.map((lens, index) => normalizeTaskLens(lens, `lenses[${index}]`))));
 }
 
-function normalizeCandidateClaim(input, { targetDomain = null, now = new Date() } = {}) {
+function normalizeCandidateClaim(input, { targetDomain = null, now = new Date(), payloadBypassValuePaths = null } = {}) {
   if (input == null || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("claim must be an object");
   }
   const domain = assertSafeDomain(input.target_domain || targetDomain);
   const title = normalizeId(input.title, "title", { maxLength: 240 });
-  const summary = normalizeId(input.summary, "summary", { maxLength: 2000 });
+  // Y.0 hotfix 1 (O2): summary cap raised to accommodate field-observed
+  // payloads whose description (used as the summary fallback in
+  // record-candidate-claim) routinely exceeded 2000 chars. Per-field text
+  // caps for the inline finding payload live in
+  // mcp/lib/tools/record-candidate-claim.js CLAIM_TEXT_LIMITS.
+  const summary = normalizeId(input.summary, "summary", { maxLength: 16000 });
   const createdAt = normalizeIsoTimestamp(input.created_at || input.ts, "created_at", now);
   const status = assertEnumValue(input.status || "candidate", CLAIM_STATUSES, "status");
   const severity = assertEnumValue(input.severity || "medium", CLAIM_SEVERITIES, "severity");
@@ -269,7 +274,17 @@ function normalizeCandidateClaim(input, { targetDomain = null, now = new Date() 
   const sourceTaskIds = normalizeOptionalTextArray(input.source_task_ids, "source_task_ids");
   const agentRunIds = normalizeOptionalTextArray(input.agent_run_ids, "agent_run_ids");
   const tags = normalizeOptionalTextArray(input.tags, "tags");
-  const payload = normalizeOptionalObject(input.payload, "payload");
+  // Y.0 hotfix 1 (O2): payload carries the embedded finding-shaped record
+  // whose per-field caps were raised in
+  // mcp/lib/tools/record-candidate-claim.js. Pass the widened text cap so the
+  // generic plain-object validator does not re-tighten what the writer just
+  // accepted. payloadBypassValuePaths is the deep-path Set the caller built
+  // from secret_detection_bypass; structural sensitive-key detection still
+  // fires, only the listed value-paths skip the regex scan.
+  const payload = normalizeOptionalObject(input.payload, "payload", {
+    maxTextChars: 16000,
+    bypassValuePaths: payloadBypassValuePaths,
+  });
 
   const base = {
     version: CLAIM_VERSION,

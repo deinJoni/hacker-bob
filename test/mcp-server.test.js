@@ -12868,7 +12868,7 @@ test("verification v2 validates artifact hashes and canonicalizes result orderin
       verification_snapshot_hash: context.snapshot_hash,
       round_profile: "brutalist",
       results: [v2VerificationResult("F-1", { artifact_hashes: { bad: "A".repeat(64) } }), f2],
-    }), /lower-case SHA-256 hex hash|must match pattern/);
+    }), /lower-case md5 \(32 hex\) or sha256 \(64 hex\) hash|must match pattern/);
 
     assert.throws(() => writeVerificationRound({
       target_domain: domain,

@@ -68,7 +68,13 @@ function normalizeStringEnumArray(value, fieldName, allowedValues, { required = 
 }
 
 const VERIFICATION_ARTIFACT_HASH_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/;
-const VERIFICATION_ARTIFACT_HASH_VALUE_RE = /^[a-f0-9]{64}$/;
+// Y.0 hotfix 2 (O3): field evidence showed verification rounds that recorded
+// artifact hashes from third-party tooling (HTTP digest headers, vendor
+// scanner outputs) where md5 — not sha256 — was the only hash the upstream
+// emitted. The validator previously rejected those rounds; the regex now
+// accepts both md5 (32 lowercase hex) and sha256 (64 lowercase hex). The
+// 64-hex sha256 path is the back-compat default; md5 is the additive widening.
+const VERIFICATION_ARTIFACT_HASH_VALUE_RE = /^(?:[a-f0-9]{32}|[a-f0-9]{64})$/;
 const VERIFICATION_ARTIFACT_HASH_MAX_ENTRIES = 20;
 const VERIFICATION_ARTIFACT_HASH_SECRET_KEY_RE = /(?:authorization|cookie|token|secret|password|passwd|api[_-]?key|credential|session)/i;
 
@@ -92,7 +98,7 @@ function normalizeArtifactHashes(value, fieldName = "artifact_hashes") {
     }
     const normalizedHash = assertNonEmptyString(hash, `${fieldName}.${safeKey}`);
     if (!VERIFICATION_ARTIFACT_HASH_VALUE_RE.test(normalizedHash)) {
-      throw new Error(`${fieldName}.${safeKey} must be a lower-case SHA-256 hex hash`);
+      throw new Error(`${fieldName}.${safeKey} must be a lower-case md5 (32 hex) or sha256 (64 hex) hash`);
     }
     normalized[safeKey] = normalizedHash;
   }

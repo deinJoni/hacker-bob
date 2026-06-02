@@ -70,13 +70,26 @@ function isPlainObject(value) {
   return value != null && typeof value === "object" && !Array.isArray(value);
 }
 
-function validateNoSensitiveMaterial(value, fieldName, { maxTextChars = DEFAULT_MAX_TEXT_CHARS } = {}) {
+function validateNoSensitiveMaterial(
+  value,
+  fieldName,
+  { maxTextChars = DEFAULT_MAX_TEXT_CHARS, bypassValuePaths = null } = {},
+) {
+  // Y.0 hotfix 1 (O2): bypassValuePaths is an optional Set<string> of
+  // recursion paths whose VALUE-pattern check (bearer, Authorization:, etc.)
+  // is skipped because the caller asserted the match is benign and recorded a
+  // rationale at the record-candidate-claim layer. The length cap and the
+  // structural KEY-name check still fire — only the regex value scan is
+  // suppressed at the matching path. Paths are matched as the full dotted
+  // path string built by the recursion (e.g. "payload.finding.description").
+  const bypass = bypassValuePaths instanceof Set ? bypassValuePaths : null;
   const visit = (item, path) => {
     if (typeof item === "string") {
       if (item.length > maxTextChars) {
         throw new Error(`${path} is too large; do not persist raw large response bodies`);
       }
-      if (SENSITIVE_VALUE_RE.some((pattern) => pattern.test(item))) {
+      const bypassThisValue = bypass != null && bypass.has(path);
+      if (!bypassThisValue && SENSITIVE_VALUE_RE.some((pattern) => pattern.test(item))) {
         throw new Error(`${path} appears to contain secrets, auth headers, cookies, or tokens`);
       }
       return;
