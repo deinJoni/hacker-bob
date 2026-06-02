@@ -91,9 +91,15 @@ const EXPLICIT_AUTHORITY_CLASS_BY_TOOL = Object.freeze({
   bob_init_repo_session: "bootstrap_session",
   bob_list_auth_profiles: "initialized_session_read",
   bob_list_candidate_claims: "initialized_session_read",
+  bob_log_capability_friction: "initialized_session_mutation",
   bob_log_coverage: "initialized_session_mutation",
   bob_log_dead_ends: "initialized_session_mutation",
+  bob_log_protocol_drift: "initialized_session_mutation",
   bob_log_technique_attempt: "initialized_session_mutation",
+  // Plane Y Cycle Y.2 — Y-D13 runtime drift telemetry entry. Orchestrator-
+  // only at the role-bundle layer; Y.2.5 will add a server-internal caller
+  // bundle for _write-base.js auto-emit on INVALID_ARGUMENTS retry success.
+  bob_emit_runtime_drift: "initialized_session_mutation",
   bob_merge_wave_handoffs: "initialized_session_read",
   bob_promote_surface_leads: "initialized_session_mutation",
   bob_propose_hypothesis: "initialized_session_mutation",

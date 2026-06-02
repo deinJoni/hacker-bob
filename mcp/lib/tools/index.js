@@ -168,6 +168,19 @@ const TOOL_MODULES = Object.freeze([
   require("./browser-session-start-recording.js"),
   require("./browser-flush-recorded-requests.js"),
   require("./set-pack-telemetry-config.js"),
+  // Plane Y Cycle Y.2 — capability friction + protocol drift voluntary
+  // emission entries plus the orchestrator-facing runtime drift telemetry
+  // tool (Y-D13). Friction + drift records ride observation.recorded as
+  // payload.observation_kind siblings of OSS kinds — zero new top-level
+  // FRONTIER_EVENT_KIND (Y-P1 / X-P8). Friction is 5-tuple idempotent
+  // (Y-P3); drift is per-(run_id, skill_path, drift_signature) idempotent;
+  // runtime-drift is per-(run_id, drift_signature, details.tool) idempotent
+  // (Y-R20). bob_emit_runtime_drift is orchestrator-only at the
+  // role-bundle layer — the Y.2.5 _write-base.js auto-emit path uses a
+  // server-internal caller bundle that is NEVER grantable to agents.
+  require("./log-capability-friction.js"),
+  require("./log-protocol-drift.js"),
+  require("./emit-runtime-drift.js"),
 ]);
 
 module.exports = {

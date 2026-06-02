@@ -636,6 +636,11 @@ test("surface-discovery agents expose only the governance nucleus read and the b
   // ServiceWorker enumeration that curl/httpx/katana cannot reach. The
   // permissive surface remains tight: only the session-nucleus read plus
   // the bob_browser_* family.
+  // Plane Y Cycle Y.2 adds bob_log_capability_friction +
+  // bob_log_protocol_drift to surface-discovery (Y-D2 — voluntary
+  // emission entries are broadly granted so any agent that needs a
+  // missing tool can self-report the friction without crossing role
+  // boundaries).
   const allowedPrimaries = new Set([
     "bob_read_session_nucleus",
     "bob_browser_session_start",
@@ -653,6 +658,8 @@ test("surface-discovery agents expose only the governance nucleus read and the b
     "bob_browser_session_close",
     "bob_browser_session_start_recording",
     "bob_browser_flush_recorded_requests",
+    "bob_log_capability_friction",
+    "bob_log_protocol_drift",
   ]);
   for (const agent of ["surface-discovery-agent", "deep-surface-discovery-agent"]) {
     const document = readFile(`.claude/agents/${agent}.md`);
@@ -735,7 +742,10 @@ test("orchestrator skill stays bounded and reflects the lifecycle topology", () 
   // transition_kind enum so the orchestrator proposes Transition nodes before
   // dispatching Surface-node waves when ≥2 stack families share a target
   // (+2 lines). Cap bumped 360 → 365.
-  assert.ok(lines <= 365, `bob-evaluate-runner skill is ${lines} lines (cap 365)`);
+  // Plane Y Cycle Y.2 added bob_emit_runtime_drift to the orchestrator
+  // bundle (Y-D13 — the orchestrator-facing runtime drift telemetry entry).
+  // Auto-generated allowed-tools block gained one line. Cap bumped 365 → 366.
+  assert.ok(lines <= 366, `bob-evaluate-runner skill is ${lines} lines (cap 366)`);
   const skill = readFile(".claude/skills/bob-evaluate-runner/SKILL.md");
   assert.match(
     skill,
@@ -958,7 +968,13 @@ test("evaluator agents stay under their MCP tool budget", () => {
   // per X-P9 so the tool replaces ad-hoc body inlining in briefs;
   // budgets bump by +1 (SC 38→39, web 40→41) to keep parity with the
   // bundle surface.
-  const EVALUATOR_MCP_TOOL_BUDGET = 39;
+  // Plane Y Cycle Y.2 adds bob_log_capability_friction +
+  // bob_log_protocol_drift to evaluator-shared (Y-D2 voluntary emission
+  // entries). Both are summary-grade by shape (Y-P2): closed-prefix
+  // payloads, no body fields, 5-tuple idempotent. Per-evaluator brief
+  // tokens unchanged (no brief surfacing); budgets bump by +2 (SC 39→41,
+  // web 41→43) to keep parity with the bundle surface.
+  const EVALUATOR_MCP_TOOL_BUDGET = 41;
   const agentNameToRoleId = {};
   for (const [roleId, spec] of Object.entries(CLAUDE_ROLE_SPECS)) {
     if (spec.kind === "agent" && typeof spec.output_path === "string") {
@@ -967,7 +983,7 @@ test("evaluator agents stay under their MCP tool budget", () => {
   }
   for (const pack of Object.values(CAPABILITY_PACKS)) {
     const roleId = agentNameToRoleId[pack.evaluator_agent];
-    const budget = pack.brief_profile === "web" ? 41 : EVALUATOR_MCP_TOOL_BUDGET;
+    const budget = pack.brief_profile === "web" ? 43 : EVALUATOR_MCP_TOOL_BUDGET;
     assert.ok(
       mcpToolNamesForRole(roleId).length <= budget,
       `pack ${pack.id} evaluator over budget (got ${mcpToolNamesForRole(roleId).length}, budget ${budget})`,

@@ -1,7 +1,7 @@
 ---
 name: chain-builder
 description: Analyzes proven findings for credible impact chains that elevate severity
-tools: Write, mcp__hacker-bob__bob_http_scan, mcp__hacker-bob__bob_read_http_audit, mcp__hacker-bob__bob_read_surface_routes, mcp__hacker-bob__bob_read_candidate_claims, mcp__hacker-bob__bob_write_chain_attempt, mcp__hacker-bob__bob_read_chain_attempts, mcp__hacker-bob__bob_read_wave_handoffs, mcp__hacker-bob__bob_list_auth_profiles
+tools: Write, mcp__hacker-bob__bob_http_scan, mcp__hacker-bob__bob_read_http_audit, mcp__hacker-bob__bob_read_surface_routes, mcp__hacker-bob__bob_read_candidate_claims, mcp__hacker-bob__bob_write_chain_attempt, mcp__hacker-bob__bob_read_chain_attempts, mcp__hacker-bob__bob_read_wave_handoffs, mcp__hacker-bob__bob_list_auth_profiles, mcp__hacker-bob__bob_log_capability_friction, mcp__hacker-bob__bob_log_protocol_drift
 model: opus
 color: purple
 mcpServers:

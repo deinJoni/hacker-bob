@@ -6,16 +6,16 @@ The `Target URL` and `Tests` columns are authority contracts for N2-004 enforcem
 
 ## Summary
 
-- Registered tools: 139
-- Tools with `target_domain`: 131
-- Tools requiring `target_domain`: 126
+- Registered tools: 142
+- Tools with `target_domain`: 134
+- Tools requiring `target_domain`: 129
 - Mode-dependent tools: 5
 
 | Authority Class | Default Tool Count | Resolved Mode/Tool Count |
 | --- | ---: | ---: |
 | `bootstrap_session` | 2 | 2 |
 | `initialized_session_read` | 36 | 40 |
-| `initialized_session_mutation` | 63 | 64 |
+| `initialized_session_mutation` | 66 | 67 |
 | `scoped_http_network` | 7 | 7 |
 | `smart_contract_contextual` | 19 | 19 |
 | `optional_session_context` | 0 | 0 |
@@ -207,3 +207,6 @@ Fail-closed fields: `target`, `target_url`, `checkpoint_mode`, `block_internal_h
 | bob_browser_session_start_recording | mcp/lib/tools/browser-session-start-recording.js | `initialized_session_mutation` | has=true<br>required=true | mutating=true<br>global_preapproval=false<br>network_access=true<br>browser_access=true<br>scope_required=true<br>sensitive_output=false<br>artifacts=[] | target_url | validate_session_target_url | allowlist_required | not_applicable | not_applicable | Writes session artifacts or mutates session state and must be bound to an initialized session. | Require initialized session, target match, target_url validation, and legacy allowlist before write. | Direct tests for missing session, mismatch, legacy fail-closed fields, and artifact write path. |
 | bob_browser_flush_recorded_requests | mcp/lib/tools/browser-flush-recorded-requests.js | `initialized_session_mutation` | has=true<br>required=true | mutating=true<br>global_preapproval=false<br>network_access=false<br>browser_access=true<br>scope_required=true<br>sensitive_output=false<br>artifacts=traffic.jsonl | [] | validate_session_target_url | allowlist_required | not_applicable | not_applicable | Writes session artifacts or mutates session state and must be bound to an initialized session. | Require initialized session, target match, target_url validation, and legacy allowlist before write. | Direct tests for missing session, mismatch, legacy fail-closed fields, and artifact write path. |
 | bob_set_pack_telemetry_config | mcp/lib/tools/set-pack-telemetry-config.js | `initialized_session_mutation` | has=true<br>required=true | mutating=true<br>global_preapproval=false<br>network_access=false<br>browser_access=false<br>scope_required=false<br>sensitive_output=false<br>artifacts=pack-telemetry-config.json | [] | validate_session_target_url | allowlist_required | not_applicable | not_applicable | Writes session artifacts or mutates session state and must be bound to an initialized session. | Require initialized session, target match, target_url validation, and legacy allowlist before write. | Direct tests for missing session, mismatch, legacy fail-closed fields, and artifact write path. |
+| bob_log_capability_friction | mcp/lib/tools/log-capability-friction.js | `initialized_session_mutation` | has=true<br>required=true | mutating=true<br>global_preapproval=true<br>network_access=false<br>browser_access=false<br>scope_required=false<br>sensitive_output=false<br>artifacts=frontier-events.jsonl | [] | validate_session_target_url | allowlist_required | not_applicable | not_applicable | Writes session artifacts or mutates session state and must be bound to an initialized session. | Require initialized session, target match, target_url validation, and legacy allowlist before write. | Direct tests for missing session, mismatch, legacy fail-closed fields, and artifact write path. |
+| bob_log_protocol_drift | mcp/lib/tools/log-protocol-drift.js | `initialized_session_mutation` | has=true<br>required=true | mutating=true<br>global_preapproval=true<br>network_access=false<br>browser_access=false<br>scope_required=false<br>sensitive_output=false<br>artifacts=frontier-events.jsonl | [] | validate_session_target_url | allowlist_required | not_applicable | not_applicable | Writes session artifacts or mutates session state and must be bound to an initialized session. | Require initialized session, target match, target_url validation, and legacy allowlist before write. | Direct tests for missing session, mismatch, legacy fail-closed fields, and artifact write path. |
+| bob_emit_runtime_drift | mcp/lib/tools/emit-runtime-drift.js | `initialized_session_mutation` | has=true<br>required=true | mutating=true<br>global_preapproval=false<br>network_access=false<br>browser_access=false<br>scope_required=false<br>sensitive_output=false<br>artifacts=frontier-events.jsonl | [] | validate_session_target_url | allowlist_required | not_applicable | not_applicable | Writes session artifacts or mutates session state and must be bound to an initialized session. | Require initialized session, target match, target_url validation, and legacy allowlist before write. | Direct tests for missing session, mismatch, legacy fail-closed fields, and artifact write path. |

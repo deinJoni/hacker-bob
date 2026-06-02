@@ -76,5 +76,7 @@
   "test/capability-pack-derivation.test.js",
   "test/contract-verifier.test.js",
   "test/prepare-finalize-node.test.js",
-  "test/capability-observation-shape.test.js"
+  "test/capability-observation-shape.test.js",
+  "test/log-capability-friction.test.js",
+  "test/emit-runtime-drift.test.js"
 ]

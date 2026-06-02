@@ -477,6 +477,11 @@ const EXPECTED_TOOL_NAMES = [
   "bob_browser_session_start_recording",
   "bob_browser_flush_recorded_requests",
   "bob_set_pack_telemetry_config",
+  // Plane Y Cycle Y.2 — capability friction + protocol drift voluntary
+  // emission tools plus the Y-D13 runtime drift telemetry entry.
+  "bob_log_capability_friction",
+  "bob_log_protocol_drift",
+  "bob_emit_runtime_drift",
 ];
 
 function withTempHome(fn) {
@@ -1825,6 +1830,15 @@ test("MCP tool registry exposes capability metadata for metric and eval tools", 
     I1_surface_graph: [
       "bob_build_surface_graph",
       "bob_query_surface_graph",
+    ],
+    // Plane Y Cycle Y.2 — capability friction + protocol drift voluntary
+    // emission tools plus the orchestrator-facing runtime drift telemetry
+    // entry. All three share the Y_self_reporting capability_id so operators
+    // can grep telemetry by source.
+    Y_self_reporting: [
+      "bob_log_capability_friction",
+      "bob_log_protocol_drift",
+      "bob_emit_runtime_drift",
     ],
   });
 });
