@@ -85,5 +85,6 @@
   "test/amend-report.test.js",
   "test/write-chain-rollup.test.js",
   "test/tool-error-remediation.test.js",
-  "test/plane-y-cycle-0-hotfix.test.js"
+  "test/plane-y-cycle-0-hotfix.test.js",
+  "test/friction-prompt-fragments.test.js"
 ]
