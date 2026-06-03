@@ -1,6 +1,6 @@
 ---
-name: bob-hunt
-description: Run or resume a Hacker Bob bug bounty hunt in Kimi CLI using the shared MCP runtime.
+name: bob-evaluate-runner
+description: Run or resume a Hacker Bob bug bounty evaluate in Kimi CLI using the shared MCP runtime.
 type: standard
 ---
 
@@ -60,7 +60,7 @@ Use `bob_read_state_summary.data` for routine decisions. Use `bob_read_session_s
 - Continue only from MCP state and summaries; do not reconstruct resume state from markdown, `report.md`, handoff markdown, or session artifact text.
 - If `state.pending_wave` is null, continue from `state.phase`.
 - If `state.pending_wave` is non-null, call `bob_apply_wave_merge({ target_domain, wave_number: state.pending_wave, force_merge, force_merge_reason })` and use `result.data`. When `force_merge` is true, `force_merge_reason` must explain the missing/invalid handoffs and why reconciliation is safe.
-- If status is `"pending"`, report `Wave N pending: X/Y handoffs received. Resume again later, or run /skill:bob-hunt resume [domain] force-merge to reconcile now.` Then stop.
+- If status is `"pending"`, report `Wave N pending: X/Y handoffs received. Resume again later, or run /skill:bob-evaluate-runner resume [domain] force-merge to reconcile now.` Then stop.
 - If status is `"merged"`, continue with returned `state`, `readiness`, `merge`, and `findings`.
 - Pending-wave reconciliation happens only on explicit re-entry or after all background hunters complete, never in the same turn that launched hunters.
 
@@ -119,7 +119,7 @@ Wave policy:
 
 Before spawning a wave:
 1. Call `bob_start_next_wave({ target_domain })` and use `result.data`.
-2. If `decision === "pending_wave_reconcile"`, call the `next_action` tool or stop and require `/skill:bob-hunt resume [domain]`.
+2. If `decision === "pending_wave_reconcile"`, call the `next_action` tool or stop and require `/skill:bob-evaluate-runner resume [domain]`.
 3. If `decision === "no_assignable_candidates"`, stop wave launching and let the phase gate decide whether CHAIN is allowed.
 4. Spawn hunters only when `started === true` and `next_action.kind === "spawn_hunters"`. Use top-level `result.data.assignments`; do not use assignments from `next_action`.
 5. Use each returned assignment's `hunter_agent` as the subagent type and that assignment's `handoff_token` only in its spawn prompt. The MCP capability router has already chosen the correct hunter family per surface; do not branch by `chain_family` in the orchestrator.
@@ -168,13 +168,13 @@ Pack catalogue (lookup by `assignment.capability_pack`):
 - `capability_pack: "smart_contract_substrate"` (chain_family `substrate`) -> hunter_agent `evaluator-substrate-agent`. chain_id: the network name (polkadot/kusama/astar/shiden/rococo/westend/localnet). Workflow: bob_substrate_fetch_runtime (confirm chain identity + spec_version) -> bob_substrate_fetch_storage (read pallet_contracts.ContractInfoOf for code_hash and admin) -> scaffold an ink! `cargo test` harness under harness_path/ via Write (uses #[ink::test] for unit or #[ink_e2e::test] for E2E) -> bob_substrate_run with network and optional pinned fork_block -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary. SC RPC/REST egress is direct public HTTPS only: DNS-private endpoints, private/localnet RPC, and egress_profile proxy routing are unsupported by default. CLI dependency: cargo or substrate-contracts-node; blocked_harness_runs[] kind: substrate_fork or rpc_endpoint.
 - `capability_pack: "smart_contract_cosmwasm"` (chain_family `cosmwasm`) -> hunter_agent `evaluator-cosmwasm-agent`. chain_id: the network name (osmosis/juno/neutron/archway/sei/stargaze/terra/kava/localnet). Workflow: bob_cosmwasm_fetch_contract (confirm contract exists, capture code_id + admin) -> bob_cosmwasm_smart_query (inspect public Config / Owner / Balance entrypoints) -> scaffold a cw-multi-test integration test under harness_path/tests/ via Write -> bob_cosmwasm_run with network and optional pinned fork_block -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary. SC RPC/REST egress is direct public HTTPS only: DNS-private endpoints, private/localnet RPC, and egress_profile proxy routing are unsupported by default. CLI dependency: cargo; blocked_harness_runs[] kind: cosmwasm_fork or rpc_endpoint.
 
-Geofence triggers for the orchestrator are repeated first-party timeouts, repeated first-party `INTERNAL_ERROR` or connection reset results, multiple tripped target-owned hosts in `circuit_breaker_summary`, `network_unreachable_target` in audit or analytics, or audit summaries showing `default` egress cannot reach high-value first-party surfaces. Treat these as reachability warnings. Do not rotate silently; summarize the blocked context and ask the operator to resume with `/skill:bob-hunt --egress <profile> resume <domain>`.
+Geofence triggers for the orchestrator are repeated first-party timeouts, repeated first-party `INTERNAL_ERROR` or connection reset results, multiple tripped target-owned hosts in `circuit_breaker_summary`, `network_unreachable_target` in audit or analytics, or audit summaries showing `default` egress cannot reach high-value first-party surfaces. Treat these as reachability warnings. Do not rotate silently; summarize the blocked context and ask the operator to resume with `/skill:bob-evaluate-runner --egress <profile> resume <domain>`.
 
 Launch-turn barrier:
 1. After spawning hunters, report wave number, agent count, and assignments.
 2. Never call `bob_apply_wave_merge`, `bob_wave_status`, `bob_wave_handoff_status`, or `bob_merge_wave_handoffs` in the same turn that spawned hunters.
 3. Wait for background completion notifications. When all hunters complete, reconcile.
-4. If context is lost, the user can run `/skill:bob-hunt resume [domain]`.
+4. If context is lost, the user can run `/skill:bob-evaluate-runner resume [domain]`.
 
 Wave reconciliation:
 1. First call `bob_read_state_summary({ target_domain })` and use `result.data.state`.

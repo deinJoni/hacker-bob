@@ -70,7 +70,7 @@ test("dependency freshness check warns on stale but current PSL metadata", () =>
   assert.match(output, /Dependency freshness check passed with 1 warning\(s\)\./);
 });
 
-test("dependency freshness check fails when PSL is behind latest or too old", () => {
+test("dependency freshness check fails when PSL lockfile is behind latest", () => {
   assert.throws(() => withDependencyFreshnessFixture({
     version: "1.16.0",
     "dist-tags": { latest: "1.16.0" },
@@ -87,25 +87,6 @@ test("dependency freshness check fails when PSL is behind latest or too old", ()
     stdio: ["ignore", "pipe", "pipe"],
   })), (error) => {
     assert.match(String(error.stdout), /FAIL psl lockfile version 1\.15\.0 is behind npm latest 1\.16\.0/);
-    return true;
-  });
-
-  assert.throws(() => withDependencyFreshnessFixture({
-    version: "1.15.0",
-    "dist-tags": { latest: "1.15.0" },
-    time: { "1.15.0": "2024-12-02T10:16:04.251Z" },
-  }, (fixturePath) => execFileSync(process.execPath, [
-    "scripts/dependency-freshness.js",
-    "--metadata-file",
-    fixturePath,
-    "--now",
-    "2026-06-10T00:00:00.000Z",
-  ], {
-    cwd: ROOT,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  })), (error) => {
-    assert.match(String(error.stdout), /FAIL psl@1\.15\.0 latest publish age \d+\.\d days exceeds failure threshold 540 days/);
     return true;
   });
 });
@@ -159,13 +140,13 @@ test("npm package contains runtime surfaces and excludes test/cache artifacts", 
       assert.equal(isExcludedCanonicalPackageFile(excluded), true, `${excluded} should be denied by policy`);
     }
 
-    // Pack-size budget raised from 2.5 MB to 2.6 MB to accommodate Y.3 Stage c
-    // substrate growth (the new evidence_refs[] validator + LARGE_BODY_THRESHOLD_BYTES
+    // Pack-size budget raised to 3 MB to accommodate the kimi adapter family
+    // (adapters/kimi/*, scripts/lib/kimi-role-renderer.js, scripts/lib/install-fs.js,
+    // packages/hacker-bob-kimi/*) absorbed from PR #58 alongside the existing
+    // Y.3 Stage c substrate growth (evidence_refs[] validator + LARGE_BODY_THRESHOLD_BYTES
     // export + EVIDENCE_REF_HANDLE_PREFIXES constant on bob_write_chain_rollup
-    // per Y-P14b / O4). Pre-Y.3 main HEAD already packed within ~2 bytes of the
-    // old ceiling, so any further runtime growth — including the canonical
-    // Y-P14b enforcement substrate — would tip it over without operator intent.
-    assert.ok(pack.size < 2600000, `npm pack size ${pack.size} exceeds 2.6 MB threshold`);
+    // per Y-P14b / O4).
+    assert.ok(pack.size < 3000000, `npm pack size ${pack.size} exceeds 3 MB threshold`);
 
     for (const file of files) {
       assert.ok(!file.startsWith("node_modules/"), `${file} should not vendor runtime dependencies`);

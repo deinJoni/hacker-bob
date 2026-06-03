@@ -5,10 +5,10 @@ const path = require("path");
 const KIMI_SKILL_SPECS = Object.freeze({
   hunt: Object.freeze({
     role_id: "orchestrator",
-    output_path: path.join("adapters", "kimi", "skills", "bob-hunt", "SKILL.md"),
-    references_path: path.join("adapters", "kimi", "skills", "bob-hunt", "references"),
-    name: "bob-hunt",
-    description: "Run or resume a Hacker Bob bug bounty hunt in Kimi CLI using the shared MCP runtime.",
+    output_path: path.join("adapters", "kimi", "skills", "bob-evaluate-runner", "SKILL.md"),
+    references_path: path.join("adapters", "kimi", "skills", "bob-evaluate-runner", "references"),
+    name: "bob-evaluate-runner",
+    description: "Run or resume a Hacker Bob bug bounty evaluate in Kimi CLI using the shared MCP runtime.",
     type: "standard",
   }),
   status: Object.freeze({
@@ -52,7 +52,7 @@ const KIMI_SKILL_SPECS = Object.freeze({
 // — strictly worse than the codex adapter's prompt-only discipline model.
 // When a future PR researches the TOML format and ships the wiring, restore
 // KIMI_HOOK_FILES + EXECUTABLE_HOOKS here and re-introduce the install block.
-const BOB_SKILLS = Object.freeze(["bob-hunt", "bob-status", "bob-debug", "bob-update", "bob-export", "bob-egress"]);
+const BOB_SKILLS = Object.freeze(["bob-evaluate-runner", "bob-status", "bob-debug", "bob-update", "bob-export", "bob-egress"]);
 const LEGACY_BOB_SKILLS = Object.freeze([]);
 
 module.exports = {
