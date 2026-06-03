@@ -53,12 +53,6 @@ const COMMAND_SPECS = Object.freeze({
     description: "Run or resume a Hacker Bob bug bounty evaluate.",
     argumentHint: "<target|resume target [force-merge]> [--no-auth|--normal|--paranoid|--yolo] [--deep] [--egress <profile>] [--block-internal-hosts|--allow-internal-hosts]",
   }),
-  oss: Object.freeze({
-    file: "bob-oss.md",
-    skill: "bob-oss",
-    description: "Run Hacker Bob OSS mode against a local open-source project checkout.",
-    argumentHint: "<repo-path|resume target_domain> [--target-id <id>]",
-  }),
   status: Object.freeze({
     file: "bob-status.md",
     skill: "bob-status",
