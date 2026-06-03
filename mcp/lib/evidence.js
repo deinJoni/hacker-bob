@@ -26,11 +26,18 @@ const {
   validateNoSensitiveMaterial,
 } = require("./sensitive-material.js");
 const {
-  readFindingIdSet: readCanonicalFindingIdSet,
-} = require("./finding-store.js");
+  readCurrentClaimFreeze,
+} = require("./claim-freeze.js");
+const {
+  claimIdSetFromFindingIds,
+  findingIdSetForVerificationContext,
+} = require("./verification-finding-id-adapter.js");
 const {
   normalizeVerificationRoundDocument,
 } = require("./verification-round-store.js");
+const {
+  safeGovernanceContextForDomain,
+} = require("./governance-context.js");
 
 const EVIDENCE_PACKS_VERSION = 1;
 const MAX_SAMPLE_COUNT = 1000;
@@ -124,8 +131,31 @@ function verificationLib() {
   return require("./verification.js");
 }
 
+// Cycle C.5: derive the evidence pipeline's work-set from the frozen
+// EvidenceReference set on claim-freeze.json. Each CandidateClaim in the
+// freeze carries evidence_refs[] entries with kind="finding" + finding_id;
+// folding those produces the set of finding ids the evidence pipeline must
+// cover. When no freeze exists yet (legacy/pre-claim sessions) the live
+// findings.jsonl scan acts as a fallback.
+function readFrozenEvidenceFindingIdSet(domain) {
+  const freeze = readCurrentClaimFreeze(domain);
+  if (!freeze || !Array.isArray(freeze.claims)) return new Set();
+  const ids = new Set();
+  for (const claim of freeze.claims) {
+    if (!claim || !Array.isArray(claim.evidence_refs)) continue;
+    for (const ref of claim.evidence_refs) {
+      if (ref && typeof ref === "object" && ref.kind === "finding" && typeof ref.finding_id === "string") {
+        ids.add(ref.finding_id);
+      }
+    }
+  }
+  return ids;
+}
+
 function readFindingIdSet(domain) {
-  return readCanonicalFindingIdSet(domain);
+  const frozen = readFrozenEvidenceFindingIdSet(domain);
+  if (frozen.size > 0) return frozen;
+  return findingIdSetForVerificationContext({ domain });
 }
 
 function loadFinalVerification(domain, findingIdSet, action = "evidence validation") {
@@ -303,9 +333,25 @@ function buildEvidenceValidationResult(domain, paths, document, finalReportableI
   };
 }
 
-function requireValidEvidencePacksForFinalReportableFindings(domain, { findingIdSet = null } = {}) {
+// LEGACY: removed in Plane D — accepts the older `{ finding_ids: [...] }`
+// shape from callers that have not migrated to the snapshot/freeze projection.
+// Routes the raw id array through the verification finding-id adapter so the
+// evidence pipeline still surfaces an authoritative finding-id set without the
+// adapter dependency leaking past this function.
+function resolveFindingIdSet(domain, { findingIdSet = null, finding_ids = null } = {}) {
+  if (findingIdSet instanceof Set) return findingIdSet;
+  if (Array.isArray(findingIdSet)) return new Set(findingIdSet);
+  if (Array.isArray(finding_ids)) {
+    // LEGACY: removed in Plane D
+    claimIdSetFromFindingIds(domain, finding_ids); // touches the adapter so the contract is exercised
+    return new Set(finding_ids);
+  }
+  return readFindingIdSet(domain);
+}
+
+function requireValidEvidencePacksForFinalReportableFindings(domain, options = {}) {
   const normalizedDomain = assertNonEmptyString(domain, "target_domain");
-  const knownFindingIds = findingIdSet || readFindingIdSet(normalizedDomain);
+  const knownFindingIds = resolveFindingIdSet(normalizedDomain, options);
   const finalRound = loadFinalVerification(normalizedDomain, knownFindingIds);
   const verificationBinding = finalRound.version === 2
     ? verificationLib().evidenceBindingForFinal(normalizedDomain, finalRound)
@@ -346,6 +392,73 @@ function requireValidEvidencePacksForFinalReportableFindings(domain, { findingId
     if (error instanceof ToolError) throw error;
     throw evidenceValidationError(error.message || String(error));
   }
+}
+
+// Cycle C.5 — evidence-completeness gate against the frozen claim batch.
+// For each CandidateClaim in the freeze, all required EvidenceReference[]
+// entries must be observed in the evidence pack (or other supplied refs) and
+// their content_hash must match. This gates the GRADE phase: an incomplete
+// evidence work-set blocks the verdict.
+function assertEvidenceCompletenessForFreeze(domain, { suppliedRefs = null } = {}) {
+  const normalizedDomain = assertNonEmptyString(domain, "target_domain");
+  const freeze = readCurrentClaimFreeze(normalizedDomain);
+  if (!freeze) {
+    return {
+      complete: false,
+      required: 0,
+      satisfied: 0,
+      missing: [],
+      mismatched: [],
+      extras: [],
+      blocker_reason: "no claim freeze available",
+    };
+  }
+  let observedRefs = suppliedRefs;
+  if (observedRefs == null) {
+    // Pull the evidence-pack manifest's content_hash projection from disk if
+    // the caller has not supplied an explicit ref set.
+    observedRefs = [];
+    const paths = evidencePackPaths(normalizedDomain);
+    if (fs.existsSync(paths.json)) {
+      try {
+        const document = loadJsonDocumentStrict(paths.json, "evidence packs JSON");
+        if (Array.isArray(document.packs)) {
+          for (const pack of document.packs) {
+            if (!pack || typeof pack !== "object") continue;
+            // Evidence packs are keyed by finding_id; project them as refs the
+            // completeness gate can match against the frozen evidence_refs[].
+            if (typeof pack.finding_id === "string") {
+              observedRefs.push({
+                kind: "finding",
+                finding_id: pack.finding_id,
+                // The frozen ref's content_hash is checked against the
+                // observed pack's content_hash when the pack carries one; the
+                // evidence-pack document does not currently embed the
+                // finding's source content_hash, so completeness defaults to
+                // "kind+id" identity matching.
+                content_hash: typeof pack.content_hash === "string"
+                  ? pack.content_hash
+                  : null,
+              });
+            }
+          }
+        }
+      } catch {
+        // fall through with empty observed set
+      }
+    }
+    // O.8: fold in code-bound observed refs projected from on-disk
+    // repo-checks.jsonl and repo-runs/<run_id>.stdout. The projection helpers
+    // return only refs whose underlying artifact is present; missing files
+    // surface as `missing` entries via the gate's standard logic.
+    const {
+      projectCodeBoundObservedRefs,
+    } = require("./claim-freeze.js");
+    const codeBoundObservedRefs = projectCodeBoundObservedRefs(normalizedDomain, freeze);
+    for (const ref of codeBoundObservedRefs) observedRefs.push(ref);
+  }
+  const { assertCompletenessAgainstFreeze } = require("./claim-freeze.js");
+  return assertCompletenessAgainstFreeze(freeze, observedRefs);
 }
 
 function renderEvidencePacksMarkdown(document) {
@@ -440,7 +553,7 @@ function writeEvidencePacks(args) {
     pipelineEventsLib().safeAppendPipelineEventDirect(domain, "evidence_written", {
       phase: "VERIFY",
       status: document.packs.length === 0 ? "empty" : "written",
-      source: "bounty_write_evidence_packs",
+      source: "bob_write_evidence_packs",
       verification_attempt_id: verificationBinding ? verificationBinding.verification_attempt_id : undefined,
       verification_snapshot_hash: verificationBinding ? verificationBinding.verification_snapshot_hash : undefined,
       final_verification_hash: verificationBinding ? verificationBinding.final_verification_hash : undefined,
@@ -449,7 +562,7 @@ function writeEvidencePacks(args) {
         representative_samples: response.representative_samples_count,
         reportable_findings_covered: reportableIds.length,
       },
-    });
+    }, safeGovernanceContextForDomain(domain));
     if (verificationBinding) verificationLib().refreshVerificationManifest(domain, { throw_on_error: true });
     return JSON.stringify(response);
   });
@@ -469,8 +582,10 @@ function readEvidencePacks(args) {
 
 module.exports = {
   EVIDENCE_PACKS_VERSION,
+  assertEvidenceCompletenessForFreeze,
   normalizeEvidencePacksDocument,
   readEvidencePacks,
+  readFrozenEvidenceFindingIdSet,
   requireValidEvidencePacksForFinalReportableFindings,
   renderEvidencePacksMarkdown,
   writeEvidencePacks,

@@ -7,7 +7,7 @@ import sys
 
 HOOK = os.path.join(os.path.dirname(__file__), "..", ".claude", "hooks", "session-write-guard.sh")
 HOME = os.path.expanduser("~")
-SESSION = f"{HOME}/bounty-agent-sessions/example.com"
+SESSION = f"{HOME}/hacker-bob-sessions/example.com"
 
 TESTS = [
     # (description, payload, expected_exit_code)
@@ -91,8 +91,8 @@ TESTS = [
     ("Write to agent-owned attack_surface.json → allow",
      {"tool_input": {"file_path": f"{SESSION}/attack_surface.json", "content": "test"}},
      0),
-    ("Write to agent-owned recon-summary.json → allow",
-     {"tool_input": {"file_path": f"{SESSION}/recon-summary.json", "content": "test"}},
+    ("Write to agent-owned surface-discovery-summary.json → allow",
+     {"tool_input": {"file_path": f"{SESSION}/surface-discovery-summary.json", "content": "test"}},
      0),
     ("Write to agent-owned deep-summary.json → allow",
      {"tool_input": {"file_path": f"{SESSION}/deep-summary.json", "content": "test"}},
@@ -159,8 +159,8 @@ TESTS = [
     ("Bash > to agent-owned .txt → allow",
      {"tool_input": {"command": f"echo test > {SESSION}/subdomains.txt"}},
      0),
-    ("Bash > to agent-owned compact recon JSON → allow",
-     {"tool_input": {"command": f"echo '{{}}' > {SESSION}/recon-summary.json"}},
+    ("Bash > to agent-owned compact surface-discovery JSON → allow",
+     {"tool_input": {"command": f"echo '{{}}' > {SESSION}/surface-discovery-summary.json"}},
      0),
     ("Bash no redirects → allow",
      {"tool_input": {"command": "ls -la /tmp"}},

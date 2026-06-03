@@ -37,18 +37,25 @@ const {
 const {
   safeAppendPipelineEventDirect,
 } = require("./pipeline-events.js");
+const {
+  safeGovernanceContextForDomain,
+} = require("./governance-context.js");
 
 const VERIFICATION_REPLAY_LEASE_TTL_MS = 15 * 60 * 1000;
 const VERIFICATION_REPLAY_LEASE_HEARTBEAT_MS = Math.max(1_000, Math.floor(VERIFICATION_REPLAY_LEASE_TTL_MS / 3));
 
-function safeAppendPipelineEvent(domain, type, fields) {
+function safeAppendPipelineEvent(domain, type, fields, governanceContext) {
   try {
-    safeAppendPipelineEventDirect(domain, type, fields);
+    safeAppendPipelineEventDirect(domain, type, fields, governanceContext);
   } catch {}
 }
 
+function governanceContextForDomain(domain) {
+  return safeGovernanceContextForDomain(domain);
+}
+
 function replaySafetyForTool(toolName) {
-  if (toolName === "bounty_repo_docker_run") {
+  if (toolName === "bob_repo_docker_run") {
     return {
       capability_pack: "oss_native_code",
       replay_safety: DEFAULT_REPLAY_SAFETY,
@@ -354,7 +361,7 @@ async function runWithReplaySafety(tool, args, handler) {
           lease_scope: leaseScope,
           replay_purpose: context.purpose,
           counts: { active_leases: listActiveReplayLeases(targetDomain).length },
-        });
+        }, governanceContextForDomain(targetDomain));
       }
       throw error;
     }
@@ -373,7 +380,7 @@ async function runWithReplaySafety(tool, args, handler) {
     lease_scope: leaseScope,
     replay_purpose: context.purpose,
     counts: { active_leases: listActiveReplayLeases(targetDomain).length },
-  });
+  }, governanceContextForDomain(targetDomain));
   try {
     return await handler();
   } finally {

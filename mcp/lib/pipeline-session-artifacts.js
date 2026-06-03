@@ -16,11 +16,10 @@ const {
   parseWaveId,
 } = require("./validation.js");
 const {
-  attackSurfacePath,
   chainAttemptsJsonlPath,
+  claimsJsonlPath,
   coverageJsonlPath,
   evidencePackPaths,
-  findingsJsonlPath,
   httpAuditJsonlPath,
   reportMarkdownPath,
   sessionDir,
@@ -60,8 +59,8 @@ const {
   validateSessionAuthorityState,
 } = require("./session-authority.js");
 const {
-  summarizeFindingsFile,
-} = require("./finding-store.js");
+  findingPayloadsFromClaims,
+} = require("./tools/record-candidate-claim.js");
 const {
   listArchivedVerificationAttempts,
   summarizeVerificationRoundStatus,
@@ -75,6 +74,9 @@ const {
   isPlainObject,
   timestampMs,
 } = require("./pipeline-events.js");
+const {
+  currentSurfaces,
+} = require("./frontier-projections.js");
 
 const HANDOFF_ANALYTICS_MAX_FILES = 1000;
 const WAVE_READINESS_MAX_ASSIGNMENT_FILES = 200;
@@ -316,7 +318,42 @@ function readWaveReadiness(targetDomain, waveNumber, handoffListing = null) {
 }
 
 function summarizeFindingsJsonl(targetDomain) {
-  return summarizeFindingsFile(targetDomain);
+  // Cycle D.2: candidate claims are the authoritative ledger. Findings are
+  // projected from each claim's embedded finding payload, so the summary
+  // counts (by severity, total) read off claims.jsonl rather than the legacy
+  // findings.jsonl artifact.
+  const bySeverity = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  const claimsPath = claimsJsonlPath(targetDomain);
+  let mtime = null;
+  try {
+    mtime = new Date(fs.statSync(claimsPath).mtimeMs).toISOString();
+  } catch {}
+  let total = 0;
+  let exists = false;
+  try {
+    exists = fs.existsSync(claimsPath);
+  } catch {}
+  let error = null;
+  if (exists) {
+    try {
+      for (const finding of findingPayloadsFromClaims(targetDomain)) {
+        total += 1;
+        if (Object.prototype.hasOwnProperty.call(bySeverity, finding.severity)) {
+          bySeverity[finding.severity] += 1;
+        }
+      }
+    } catch (err) {
+      error = err && err.message ? err.message : String(err);
+    }
+  }
+  return {
+    exists,
+    total,
+    by_severity: bySeverity,
+    malformed_lines: 0,
+    error,
+    mtime,
+  };
 }
 
 function summarizeCoverageJsonl(targetDomain) {
@@ -808,11 +845,27 @@ function summarizeEvidenceArtifacts(targetDomain, finalReportableIds) {
 }
 
 function summarizeAttackSurfaceCoverage(targetDomain, state) {
-  const read = readJsonSafe(attackSurfacePath(targetDomain), "attack_surface.json");
-  if (!isPlainObject(read.document) || !Array.isArray(read.document.surfaces)) {
+  // Surface coverage reads from currentSurfaces (Cycle F.5): the materialized
+  // surface-index.json is the authoritative read source. The mtime reported
+  // back to dashboards reflects the underlying source (surface-index.json
+  // when present, attack_surface.json only in the legacy fallback).
+  let surfaceList = [];
+  let sourcePath = null;
+  let exists = false;
+  let error = null;
+  try {
+    const projection = currentSurfaces(targetDomain);
+    surfaceList = projection.surfaces || [];
+    sourcePath = projection.path;
+    exists = projection.source !== "missing";
+  } catch (err) {
+    error = compactErrorMessage(err);
+  }
+  const mtime = sourcePath ? fileMtimeIso(sourcePath) : null;
+  if (!exists || error) {
     return {
-      exists: read.exists,
-      error: read.error,
+      exists,
+      error,
       total_surfaces: 0,
       non_low_total: 0,
       non_low_explored: 0,
@@ -821,16 +874,25 @@ function summarizeAttackSurfaceCoverage(targetDomain, state) {
       closed_pct: null,
       unexplored_high: 0,
       blocked_high: 0,
-      mtime: read.mtime,
+      mtime,
     };
   }
-  const exploredSet = new Set(Array.isArray(state?.explored) ? state.explored : []);
-  const terminallyBlockedSet = new Set(
-    Array.isArray(state?.terminally_blocked)
-      ? state.terminally_blocked.map((entry) => entry && typeof entry.surface_id === "string" ? entry.surface_id : null).filter(Boolean)
-      : [],
-  );
-  const surfaces = read.document.surfaces.filter((surface) => isPlainObject(surface) && typeof surface.id === "string");
+  // Explored / terminally-blocked sets derive from the frontier ledger
+  // projection (Cycle D.3). The legacy state arrays were removed; the
+  // frontier-projections fold is the sole source of surface-level closure
+  // and blocker truth.
+  let exploredSet = new Set();
+  let terminallyBlockedSet = new Set();
+  if (state && typeof state.target === "string" && state.target) {
+    try {
+      const projections = require("./frontier-projections.js");
+      exploredSet = new Set(projections.currentClosures(state.target).map((entry) => entry.surface_id));
+      terminallyBlockedSet = new Set(projections.currentBlockers(state.target).map((entry) => entry.surface_id));
+    } catch {
+      // Ledger projection unavailable; counts default to 0 / empty.
+    }
+  }
+  const surfaces = surfaceList.filter((surface) => isPlainObject(surface) && typeof surface.id === "string");
   const nonLowSurfaces = surfaces.filter((surface) => (surface.priority || "HIGH").toUpperCase() !== "LOW");
   const highSurfaces = surfaces.filter((surface) => ["CRITICAL", "HIGH"].includes((surface.priority || "HIGH").toUpperCase()));
   const exploredNonLow = nonLowSurfaces.filter((surface) => exploredSet.has(surface.id)).length;
@@ -852,7 +914,7 @@ function summarizeAttackSurfaceCoverage(targetDomain, state) {
     closed_pct: nonLowSurfaces.length ? Math.round((closedNonLow / nonLowSurfaces.length) * 100) : 100,
     unexplored_high: highSurfaces.filter((surface) => !exploredSet.has(surface.id) && !terminallyBlockedSet.has(surface.id)).length,
     blocked_high: highSurfaces.filter((surface) => terminallyBlockedSet.has(surface.id)).length,
-    mtime: read.mtime,
+    mtime,
   };
 }
 
@@ -955,7 +1017,7 @@ function readSessionArtifactSummary(targetDomain, { validateAuthority = false } 
       egress_profile_identity_version: Number.isInteger(state?.egress_profile_identity_version)
         ? state.egress_profile_identity_version
         : null,
-      hunt_wave: Number.isInteger(state?.hunt_wave) ? state.hunt_wave : 0,
+      evaluation_wave: Number.isInteger(state?.evaluation_wave) ? state.evaluation_wave : 0,
       pending_wave: Number.isInteger(state?.pending_wave) ? state.pending_wave : null,
       total_findings: Number.isInteger(state?.total_findings) ? state.total_findings : findings.total,
       hold_count: Number.isInteger(state?.hold_count) ? state.hold_count : 0,

@@ -420,13 +420,13 @@ function normalizeFindingRecord(record, { expectedDomain = null, lineNumber = nu
       surface_id: normalizeOptionalText(record.surface_id, "surface_id"),
       surface_type: normalizeSurfaceType(record.surface_type),
       capability_pack: normalizeOptionalText(record.capability_pack, "capability_pack"),
-      hunter_agent: normalizeOptionalText(record.hunter_agent, "hunter_agent"),
+      evaluator_agent: normalizeOptionalText(record.evaluator_agent, "evaluator_agent"),
       brief_profile: normalizeOptionalText(record.brief_profile, "brief_profile"),
       sc_evidence: normalizeScEvidence(record.sc_evidence),
       auth_profile: normalizeOptionalText(record.auth_profile, "auth_profile"),
       dedupe_key: normalizeOptionalText(record.dedupe_key, "dedupe_key"),
     };
-    const missingRouting = !finding.capability_pack || !finding.hunter_agent || !finding.brief_profile;
+    const missingRouting = !finding.capability_pack || !finding.evaluator_agent || !finding.brief_profile;
     if (missingRouting) {
       const backfill = capabilityPackForLegacyFinding({
         surface_type: finding.surface_type,
@@ -434,7 +434,7 @@ function normalizeFindingRecord(record, { expectedDomain = null, lineNumber = nu
       });
       if (backfill) {
         if (!finding.capability_pack) finding.capability_pack = backfill.capability_pack;
-        if (!finding.hunter_agent) finding.hunter_agent = backfill.hunter_agent;
+        if (!finding.evaluator_agent) finding.evaluator_agent = backfill.evaluator_agent;
         if (!finding.brief_profile) finding.brief_profile = backfill.brief_profile;
       }
     }
@@ -473,7 +473,7 @@ function renderFindingMarkdownEntry(finding) {
     : (finding.surface_type ? `(${finding.surface_type})` : "");
   const surface = surfaceLabel ? `\n- **Surface:** ${surfaceLabel}` : "";
   const routing = finding.capability_pack
-    ? `\n- **Capability Pack:** ${finding.capability_pack}${finding.hunter_agent ? ` (${finding.hunter_agent})` : ""}`
+    ? `\n- **Capability Pack:** ${finding.capability_pack}${finding.evaluator_agent ? ` (${finding.evaluator_agent})` : ""}`
     : "";
   const authProfile = finding.auth_profile ? `\n- **Auth Profile:** ${finding.auth_profile}` : "";
   const repoFields = [

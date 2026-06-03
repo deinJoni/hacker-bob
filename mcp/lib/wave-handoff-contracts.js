@@ -94,9 +94,11 @@ function handoffAssignmentProvenancePayload(assignment) {
     surface_type: assignment.surface_type || null,
     capability_pack: assignment.capability_pack || null,
     capability_pack_version: assignment.capability_pack_version || null,
-    hunter_agent: assignment.hunter_agent || null,
+    evaluator_agent: assignment.evaluator_agent || null,
     brief_profile: assignment.brief_profile || null,
     context_budget: assignment.context_budget || null,
+    task_lens: assignment.task_lens || null,
+    budget: assignment.budget || null,
     handoff_token_required: assignmentRequiresToken(assignment),
     handoff_token_sha256: assignment.handoff_token_sha256 || null,
   };
@@ -213,9 +215,9 @@ function normalizeChainNotes(value) {
   return notes;
 }
 
-// Runtime mirror of the bounty_write_wave_handoff JSON schema enum and the
+// Runtime mirror of the bob_write_wave_handoff JSON schema enum and the
 // renderer's BLOCKED_HARNESS_RUN_KINDS constant. Mismatch here would cause
-// SVM/Move/Substrate/CosmWasm hunters to fail finalization even though the
+// SVM/Move/Substrate/CosmWasm evaluators to fail finalization even though the
 // schema accepted their handoff. test/prompt-contracts.test.js enforces the
 // schema, renderer, and runtime invariant.
 const BLOCKED_HARNESS_KIND_VALUES = Object.freeze([
@@ -230,11 +232,15 @@ const BLOCKED_HARNESS_KIND_VALUES = Object.freeze([
   "symbolic_solver",
   "mock_dependency",
   "external_api",
+  "docker_unavailable",
+  "sanitizer_unavailable",
+  "static_analyzer_unavailable",
+  "cve_feed_stale",
   "other",
 ]);
 
 // Mirror of capability-packs-rendering.js BLOCKED_PREREQ_KINDS and the
-// bounty_write_wave_handoff schema enum for blocked_prereqs[].kind. Like
+// bob_write_wave_handoff schema enum for blocked_prereqs[].kind. Like
 // BLOCKED_HARNESS_KIND_VALUES this is a runtime guard that throws on unknown
 // kinds before the JSON schema would even check; mismatch with the renderer
 // constant or schema enum is caught by the parity test in
@@ -418,9 +424,19 @@ function normalizeBypassAttempts(value, { findingIds = null } = {}) {
 
 function assertBlockedHarnessConsistency(surfaceStatus, blockedHarnessRuns) {
   if (surfaceStatus === "complete" && blockedHarnessRuns.length > 0) {
+    // Plane O O.7: the gate must surface a stable, machine-checkable code so
+    // operators and reviewers can detect "surface marked complete despite
+    // blocked harnesses" without string-matching the message. The structured
+    // `details.code` reaches the MCP envelope as
+    // `{error: {code: "surface_complete_with_blocked_harness", ...}}`.
     throw new ToolError(
       ERROR_CODES.INVALID_ARGUMENTS,
       "surface_status cannot be 'complete' when blocked_harness_runs is non-empty; set surface_status to 'partial' or resolve the blocked harnesses first",
+      {
+        code: "surface_complete_with_blocked_harness",
+        surface_status: surfaceStatus,
+        blocked_harness_kinds: blockedHarnessRuns.map((entry) => entry.kind),
+      },
     );
   }
 }

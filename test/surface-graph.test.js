@@ -21,7 +21,7 @@ function uniqueDomain(prefix = "bob-surface-graph-test") {
 }
 
 function cleanupDomain(domain) {
-  const dir = path.join(os.homedir(), "bounty-agent-sessions", domain);
+  const dir = path.join(os.homedir(), "hacker-bob-sessions", domain);
   if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
 }
 
@@ -82,7 +82,7 @@ test("appendEdges persists edges and reports new vs replaced counts", () => {
     assert.equal(second.replaced_count, 1);
     assert.equal(second.total_in_graph, 3);
 
-    const filePath = path.join(os.homedir(), "bounty-agent-sessions", domain, "surface-graph.jsonl");
+    const filePath = path.join(os.homedir(), "hacker-bob-sessions", domain, "surface-graph.jsonl");
     assert.ok(fs.existsSync(filePath));
   } finally {
     cleanupDomain(domain);
@@ -204,7 +204,7 @@ test("on-disk surface-graph.jsonl is sorted by edge_hash for replay determinism"
         jsToApi("m.js", "/api/middle"),
       ],
     });
-    const filePath = path.join(os.homedir(), "bounty-agent-sessions", domain, "surface-graph.jsonl");
+    const filePath = path.join(os.homedir(), "hacker-bob-sessions", domain, "surface-graph.jsonl");
     const content = fs.readFileSync(filePath, "utf8");
     const lines = content.split("\n").filter((line) => line.trim().length > 0);
     const records = lines.map((line) => JSON.parse(line));

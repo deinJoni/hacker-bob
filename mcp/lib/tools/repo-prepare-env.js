@@ -2,53 +2,77 @@
 
 const { prepareRepoEnv } = require("../repo-env.js");
 
+async function handler(args) {
+  const result = await prepareRepoEnv({
+    target_domain: args.target_domain,
+    base_image: args.base_image,
+    build_image: args.build_image,
+    dry_run: args.dry_run,
+    allow_network: args.allow_network,
+    image_tag: args.image_tag,
+    timeout_ms: args.timeout_ms,
+    egress_profile: args.egress_profile,
+  });
+  return JSON.stringify({
+    version: 1,
+    ...result,
+  });
+}
+
 module.exports = Object.freeze({
-  name: "bounty_repo_prepare_env",
+  name: "bob_repo_prepare_env",
   description:
-    "Prepare a session-owned Docker environment plan for an OSS repo session. Writes Dockerfile.bob and repo-env.json, and optionally builds the Docker image when explicitly requested.",
+    "Generate a per-session Dockerfile.bob + repo-env.json for an OSS repo session (Plane O O.3). " +
+    "Detects language from manifests, picks a sandbox-friendly base image, and emits recommended " +
+    "build/test/fuzz/compose commands. dry_run is the default; build_image: true exec's docker build " +
+    "with O-P3 sandbox flags and an O-D6 ARG SESSION_ID cache-bust. Never bakes proxy/secret into ENV.",
   inputSchema: {
-    "type": "object",
-    "properties": {
-      "target_domain": {
-        "type": "string"
+    type: "object",
+    properties: {
+      target_domain: {
+        type: "string",
+        description: "Repo session target_domain derived by bob_init_repo_session.",
       },
-      "build_image": {
-        "type": "boolean",
-        "description": "When true, run docker build for the generated session-owned image."
+      base_image: {
+        type: "string",
+        description: "Optional override of the detected base image (e.g. node:20, rust:1.79). Defaults to the language-detected image.",
       },
-      "dry_run": {
-        "type": "boolean",
-        "description": "When true, write the plan and Dockerfile but do not execute docker build."
+      build_image: {
+        type: "boolean",
+        description: "When true, exec docker build with O-P3 sandbox flags. Defaults to false (dry_run flow).",
       },
-      "allow_network": {
-        "type": "boolean",
-        "description": "When true, allow network during docker build. Defaults to false."
+      dry_run: {
+        type: "boolean",
+        description: "When true (default), write Dockerfile.bob + repo-env.json without invoking docker.",
       },
-      "base_image": {
-        "type": "string",
-        "description": "Optional Docker base image. Defaults to ubuntu:24.04."
+      allow_network: {
+        type: "boolean",
+        description: "When true, allow docker build --network default and inject the resolved egress proxy via --build-arg. Defaults to false (--network none).",
       },
-      "image_tag": {
-        "type": "string",
-        "description": "Optional Docker image tag. Defaults to bob-oss-<target>:<repo-hash>."
+      image_tag: {
+        type: "string",
+        description: "Optional explicit image tag. Defaults to bob-oss-<target_domain>:<repo_hash>.",
       },
-      "timeout_ms": {
-        "type": "integer",
-        "description": "Optional build timeout, 1000..600000 ms."
-      }
+      timeout_ms: {
+        type: "integer",
+        minimum: 1000,
+        maximum: 600000,
+        description: "docker build timeout in milliseconds. Defaults to 300000 (5m); max 600000 (10m).",
+      },
+      egress_profile: {
+        type: "string",
+        description: "Optional egress profile name override for build-time proxy resolution. Defaults to the session's bound profile.",
+      },
     },
-    "required": [
-      "target_domain"
-    ]
+    required: ["target_domain"],
   },
-  handler: prepareRepoEnv,
+  handler,
   role_bundles: ["orchestrator"],
   mutating: true,
   global_preapproval: false,
-  network_access: true,
+  network_access: false,
   browser_access: false,
   scope_required: false,
   sensitive_output: false,
   session_artifacts_written: ["Dockerfile.bob", "repo-env.json"],
-  prepareRepoEnv,
 });

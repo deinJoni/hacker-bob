@@ -24,7 +24,8 @@ function querySurfaceGraphHandler(args) {
 }
 
 module.exports = Object.freeze({
-  name: "bounty_query_surface_graph",
+  name: "bob_query_surface_graph",
+  aliases: ["bounty_query_surface_graph"],
   capability_id: "I1_surface_graph",
   description:
     "Query the surface graph. Default mode filters edges by source/target type, source/target id, and edge_type. Pass mode: 'neighbors' with node_type and node_id to walk a node's adjacency (direction: incoming, outgoing, or both).",

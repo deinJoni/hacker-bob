@@ -25,7 +25,7 @@ function dashboardUsageText() {
   return `Usage:
   hacker-bob dashboard [--host 127.0.0.1] [--port 4873] [--repo-only] [--window-days 30] [--limit 50] [--json]
 
-Starts a local read-only dashboard over ~/bounty-agent-sessions.
+Starts a local read-only dashboard over ~/hacker-bob-sessions.
 Use --json to print the same dashboard snapshot without starting a server.`;
 }
 

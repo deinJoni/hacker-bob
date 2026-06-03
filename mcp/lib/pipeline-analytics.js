@@ -2,15 +2,19 @@
 
 const fs = require("fs");
 const {
-  PHASE_VALUES,
   VERIFICATION_ROUND_VALUES,
 } = require("./constants.js");
+const {
+  LIFECYCLE_STATE_VALUES,
+} = require("./governance-contracts.js");
+const {
+  deriveLifecycleStateFromLegacyPhase,
+} = require("./session-state-contracts.js");
 const {
   assertNonEmptyString,
 } = require("./validation.js");
 const {
-  findingsIndexJsonlPath,
-  findingsJsonlPath,
+  claimsJsonlPath,
   httpAuditJsonlPath,
   pipelineEventsJsonlPath,
   reportMarkdownPath,
@@ -19,7 +23,7 @@ const {
   statePath,
 } = require("./paths.js");
 const {
-  readAgentRunTelemetryEvents,
+  readToolInvocationTelemetryEvents,
   readToolTelemetryEvents,
   summarizeToolTelemetryEvents,
 } = require("./tool-telemetry.js");
@@ -60,7 +64,7 @@ const {
   pipelineAnalyticsEnabled,
   safeAppendPipelineEventDirect,
   safeAppendPipelineEventWithSessionLock,
-  safeRecordHunterStoppedPipelineEvent,
+  safeRecordEvaluatorStoppedPipelineEvent,
   timestampMs,
 } = require("./pipeline-events.js");
 
@@ -113,16 +117,18 @@ function buildBackfillEvents(targetDomain, artifacts) {
     block_internal_hosts_source: artifacts.state.block_internal_hosts_source,
   };
   const events = [];
+  // session_started always synthesizes with the bootstrap lifecycle state.
   events.push(normalizePipelineEvent(targetDomain, "session_started", {
     ts: artifacts.state.mtime || ts,
-    phase: "RECON",
+    lifecycle_state: "SETUP",
     source,
     ...egressFields,
   }));
-  if (artifacts.state.phase && artifacts.state.phase !== "RECON") {
-    events.push(normalizePipelineEvent(targetDomain, "phase_transitioned", {
+  const currentLifecycleState = artifacts.state.lifecycle_state;
+  if (currentLifecycleState && currentLifecycleState !== "SETUP") {
+    events.push(normalizePipelineEvent(targetDomain, "lifecycle_advanced", {
       ts: artifacts.state.mtime || ts,
-      to_phase: artifacts.state.phase,
+      to_state: currentLifecycleState,
       status: "current",
       source,
       ...egressFields,
@@ -151,7 +157,7 @@ function buildBackfillEvents(targetDomain, artifacts) {
         source,
         ...egressFields,
       }));
-    } else if (artifacts.state.hunt_wave >= wave.wave_number) {
+    } else if (artifacts.state.evaluation_wave >= wave.wave_number) {
       events.push(normalizePipelineEvent(targetDomain, "wave_merged", {
         ts,
         wave_number: wave.wave_number,
@@ -362,7 +368,7 @@ function compactEvent(event) {
     target_domain: event.target_domain,
     type: event.type,
   };
-  for (const field of ["phase", "from_phase", "to_phase", "wave_number", "agent", "surface_id", "status", "block_code", "counts", "source", "force_merge", "force_merge_reason", "override", "override_reason", "legacy_migration", "kind", "identifier_hint", "verification_attempt_id", "verification_snapshot_hash", "adjudication_plan_hash", "final_verification_hash", "capability_pack", "lease_scope", "replay_purpose", "started_by", "checkpoint_mode", "block_internal_hosts", "block_internal_hosts_source", "egress_profile", "egress_region", "proxy_configured", "egress_profile_identity_hash", "egress_profile_identity_version"]) {
+  for (const field of ["lifecycle_state", "from_state", "to_state", "wave_number", "agent", "surface_id", "status", "block_code", "counts", "source", "force_merge", "force_merge_reason", "override", "override_reason", "legacy_migration", "kind", "identifier_hint", "verification_attempt_id", "verification_snapshot_hash", "adjudication_plan_hash", "final_verification_hash", "capability_pack", "lease_scope", "replay_purpose", "started_by", "checkpoint_mode", "block_internal_hosts", "block_internal_hosts_source", "egress_profile", "egress_region", "proxy_configured", "egress_profile_identity_hash", "egress_profile_identity_version"]) {
     if (event[field] != null) compact[field] = event[field];
   }
   return compact;
@@ -430,17 +436,17 @@ function buildToolHealth({ targetDomain = null, cutoffMs = null, limit = DEFAULT
   return slimToolHealth(filtered, filtered.events, limit);
 }
 
-function buildHunterHealth({ targetDomain = null, cutoffMs = null, limit = DEFAULT_LIMIT, env = process.env, readResult = null } = {}) {
-  const baseRead = readResult || readAgentRunTelemetryEvents({
+function buildEvaluatorHealth({ targetDomain = null, cutoffMs = null, limit = DEFAULT_LIMIT, env = process.env, readResult = null } = {}) {
+  const baseRead = readResult || readToolInvocationTelemetryEvents({
     target_domain: targetDomain,
-    agent_run_type: "hunter",
+    agent_run_type: "evaluator",
     env,
   });
   const filtered = readResult
     ? filterTelemetryReadResult(baseRead, {
       targetDomain,
       cutoffMs,
-      predicate: (event) => event.run_type === "hunter",
+      predicate: (event) => event.run_type === "evaluator",
     })
     : { ...baseRead, events: filterByWindow(baseRead.events, cutoffMs) };
   const events = filtered.events;
@@ -482,27 +488,33 @@ function buildHunterHealth({ targetDomain = null, cutoffMs = null, limit = DEFAU
   };
 }
 
-function phaseIndex(phase) {
-  return PHASE_VALUES.indexOf(phase);
+// Lifecycle vocabulary is the sole accepted form post-D.3. Legacy phase
+// strings persisted on disk (pre-D.1 sessions) are coerced through
+// deriveLifecycleStateFromLegacyPhase so historical reads keep working;
+// emitted events carry only lifecycle_state / from_state / to_state.
+function lifecycleIndex(state) {
+  const lifecycleState = deriveLifecycleStateFromLegacyPhase(state) || state;
+  return LIFECYCLE_STATE_VALUES.indexOf(lifecycleState);
 }
 
-function phaseAtLeast(phase, requiredPhase) {
-  const current = phaseIndex(phase);
-  const required = phaseIndex(requiredPhase);
+function lifecycleAtLeast(state, requiredState) {
+  const current = lifecycleIndex(state);
+  const required = lifecycleIndex(requiredState);
   return current >= 0 && required >= 0 && current >= required;
 }
 
-function computeChainPhaseDurationMs(events) {
-  let chainStartMs = null;
+function computeClaimFreezeLifecycleDurationMs(events) {
+  let freezeStartMs = null;
   for (const event of events) {
-    if (event.type !== "phase_transitioned") continue;
-    if (event.to_phase === "CHAIN") {
-      chainStartMs = timestampMs(event.ts);
+    if (event.type !== "lifecycle_advanced") continue;
+    const toLifecycle = event.to_state;
+    if (toLifecycle === "CLAIM_FREEZE") {
+      freezeStartMs = timestampMs(event.ts);
       continue;
     }
-    if (event.to_phase === "VERIFY" && chainStartMs != null) {
+    if (toLifecycle === "VERIFY" && freezeStartMs != null) {
       const verifyMs = timestampMs(event.ts);
-      return verifyMs >= chainStartMs ? verifyMs - chainStartMs : null;
+      return verifyMs >= freezeStartMs ? verifyMs - freezeStartMs : null;
     }
   }
   return null;
@@ -603,12 +615,12 @@ function analyzeSession(targetDomain, {
     env,
     readResult: telemetryCache ? telemetryCache.toolRead : null,
   });
-  const hunterHealth = buildHunterHealth({
+  const evaluatorHealth = buildEvaluatorHealth({
     targetDomain,
     cutoffMs,
     limit,
     env,
-    readResult: telemetryCache ? telemetryCache.hunterRead : null,
+    readResult: telemetryCache ? telemetryCache.evaluatorRead : null,
   });
   const issues = [];
 
@@ -623,18 +635,18 @@ function analyzeSession(targetDomain, {
     ? null
     : artifacts.waves.find((wave) => wave.wave_number === pendingWave) || null;
   if (pendingReadiness && (pendingReadiness.missing_agents.length > 0 || pendingReadiness.invalid_agents.length > 0)) {
-    issues.push(issue("hunter_handoff_failures", "blocked", "Pending wave has missing or invalid hunter handoffs.", {
+    issues.push(issue("evaluator_handoff_failures", "blocked", "Pending wave has missing or invalid evaluator handoffs.", {
       wave_number: pendingWave,
       missing_handoffs: pendingReadiness.missing_agents.length,
       invalid_handoffs: pendingReadiness.invalid_agents.length,
     }));
   }
 
-  const blockedHunterRuns = hunterHealth.totals.by_status.blocked || 0;
-  if (blockedHunterRuns >= 2) {
-    issues.push(issue("repeated_hunter_stops", "blocked", "Hunter SubagentStop blocks repeated for this session.", {
-      blocked_runs: blockedHunterRuns,
-      by_block_code: hunterHealth.totals.by_block_code,
+  const blockedEvaluatorRuns = evaluatorHealth.totals.by_status.blocked || 0;
+  if (blockedEvaluatorRuns >= 2) {
+    issues.push(issue("repeated_evaluator_stops", "blocked", "Evaluator SubagentStop blocks repeated for this session.", {
+      blocked_runs: blockedEvaluatorRuns,
+      by_block_code: evaluatorHealth.totals.by_block_code,
     }));
   }
 
@@ -646,32 +658,33 @@ function analyzeSession(targetDomain, {
     }));
   }
 
-  if (phaseAtLeast(artifacts.state.phase, "GRADE") && !artifacts.verification.rounds.final.valid) {
+  const lifecycleState = artifacts.state.lifecycle_state || artifacts.state.phase;
+  if (lifecycleAtLeast(lifecycleState, "GRADE") && !artifacts.verification.rounds.final.valid) {
     issues.push(issue("missing_verification", "blocked", "Session reached GRADE without a valid final verification artifact.", {
-      phase: artifacts.state.phase,
+      lifecycle_state: lifecycleState,
     }));
   }
 
   if (
-    phaseAtLeast(artifacts.state.phase, "GRADE") &&
+    lifecycleAtLeast(lifecycleState, "GRADE") &&
     artifacts.verification.final_reportable_count > 0 &&
     !artifacts.evidence.valid
   ) {
     issues.push(issue("missing_evidence", "blocked", "Session reached GRADE or later without valid evidence packs for final reportable findings.", {
-      phase: artifacts.state.phase,
+      lifecycle_state: lifecycleState,
       final_reportable: artifacts.verification.final_reportable_count,
       covered: artifacts.evidence.reportable_findings_covered,
       missing_finding_ids: artifacts.evidence.missing_finding_ids,
     }));
   }
 
-  if (phaseAtLeast(artifacts.state.phase, "REPORT") && !artifacts.grade.valid) {
+  if (lifecycleAtLeast(lifecycleState, "REPORT") && !artifacts.grade.valid) {
     issues.push(issue("missing_grade", "blocked", "Session reached REPORT without a valid grade artifact.", {
-      phase: artifacts.state.phase,
+      lifecycle_state: lifecycleState,
     }));
   }
 
-  if (phaseAtLeast(artifacts.state.phase, "REPORT") && !artifacts.report.present) {
+  if (lifecycleAtLeast(lifecycleState, "REPORT") && !artifacts.report.present) {
     const submitWithoutCanonicalReport = artifacts.grade.verdict === "SUBMIT";
     issues.push(issue(
       submitWithoutCanonicalReport ? "report_pending_canonical_path" : "missing_report",
@@ -680,7 +693,7 @@ function analyzeSession(targetDomain, {
         ? "Session reached REPORT with SUBMIT grade, but canonical report.md is not present."
         : "Session reached REPORT but report.md is not present.",
       {
-        phase: artifacts.state.phase,
+        lifecycle_state: lifecycleState,
         grade_verdict: artifacts.grade.verdict,
         canonical_report_path: artifacts.report.path,
       },
@@ -717,7 +730,7 @@ function analyzeSession(targetDomain, {
 
   const coverage = artifacts.attack_surface_coverage;
   if (
-    phaseAtLeast(artifacts.state.phase, "CHAIN") &&
+    lifecycleAtLeast(lifecycleState, "CLAIM_FREEZE") &&
     coverage.non_low_total > 0 &&
     Number.isFinite(coverage.closed_pct) &&
     coverage.closed_pct < 100
@@ -735,11 +748,11 @@ function analyzeSession(targetDomain, {
 
   const chainWorkRequired = artifacts.findings.total >= 2 || artifacts.chain_handoffs.chain_notes_count > 0;
   if (
-    phaseAtLeast(artifacts.state.phase, "CHAIN") &&
+    lifecycleAtLeast(lifecycleState, "CLAIM_FREEZE") &&
     chainWorkRequired &&
     artifacts.chain_attempts.terminal_total === 0
   ) {
-    issues.push(issue("chain_phase_no_attempts", "blocked", "CHAIN phase has required chain work but no terminal structured chain attempts.", {
+    issues.push(issue("chain_phase_no_attempts", "blocked", "CLAIM_FREEZE lifecycle requires terminal structured chain attempts when chain work is recorded.", {
       findings: artifacts.findings.total,
       handoff_chain_notes: artifacts.chain_handoffs.chain_notes_count,
       attempts: artifacts.chain_attempts.total,
@@ -760,7 +773,7 @@ function analyzeSession(targetDomain, {
   }
 
   // HOLD is the only verdict that is operator-actionable on its own — the
-  // grader is asking for another HUNT round. SKIP is internally consistent
+  // grader is asking for another EVALUATE round. SKIP is internally consistent
   // by construction: writeGradeVerdict rejects any SKIP that does not
   // satisfy `!hasReportableMedium || total_score < GRADE_HOLD_MIN_SCORE`,
   // so a SKIP at read time is either "no reportables" or "low-score
@@ -800,7 +813,7 @@ function analyzeSession(targetDomain, {
 
   const row = {
     target_domain: targetDomain,
-    phase: artifacts.state.phase,
+    lifecycle_state: lifecycleState,
     auth_status: artifacts.state.auth_status,
     checkpoint_mode: artifacts.state.checkpoint_mode,
     block_internal_hosts: artifacts.state.block_internal_hosts,
@@ -813,7 +826,7 @@ function analyzeSession(targetDomain, {
       egress_profile_identity_version: artifacts.state.egress_profile_identity_version,
     },
     waves: {
-      hunt_wave: artifacts.state.hunt_wave,
+      evaluation_wave: artifacts.state.evaluation_wave,
       pending_wave: artifacts.state.pending_wave,
       assignment_files: artifacts.waves.length,
       assignment_files_total: artifacts.wave_bounds.assignment_files_total,
@@ -839,7 +852,7 @@ function analyzeSession(targetDomain, {
       surface_count: artifacts.technique_pack_reads.surface_count,
       pack_count: artifacts.technique_pack_reads.pack_count,
     },
-    chain_phase_duration_ms: computeChainPhaseDurationMs(allEvents),
+    claim_freeze_duration_ms: computeClaimFreezeLifecycleDurationMs(allEvents),
     final_verification_count: artifacts.verification.final_results_count,
     final_reportable_count: artifacts.verification.final_reportable_count,
     evidence: {
@@ -877,23 +890,23 @@ function analyzeSession(targetDomain, {
     events,
     issues,
     tool_health: toolHealth,
-    hunter_health: hunterHealth,
+    evaluator_health: evaluatorHealth,
   };
 }
 
-function sessionReachedPhase(analysis, phase) {
-  if (phase === "REPORT" && analysis.artifacts.report.present) return true;
-  if (phaseAtLeast(analysis.artifacts.state.phase, phase)) return true;
-  return analysis.event_read.events.some((event) => event.to_phase === phase || event.phase === phase);
+function sessionReachedLifecycleState(analysis, lifecycleState) {
+  if (lifecycleState === "REPORT" && analysis.artifacts.report.present) return true;
+  const state = analysis.artifacts.state.lifecycle_state || analysis.artifacts.state.phase;
+  if (lifecycleAtLeast(state, lifecycleState)) return true;
+  return analysis.event_read.events.some((event) => event.to_state === lifecycleState || event.lifecycle_state === lifecycleState);
 }
 
 function buildFunnel(analyses) {
   const funnel = {
     sessions_total: analyses.length,
     reached: {
-      AUTH: 0,
-      HUNT: 0,
-      CHAIN: 0,
+      OPEN_FRONTIER: 0,
+      CLAIM_FREEZE: 0,
       VERIFY: 0,
       GRADE: 0,
       REPORT: 0,
@@ -906,8 +919,8 @@ function buildFunnel(analyses) {
   };
 
   for (const analysis of analyses) {
-    for (const phase of Object.keys(funnel.reached)) {
-      if (sessionReachedPhase(analysis, phase)) funnel.reached[phase] += 1;
+    for (const lifecycleState of Object.keys(funnel.reached)) {
+      if (sessionReachedLifecycleState(analysis, lifecycleState)) funnel.reached[lifecycleState] += 1;
     }
     funnel.findings_total += analysis.artifacts.findings.total;
     funnel.final_verification_total += analysis.artifacts.verification.final_results_count;
@@ -965,22 +978,22 @@ function buildBottlenecks(analyses, limit) {
 function actionForBottleneck(bottleneck) {
   const actionByCode = {
     unreadable_artifacts: "Repair or remove malformed session artifacts before resuming orchestration.",
-    hunter_handoff_failures: "Resume the pending wave after missing hunters write valid structured handoffs, or force-merge intentionally.",
-    repeated_hunter_stops: "Fix the hunter final-marker or handoff path that is repeatedly blocking SubagentStop.",
+    evaluator_handoff_failures: "Resume the pending wave after missing evaluators write valid structured handoffs, or force-merge intentionally.",
+    repeated_evaluator_stops: "Fix the evaluator final-marker or handoff path that is repeatedly blocking SubagentStop.",
     mcp_tool_failures: "Inspect failing MCP tools and address the dominant error code before launching more agents.",
     network_unreachable_target: "Log blocked coverage/dead-end context, then choose an explicit egress profile if the operator approves a regional retry.",
     auth_failures: "Refresh or recapture auth profiles before additional authenticated testing.",
     low_coverage: "Launch another wave for unexplored non-low surfaces before verification.",
     chain_phase_no_attempts: "Run the chain-builder again so it records terminal chain attempts, or transition with an explicit override reason.",
     verification_dropoff: "Review final verification inputs because recorded findings are not surviving as reportable.",
-    grade_hold: "Use grader feedback to launch a targeted HUNT wave, then re-run CHAIN -> VERIFY before grading again.",
+    grade_hold: "Use grader feedback to launch a targeted EVALUATE wave, then re-run CHAIN -> VERIFY before grading again.",
     missing_verification: "Write a valid final verification round before grading or reporting.",
     missing_evidence: "Run the evidence agent and validate evidence packs before grading or reporting.",
     missing_grade: "Write a valid grade verdict before report completion.",
     missing_report: "Write report.md or move the session out of REPORT if report writing is still pending.",
     report_pending_canonical_path: "Write or move the consolidated report to the canonical session report.md path, then call bounty_report_written.",
-    stale_pending_wave: "Re-enter resume flow for the stale pending wave and reconcile handoffs.",
-    delayed_wave_reconciliation: "Audit and tighten the resume flow after hunter completion so wave reconciliation runs promptly.",
+    stale_pending_wave: "Re-enter resume flow for the stale pending wave and settle handoffs.",
+    delayed_wave_reconciliation: "Audit and tighten the resume flow after evaluator completion so wave reconciliation runs promptly.",
   };
   return {
     action: actionByCode[bottleneck.code] || "Inspect this bottleneck before continuing.",
@@ -1016,9 +1029,8 @@ function sessionActivityMtimeMs(targetDomain) {
   const candidates = [
     statePath(targetDomain),
     pipelineEventsJsonlPath(targetDomain),
-    findingsIndexJsonlPath(targetDomain),
     httpAuditJsonlPath(targetDomain),
-    findingsJsonlPath(targetDomain),
+    claimsJsonlPath(targetDomain),
     reportMarkdownPath(targetDomain),
   ];
   let latest = 0;
@@ -1080,7 +1092,7 @@ function readPipelineAnalytics(args = {}, { env = process.env, validateAuthority
       bottlenecks,
       next_actions: buildNextActions(bottlenecks, options.limit),
       tool_health: analysis.tool_health,
-      hunter_health: analysis.hunter_health,
+      evaluator_health: analysis.evaluator_health,
       event_log: {
         enabled: analysis.event_read.enabled,
         path: analysis.event_read.events_path,
@@ -1095,7 +1107,7 @@ function readPipelineAnalytics(args = {}, { env = process.env, validateAuthority
         sessions_truncated: false,
         telemetry_reads_reused: false,
         tool_events_loaded: analysis.tool_health.total_events,
-        hunter_events_loaded: analysis.hunter_health.total_runs,
+        evaluator_events_loaded: analysis.evaluator_health.total_runs,
       },
     };
     if (options.include_events) {
@@ -1110,8 +1122,8 @@ function readPipelineAnalytics(args = {}, { env = process.env, validateAuthority
   });
   const telemetryCache = {
     toolRead: readToolTelemetryEvents({ env }),
-    hunterRead: readAgentRunTelemetryEvents({
-      agent_run_type: "hunter",
+    evaluatorRead: readToolInvocationTelemetryEvents({
+      agent_run_type: "evaluator",
       env,
     }),
   };
@@ -1144,7 +1156,7 @@ function readPipelineAnalytics(args = {}, { env = process.env, validateAuthority
     bottlenecks,
     next_actions: buildNextActions(bottlenecks, options.limit),
     tool_health: buildToolHealth({ cutoffMs, limit: options.limit, env, readResult: telemetryCache.toolRead }),
-    hunter_health: buildHunterHealth({ cutoffMs, limit: options.limit, env, readResult: telemetryCache.hunterRead }),
+    evaluator_health: buildEvaluatorHealth({ cutoffMs, limit: options.limit, env, readResult: telemetryCache.evaluatorRead }),
     analytics_bounds: {
       session_scan_limit: candidates.limit,
       sessions_available: candidates.total_available,
@@ -1152,7 +1164,7 @@ function readPipelineAnalytics(args = {}, { env = process.env, validateAuthority
       sessions_truncated: candidates.truncated,
       telemetry_reads_reused: true,
       tool_events_loaded: telemetryCache.toolRead.events.length,
-      hunter_events_loaded: telemetryCache.hunterRead.events.length,
+      evaluator_events_loaded: telemetryCache.evaluatorRead.events.length,
     },
   };
   if (options.include_events) {
@@ -1184,5 +1196,5 @@ module.exports = {
   appendPipelineEventDirect,
   safeAppendPipelineEventDirect,
   safeAppendPipelineEventWithSessionLock,
-  safeRecordHunterStoppedPipelineEvent,
+  safeRecordEvaluatorStoppedPipelineEvent,
 };

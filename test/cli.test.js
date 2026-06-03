@@ -19,7 +19,7 @@ test("CLI help explains per-project installs and global CLI behavior", () => {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
-  for (const command of ["install", "update", "check-update", "doctor", "uninstall", "dashboard"]) {
+  for (const command of ["install", "update", "check-update", "doctor", "uninstall"]) {
     assert.match(output, new RegExp(`hacker-bob ${command}`));
   }
   assert.match(output, /Bob auto-selects/);
@@ -29,26 +29,6 @@ test("CLI help explains per-project installs and global CLI behavior", () => {
   assert.match(output, /--adapter claude\|codex\|generic-mcp\|kimi\|all/);
   assert.match(output, /Global npm install only adds this CLI to PATH/);
   assert.match(output, /Uninstall defaults to dry-run/);
-  assert.match(output, /Dashboard is a local read-only view/);
-});
-
-test("CLI dashboard --json emits a cross-session snapshot without starting a server", () => {
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-dashboard-home-"));
-  try {
-    const output = execFileSync(process.execPath, [CLI, "dashboard", "--repo-only", "--json"], {
-      cwd: ROOT,
-      env: { ...process.env, HOME: tempHome },
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const parsed = JSON.parse(output);
-    assert.equal(parsed.version, 1);
-    assert.equal(parsed.filters.repo_only, true);
-    assert.equal(parsed.totals.sessions, 0);
-    assert.deepEqual(parsed.sessions, []);
-  } finally {
-    fs.rmSync(tempHome, { recursive: true, force: true });
-  }
 });
 
 test("CLI installs into a workspace", () => {
@@ -71,17 +51,19 @@ test("CLI installs into a workspace", () => {
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-update.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-egress.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-export.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-oss", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate-runner", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "update.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-check-update.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-egress.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-export.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "bob", "egress-profiles.json")));
 
-    // .mcp.json must register both bountyagent (required) and brutalist (optional roast layer).
+    // .mcp.json must register both hacker-bob (required) and brutalist (optional roast layer).
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
-    assert.ok(mcp.mcpServers.bountyagent);
+    assert.ok(mcp.mcpServers["hacker-bob"]);
+    assert.ok(!mcp.mcpServers.bountyagent, "v2.0+ installs must not emit the legacy bountyagent server key");
     assert.ok(mcp.mcpServers.brutalist, "Claude install must register the optional brutalist MCP server");
     assert.equal(mcp.mcpServers.brutalist.command, "npx");
     assert.deepEqual(mcp.mcpServers.brutalist.args, ["-y", "@brutalist/mcp@latest"]);
@@ -105,26 +87,24 @@ test("CLI installs and doctors the Codex adapter without Claude files", () => {
     });
 
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".codex-plugin", "plugin.json")));
-    // Plugin .mcp.json must register both bountyagent and the optional brutalist server.
+    // Plugin .mcp.json must register both hacker-bob and the optional brutalist server.
     // The bundled source file ships both; this assertion catches mergeConfig regressions
-    // that would silently overwrite the bundled file with a bountyagent-only template
+    // that would silently overwrite the bundled file with a hacker-bob-only template
     // during install.
     const codexMcp = JSON.parse(fs.readFileSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".mcp.json"), "utf8"));
-    assert.ok(codexMcp.mcpServers.bountyagent, "Codex plugin .mcp.json must keep bountyagent");
+    assert.ok(codexMcp.mcpServers["hacker-bob"], "Codex plugin .mcp.json must keep hacker-bob");
     assert.ok(codexMcp.mcpServers.brutalist, "Codex plugin .mcp.json must register the optional brutalist MCP server post-install");
     assert.deepEqual(codexMcp.mcpServers.brutalist.args, ["-y", "@brutalist/mcp@latest"]);
-    assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-hunt", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-oss", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-evaluate", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-status", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-debug", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-update", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-export", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-egress", "SKILL.md")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "hunt", "SKILL.md")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "bob-hunt", "SKILL.md")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "hacker-bob-hunt", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-hunt.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-oss.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "evaluate", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "bob-evaluate", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "hacker-bob-evaluate", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-evaluate.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-status.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-debug.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-update.md")));
@@ -143,7 +123,7 @@ test("CLI installs and doctors the Codex adapter without Claude files", () => {
       "hacker-bob",
       PACKAGE_VERSION,
       "commands",
-      "bob-hunt.md",
+      "bob-evaluate.md",
     )));
     assert.ok(!fs.existsSync(path.join(
       tempHome,
@@ -237,11 +217,12 @@ test("CLI generic MCP adapter install and uninstall preserve unrelated MCP confi
     assert.ok(!fs.existsSync(path.join(workspace, ".claude")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex")));
 
-    // .mcp.json must keep the operator's existing entry, register bountyagent,
+    // .mcp.json must keep the operator's existing entry, register hacker-bob,
     // and additionally register the optional brutalist server.
     const installedMcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
     assert.ok(installedMcp.mcpServers.existing, "generic-mcp install must preserve unrelated MCP servers");
-    assert.ok(installedMcp.mcpServers.bountyagent);
+    assert.ok(installedMcp.mcpServers["hacker-bob"]);
+    assert.ok(!installedMcp.mcpServers.bountyagent);
     assert.ok(installedMcp.mcpServers.brutalist, "generic-mcp install must register the optional brutalist MCP server");
     assert.deepEqual(installedMcp.mcpServers.brutalist.args, ["-y", "@brutalist/mcp@latest"]);
 
@@ -260,57 +241,9 @@ test("CLI generic MCP adapter install and uninstall preserve unrelated MCP confi
 
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
     assert.ok(mcp.mcpServers.existing);
+    assert.ok(!mcp.mcpServers["hacker-bob"]);
     assert.ok(!mcp.mcpServers.bountyagent);
     assert.ok(!mcp.mcpServers.brutalist, "uninstall must also remove the Bob-managed brutalist server");
-  } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
-    fs.rmSync(tempHome, { recursive: true, force: true });
-  }
-});
-
-test("CLI installs and doctors the Kimi adapter without Claude or Codex files", () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-kimi-"));
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-home-"));
-  const workspace = path.join(tempRoot, "workspace");
-  fs.mkdirSync(workspace, { recursive: true });
-
-  try {
-    execFileSync(process.execPath, [CLI, "install", workspace, "--adapter", "kimi"], {
-      cwd: ROOT,
-      env: { ...process.env, HOME: tempHome },
-      stdio: "pipe",
-    });
-
-    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-hunt", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-status", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-debug", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-update", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-export", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-egress", "SKILL.md")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".claude")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".codex")));
-
-    const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".kimi", "mcp.json"), "utf8"));
-    assert.ok(mcp.mcpServers.bountyagent, "kimi install must keep bountyagent");
-    assert.ok(mcp.mcpServers.brutalist, "kimi install must register the optional brutalist MCP server post-install");
-    assert.deepEqual(mcp.mcpServers.brutalist.args, ["-y", "@brutalist/mcp@latest"]);
-
-    const installMeta = JSON.parse(fs.readFileSync(path.join(workspace, ".hacker-bob", "install.json"), "utf8"));
-    assert.deepEqual(installMeta.installed_adapters, ["kimi"]);
-
-    const output = execFileSync(process.execPath, [CLI, "doctor", workspace, "--adapter", "kimi", "--json"], {
-      cwd: ROOT,
-      env: { ...process.env, HOME: tempHome },
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const result = JSON.parse(output);
-    assert.equal(result.ok, true);
-    assert.deepEqual(result.adapters, ["kimi"]);
-    assert.ok(result.checks.some((check) => check.id === "kimi_skills" && check.status === "ok"));
-    assert.ok(result.checks.some((check) => check.id === "kimi_mcp_server_config" && check.status === "ok"));
-    assert.ok(!result.checks.some((check) => check.id.startsWith("claude_")));
-    assert.ok(!result.checks.some((check) => check.id.startsWith("codex_")));
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(tempHome, { recursive: true, force: true });
@@ -341,21 +274,17 @@ test("CLI uninstall of one adapter preserves remaining adapters and shared runti
     assert.deepEqual(result.remaining_adapters, ["claude", "generic-mcp", "kimi"]);
     assert.equal(result.remove_shared, false);
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".mcp.json")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-hunt.md")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-oss.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-evaluate.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-egress.md")));
-    assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-hunt", "SKILL.md")));
-    assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-oss", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-evaluate", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-export", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-egress", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".agents", "plugins", "marketplace.json")));
     assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "plugins", "cache", "hacker-bob-local", "hacker-bob")));
     assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "config.toml")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-update.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-oss", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate-runner", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".hacker-bob", "generic-mcp", "hacker-bob.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-hunt", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, "mcp", "server.js")));
 
     const installMeta = JSON.parse(fs.readFileSync(path.join(workspace, ".hacker-bob", "install.json"), "utf8"));
@@ -372,13 +301,11 @@ test("CLI uninstall of one adapter preserves remaining adapters and shared runti
     assert.equal(claudeResult.remove_shared, false);
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob-update.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob-export.md")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-oss", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate-runner", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".hacker-bob", "generic-mcp", "hacker-bob.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-hunt", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, "mcp", "server.js")));
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
-    assert.ok(mcp.mcpServers.bountyagent);
+    assert.ok(mcp.mcpServers["hacker-bob"]);
     const finalMeta = JSON.parse(fs.readFileSync(path.join(workspace, ".hacker-bob", "install.json"), "utf8"));
     assert.deepEqual(finalMeta.installed_adapters, ["generic-mcp", "kimi"]);
   } finally {
@@ -415,7 +342,7 @@ test("CLI auto-selects claude (default fallback) on a fresh install with no --ad
   }
 });
 
-test("CLI generic-mcp install writes mcpServers.bountyagent into .mcp.json", () => {
+test("CLI generic-mcp install writes mcpServers['hacker-bob'] into .mcp.json", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-generic-presence-"));
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-home-"));
   const workspace = path.join(tempRoot, "workspace");
@@ -428,12 +355,13 @@ test("CLI generic-mcp install writes mcpServers.bountyagent into .mcp.json", () 
       stdio: "pipe",
     });
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
-    assert.ok(mcp.mcpServers && mcp.mcpServers.bountyagent, "mcpServers.bountyagent should be present after generic-mcp install");
-    assert.equal(mcp.mcpServers.bountyagent.command, "node");
+    assert.ok(mcp.mcpServers && mcp.mcpServers["hacker-bob"], "mcpServers['hacker-bob'] should be present after generic-mcp install");
+    assert.ok(!mcp.mcpServers.bountyagent, "v2.0+ installs must not emit the legacy bountyagent server key");
+    assert.equal(mcp.mcpServers["hacker-bob"].command, "node");
     assert.ok(
-      Array.isArray(mcp.mcpServers.bountyagent.args)
-        && mcp.mcpServers.bountyagent.args.some((arg) => arg.endsWith(path.join("mcp", "server.js"))),
-      `mcpServers.bountyagent.args should reference mcp/server.js; got: ${JSON.stringify(mcp.mcpServers.bountyagent.args)}`,
+      Array.isArray(mcp.mcpServers["hacker-bob"].args)
+        && mcp.mcpServers["hacker-bob"].args.some((arg) => arg.endsWith(path.join("mcp", "server.js"))),
+      `mcpServers['hacker-bob'].args should reference mcp/server.js; got: ${JSON.stringify(mcp.mcpServers["hacker-bob"].args)}`,
     );
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -470,10 +398,8 @@ test("CLI no-flag uninstall on multi-adapter install removes everything that was
     assert.deepEqual(parsed.adapters.sort(), ["claude", "codex", "generic-mcp", "kimi"]);
     assert.deepEqual(parsed.remaining_adapters, []);
     assert.equal(parsed.remove_shared, true);
-    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
-    assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-hunt", "SKILL.md")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-oss", "SKILL.md")));
-    assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-oss", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate-runner", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-evaluate", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".hacker-bob", "generic-mcp", "hacker-bob.md")));
     assert.ok(!fs.existsSync(path.join(workspace, "mcp", "server.js")));
   } finally {
@@ -512,6 +438,7 @@ test("CLI no-flag doctor on multi-adapter install runs checks for every installe
     assert.ok([...checkIds].some((id) => id.startsWith("claude_")), "expected at least one claude_* check");
     assert.ok([...checkIds].some((id) => id.startsWith("codex_")), "expected at least one codex_* check");
     assert.ok([...checkIds].some((id) => id.startsWith("generic_mcp_") || id.includes("generic")), "expected at least one generic-mcp check");
+    assert.ok([...checkIds].some((id) => id.startsWith("kimi_")), "expected at least one kimi_* check");
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(tempHome, { recursive: true, force: true });
@@ -543,7 +470,7 @@ test("CLI no-flag update on a previously-installed codex project keeps codex (do
     assert.match(result.stderr, /reason: reinstall_metadata/);
     const meta = JSON.parse(fs.readFileSync(path.join(workspace, ".hacker-bob", "install.json"), "utf8"));
     assert.deepEqual(meta.installed_adapters, ["codex"]);
-    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate-runner", "SKILL.md")));
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(tempHome, { recursive: true, force: true });
@@ -603,7 +530,7 @@ test("CLI reinstall with no --adapter preserves previously-installed adapter mix
     assert.match(reinstall.stderr, /reason: reinstall_metadata/);
     const finalMeta = JSON.parse(fs.readFileSync(path.join(workspace, ".hacker-bob", "install.json"), "utf8"));
     assert.deepEqual(finalMeta.installed_adapters, ["codex"]);
-    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate-runner", "SKILL.md")));
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(tempHome, { recursive: true, force: true });
@@ -810,7 +737,7 @@ test("CLI uninstall --yes removes Bob-managed files and preserves unrelated conf
     }, null, 2)}\n`);
     fs.writeFileSync(path.join(workspace, ".claude", "settings.json"), `${JSON.stringify({
       permissions: {
-        allow: ["custom-tool", "mcp__bountyagent__custom_user_tool"],
+        allow: ["custom-tool", "mcp__hacker-bob__custom_user_tool"],
       },
       hooks: {
         PreToolUse: [{
@@ -833,7 +760,7 @@ test("CLI uninstall --yes removes Bob-managed files and preserves unrelated conf
         { name: "operator", proxy_url: "${BOB_EGRESS_OPERATOR_PROXY}", region: "EU", description: "Operator-owned", enabled: true },
       ],
     }, null, 2)}\n`);
-    fs.writeFileSync(path.join(tempHome, "bounty-agent-sessions", "keep.txt"), "keep\n");
+    fs.writeFileSync(path.join(tempHome, "hacker-bob-sessions", "keep.txt"), "keep\n");
 
     const output = execFileSync(process.execPath, [CLI, "uninstall", workspace, "--yes", "--json"], {
       cwd: ROOT,
@@ -847,7 +774,7 @@ test("CLI uninstall --yes removes Bob-managed files and preserves unrelated conf
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob-update.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob-export.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-check-update.js")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".hacker-bob", "knowledge", "hunter-techniques.json")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".hacker-bob", "knowledge", "evaluator-techniques.json")));
     assert.ok(!fs.existsSync(path.join(workspace, ".hacker-bob", "bypass-tables", "rest-api.txt")));
     assert.ok(!fs.existsSync(path.join(workspace, "mcp", "server.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "bob", "egress-profiles.json")));
@@ -855,13 +782,15 @@ test("CLI uninstall --yes removes Bob-managed files and preserves unrelated conf
 
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
     assert.ok(mcp.mcpServers.existing);
+    assert.ok(!mcp.mcpServers["hacker-bob"]);
     assert.ok(!mcp.mcpServers.bountyagent);
 
     const settings = JSON.parse(fs.readFileSync(path.join(workspace, ".claude", "settings.json"), "utf8"));
     assert.equal(settings.customSetting, true);
     assert.ok(settings.permissions.allow.includes("custom-tool"));
-    assert.ok(settings.permissions.allow.includes("mcp__bountyagent__custom_user_tool"));
-    assert.ok(!settings.permissions.allow.includes("mcp__bountyagent__bounty_http_scan"));
+    assert.ok(settings.permissions.allow.includes("mcp__hacker-bob__custom_user_tool"));
+    assert.ok(!settings.permissions.allow.includes("mcp__hacker-bob__bob_http_scan"));
+    assert.ok(!settings.permissions.allow.includes("mcp__bountyagent__bob_http_scan"));
     assert.ok(!settings.statusLine);
     assert.ok(settings.hooks.PreToolUse.some((entry) => (
       entry.matcher === "Bash" &&
@@ -871,7 +800,7 @@ test("CLI uninstall --yes removes Bob-managed files and preserves unrelated conf
       entry.hooks &&
       entry.hooks.some((hook) => /scope-guard\.sh|session-write-guard\.sh/.test(hook.command))
     )));
-    assert.ok(fs.existsSync(path.join(tempHome, "bounty-agent-sessions", "keep.txt")));
+    assert.ok(fs.existsSync(path.join(tempHome, "hacker-bob-sessions", "keep.txt")));
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(tempHome, { recursive: true, force: true });

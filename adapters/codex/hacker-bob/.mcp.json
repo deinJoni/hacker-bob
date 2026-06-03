@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "bountyagent": {
+    "hacker-bob": {
       "command": "node",
       "args": [
         "../../../mcp/server.js"

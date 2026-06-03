@@ -38,8 +38,8 @@ const {
   isPlainObject,
 } = require("./verification-contracts.js");
 const {
-  readFindingsFromJsonl,
-} = require("./finding-store.js");
+  findingIdSetForVerificationContext,
+} = require("./verification-finding-id-adapter.js");
 const {
   normalizeVerificationRoundDocument,
 } = require("./verification-round-store.js");
@@ -116,10 +116,14 @@ function readStateSafe(domain) {
   }
 }
 
-function safeAppendPipelineEvent(domain, type, fields) {
+function safeAppendPipelineEvent(domain, type, fields, governanceContext) {
   try {
-    pipelineEventsLib().safeAppendPipelineEventDirect(domain, type, fields);
+    pipelineEventsLib().safeAppendPipelineEventDirect(domain, type, fields, governanceContext);
   } catch {}
+}
+
+function governanceContextForDomain(domain) {
+  return require("./governance-context.js").safeGovernanceContextForDomain(domain);
 }
 
 function verificationSourceFiles(domain) {
@@ -213,7 +217,7 @@ function pruneOldVerificationArchives(domain) {
       status: "pruned",
       source: "verification_v2",
       counts: { pruned: pruned.length },
-    });
+    }, governanceContextForDomain(domain));
   }
   if (fs.existsSync(dir)) return pruned;
   return pruned;
@@ -298,7 +302,7 @@ function archiveCurrentV2Attempt(domain, { attemptId, snapshotHash }) {
         files: Object.keys(files).length,
         missing_files: missingFiles.length,
       },
-    });
+    }, governanceContextForDomain(domain));
     pruneOldVerificationArchives(domain);
     return manifest;
   } catch (error) {
@@ -335,18 +339,21 @@ function prepareVerificationEntry(domain, state, { now = new Date() } = {}) {
 
   const enteredAt = now.toISOString();
   const attemptId = verificationAttemptId(now);
-  const snapshot = buildVerificationSnapshot(domain, { attemptId, createdAt: enteredAt });
+  const snapshot = buildVerificationSnapshot(domain, { attemptId, createdAt: enteredAt, now });
   writeFileAtomic(verificationSnapshotPath(domain), `${JSON.stringify(snapshot, null, 2)}\n`);
   safeAppendPipelineEvent(domain, "verification_snapshot_created", {
     phase: "VERIFY",
     status: "created",
-    source: "bounty_transition_phase",
+    source: "bob_advance_session",
     verification_attempt_id: attemptId,
     verification_snapshot_hash: snapshot.snapshot_hash,
+    claim_freeze_id: snapshot.claim_freeze_id,
     counts: {
-      findings: snapshot.finding_ids.length,
+      claims: Array.isArray(snapshot.claim_ids) ? snapshot.claim_ids.length : 0,
+      // LEGACY: removed in Plane D
+      findings: Array.isArray(snapshot.finding_ids) ? snapshot.finding_ids.length : 0,
     },
-  });
+  }, governanceContextForDomain(domain));
 
   return {
     schema_version: VERIFICATION_SCHEMA_V2,
@@ -434,7 +441,13 @@ function assertCurrentV2RoundDocument(domain, document, { expectedRound = null, 
 
 function loadCurrentV2Round(domain, round, { state = null, snapshot = null } = {}) {
   const document = loadJsonDocumentStrict(verificationRoundPaths(domain, round).json, `${round} verification round JSON`);
-  const findingIdSet = new Set((snapshot ? snapshot.finding_ids : readFindingsFromJsonl(domain).map((finding) => finding.id)));
+  // The snapshot is authoritative for claim membership when an attempt is
+  // active. We address claims by finding_id during the legacy dual-write
+  // window via the findingIdSetFromSnapshot projection.
+  const findingIdSet = findingIdSetForVerificationContext({
+    domain,
+    snapshot,
+  });
   const normalized = normalizeVerificationRoundDocument(document, {
     expectedDomain: domain,
     expectedRound: round,
@@ -688,7 +701,7 @@ function buildVerificationAdjudication(args) {
   safeAppendPipelineEvent(domain, "verification_adjudication_built", {
     phase: "VERIFY",
     status: "built",
-    source: "bounty_build_verification_adjudication",
+    source: "bob_build_verification_adjudication",
     verification_attempt_id: state.verification_attempt_id,
     verification_snapshot_hash: state.verification_snapshot_hash,
     adjudication_plan_hash: adjudicationPlanHash,
@@ -698,7 +711,7 @@ function buildVerificationAdjudication(args) {
       replay_required: replayRequired.size,
       qa_sampled: qaSampledIds.length,
     },
-  });
+  }, governanceContextForDomain(domain));
   refreshVerificationManifest(domain);
   return JSON.stringify({
     version: 1,
@@ -1231,7 +1244,7 @@ function nextVerificationAction({ schemaVersion, state, rounds, adjudication, ev
   if (!state || !state.verification_attempt_id) return "transition CHAIN -> VERIFY to create v2 verification attempt";
   if (staleBlockers.length > 0) return "restart VERIFY/adjudication";
   if (!rounds.brutalist.current || !rounds.balanced.current) return "run independent brutalist and balanced verifier rounds";
-  if (!adjudication.current) return "call bounty_build_verification_adjudication";
+  if (!adjudication.current) return "call bob_build_verification_adjudication";
   if (!rounds.final.current) return "run final verifier with the current adjudication_plan_hash";
   if (!evidence.valid) return "write or repair evidence packs for current final verification";
   return "transition VERIFY -> GRADE";

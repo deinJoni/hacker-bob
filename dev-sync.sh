@@ -97,6 +97,9 @@ sync_shared_runtime() {
   rm -rf "$TARGET_ABS/mcp/lib/tools"
   mkdir -p "$TARGET_ABS/mcp/lib/tools"
   cp "$SCRIPT_DIR/mcp/lib/tools/"*.js "$TARGET_ABS/mcp/lib/tools/"
+  rm -rf "$TARGET_ABS/mcp/lib/waves"
+  mkdir -p "$TARGET_ABS/mcp/lib/waves"
+  cp "$SCRIPT_DIR/mcp/lib/waves/"*.js "$TARGET_ABS/mcp/lib/waves/"
   chmod +x "$TARGET_ABS/mcp/server.js"
 }
 
@@ -112,28 +115,35 @@ sync_kimi_adapter() {
 }
 
 sync_claude_adapter() {
-  mkdir -p "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/commands" "$CLAUDE_DIR/bob" "$CLAUDE_DIR/skills/bob-hunt" "$CLAUDE_DIR/skills/bob-status" "$CLAUDE_DIR/skills/bob-debug"
+  mkdir -p "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/commands" "$CLAUDE_DIR/bob" "$CLAUDE_DIR/skills/bob-evaluate-runner" "$CLAUDE_DIR/skills/bob-status" "$CLAUDE_DIR/skills/bob-debug"
   rm -f "$CLAUDE_DIR/hooks/bob-update-lib.js"
   cp "$SCRIPT_DIR/.claude/hooks/session-write-guard.sh" "$CLAUDE_DIR/hooks/"
-  cp "$SCRIPT_DIR/.claude/hooks/hunter-subagent-stop.js" "$CLAUDE_DIR/hooks/"
+  cp "$SCRIPT_DIR/.claude/hooks/agent-run-stop.js" "$CLAUDE_DIR/hooks/"
   cp "$SCRIPT_DIR/.claude/hooks/bob-egress.js" "$CLAUDE_DIR/hooks/"
   cp "$SCRIPT_DIR/.claude/hooks/bob-export.js" "$CLAUDE_DIR/hooks/"
   cp "$SCRIPT_DIR/.claude/hooks/bob-update.js" "$CLAUDE_DIR/hooks/"
   cp "$SCRIPT_DIR/.claude/hooks/bob-check-update.js" "$CLAUDE_DIR/hooks/"
   cp "$SCRIPT_DIR/.claude/hooks/bob-check-update-worker.js" "$CLAUDE_DIR/hooks/"
-  chmod +x "$CLAUDE_DIR/hooks/session-write-guard.sh" "$CLAUDE_DIR/hooks/hunter-subagent-stop.js" "$CLAUDE_DIR/hooks/bob-egress.js" "$CLAUDE_DIR/hooks/bob-export.js" "$CLAUDE_DIR/hooks/bob-update.js" "$CLAUDE_DIR/hooks/bob-check-update.js" "$CLAUDE_DIR/hooks/bob-check-update-worker.js"
+  chmod +x "$CLAUDE_DIR/hooks/session-write-guard.sh" "$CLAUDE_DIR/hooks/agent-run-stop.js" "$CLAUDE_DIR/hooks/bob-egress.js" "$CLAUDE_DIR/hooks/bob-export.js" "$CLAUDE_DIR/hooks/bob-update.js" "$CLAUDE_DIR/hooks/bob-check-update.js" "$CLAUDE_DIR/hooks/bob-check-update-worker.js"
   cp "$SCRIPT_DIR/.claude/bob/egress-profiles.example.json" "$CLAUDE_DIR/bob/"
   if [[ ! -f "$CLAUDE_DIR/bob/egress-profiles.json" ]]; then
     node -e 'const e=require(process.argv[1]); e.writeEgressProfilesDocument(process.argv[2], e.defaultEgressProfilesDocument())' "$SCRIPT_DIR/mcp/lib/egress-profiles.js" "$TARGET_ABS"
   fi
   rm -f "$CLAUDE_DIR/commands/bountyagent.md" "$CLAUDE_DIR/commands/bountyagentdebug.md"
-  rm -f "$CLAUDE_DIR/commands/bob/hunt.md" "$CLAUDE_DIR/commands/bob/status.md" "$CLAUDE_DIR/commands/bob/debug.md" "$CLAUDE_DIR/commands/bob/update.md"
+  rm -f "$CLAUDE_DIR/commands/bob/evaluate.md" "$CLAUDE_DIR/commands/bob/status.md" "$CLAUDE_DIR/commands/bob/debug.md" "$CLAUDE_DIR/commands/bob/update.md"
   rmdir "$CLAUDE_DIR/commands/bob" 2>/dev/null || true
-  rm -rf "$CLAUDE_DIR/skills/bountyagent" "$CLAUDE_DIR/skills/bountyagentstatus" "$CLAUDE_DIR/skills/bountyagentdebug"
+  # Sweep legacy Claude skill dirs. `bob-evaluate` and `bob-hunt` predate the
+  # rename to bob-evaluate-runner; they otherwise survive across reinstalls and
+  # register duplicate /bob-evaluate slash-picker entries with orchestrator-prose
+  # descriptions (skills without `description:` fall back to body lede).
+  rm -rf "$CLAUDE_DIR/skills/bountyagent" "$CLAUDE_DIR/skills/bountyagentstatus" "$CLAUDE_DIR/skills/bountyagentdebug" "$CLAUDE_DIR/skills/bob-hunt" "$CLAUDE_DIR/skills/bob-evaluate"
   cp "$SCRIPT_DIR/.claude/commands/bob-update.md" "$CLAUDE_DIR/commands/"
   cp "$SCRIPT_DIR/.claude/commands/bob-egress.md" "$CLAUDE_DIR/commands/"
   cp "$SCRIPT_DIR/.claude/commands/bob-export.md" "$CLAUDE_DIR/commands/"
-  cp "$SCRIPT_DIR/.claude/skills/bob-hunt/SKILL.md" "$CLAUDE_DIR/skills/bob-hunt/"
+  # bob-evaluate.md is normally install-only, but the rename of its target skill
+  # means the shim's body must propagate to dev-synced workspaces; copy it here.
+  cp "$SCRIPT_DIR/.claude/commands/bob-evaluate.md" "$CLAUDE_DIR/commands/"
+  cp "$SCRIPT_DIR/.claude/skills/bob-evaluate-runner/SKILL.md" "$CLAUDE_DIR/skills/bob-evaluate-runner/"
   cp "$SCRIPT_DIR/.claude/skills/bob-status/SKILL.md" "$CLAUDE_DIR/skills/bob-status/"
   cp "$SCRIPT_DIR/.claude/skills/bob-debug/SKILL.md" "$CLAUDE_DIR/skills/bob-debug/"
 
@@ -195,5 +205,5 @@ elif adapter_includes "kimi"; then
 else
   echo "  1. Configure your MCP host to use $TARGET_ABS/mcp/server.js"
   echo "  2. Read $BOB_DIR/generic-mcp/hacker-bob.md"
-  echo "  3. Smoke test by listing or calling the bountyagent MCP tools"
+  echo "  3. Smoke test by listing or calling the hacker-bob MCP tools"
 fi

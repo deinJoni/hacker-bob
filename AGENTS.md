@@ -50,8 +50,9 @@ Treat these as high-priority findings when introduced by a PR:
 - Tool schema, dispatch, validation, lifecycle hook, or role/skill permission
   changes that let an agent bypass registry-defined controls.
 - Session state, verification, grading, wave handoff, or report-generation
-  mutations that break the expected RECON -> AUTH -> HUNT -> CHAIN -> VERIFY ->
-  GRADE -> REPORT workflow.
+  mutations that break the server-enforced v2 lifecycle
+  (`SETUP -> OPEN_FRONTIER -> CLAIM_FREEZE -> VERIFY -> GRADE -> REPORT`)
+  defined by `mcp/lib/lifecycle-gates.js` `LIFECYCLE_STATE_VALUES`.
 - Packaging or release changes that omit required runtime files, include private
   local artifacts, break adapter installs, or make published packages drift from
   generated sources.

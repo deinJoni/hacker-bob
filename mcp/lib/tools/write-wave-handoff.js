@@ -8,11 +8,13 @@ const {
   BYPASS_ATTEMPT_SUMMARY_MIN_CHARS,
   WAVE_HANDOFF_CONTENT_MAX_CHARS,
 } = require("../wave-handoff-contracts.js");
+const { wrapWriteTool } = require("./_write-base.js");
 
-module.exports = Object.freeze({
-  name: "bounty_write_wave_handoff",
+module.exports = wrapWriteTool({
+  name: "bob_write_wave_handoff",
+  aliases: ["bounty_write_wave_handoff"],
   description:
-    "Hunter-final writer for one structured wave handoff as markdown plus authoritative JSON.",
+    "Evaluator-final writer for one structured wave handoff as markdown plus authoritative JSON.",
   inputSchema: {
     "type": "object",
     "properties": {
@@ -77,6 +79,10 @@ module.exports = Object.freeze({
                 "symbolic_solver",
                 "mock_dependency",
                 "external_api",
+                "docker_unavailable",
+                "sanitizer_unavailable",
+                "static_analyzer_unavailable",
+                "cve_feed_stale",
                 "other"
               ]
             },
@@ -90,7 +96,7 @@ module.exports = Object.freeze({
       "blocked_prereqs": {
         "type": "array",
         "maxItems": 20,
-        "description": "Prerequisites the hunter could not satisfy from registered material (auth profile, egress profile, funded wallet, etc.). Pair with surface_status: partial. Free-text fields (reason, evidence_summary) are screened for secrets at write time; identifier_hint must be a lowercase handle when present.",
+        "description": "Prerequisites the evaluator could not satisfy from registered material (auth profile, egress profile, funded wallet, etc.). Pair with surface_status: partial. Free-text fields (reason, evidence_summary) are screened for secrets at write time; identifier_hint must be a lowercase handle when present.",
         "items": {
           "type": "object",
           "required": ["kind", "reason"],
@@ -195,7 +201,7 @@ module.exports = Object.freeze({
     ]
   },
   handler: writeWaveHandoff,
-  role_bundles: ["hunter-shared"],
+  role_bundles: ["evaluator-shared"],
   mutating: true,
   global_preapproval: true,
   network_access: false,

@@ -35,8 +35,8 @@ const {
   loadWaveAssignments,
 } = require("./assignments.js");
 const {
-  readFindingsFromJsonl,
-} = require("./finding-store.js");
+  findingPayloadsFromClaims,
+} = require("./tools/record-candidate-claim.js");
 const {
   readHandoffSigningKey,
 } = require("./handoff-signing-key.js");
@@ -49,6 +49,55 @@ const {
   validateHandoffProvenance,
   validateWaveHandoffPayload,
 } = require("./wave-handoff-contracts.js");
+const {
+  latestAgentRunForWaveAgent,
+} = require("./agent-runs.js");
+
+// Cycle S.5: drive the merge gate from AgentRun.state instead of the
+// handoff-file presence on disk. Pact P2 keeps file-presence as the fallback
+// during the deprecation window: until the SubagentStart hook lands in every
+// adapter, freshly-started agents may have only an `assigned` row when the
+// merge gate inspects them. Treat the three signals as follows:
+//
+//   settled                       -> handoff authoritative, no fallback.
+//   failed | abandoned            -> explicit terminal-non-settled, refuse.
+//   running                       -> agent observed running but never settled;
+//                                    the SubagentStop hook should have fired
+//                                    to either settle or mark terminal, so a
+//                                    stuck `running` row means the agent died
+//                                    mid-flight — refuse.
+//   assigned | completed | null   -> not enough state-machine signal yet; fall
+//                                    back to handoff-file presence so the
+//                                    dual-write window keeps producing valid
+//                                    merges for legacy callers and adapters
+//                                    that have not wired the SubagentStart
+//                                    hook yet.
+//
+// A `gate` of "settled" closes the merge gate in favor of the AgentRun row.
+// A `gate` of "closed_terminal_non_settled" closes it against the agent.
+// A `gate` of "fallback" defers to file-presence checks at the call site.
+const AGENT_RUN_GATE_FALLBACK_STATUSES = new Set([null, "assigned", "completed"]);
+
+function agentRunGateForAssignment(domain, wave, assignment) {
+  let run = null;
+  try {
+    run = latestAgentRunForWaveAgent(domain, {
+      wave,
+      agent: assignment.agent,
+      surfaceId: assignment.surface_id,
+    });
+  } catch {
+    run = null;
+  }
+  const status = run ? run.status : null;
+  if (status === "settled") {
+    return { status, gate: "settled" };
+  }
+  if (status === "failed" || status === "abandoned" || status === "running") {
+    return { status, gate: "closed_terminal_non_settled" };
+  }
+  return { status, gate: "fallback" };
+}
 
 const WAVE_ARTIFACT_KEYS = Object.freeze([
   "dir",
@@ -135,7 +184,21 @@ function buildWaveReadiness(artifacts, { domain = null } = {}) {
   }
 
   for (const assignment of artifacts.assignments) {
-    if (!artifacts.handoffPathByAgent.has(assignment.agent)) {
+    // Cycle S.5: drive readiness from AgentRun.state with file-presence as
+    // the deprecation-window fallback (Pact P2).
+    const handoffPresent = artifacts.handoffPathByAgent.has(assignment.agent);
+    const gate = domain
+      ? agentRunGateForAssignment(domain, artifacts.wave, assignment)
+      : { status: null, gate: "fallback" };
+    if (gate.gate === "closed_terminal_non_settled") {
+      missingAgents.push(assignment.agent);
+      continue;
+    }
+    if (gate.gate === "fallback" && !handoffPresent) {
+      missingAgents.push(assignment.agent);
+      continue;
+    }
+    if (gate.gate === "settled" && !handoffPresent) {
       missingAgents.push(assignment.agent);
       continue;
     }
@@ -225,7 +288,7 @@ function mergeWaveHandoffsInternal(domain, waveNumber) {
   const wafSet = new Set();
   const leadSet = new Set();
 
-  const allFindings = readFindingsFromJsonl(domain);
+  const allFindings = findingPayloadsFromClaims(domain);
   const findingsByRun = new Map();
   const recordedFindingsBySurface = new Map();
   for (const finding of allFindings) {
@@ -245,7 +308,22 @@ function mergeWaveHandoffsInternal(domain, waveNumber) {
 
   for (const assignment of artifacts.assignments) {
     const filePath = artifacts.handoffPathByAgent.get(assignment.agent);
+    // Cycle S.5: drive the merge gate from AgentRun.state. The file-presence
+    // check stays as a fallback when no AgentRun row exists yet (legacy
+    // session, pre-S.5 wave, or hook write failure) per Pact P2.
+    const gate = agentRunGateForAssignment(domain, artifacts.wave, assignment);
+    if (gate.gate === "closed_terminal_non_settled") {
+      missingSurfaceIds.push(assignment.surface_id);
+      continue;
+    }
+    if (gate.gate === "fallback" && !filePath) {
+      missingSurfaceIds.push(assignment.surface_id);
+      continue;
+    }
     if (!filePath) {
+      // AgentRun says settled but the handoff file is absent — dual-write
+      // mismatch. Treat as missing so the merge gate refuses to advance
+      // until both ledger and on-disk evidence agree.
       missingSurfaceIds.push(assignment.surface_id);
       continue;
     }
@@ -367,10 +445,85 @@ function mergeWaveHandoffsInternal(domain, waveNumber) {
   };
 }
 
+// Y.10 (Y-P12) — merge-snapshot persistence so the runtime gate at
+// bob_advance_session(OPEN_FRONTIER -> CLAIM_FREEZE) can read the latest
+// merged wave's partial_surface_ids without re-running mergeWaveHandoffsInternal.
+// Snapshot lives at <sessionDir>/wave-handoffs/wave-<N>-merge-snapshot.json and
+// is append-only (each successful merge writes a new snapshot file; older
+// snapshots are retained for audit). The wave-handoffs/ directory is already
+// in AUDIT_GRADED_RELATIVE_DIRS (mcp/lib/paths.js) so the snapshot is
+// MCP-owned audit-graded artifact content (Y-P13).
+function waveHandoffsSnapshotDir(domain) {
+  return path.join(sessionDir(domain), "wave-handoffs");
+}
+
+function waveMergeSnapshotPath(domain, waveNumber) {
+  return path.join(waveHandoffsSnapshotDir(domain), `wave-${waveNumber}-merge-snapshot.json`);
+}
+
+function writeWaveMergeSnapshot(domain, waveNumber, snapshot) {
+  const dir = waveHandoffsSnapshotDir(domain);
+  fs.mkdirSync(dir, { recursive: true });
+  const filePath = waveMergeSnapshotPath(domain, waveNumber);
+  const body = `${JSON.stringify(snapshot, null, 2)}\n`;
+  fs.writeFileSync(filePath, body);
+}
+
+// Returns the partial_surface_ids of the highest-numbered merge snapshot for
+// the target's session; empty array if no merges have happened or the
+// snapshot directory is missing. Used by the Y-P12 runtime gate in
+// mcp/lib/tools/advance-session.js and by mcp/lib/scheduler-preconditions.js.
+function getLatestMergedWavePartialSurfaceIds(targetDomain) {
+  const domain = assertNonEmptyString(targetDomain, "target_domain");
+  const dir = waveHandoffsSnapshotDir(domain);
+  if (!fs.existsSync(dir)) return [];
+  let entries;
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const snapshotPattern = /^wave-([1-9][0-9]*)-merge-snapshot\.json$/;
+  const numbers = [];
+  for (const entry of entries) {
+    const match = entry.match(snapshotPattern);
+    if (match) numbers.push(Number(match[1]));
+  }
+  if (numbers.length === 0) return [];
+  const highest = Math.max.apply(null, numbers);
+  let parsed;
+  try {
+    parsed = readJsonFile(waveMergeSnapshotPath(domain, highest));
+  } catch {
+    return [];
+  }
+  if (!parsed || typeof parsed !== "object") return [];
+  const partial = parsed.partial_surface_ids;
+  if (!Array.isArray(partial)) return [];
+  return partial.filter((id) => typeof id === "string" && id.length > 0);
+}
+
 function mergeWaveHandoffs(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   const waveNumber = parseWaveNumber(args.wave_number);
   const { readiness, merge } = mergeWaveHandoffsInternal(domain, waveNumber);
+
+  // Y.10 (Y-P12) — persist a merge snapshot so the partial-surface runtime
+  // gate at bob_advance_session can consult the latest merged wave without
+  // recomputing. Failures here do NOT block the merge itself (the merge
+  // result is the primary contract); the gate falls back to "no partial
+  // surfaces known" when the snapshot is missing, which is the safer default.
+  try {
+    writeWaveMergeSnapshot(domain, waveNumber, {
+      wave_number: waveNumber,
+      merged_at_iso: new Date().toISOString(),
+      partial_surface_ids: merge.partial_surface_ids.slice(),
+      completed_surface_ids: merge.completed_surface_ids.slice(),
+      missing_surface_ids: merge.missing_surface_ids.slice(),
+    });
+  } catch {
+    // Intentionally swallow — snapshot persistence is best-effort.
+  }
 
   return JSON.stringify({
     assignments_total: readiness.assignments_total,
@@ -414,7 +567,7 @@ function buildWaveHandoffsDocument(domain, waveNumbers) {
   const invalidHandoffs = [];
   const unexpectedHandoffs = [];
 
-  const allFindings = readFindingsFromJsonl(domain);
+  const allFindings = findingPayloadsFromClaims(domain);
   const findingsByRun = new Map();
   for (const finding of allFindings) {
     const runKey = `${finding.wave} ${finding.agent} ${finding.surface_id}`;
@@ -438,7 +591,26 @@ function buildWaveHandoffsDocument(domain, waveNumbers) {
 
     for (const assignment of artifacts.assignments) {
       const filePath = artifacts.handoffPathByAgent.get(assignment.agent);
-      if (!filePath) {
+      // Cycle S.5: drive the readout from AgentRun.state with file-presence as
+      // the deprecation-window fallback (Pact P2).
+      const gate = agentRunGateForAssignment(domain, artifacts.wave, assignment);
+      if (gate.gate === "closed_terminal_non_settled") {
+        missingHandoffs.push({
+          wave: artifacts.wave,
+          agent: assignment.agent,
+          surface_id: assignment.surface_id,
+        });
+        continue;
+      }
+      if (gate.gate === "fallback" && !filePath) {
+        missingHandoffs.push({
+          wave: artifacts.wave,
+          agent: assignment.agent,
+          surface_id: assignment.surface_id,
+        });
+        continue;
+      }
+      if (gate.gate === "settled" && !filePath) {
         missingHandoffs.push({
           wave: artifacts.wave,
           agent: assignment.agent,
@@ -527,6 +699,7 @@ module.exports = {
   buildWaveHandoffFileIndex,
   buildWaveHandoffsDocument,
   buildWaveReadiness,
+  getLatestMergedWavePartialSurfaceIds,
   listWaveAssignmentNumbers,
   listWaveHandoffFiles,
   loadWaveArtifacts,
@@ -535,4 +708,6 @@ module.exports = {
   readSigningKeyForArtifacts,
   readWaveHandoffs,
   waveHandoffStatus,
+  waveMergeSnapshotPath,
+  waveHandoffsSnapshotDir,
 };

@@ -15,7 +15,14 @@ import shlex
 import sys
 
 
-SESSIONS_ROOT = pathlib.Path.home() / "bounty-agent-sessions"
+# Cycle P.2: guard both the canonical `hacker-bob-sessions` root and the
+# legacy `bounty-agent-sessions` root so direct reads remain blocked during
+# the v2.0/v2.1 coexistence window.
+SESSIONS_ROOTS = (
+    pathlib.Path.home() / "hacker-bob-sessions",
+    pathlib.Path.home() / "bounty-agent-sessions",
+)
+SESSIONS_ROOT = SESSIONS_ROOTS[0]
 
 BLOCKED_EXACT = {
     "state.json",
@@ -52,17 +59,29 @@ BLOCKED_EXACT = {
     "report.md",
     "chains.md",
     ".handoff-signing-key.json",
+    # Plane O O.7: OSS-target artifacts. Raw stdout/stderr from sandboxed
+    # docker runs and inventory/env documents may carry secret-shaped tokens
+    # from build output. Force agents through MCP readers.
+    "repo-checks.jsonl",
+    "repo-command-runs.jsonl",
+    "repo-env.json",
+    "Dockerfile.bob",
+    "repo-inventory.json",
 }
 
 ALLOWED_EXACT = {
     "attack_surface.json",
     "deep-summary.json",
-    "recon-summary.json",
+    "surface-discovery-summary.json",
     "surface-leads.json",
 }
 
 BLOCKED_DIRS = {
     "static-imports",
+    # Plane O O.7: raw docker-run stdout/stderr (`repo-runs/`) and any
+    # in-container scratch space (`repo-work/`) must stay opaque to agents.
+    "repo-runs",
+    "repo-work",
 }
 
 BLOCKED_PATTERNS = [
@@ -71,7 +90,7 @@ BLOCKED_PATTERNS = [
     re.compile(r"^live-dead-ends-w[1-9][0-9]*-a[1-9][0-9]*\.jsonl$"),
 ]
 
-RISKY_PATH_RE = re.compile(r"(?:^|[._/\-])(raw|proof|poc|dump|body|exploit)(?:[._/\-]|$)", re.I)
+RISKY_PATH_RE = re.compile(r"(?:^|[._/\-])(raw|proof|poc|dump|body|impact proof)(?:[._/\-]|$)", re.I)
 PATH_FRAGMENT_RE = re.compile(r"(~|\$\{?SESSION\}?|\$\{?HOME\}?|/)[^\s'\";|&)<>,]*")
 READ_COMMANDS = {
     "awk",
@@ -108,21 +127,34 @@ def resolve_path(raw_path):
 
 
 def is_in_session_dir(resolved):
-    try:
-        resolved.resolve(strict=False).relative_to(SESSIONS_ROOT.resolve(strict=False))
-        return True
-    except (ValueError, OSError):
-        return False
+    for root in SESSIONS_ROOTS:
+        try:
+            resolved.resolve(strict=False).relative_to(root.resolve(strict=False))
+            return True
+        except (ValueError, OSError):
+            continue
+    return False
+
+
+def session_root_for(resolved):
+    for root in SESSIONS_ROOTS:
+        try:
+            resolved.resolve(strict=False).relative_to(root.resolve(strict=False))
+            return root
+        except (ValueError, OSError):
+            continue
+    return None
 
 
 def check_file(raw_path, *, block_session_dirs=False):
     resolved = resolve_path(raw_path)
-    if not is_in_session_dir(resolved):
+    root = session_root_for(resolved)
+    if root is None:
         return None
 
     try:
         session_relative_parts = resolved.resolve(strict=False).relative_to(
-            SESSIONS_ROOT.resolve(strict=False)
+            root.resolve(strict=False)
         ).parts
     except (ValueError, OSError):
         session_relative_parts = ()
@@ -148,9 +180,9 @@ def check_file(raw_path, *, block_session_dirs=False):
 def block(blocked):
     print(
         f"BLOCKED: Direct read of '{blocked}' in a Bob session directory. "
-        "Use MCP readers such as bounty_read_session_summary, "
-        "bounty_read_state_summary, bounty_read_findings, and "
-        "bounty_read_http_audit instead.",
+        "Use MCP readers such as bob_read_session_summary, "
+        "bob_read_state_summary, bob_read_candidate_claims, and "
+        "bob_read_http_audit instead.",
         file=sys.stderr,
     )
     raise SystemExit(2)
@@ -165,6 +197,7 @@ def looks_like_path(token):
         token.startswith("/")
         or token.startswith("~")
         or token.startswith("$")
+        or "hacker-bob-sessions" in token
         or "bounty-agent-sessions" in token
         or token.endswith((".json", ".jsonl", ".md", ".txt", ".har"))
         or "/" in token

@@ -5,8 +5,15 @@ const WAVE_ID_RE = /^w([1-9]\d*)$/;
 const AGENT_ID_RE = /^a([1-9]\d*)$/;
 
 const SEVERITY_VALUES = ["critical", "high", "medium", "low", "info"];
-const TARGET_KIND_VALUES = ["web", "repo"];
 const SURFACE_TYPE_VALUES = ["web", "smart_contract"];
+// X.3 / X-P6: closed enum of TaskGraph node + surface kinds. Distinct from
+// SURFACE_TYPE_VALUES (web/smart_contract is the finding-level technology
+// classification consumed by finding-contracts and the wave-scheduler);
+// SURFACE_KIND_VALUES is the node-kind discriminator persisted in
+// task-graph.json (X.2) and surface-index.json (X-P6: "transition nodes are
+// persisted as kind: \"transition\"" in surface-index). Initially shipped
+// with the 4 X.2 node kinds; growing the set requires a new cycle per X-P8.
+const SURFACE_KIND_VALUES = ["surface", "transition", "hypothesis", "claim"];
 const CHAIN_FAMILY_VALUES = ["evm", "svm", "aptos", "sui", "substrate", "cosmwasm"];
 const SVM_CLUSTER_VALUES = ["mainnet-beta", "devnet", "testnet"];
 // Aptos and Sui both identify networks by string name in tooling and RPC URLs.
@@ -45,7 +52,6 @@ const COSMWASM_NETWORK_VALUES = [
   "kava",
   "localnet",
 ];
-const PHASE_VALUES = ["RECON", "AUTH", "HUNT", "CHAIN", "VERIFY", "GRADE", "REPORT", "EXPLORE"];
 const AUTH_STATUS_VALUES = ["pending", "authenticated", "unauthenticated"];
 const CHECKPOINT_MODE_VALUES = ["normal", "paranoid", "yolo"];
 const VERIFICATION_ROUND_VALUES = ["brutalist", "balanced", "final"];
@@ -98,24 +104,25 @@ const SESSION_LOCK_STALE_MS = 300_000;
 const SESSION_PUBLIC_STATE_FIELDS = [
   "target",
   "target_url",
-  "target_kind",
-  "repo",
+  // Cycle O.1: repo sessions persist target_repo + repo_hash alongside the
+  // (nullable) target_url. URL sessions leave these null; the lifecycle
+  // contracts treat repo and url targets as mutually exclusive bindings.
+  "target_repo",
+  "repo_hash",
   "deep_mode",
   "checkpoint_mode",
   "block_internal_hosts",
   "block_internal_hosts_source",
   "phase",
-  "hunt_wave",
+  "lifecycle_state",
+  "evaluation_wave",
   "pending_wave",
   "total_findings",
-  "explored",
-  "terminally_blocked",
   "prereq_registry_snapshots",
   "blocked_prereq_history",
   "terminal_block_clear_history",
   "dead_ends",
   "waf_blocked_endpoints",
-  "lead_surface_ids",
   "scope_exclusions",
   "hold_count",
   "auth_status",
@@ -162,7 +169,6 @@ module.exports = {
   GRADE_VERDICT_VALUES,
   HTTP_AUDIT_LOG_MAX_RECORDS,
   HTTP_AUDIT_SUMMARY_MAX_ITEMS,
-  PHASE_VALUES,
   PUBLIC_INTEL_MAX_ITEMS,
   PUBLIC_INTEL_MAX_RESPONSE_BYTES,
   SESSION_LOCK_NAME,
@@ -181,8 +187,8 @@ module.exports = {
   TECHNIQUE_PACK_READ_LOG_MAX_RECORDS,
   SUBSTRATE_NETWORK_VALUES,
   SUI_NETWORK_VALUES,
+  SURFACE_KIND_VALUES,
   SURFACE_TYPE_VALUES,
-  TARGET_KIND_VALUES,
   SVM_CLUSTER_VALUES,
   TRAFFIC_IMPORT_MAX_ENTRIES,
   TRAFFIC_LOG_MAX_RECORDS,

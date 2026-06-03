@@ -29,6 +29,9 @@ const {
   toolTelemetryPath,
   TOOL_TELEMETRY_MAX_RECORDS,
 } = require("../mcp/lib/tool-telemetry.js");
+const {
+  appendFrontierEvent,
+} = require("../mcp/lib/frontier-events.js");
 
 function withTempHome(fn) {
   const previousHome = process.env.HOME;
@@ -78,11 +81,11 @@ test("cross-session pipeline analytics bounds session scans and reuses telemetry
       const domain = `pipeline-bound-${String(i).padStart(3, "0")}.example.com`;
       fs.mkdirSync(path.dirname(statePath(domain)), { recursive: true });
       fs.writeFileSync(statePath(domain), `${JSON.stringify({
-        phase: "RECON",
+        phase: "SURFACE_DISCOVERY",
         auth_status: "unknown",
       }, null, 2)}\n`, "utf8");
       fs.writeFileSync(pipelineEventsJsonlPath(domain), `${JSON.stringify(normalizePipelineEvent(domain, "session_started", {
-        phase: "RECON",
+        phase: "SURFACE_DISCOVERY",
         status: "started",
         source: "test",
         ts: new Date().toISOString(),
@@ -133,7 +136,7 @@ test("session artifact analytics caps handoff file inspection", () => {
   withTempHome(() => {
     const domain = "handoff-cap.example.com";
     fs.mkdirSync(path.dirname(statePath(domain)), { recursive: true });
-    fs.writeFileSync(statePath(domain), `${JSON.stringify({ phase: "HUNT" })}\n`, "utf8");
+    fs.writeFileSync(statePath(domain), `${JSON.stringify({ phase: "EVALUATE" })}\n`, "utf8");
     for (let i = 1; i <= HANDOFF_ANALYTICS_MAX_FILES + 3; i++) {
       fs.writeFileSync(
         path.join(path.dirname(statePath(domain)), `handoff-w1-a${i}.json`),
@@ -154,7 +157,7 @@ test("session artifact analytics caps wave assignment payload inspection", () =>
     const domain = "assignment-cap.example.com";
     const dir = path.dirname(statePath(domain));
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(statePath(domain), `${JSON.stringify({ phase: "HUNT", pending_wave: 2 })}\n`, "utf8");
+    fs.writeFileSync(statePath(domain), `${JSON.stringify({ phase: "EVALUATE", pending_wave: 2 })}\n`, "utf8");
     for (let i = 1; i <= WAVE_READINESS_MAX_ASSIGNMENT_FILES + 3; i++) {
       fs.writeFileSync(path.join(dir, `wave-${i}-assignments.json`), "{not-json}\n", "utf8");
     }
@@ -184,15 +187,32 @@ test("session artifact analytics preserves artifact summary shape and value sema
     const surfaceFile = attackSurfacePath(domain);
     const assignmentFile = waveAssignmentsPath(domain, 1);
     fs.mkdirSync(dir, { recursive: true });
+    // Cycle D.3: state.explored and state.terminally_blocked are no longer
+    // first-class state fields. Surface closures and blockers are projected
+    // from frontier-events.jsonl via frontier-projections; legacy fields on
+    // disk are silently dropped by the normalizer.
     fs.writeFileSync(stateFile, `${JSON.stringify({
       target: domain,
       target_url: `https://${domain}`,
-      phase: "HUNT",
-      hunt_wave: 1,
+      phase: "EVALUATE",
+      evaluation_wave: 1,
       pending_wave: 1,
-      explored: ["surface-a"],
-      terminally_blocked: [{ surface_id: "surface-b" }],
     }, null, 2)}\n`, "utf8");
+    // Seed the surface-state projection via append-only frontier events.
+    appendFrontierEvent({
+      target_domain: domain,
+      kind: "closure.recorded",
+      surface_id: "surface-a",
+      payload: { surface_fully_explored: true, reason: "seeded_explored" },
+      source: { artifact: "wave-merge", tool: "bob_apply_wave_merge" },
+    });
+    appendFrontierEvent({
+      target_domain: domain,
+      kind: "blocker.asserted",
+      surface_id: "surface-b",
+      payload: { terminally_blocked: true, kind: "auth_missing" },
+      source: { artifact: "wave-merge", tool: "bob_apply_wave_merge" },
+    });
     fs.writeFileSync(surfaceFile, `${JSON.stringify({
       surfaces: [
         { id: "surface-a", priority: "HIGH" },
@@ -243,7 +263,7 @@ test("session artifact analytics preserves artifact summary shape and value sema
       "waves",
     ].sort());
     assert.equal(summary.target_domain, domain);
-    assert.equal(summary.state.phase, "HUNT");
+    assert.equal(summary.state.phase, "EVALUATE");
     assert.equal(summary.findings.total, 0);
     assert.equal(summary.coverage.total_records, 0);
     assert.equal(summary.technique_attempts.total_records, 0);
@@ -287,7 +307,7 @@ test("session artifact analytics strips state fields when authority validation f
     fs.writeFileSync(stateFile, `${JSON.stringify({
       target: domain,
       target_url: "https://other.example.com",
-      phase: "HUNT",
+      phase: "EVALUATE",
       auth_status: "ready",
       checkpoint_mode: "paranoid",
       block_internal_hosts: true,
@@ -297,7 +317,7 @@ test("session artifact analytics strips state fields when authority validation f
       proxy_configured: true,
       egress_profile_identity_hash: "a".repeat(64),
       egress_profile_identity_version: 7,
-      hunt_wave: 3,
+      evaluation_wave: 3,
       pending_wave: 2,
       total_findings: 9,
       hold_count: 1,
@@ -317,7 +337,7 @@ test("session artifact analytics strips state fields when authority validation f
     assert.equal(summary.state.proxy_configured, null);
     assert.equal(summary.state.egress_profile_identity_hash, null);
     assert.equal(summary.state.egress_profile_identity_version, null);
-    assert.equal(summary.state.hunt_wave, 0);
+    assert.equal(summary.state.evaluation_wave, 0);
     assert.equal(summary.state.pending_wave, null);
     assert.equal(summary.state.total_findings, 0);
     assert.equal(summary.state.hold_count, 0);

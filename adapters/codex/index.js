@@ -21,14 +21,17 @@ const DIRECT_SKILL_NAMES = Object.freeze(
   Object.values(CODEX_SKILL_SPECS).map((spec) => spec.name),
 );
 const LEGACY_SKILL_DIRS = Object.freeze([
-  "hacker-bob-hunt",
+  "hacker-bob-evaluate",
   "hacker-bob-status",
   "hacker-bob-debug",
   "hacker-bob-update",
   "hacker-bob-export",
+  // v1.x hunt→evaluate rename leftover. Survives in ~/.codex/skills on
+  // workspaces that were installed before the rename; sweep on every install.
+  "bob-hunt",
 ]);
 const STALE_PLUGIN_SKILL_DIRS = Object.freeze([
-  "hunt",
+  "evaluate",
   "status",
   "debug",
   "update",
@@ -36,23 +39,19 @@ const STALE_PLUGIN_SKILL_DIRS = Object.freeze([
   ...DIRECT_SKILL_NAMES,
 ]);
 const STALE_COMMAND_FILES = Object.freeze([
-  "hunt.md",
+  "evaluate.md",
   "status.md",
   "debug.md",
   "update.md",
+  // v1.x hunt→evaluate rename leftover under .codex/plugins/hacker-bob/commands/.
+  "bob-hunt.md",
 ]);
 const COMMAND_SPECS = Object.freeze({
-  hunt: Object.freeze({
-    file: "bob-hunt.md",
-    skill: "bob-hunt",
-    description: "Run or resume a Hacker Bob bug bounty hunt.",
+  evaluate: Object.freeze({
+    file: "bob-evaluate.md",
+    skill: "bob-evaluate",
+    description: "Run or resume a Hacker Bob bug bounty evaluate.",
     argumentHint: "<target|resume target [force-merge]> [--no-auth|--normal|--paranoid|--yolo] [--deep] [--egress <profile>] [--block-internal-hosts|--allow-internal-hosts]",
-  }),
-  oss: Object.freeze({
-    file: "bob-oss.md",
-    skill: "bob-oss",
-    description: "Run Hacker Bob OSS mode against a local open-source project checkout.",
-    argumentHint: "<repo-path|resume target_domain> [--target-id <id>]",
   }),
   status: Object.freeze({
     file: "bob-status.md",
@@ -166,7 +165,7 @@ function managedDirs() {
 }
 
 // External adversarial-roast MCP server consumed by the brutalist-verifier
-// role. Optional — registered alongside bountyagent but not required at
+// role. Optional — registered alongside hacker-bob but not required at
 // runtime. See prompts/roles/brutalist-verifier.md for the graceful-fallback
 // contract.
 const BRUTALIST_MCP_SERVER = Object.freeze({
@@ -177,7 +176,7 @@ const BRUTALIST_MCP_SERVER = Object.freeze({
 function mergeConfig({ serverPath }) {
   return {
     mcpServers: {
-      bountyagent: {
+      "hacker-bob": {
         command: "node",
         args: [serverPath],
       },

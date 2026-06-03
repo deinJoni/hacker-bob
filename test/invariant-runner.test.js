@@ -26,7 +26,7 @@ function uniqueDomain(prefix = "bob-invariant-runner-test") {
 }
 
 function cleanupDomain(domain) {
-  const dir = path.join(os.homedir(), "bounty-agent-sessions", domain);
+  const dir = path.join(os.homedir(), "hacker-bob-sessions", domain);
   if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
 }
 
@@ -105,7 +105,7 @@ function waitForFile(filePath, label) {
     Atomics.wait(signal, 0, 0, 25);
   }
 }
-const invariantRunsPath = path.join(os.homedir(), "bounty-agent-sessions", domain, "invariant-runs.jsonl");
+const invariantRunsPath = path.join(os.homedir(), "hacker-bob-sessions", domain, "invariant-runs.jsonl");
 const originalOpenSync = fs.openSync;
 let pausedOnInvariantRead = false;
 fs.openSync = function patchedOpenSync(filePath, ...args) {
@@ -477,7 +477,7 @@ test("concurrent invariant runs serialize invariant-runs.jsonl upserts", async (
   cleanupDomain(domain);
   const harness = makeHarness();
   const barrierDir = fs.mkdtempSync(path.join(os.tmpdir(), "bob-invariant-jsonl-lock-"));
-  const sessionPath = path.join(os.homedir(), "bounty-agent-sessions", domain);
+  const sessionPath = path.join(os.homedir(), "hacker-bob-sessions", domain);
   const runsPath = path.join(sessionPath, "invariant-runs.jsonl");
   let childA = null;
   let childB = null;
@@ -506,7 +506,7 @@ test("cross-process runs for the same finding with different slot values keep di
   cleanupDomain(domain);
   const harness = makeHarness();
   const barrierDir = fs.mkdtempSync(path.join(os.tmpdir(), "bob-invariant-slot-process-"));
-  const sessionPath = path.join(os.homedir(), "bounty-agent-sessions", domain);
+  const sessionPath = path.join(os.homedir(), "hacker-bob-sessions", domain);
   const runsPath = path.join(sessionPath, "invariant-runs.jsonl");
   let childA = null;
   let childB = null;
@@ -562,7 +562,7 @@ test("runInvariantForFinding replaces symlinked invariant-runs.jsonl without imp
   cleanupDomain(domain);
   const harness = makeHarness();
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), "bob-invariant-jsonl-symlink-"));
-  const sessionPath = path.join(os.homedir(), "bounty-agent-sessions", domain);
+  const sessionPath = path.join(os.homedir(), "hacker-bob-sessions", domain);
   const runsPath = path.join(sessionPath, "invariant-runs.jsonl");
   const outsideRunsPath = path.join(outside, "outside-runs.jsonl");
   const poison = {
@@ -603,7 +603,7 @@ test("runInvariantForFinding replaces hard-linked invariant-runs.jsonl without i
   cleanupDomain(domain);
   const harness = makeHarness();
   const outside = fs.mkdtempSync(path.join(os.homedir(), ".bob-invariant-jsonl-hardlink-"));
-  const sessionPath = path.join(os.homedir(), "bounty-agent-sessions", domain);
+  const sessionPath = path.join(os.homedir(), "hacker-bob-sessions", domain);
   const runsPath = path.join(sessionPath, "invariant-runs.jsonl");
   const outsideRunsPath = path.join(outside, "outside-runs.jsonl");
   const poison = {
@@ -650,7 +650,7 @@ test("runInvariantForFinding replaces hard-linked invariant-runs.jsonl without i
 test("readInvariantRuns rejects a dangling symlinked invariant-runs.jsonl", () => {
   const domain = uniqueDomain();
   cleanupDomain(domain);
-  const sessionPath = path.join(os.homedir(), "bounty-agent-sessions", domain);
+  const sessionPath = path.join(os.homedir(), "hacker-bob-sessions", domain);
   const runsPath = path.join(sessionPath, "invariant-runs.jsonl");
   try {
     fs.mkdirSync(sessionPath, { recursive: true });
@@ -668,7 +668,7 @@ test("readInvariantRuns rejects hard-linked invariant-runs.jsonl", (t) => {
   const domain = uniqueDomain();
   cleanupDomain(domain);
   const outside = fs.mkdtempSync(path.join(os.homedir(), ".bob-invariant-jsonl-hardlink-read-"));
-  const sessionPath = path.join(os.homedir(), "bounty-agent-sessions", domain);
+  const sessionPath = path.join(os.homedir(), "hacker-bob-sessions", domain);
   const runsPath = path.join(sessionPath, "invariant-runs.jsonl");
   const outsideRunsPath = path.join(outside, "outside-runs.jsonl");
   try {
@@ -696,7 +696,7 @@ test("readInvariantRuns rejects hard-linked invariant-runs.jsonl", (t) => {
 test("readInvariantRuns enforces the JSONL read cap while reading from the descriptor", () => {
   const domain = uniqueDomain();
   cleanupDomain(domain);
-  const sessionPath = path.join(os.homedir(), "bounty-agent-sessions", domain);
+  const sessionPath = path.join(os.homedir(), "hacker-bob-sessions", domain);
   const runsPath = path.join(sessionPath, "invariant-runs.jsonl");
   const originalFstatSync = fs.fstatSync;
   try {
@@ -726,7 +726,7 @@ test("runInvariantForFinding rejects JSONL writes that would exceed the read cap
   const domain = uniqueDomain();
   cleanupDomain(domain);
   const harness = makeHarness();
-  const runsPath = path.join(os.homedir(), "bounty-agent-sessions", domain, "invariant-runs.jsonl");
+  const runsPath = path.join(os.homedir(), "hacker-bob-sessions", domain, "invariant-runs.jsonl");
   try {
     const oversizedEvidence = "x".repeat(DEFAULT_ARTIFACT_READ_MAX_BYTES + 1);
     await assert.rejects(
@@ -750,7 +750,7 @@ test("runInvariantForFinding trims oldest JSONL records to stay under the read c
   const domain = uniqueDomain();
   cleanupDomain(domain);
   const harness = makeHarness();
-  const sessionPath = path.join(os.homedir(), "bounty-agent-sessions", domain);
+  const sessionPath = path.join(os.homedir(), "hacker-bob-sessions", domain);
   const runsPath = path.join(sessionPath, "invariant-runs.jsonl");
   try {
     fs.mkdirSync(sessionPath, { recursive: true });
@@ -839,7 +839,7 @@ test("runInvariantForFinding rejects invariant-runs.jsonl temp hard-link races",
       }),
       /invariant-runs\.jsonl file must not be hard-linked/,
     );
-    const runsPath = path.join(os.homedir(), "bounty-agent-sessions", domain, "invariant-runs.jsonl");
+    const runsPath = path.join(os.homedir(), "hacker-bob-sessions", domain, "invariant-runs.jsonl");
     assert.equal(fs.existsSync(runsPath), false);
   } finally {
     fs.renameSync = originalRenameSync;
@@ -853,7 +853,7 @@ test("runInvariantForFinding attempts invariant-runs.jsonl cleanup when post-ren
   const domain = uniqueDomain();
   cleanupDomain(domain);
   const harness = makeHarness();
-  const runsPath = path.join(os.homedir(), "bounty-agent-sessions", domain, "invariant-runs.jsonl");
+  const runsPath = path.join(os.homedir(), "hacker-bob-sessions", domain, "invariant-runs.jsonl");
   const originalRenameSync = fs.renameSync;
   const originalLstatSync = fs.lstatSync;
   let jsonlRenamed = false;
@@ -987,7 +987,7 @@ test("runInvariantForFinding rejects symlinked session domain directories before
   cleanupDomain(domain);
   const harness = makeHarness();
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), "bob-invariant-session-dir-symlink-"));
-  const sessionsPath = path.join(os.homedir(), "bounty-agent-sessions");
+  const sessionsPath = path.join(os.homedir(), "hacker-bob-sessions");
   const sessionPath = path.join(sessionsPath, domain);
   try {
     fs.mkdirSync(sessionsPath, { recursive: true });

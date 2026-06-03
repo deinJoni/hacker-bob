@@ -1,9 +1,11 @@
 "use strict";
 
 const { writeGradeVerdict } = require("../grade-verdict-store.js");
+const { wrapWriteTool } = require("./_write-base.js");
 
-module.exports = Object.freeze({
-  name: "bounty_write_grade_verdict",
+module.exports = wrapWriteTool({
+  name: "bob_write_grade_verdict",
+  aliases: ["bounty_write_grade_verdict"],
   description:
     "Write the authoritative grading verdict JSON plus a markdown mirror.",
   inputSchema: {

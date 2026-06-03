@@ -1,9 +1,14 @@
 # Hacker Bob OSS Mode MVP
 
 Bob OSS mode extends the existing Hacker Bob runtime for authorized open-source
-project review. It stays inside this repo and reuses the current MCP pipeline,
-host adapters, session artifacts, capability routing, verification, grading, and
-reporting.
+project review. It is **not** a separate OSS-mode orchestrator: it is realized
+as **Plane O technique packs** — the seven `oss_*` capability packs surfaced
+through the same registry-driven `bob_*` MCP tools, the single wave-scheduler /
+graph-scheduler spawner topology, and the server-enforced v2 lifecycle
+(`SETUP → OPEN_FRONTIER → CLAIM_FREEZE → VERIFY → GRADE → REPORT`) defined by
+`mcp/lib/lifecycle-gates.js`. It stays inside this repo and reuses the current
+MCP pipeline, host adapters, session artifacts, capability routing,
+verification, grading, and reporting unchanged.
 
 ## Scope
 
@@ -33,7 +38,7 @@ hacker-bob dashboard --repo-only
 ```
 
 The command starts a read-only server on `127.0.0.1:4873` by default and reads
-the existing `~/bounty-agent-sessions` artifacts. It does not launch agents or
+the existing `~/hacker-bob-sessions` artifacts. It does not launch agents or
 mutate sessions. It shows each repo session's phase, wave handoff progress,
 coverage, technique attempts, findings, final reportable counts,
 evidence/grade/report state, and bottlenecks.
@@ -49,16 +54,16 @@ hacker-bob dashboard --repo-only --json
 
 ```text
 bob-oss command
-  -> bounty_init_repo_session
+  -> bob_init_repo_session
   -> target_kind/session metadata
-  -> bounty_repo_inventory
+  -> bob_repo_inventory
   -> repo-inventory.json + attack_surface.json
-  -> bounty_repo_prepare_env
+  -> bob_repo_prepare_env
   -> repo-env.json + Dockerfile.bob
-  -> bounty_route_surfaces
+  -> bob_route_surfaces
   -> OSS capability packs
-  -> existing wave planner / hunters
-  -> bounty_repo_check + optional bounty_repo_docker_run during verification
+  -> existing wave scheduler / evaluators
+  -> bob_repo_check + optional bob_repo_docker_run during verification
   -> existing grade/report artifacts
 ```
 
@@ -76,8 +81,8 @@ bob-oss command
 ## Verification Contract
 
 OSS findings should cite file paths, symbols, manifests, affected packages, and
-repro commands when available. `bounty_repo_check` confirms repo-local evidence
-still exists. `bounty_repo_docker_run` is available for concrete repro/build
+repro commands when available. `bob_repo_check` confirms repo-local evidence
+still exists. `bob_repo_docker_run` is available for concrete repro/build
 commands, using Docker with the repo mounted read-only at `/src`, a session-owned
 writable `/work`, and `--network none` by default.
 
@@ -89,5 +94,5 @@ command that would raise confidence.
 Dependency installation is Docker-backed rather than host-backed. The default
 startup path only writes the plan and Dockerfile; it does not install packages or
 build an image. To build the prepared image, the operator must explicitly allow
-it, typically with `bounty_repo_prepare_env({ target_domain, build_image: true,
+it, typically with `bob_repo_prepare_env({ target_domain, build_image: true,
 allow_network: true })`.

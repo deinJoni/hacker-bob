@@ -15,7 +15,7 @@ const {
 const {
   renderCapabilityPlaybookAppendix,
 } = require("../../mcp/lib/capability-playbooks.js");
-const { hunterRoleSpecs } = require("../../mcp/lib/capability-packs.js");
+const { evaluatorRoleSpecs } = require("../../mcp/lib/capability-packs.js");
 
 const DEFAULT_ROOT = path.join(__dirname, "..", "..");
 
@@ -37,7 +37,7 @@ const KIMI_CROSS_CUTTING_ROLE_IDS = Object.freeze([
 ]);
 const KIMI_WORKER_CONTRACT_ROLE_IDS = Object.freeze([
   ...KIMI_CROSS_CUTTING_ROLE_IDS.slice(0, 4),
-  ...hunterRoleSpecs().map((role) => role.role_id),
+  ...evaluatorRoleSpecs().map((role) => role.role_id),
   ...KIMI_CROSS_CUTTING_ROLE_IDS.slice(4),
 ]);
 
@@ -79,7 +79,7 @@ function kimiLaunchTemplates() {
     ].join("\n"),
     "{{SPAWN_HUNTER_AGENT}}": [
       "```text",
-      `For each assignment, spawn an Agent(subagent_type="coder") for the hunter family chosen by the MCP capability router (assignment.hunter_agent from wave-start result.data.assignments[] — one of hunter-agent or any of the per-pack hunters listed in the smart-contract pack catalogue: ${hunterRoleSpecs().map((role) => role.name).join(", ")}).`,
+      `For each assignment, spawn an Agent(subagent_type="coder") for the evaluator family chosen by the MCP capability router (assignment.evaluator_agent from wave-start result.data.assignments[] — one of evaluator-agent or any of the per-pack evaluators listed in the smart-contract pack catalogue: ${evaluatorRoleSpecs().map((role) => role.name).join(", ")}).`,
       "- prompt: include the compact run header below plus the full contract for assignment.hunter_agent from Kimi Worker Role Contracts.",
       "- Header fields: Domain: [domain]; Wave: w[wave]; Agent: a[agent]; Surface: [surface_id]; Capability pack: [assignment.capability_pack]; Brief profile: [assignment.brief_profile]; Hunter agent: [assignment.hunter_agent]; Context budget: [assignment.context_budget]; Egress profile: [egress_profile]; Block internal hosts: [block_internal_hosts]; Handoff token: [only this agent's handoff_token from wave-start result.data.assignments]; Checkpoint mode: [normal|paranoid|yolo].",
       "- First action inside the worker: call bounty_read_hunter_brief({ target_domain: '[domain]', wave: 'w[wave]', agent: 'a[agent]', egress_profile: '[egress_profile]', block_internal_hosts: [block_internal_hosts] }) and use .data.run_context.context_budget plus .data.technique_packs.selected when present.",

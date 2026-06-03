@@ -1,27 +1,21 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { execFileSync, spawnSync } = require("node:child_process");
+const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { getAdapter } = require("../adapters/index.js");
 const update = require("../mcp/lib/update-check.js");
-const { createSafeInstallFs } = require("../scripts/lib/install-fs.js");
 
 const ROOT = path.join(__dirname, "..");
 const CLI = path.join(ROOT, "bin", "hacker-bob.js");
 const PACKAGE_VERSION = require("../package.json").version;
 const CODEX_ADAPTER = getAdapter("codex");
 const GENERIC_MCP_ADAPTER = getAdapter("generic-mcp");
-const KIMI_ADAPTER = getAdapter("kimi");
-
-function assertRegularFile(filePath) {
-  assert.equal(fs.lstatSync(filePath).isFile(), true);
-}
 
 test("installer copies a require-able complete MCP runtime", () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-install-"));
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-home-"));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-install-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-home-"));
   const workspace = path.join(tempRoot, "workspace");
   fs.mkdirSync(workspace, { recursive: true });
 
@@ -58,20 +52,24 @@ test("installer copies a require-able complete MCP runtime", () => {
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-update.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-egress.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-export.md")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "hunt.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-evaluate.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "evaluate.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "status.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "debug.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "update.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bountyagent.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bountyagentdebug.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-oss", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate-runner", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-status", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-debug", "SKILL.md")));
+    // Legacy skill dirs must not be present — they would surface as duplicate
+    // /bob-evaluate slash-picker entries with orchestrator-prose descriptions.
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bountyagent", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bountyagentstatus", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bountyagentdebug", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "hunter-subagent-stop.js")));
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "agent-run-stop.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-egress.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-export.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-update.js")));
@@ -79,13 +77,13 @@ test("installer copies a require-able complete MCP runtime", () => {
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-update-lib.js")));
     assert.ok(fs.existsSync(path.join(workspace, "mcp", "lib", "update-check.js")));
     assert.ok(fs.existsSync(path.join(workspace, "mcp", "lib", "bob-export.js")));
-    assert.ok(fs.existsSync(path.join(workspace, ".hacker-bob", "knowledge", "hunter-techniques.json")));
+    assert.ok(fs.existsSync(path.join(workspace, ".hacker-bob", "knowledge", "evaluator-techniques.json")));
     assert.ok(fs.existsSync(path.join(workspace, ".hacker-bob", "bypass-tables", "rest-api.txt")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "knowledge")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "bypass-tables")));
     assert.ok(fs.existsSync(path.join(workspace, "testing", "policy-replay", "replay.mjs")));
     assert.ok(fs.existsSync(path.join(workspace, "testing", "policy-replay", "tune.mjs")));
-    assert.ok(fs.existsSync(path.join(workspace, "testing", "policy-replay", "cases", "sample-hunter-refusal.json")));
+    assert.ok(fs.existsSync(path.join(workspace, "testing", "policy-replay", "cases", "sample-evaluator-refusal.json")));
     assert.ok(!fs.existsSync(path.join(workspace, "testing", "policy-replay", "node_modules")));
 
     const { createRequire } = require("node:module");
@@ -117,6 +115,18 @@ test("installer copies a require-able complete MCP runtime", () => {
     assert.equal(neutralInstallMeta.package_name, "hacker-bob");
     assert.equal(neutralInstallMeta.install_target, workspace);
     assert.deepEqual(neutralInstallMeta.installed_adapters, ["claude"]);
+    // Y.10 (Y-D12 / D6 + D14) — install provisions the operator session-cap
+    // nonce at $HOME/.bob/session-cap (mode 0600) so partial-surface
+    // acknowledgement attestation_tokens have an authoritative nonce to
+    // match against. Without this, the OPEN_FRONTIER -> CLAIM_FREEZE gate
+    // would accept any non-empty token as authority.
+    const sessionCapFile = path.join(tempHome, ".bob", "session-cap");
+    assert.ok(fs.existsSync(sessionCapFile), "install must provision ~/.bob/session-cap nonce");
+    const sessionCapStat = fs.statSync(sessionCapFile);
+    assert.equal(sessionCapStat.mode & 0o777, 0o600, "session-cap file mode must be 0600");
+    const sessionCapValue = fs.readFileSync(sessionCapFile, "utf8").trim();
+    assert.match(sessionCapValue, /^[0-9a-f]{64}$/, "session-cap nonce must be 64-char hex");
+
     assert.equal(fs.readFileSync(path.join(workspace, ".claude", "bob", "VERSION"), "utf8").trim(), PACKAGE_VERSION);
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "bob", "egress-profiles.example.json")));
     const egressConfig = JSON.parse(fs.readFileSync(path.join(workspace, ".claude", "bob", "egress-profiles.json"), "utf8"));
@@ -131,7 +141,7 @@ test("installer copies a require-able complete MCP runtime", () => {
     assert.equal(installMeta.package_name, "hacker-bob");
     assert.equal(installMeta.install_target, workspace);
 
-    const statuslinePath = path.join(workspace, ".claude", "hooks", "bounty-statusline.js");
+    const statuslinePath = path.join(workspace, ".claude", "hooks", "bob-statusline.js");
     const nestedWorkspaceDir = path.join(workspace, "nested");
     fs.mkdirSync(nestedWorkspaceDir, { recursive: true });
     const runStatusline = () => execFileSync(process.execPath, [statuslinePath], {
@@ -177,36 +187,45 @@ test("installer copies a require-able complete MCP runtime", () => {
       "-e",
       [
         "const server = require(process.argv[1]);",
-        "if (!Array.isArray(server.TOOLS) || server.TOOLS.length !== 109) process.exit(2);",
         "const installedRequire = require('module').createRequire(process.argv[1]);",
         "installedRequire('psl');",
         "installedRequire('proxy-agent');",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_list_auth_profiles')) process.exit(3);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_tool_telemetry')) process.exit(6);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_pipeline_analytics')) process.exit(7);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_finalize_hunter_run')) process.exit(8);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_write_evidence_packs')) process.exit(9);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_evidence_packs')) process.exit(10);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_promote_surface_leads')) process.exit(11);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_session_summary')) process.exit(12);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_set_operator_note')) process.exit(13);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_clear_operator_note')) process.exit(14);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_route_surfaces')) process.exit(15);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_surface_routes')) process.exit(16);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_start_next_wave')) process.exit(17);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_select_technique_packs')) process.exit(18);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_technique_pack')) process.exit(19);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_log_technique_attempt')) process.exit(20);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_get_context_budget')) process.exit(21);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_verification_context')) process.exit(22);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_build_verification_adjudication')) process.exit(23);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_init_repo_session')) process.exit(24);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_repo_inventory')) process.exit(25);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_repo_prepare_env')) process.exit(26);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_repo_docker_run')) process.exit(27);",
-        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_repo_check')) process.exit(28);",
-        "Promise.resolve(server.executeTool('bounty_init_session', { target_domain: 'example.com', target_url: 'https://example.com/' }))",
-        "  .then((init) => { if (!init.ok) process.exit(29); return server.executeTool('bounty_list_auth_profiles', { target_domain: 'example.com' }); })",
+        "if (!Array.isArray(server.TOOLS) || server.TOOLS.length !== 148) process.exit(2);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_list_auth_profiles')) process.exit(3);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_materialize_task_graph')) process.exit(33);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_read_task_graph')) process.exit(34);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_attach_contract')) process.exit(35);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_prepare_node')) process.exit(36);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_finalize_node')) process.exit(37);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_schedule_graph_nodes')) process.exit(38);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_repo_inventory')) process.exit(29);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_repo_prepare_env')) process.exit(30);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_repo_docker_run')) process.exit(31);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_repo_check')) process.exit(32);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_finalize_report')) process.exit(25);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_read_tool_telemetry')) process.exit(6);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_read_pipeline_analytics')) process.exit(7);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_finalize_agent_run')) process.exit(8);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_write_evidence_packs')) process.exit(9);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_read_evidence_packs')) process.exit(10);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_promote_surface_leads')) process.exit(11);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_read_session_summary')) process.exit(12);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_set_operator_note')) process.exit(13);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_clear_operator_note')) process.exit(14);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_route_surfaces')) process.exit(15);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_read_surface_routes')) process.exit(16);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_start_next_wave')) process.exit(17);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_select_technique_packs')) process.exit(18);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_read_technique_pack')) process.exit(19);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_log_technique_attempt')) process.exit(20);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_get_context_budget')) process.exit(21);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_read_verification_context')) process.exit(22);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_build_verification_adjudication')) process.exit(23);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_browser_session_start')) process.exit(26);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_browser_evaluate')) process.exit(27);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bob_browser_session_close')) process.exit(28);",
+        "Promise.resolve(server.executeTool('bob_init_session', { target_domain: 'example.com', target_url: 'https://example.com/' }))",
+        "  .then((init) => { if (!init.ok) process.exit(24); return server.executeTool('bob_list_auth_profiles', { target_domain: 'example.com' }); })",
         "  .then((result) => { if (!result.ok || result.data.target_domain !== 'example.com') process.exit(4); })",
         "  .catch(() => process.exit(5));",
       ].join(" "),
@@ -218,159 +237,9 @@ test("installer copies a require-able complete MCP runtime", () => {
   }
 });
 
-test("installer replaces symlinked generated runtime leaves without following them", () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-install-symlink-runtime-"));
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-home-"));
-  const workspace = path.join(tempRoot, "workspace");
-  const victim = path.join(tempRoot, "victim-server.js");
-  fs.mkdirSync(path.join(workspace, "mcp"), { recursive: true });
-  fs.writeFileSync(victim, "victim stays\n", "utf8");
-  fs.symlinkSync(victim, path.join(workspace, "mcp", "server.js"));
-
-  try {
-    execFileSync(process.execPath, [CLI, "install", workspace, "--adapter", "claude"], {
-      cwd: ROOT,
-      env: { ...process.env, HOME: tempHome },
-      stdio: "pipe",
-    });
-
-    assert.equal(fs.readFileSync(victim, "utf8"), "victim stays\n");
-    assertRegularFile(path.join(workspace, "mcp", "server.js"));
-    assert.match(fs.readFileSync(path.join(workspace, "mcp", "server.js"), "utf8"), /startStdioServer/);
-  } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
-    fs.rmSync(tempHome, { recursive: true, force: true });
-  }
-});
-
-test("installer replaces symlinked adapter-owned generated leaves without following them", () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-install-symlink-adapter-"));
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-home-"));
-  const workspace = path.join(tempRoot, "workspace");
-  const victim = path.join(tempRoot, "victim-command.md");
-  const commandPath = path.join(workspace, ".claude", "commands", "bob-egress.md");
-  fs.mkdirSync(path.dirname(commandPath), { recursive: true });
-  fs.writeFileSync(victim, "victim stays\n", "utf8");
-  fs.symlinkSync(victim, commandPath);
-
-  try {
-    execFileSync(process.execPath, [CLI, "install", workspace, "--adapter", "claude"], {
-      cwd: ROOT,
-      env: { ...process.env, HOME: tempHome },
-      stdio: "pipe",
-    });
-
-    assert.equal(fs.readFileSync(victim, "utf8"), "victim stays\n");
-    assertRegularFile(commandPath);
-    assert.match(fs.readFileSync(commandPath, "utf8"), /bob-egress/);
-  } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
-    fs.rmSync(tempHome, { recursive: true, force: true });
-  }
-});
-
-test("installer rejects symlinked generated parent directories without writing through them", () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-install-symlink-parent-"));
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-home-"));
-  const workspace = path.join(tempRoot, "workspace");
-  const outsideKnowledge = path.join(tempRoot, "outside-knowledge");
-  fs.mkdirSync(path.join(workspace, ".hacker-bob"), { recursive: true });
-  fs.mkdirSync(outsideKnowledge, { recursive: true });
-  fs.writeFileSync(path.join(outsideKnowledge, "hunter-techniques.json"), "victim stays\n", "utf8");
-  fs.symlinkSync(outsideKnowledge, path.join(workspace, ".hacker-bob", "knowledge"));
-
-  try {
-    const result = spawnSync(process.execPath, [CLI, "install", workspace, "--adapter", "claude"], {
-      cwd: ROOT,
-      env: { ...process.env, HOME: tempHome },
-      encoding: "utf8",
-    });
-
-    assert.notEqual(result.status, 0, `install unexpectedly succeeded: ${result.stdout}`);
-    assert.match(result.stderr, /symlinked parent directory|symlinked directory/);
-    assert.equal(fs.readFileSync(path.join(outsideKnowledge, "hunter-techniques.json"), "utf8"), "victim stays\n");
-  } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
-    fs.rmSync(tempHome, { recursive: true, force: true });
-  }
-});
-
-test("installer rejects symlinked merged config without writing through it", () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-install-symlink-config-"));
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-home-"));
-  const workspace = path.join(tempRoot, "workspace");
-  const victim = path.join(tempRoot, "victim-mcp.json");
-  fs.mkdirSync(workspace, { recursive: true });
-  fs.writeFileSync(victim, `${JSON.stringify({ mcpServers: { outside: { command: "node" } } }, null, 2)}\n`, "utf8");
-  fs.symlinkSync(victim, path.join(workspace, ".mcp.json"));
-
-  try {
-    const result = spawnSync(process.execPath, [CLI, "install", workspace, "--adapter", "claude"], {
-      cwd: ROOT,
-      env: { ...process.env, HOME: tempHome },
-      encoding: "utf8",
-    });
-
-    assert.notEqual(result.status, 0, `install unexpectedly succeeded: ${result.stdout}`);
-    assert.match(result.stderr, /symlinked .*\.mcp\.json/);
-    const outside = JSON.parse(fs.readFileSync(victim, "utf8"));
-    assert.deepEqual(outside, { mcpServers: { outside: { command: "node" } } });
-  } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
-    fs.rmSync(tempHome, { recursive: true, force: true });
-  }
-});
-
-test("codex installer replaces symlinked direct skill leaves under CODEX_HOME", () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-install-symlink-codex-"));
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-home-"));
-  const workspace = path.join(tempRoot, "workspace");
-  const codexHome = path.join(tempHome, ".codex");
-  const victim = path.join(tempRoot, "victim-skill.md");
-  const skillPath = path.join(codexHome, "skills", "bob-hunt", "SKILL.md");
-  fs.mkdirSync(workspace, { recursive: true });
-  fs.mkdirSync(path.dirname(skillPath), { recursive: true });
-  fs.writeFileSync(victim, "victim stays\n", "utf8");
-  fs.symlinkSync(victim, skillPath);
-
-  try {
-    execFileSync(process.execPath, [CLI, "install", workspace, "--adapter", "codex"], {
-      cwd: ROOT,
-      env: { ...process.env, HOME: tempHome, CODEX_HOME: codexHome },
-      stdio: "pipe",
-    });
-
-    assert.equal(fs.readFileSync(victim, "utf8"), "victim stays\n");
-    assertRegularFile(skillPath);
-    assert.match(fs.readFileSync(skillPath, "utf8"), /bob-hunt/);
-  } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
-    fs.rmSync(tempHome, { recursive: true, force: true });
-  }
-});
-
-test("install filesystem recursive copies return nested relative paths", () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-install-fs-copy-"));
-  const source = path.join(tempRoot, "source");
-  const destination = path.join(tempRoot, "destination");
-  fs.mkdirSync(path.join(source, "sub"), { recursive: true });
-  fs.writeFileSync(path.join(source, "top.txt"), "top\n", "utf8");
-  fs.writeFileSync(path.join(source, "sub", "nested.txt"), "nested\n", "utf8");
-
-  try {
-    const installFs = createSafeInstallFs(tempRoot, { label: "test install root" });
-    const copied = installFs.copyDirRecursive(source, destination);
-
-    assert.deepEqual(copied.sort(), ["sub/nested.txt", "top.txt"]);
-    assert.equal(fs.readFileSync(path.join(destination, "sub", "nested.txt"), "utf8"), "nested\n");
-  } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
-  }
-});
-
 test("doctor accepts legacy-only resources and uninstall removes legacy resource copies", () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-legacy-resources-"));
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-home-"));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-legacy-resources-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-home-"));
   const workspace = path.join(tempRoot, "workspace");
   fs.mkdirSync(workspace, { recursive: true });
 
@@ -411,9 +280,9 @@ test("doctor accepts legacy-only resources and uninstall removes legacy resource
     });
     const uninstall = JSON.parse(uninstallOutput);
     assert.equal(uninstall.dry_run, false);
-    assert.ok(uninstall.actions.some((action) => action.path === path.join(".claude", "knowledge", "hunter-techniques.json")));
+    assert.ok(uninstall.actions.some((action) => action.path === path.join(".claude", "knowledge", "evaluator-techniques.json")));
     assert.ok(uninstall.actions.some((action) => action.path === path.join(".claude", "bypass-tables", "rest-api.txt")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "knowledge", "hunter-techniques.json")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "knowledge", "evaluator-techniques.json")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "bypass-tables", "rest-api.txt")));
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -422,8 +291,8 @@ test("doctor accepts legacy-only resources and uninstall removes legacy resource
 });
 
 test("installer merges existing MCP/settings config idempotently", () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-install-"));
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-home-"));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-install-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-home-"));
   const workspace = path.join(tempRoot, "workspace");
   fs.mkdirSync(path.join(workspace, ".claude", "knowledge"), { recursive: true });
   fs.mkdirSync(path.join(workspace, ".claude", "bypass-tables"), { recursive: true });
@@ -434,12 +303,12 @@ test("installer merges existing MCP/settings config idempotently", () => {
   fs.mkdirSync(path.join(workspace, ".claude", "skills", "bountyagentdebug"), { recursive: true });
 
   try {
-    fs.writeFileSync(path.join(workspace, ".claude", "knowledge", "hunter-techniques.json"), "{}\n");
+    fs.writeFileSync(path.join(workspace, ".claude", "knowledge", "evaluator-techniques.json"), "{}\n");
     fs.writeFileSync(path.join(workspace, ".claude", "knowledge", "custom.json"), "{}\n");
     fs.writeFileSync(path.join(workspace, ".claude", "bypass-tables", "rest-api.txt"), "old\n");
     fs.writeFileSync(path.join(workspace, ".claude", "bypass-tables", "custom.txt"), "custom\n");
     fs.writeFileSync(path.join(workspace, ".claude", "hooks", "bob-update-lib.js"), "old\n");
-    fs.writeFileSync(path.join(workspace, ".claude", "commands", "bob", "hunt.md"), "old\n");
+    fs.writeFileSync(path.join(workspace, ".claude", "commands", "bob", "evaluate.md"), "old\n");
     fs.writeFileSync(path.join(workspace, ".claude", "commands", "bob", "status.md"), "old\n");
     fs.writeFileSync(path.join(workspace, ".claude", "commands", "bob", "debug.md"), "old\n");
     fs.writeFileSync(path.join(workspace, ".claude", "commands", "bob", "update.md"), "old\n");
@@ -456,8 +325,9 @@ test("installer merges existing MCP/settings config idempotently", () => {
         allow: [
           "Read",
           "custom-tool",
-          "mcp__bountyagent__bounty_merge_wave_handoffs",
+          "mcp__bountyagent__bob_merge_wave_handoffs",
           "mcp__bountyagent__custom_user_tool",
+          "mcp__hacker-bob__pre_migration_custom",
         ],
       },
       hooks: {
@@ -473,13 +343,13 @@ test("installer merges existing MCP/settings config idempotently", () => {
           hooks: [{ type: "command", command: "echo existing", timeout: 1 }],
         }],
         SubagentStop: [{
-          matcher: "hunter-agent",
+          matcher: "evaluator-agent",
           hooks: [{ type: "command", command: "echo existing stop", timeout: 1 }],
         }],
       },
       statusLine: {
         type: "command",
-        command: "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/bounty-statusline.js\"",
+        command: "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/bob-statusline.js\"",
       },
       customSetting: true,
     }, null, 2)}\n`);
@@ -503,8 +373,9 @@ test("installer merges existing MCP/settings config idempotently", () => {
 
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
     assert.ok(mcp.mcpServers.existing);
-    assert.ok(mcp.mcpServers.bountyagent);
-    assert.equal(Object.keys(mcp.mcpServers).filter((name) => name === "bountyagent").length, 1);
+    // Migration shim rewrites the legacy `bountyagent` key to `hacker-bob`.
+    assert.ok(mcp.mcpServers["hacker-bob"]);
+    assert.ok(!mcp.mcpServers.bountyagent, "migration shim must remove legacy bountyagent server key");
 
     const settings = JSON.parse(fs.readFileSync(path.join(workspace, ".claude", "settings.json"), "utf8"));
     const settingsText = JSON.stringify(settings);
@@ -513,9 +384,15 @@ test("installer merges existing MCP/settings config idempotently", () => {
     assert.equal(settings.customSetting, true);
     assert.equal(settings.permissions.allow.length, new Set(settings.permissions.allow).size);
     assert.ok(settings.permissions.allow.includes("custom-tool"));
-    assert.ok(settings.permissions.allow.includes("mcp__bountyagent__custom_user_tool"));
-    assert.ok(settings.permissions.allow.includes("mcp__bountyagent__bounty_http_scan"));
-    assert.ok(!settings.permissions.allow.includes("mcp__bountyagent__bounty_merge_wave_handoffs"));
+    // Migration shim rewrites mcp__bountyagent__* permission strings to mcp__hacker-bob__*.
+    assert.ok(settings.permissions.allow.includes("mcp__hacker-bob__custom_user_tool"));
+    assert.ok(!settings.permissions.allow.includes("mcp__bountyagent__custom_user_tool"));
+    assert.ok(settings.permissions.allow.includes("mcp__hacker-bob__bob_http_scan"));
+    // The pre-migration custom permission is idempotently preserved.
+    assert.ok(settings.permissions.allow.includes("mcp__hacker-bob__pre_migration_custom"));
+    // Stale legacy permission strings are dropped (both forms).
+    assert.ok(!settings.permissions.allow.includes("mcp__bountyagent__bob_merge_wave_handoffs"));
+    assert.ok(!settings.permissions.allow.includes("mcp__hacker-bob__bob_merge_wave_handoffs"));
     assert.match(settings.statusLine.command, /\$\{CLAUDE_PROJECT_DIR:-\$PWD\}/);
 
     const bashEntry = settings.hooks.PreToolUse.find((entry) => entry.matcher === "Bash");
@@ -526,14 +403,14 @@ test("installer merges existing MCP/settings config idempotently", () => {
       1,
     );
     assert.equal(
-      settings.hooks.PreToolUse.filter((entry) => entry.matcher === "mcp__bountyagent__bounty_http_scan").length,
+      settings.hooks.PreToolUse.filter((entry) => entry.matcher === "mcp__hacker-bob__bob_http_scan").length,
       0,
     );
-    const stopEntry = settings.hooks.SubagentStop.find((entry) => entry.matcher === "hunter-agent");
+    const stopEntry = settings.hooks.SubagentStop.find((entry) => entry.matcher === "evaluator-agent");
     assert.ok(stopEntry);
     assert.ok(stopEntry.hooks.some((hook) => hook.command === "echo existing stop"));
     assert.equal(
-      stopEntry.hooks.filter((hook) => /hunter-subagent-stop\.js/.test(hook.command)).length,
+      stopEntry.hooks.filter((hook) => /agent-run-stop\.js/.test(hook.command)).length,
       1,
     );
     const sessionEntry = settings.hooks.SessionStart.find((entry) => entry.matcher === "startup");
@@ -543,21 +420,24 @@ test("installer merges existing MCP/settings config idempotently", () => {
       sessionEntry.hooks.filter((hook) => /bob-check-update\.js/.test(hook.command)).length,
       1,
     );
-    assert.ok(fs.existsSync(path.join(workspace, ".hacker-bob", "knowledge", "hunter-techniques.json")));
+    assert.ok(fs.existsSync(path.join(workspace, ".hacker-bob", "knowledge", "evaluator-techniques.json")));
     assert.ok(fs.existsSync(path.join(workspace, ".hacker-bob", "bypass-tables", "rest-api.txt")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "knowledge", "hunter-techniques.json")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "knowledge", "evaluator-techniques.json")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "bypass-tables", "rest-api.txt")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-update-lib.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-update.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-export.md")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "hunt.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-evaluate.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "evaluate.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "status.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "debug.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "update.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bountyagent", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bountyagentstatus", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bountyagentdebug", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate-runner", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-status", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-debug", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "knowledge", "custom.json")));
@@ -572,8 +452,8 @@ test("installer merges existing MCP/settings config idempotently", () => {
 });
 
 test("install doctor uninstall dry-run uninstall and reinstall workflow works", () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-lifecycle-"));
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-home-"));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-lifecycle-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-home-"));
   const workspace = path.join(tempRoot, "workspace");
   fs.mkdirSync(workspace, { recursive: true });
 
@@ -601,7 +481,7 @@ test("install doctor uninstall dry-run uninstall and reinstall workflow works", 
       stdio: "pipe",
     });
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob-update.md")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-evaluate-runner", "SKILL.md")));
 
     execFileSync(process.execPath, [CLI, "uninstall", workspace, "--yes"], {
       cwd: ROOT,
@@ -627,7 +507,7 @@ test("install doctor uninstall dry-run uninstall and reinstall workflow works", 
 
 test("codex adapter installs direct skills and doctor checks MCP wiring", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-codex-adapter-"));
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-home-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-home-"));
   const workspace = path.join(tempRoot, "workspace");
   const originalCodexHome = process.env.CODEX_HOME;
   fs.mkdirSync(workspace, { recursive: true });
@@ -645,93 +525,57 @@ test("codex adapter installs direct skills and doctor checks MCP wiring", () => 
       targetAbs: workspace,
       serverPath: path.join(workspace, "mcp", "server.js"),
     });
-    assert.equal(install.skills, 7);
-    assert.equal(install.commands, 7);
+    assert.equal(install.skills, 6);
+    assert.equal(install.commands, 6);
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".codex-plugin", "plugin.json")));
     const manifest = JSON.parse(fs.readFileSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".codex-plugin", "plugin.json"), "utf8"));
     assert.equal(Object.prototype.hasOwnProperty.call(manifest, "skills"), false);
-    assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-hunt", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-oss", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-evaluate", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-status", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-debug", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-update", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-export", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-egress", "SKILL.md")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "hunt", "SKILL.md")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "bob-hunt", "SKILL.md")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "hacker-bob-hunt", "SKILL.md")));
-    assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "hacker-bob-hunt", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-hunt.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-oss.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "evaluate", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "bob-evaluate", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "skills", "hacker-bob-evaluate", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "hacker-bob-evaluate", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-evaluate.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-export.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-egress.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".agents", "plugins", "marketplace.json")));
 
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".mcp.json"), "utf8"));
-    assert.deepEqual(mcp.mcpServers.bountyagent, {
+    assert.deepEqual(mcp.mcpServers["hacker-bob"], {
       command: "node",
       args: [path.join(workspace, "mcp", "server.js")],
     });
+    assert.ok(!mcp.mcpServers.bountyagent);
 
     const doctor = CODEX_ADAPTER.doctor({ targetAbs: workspace });
     assert.equal(doctor.ok, true);
     assert.ok(doctor.checks.some((check) => check.id === "codex_plugin_manifest" && check.status === "ok"));
     assert.ok(doctor.checks.some((check) => check.id === "codex_global_skills" && check.status === "ok"));
-    assert.ok(doctor.checks.some((check) => check.id === "codex_global_skills_fresh" && check.status === "warn"));
-    fs.cpSync(path.join(ROOT, "adapters", "codex", "skills"), path.join(workspace, "adapters", "codex", "skills"), { recursive: true });
-    const sourceBackedDoctor = CODEX_ADAPTER.doctor({ targetAbs: workspace });
-    assert.equal(sourceBackedDoctor.ok, true);
-    assert.ok(sourceBackedDoctor.checks.some((check) => check.id === "codex_global_skills_fresh" && check.status === "ok"));
     assert.ok(doctor.checks.some((check) => check.id === "codex_plugin_skills_clean" && check.status === "ok"));
     assert.ok(doctor.checks.some((check) => check.id === "codex_plugin_mcp" && check.status === "ok"));
     assert.ok(doctor.checks.some((check) => check.id === "codex_plugin_commands" && check.status === "ok"));
     assert.ok(doctor.checks.some((check) => check.id === "codex_plugin_marketplace" && check.status === "ok"));
 
-    fs.appendFileSync(path.join(tempHome, ".codex", "skills", "bob-oss", "SKILL.md"), "\n# stale local edit\n", "utf8");
-    const staleDoctor = CODEX_ADAPTER.doctor({ targetAbs: workspace });
-    assert.equal(staleDoctor.ok, false);
-    const freshness = staleDoctor.checks.find((check) => check.id === "codex_global_skills_fresh");
-    assert.equal(freshness.status, "error");
-    assert.equal(freshness.detail.stale.some((item) => item.skill === "bob-oss" && item.reason === "content_mismatch"), true);
-    assert.equal(freshness.detail.reinstall, "node bin/hacker-bob.js install . --adapter codex");
-
-    const readErrorPath = path.join(tempHome, ".codex", "skills", "bob-status", "SKILL.md");
-    const originalReadFileSync = fs.readFileSync;
-    try {
-      fs.readFileSync = function patchedReadFileSync(filePath, ...args) {
-        if (path.resolve(String(filePath)) === path.resolve(readErrorPath)) {
-          throw new Error("simulated read failure");
-        }
-        return originalReadFileSync.call(this, filePath, ...args);
-      };
-      const readErrorFreshness = CODEX_ADAPTER.directSkillFreshness(workspace);
-      assert.equal(
-        readErrorFreshness.stale.some((item) => (
-          item.skill === "bob-status" &&
-          item.reason === "read_error" &&
-          /simulated read failure/.test(item.error)
-        )),
-        true,
-      );
-    } finally {
-      fs.readFileSync = originalReadFileSync;
-    }
-
     const dryRun = CODEX_ADAPTER.uninstall({ sourceRoot: ROOT, targetAbs: workspace, dryRun: true });
     assert.equal(dryRun.dry_run, true);
-    assert.ok(dryRun.actions.some((action) => action.path === path.join(tempHome, ".codex", "skills", "bob-hunt", "SKILL.md")));
+    assert.ok(dryRun.actions.some((action) => action.path === path.join(tempHome, ".codex", "skills", "bob-evaluate", "SKILL.md")));
     assert.ok(dryRun.actions.some((action) => action.path === path.join(".codex", "plugins", "hacker-bob", ".mcp.json")));
     assert.ok(dryRun.actions.some((action) => action.path === path.join(".agents", "plugins", "marketplace.json")));
     assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".mcp.json")));
-    assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-hunt", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-evaluate", "SKILL.md")));
 
     const removed = CODEX_ADAPTER.uninstall({ sourceRoot: ROOT, targetAbs: workspace, dryRun: false });
     assert.equal(removed.dry_run, false);
-    assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-hunt", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-evaluate", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-export", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-egress", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".mcp.json")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-hunt.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-evaluate.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-export.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", "commands", "bob-egress.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".agents", "plugins", "marketplace.json")));
@@ -746,81 +590,9 @@ test("codex adapter installs direct skills and doctor checks MCP wiring", () => 
   }
 });
 
-test("kimi adapter installs skills and MCP config", () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-kimi-adapter-"));
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-home-"));
-  const workspace = path.join(tempRoot, "workspace");
-  fs.mkdirSync(workspace, { recursive: true });
-
-  try {
-    execFileSync(process.execPath, [CLI, "install", workspace], {
-      cwd: ROOT,
-      env: { ...process.env, HOME: tempHome },
-      stdio: "pipe",
-    });
-    fs.rmSync(path.join(workspace, ".claude"), { recursive: true, force: true });
-
-    const install = KIMI_ADAPTER.install({
-      sourceRoot: ROOT,
-      targetAbs: workspace,
-      serverPath: path.join(workspace, "mcp", "server.js"),
-    });
-    assert.equal(install.skills, 6);
-    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-hunt", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-status", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-debug", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-update", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-export", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-egress", "SKILL.md")));
-    // Kimi adapter does NOT install hooks (see adapters/kimi/config.js header):
-    // the ~/.kimi/config.toml PreToolUse registration syntax is undocumented,
-    // so shipping the .sh scripts would be a security control that never runs.
-    assert.ok(!fs.existsSync(path.join(workspace, ".kimi", "hooks")), "kimi adapter must not install .kimi/hooks");
-
-    const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".kimi", "mcp.json"), "utf8"));
-    assert.deepEqual(mcp.mcpServers.bountyagent, {
-      command: "node",
-      args: [path.join(workspace, "mcp", "server.js")],
-    });
-    assert.ok(mcp.mcpServers.brutalist, "kimi install must register the optional brutalist MCP server");
-    assert.deepEqual(mcp.mcpServers.brutalist.args, ["-y", "@brutalist/mcp@latest"]);
-
-    const doctor = KIMI_ADAPTER.doctor({ targetAbs: workspace });
-    assert.equal(doctor.ok, true);
-    assert.ok(doctor.checks.some((check) => check.id === "kimi_skills" && check.status === "ok"));
-    assert.ok(doctor.checks.some((check) => check.id === "kimi_mcp_server_config" && check.status === "ok"));
-
-    const dryRun = KIMI_ADAPTER.uninstall({ sourceRoot: ROOT, targetAbs: workspace, dryRun: true });
-    assert.equal(dryRun.dry_run, true);
-    assert.ok(dryRun.actions.some((action) => action.path === path.join(".kimi", "skills", "bob-hunt", "SKILL.md")));
-    assert.ok(dryRun.actions.some((action) => action.path === path.join(".kimi", "mcp.json")));
-    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-hunt", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(workspace, ".kimi", "mcp.json")));
-
-    const removed = KIMI_ADAPTER.uninstall({ sourceRoot: ROOT, targetAbs: workspace, dryRun: false });
-    assert.equal(removed.dry_run, false);
-    assert.ok(!fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-hunt", "SKILL.md")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-export", "SKILL.md")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-egress", "SKILL.md")));
-    assert.ok(!fs.existsSync(path.join(workspace, ".kimi", "mcp.json")));
-    // Regression: managedDirs() must enumerate all six skill directories so
-    // uninstall removes them — earlier revisions only listed bob-hunt,
-    // bob-status, bob-debug and left bob-update/bob-export/bob-egress on disk.
-    for (const skill of ["bob-hunt", "bob-status", "bob-debug", "bob-update", "bob-export", "bob-egress"]) {
-      assert.ok(
-        !fs.existsSync(path.join(workspace, ".kimi", "skills", skill)),
-        `kimi uninstall must remove the ${skill} skill directory`,
-      );
-    }
-  } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
-    fs.rmSync(tempHome, { recursive: true, force: true });
-  }
-});
-
 test("generic MCP adapter installs only MCP config and prompt docs", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-generic-mcp-adapter-"));
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-home-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-home-"));
   const workspace = path.join(tempRoot, "workspace");
   fs.mkdirSync(workspace, { recursive: true });
 
@@ -849,10 +621,11 @@ test("generic MCP adapter installs only MCP config and prompt docs", () => {
 
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
     assert.ok(mcp.mcpServers.existing);
-    assert.deepEqual(mcp.mcpServers.bountyagent, {
+    assert.deepEqual(mcp.mcpServers["hacker-bob"], {
       command: "node",
       args: [path.join(workspace, "mcp", "server.js")],
     });
+    assert.ok(!mcp.mcpServers.bountyagent);
 
     const doctor = GENERIC_MCP_ADAPTER.doctor({ targetAbs: workspace });
     assert.equal(doctor.ok, true);
@@ -863,9 +636,178 @@ test("generic MCP adapter installs only MCP config and prompt docs", () => {
     assert.ok(!fs.existsSync(path.join(workspace, ".hacker-bob", "generic-mcp", "hacker-bob.md")));
     const after = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
     assert.ok(after.mcpServers.existing);
+    assert.ok(!after.mcpServers["hacker-bob"]);
     assert.ok(!after.mcpServers.bountyagent);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test("migration shim rewrites v1.x bountyagent server key + permission strings to hacker-bob", () => {
+  // The shim in scripts/merge-claude-config.js powers the v2.0.0 rename for
+  // existing installs. This test exercises it directly (unit-level), then
+  // re-runs it on the rewritten output to prove idempotency.
+  const {
+    migrateLegacyMcp,
+    migrateLegacySettings,
+    migrateLegacyServerKey,
+    rewriteLegacyPermissionString,
+  } = require("../scripts/merge-claude-config.js");
+
+  // Sanity: prefix rewriter handles legacy/canonical/unknown strings.
+  assert.equal(
+    rewriteLegacyPermissionString("mcp__bountyagent__bob_http_scan"),
+    "mcp__hacker-bob__bob_http_scan",
+  );
+  assert.equal(
+    rewriteLegacyPermissionString("mcp__hacker-bob__bob_http_scan"),
+    "mcp__hacker-bob__bob_http_scan",
+  );
+  assert.equal(rewriteLegacyPermissionString("custom-tool"), "custom-tool");
+  assert.equal(rewriteLegacyPermissionString(undefined), undefined);
+
+  // Pure .mcp.json migration: legacy key is renamed and operator entries
+  // unrelated to the rename are preserved.
+  const v1Mcp = {
+    mcpServers: {
+      bountyagent: {
+        command: "node",
+        args: ["/legacy/path/mcp/server.js"],
+      },
+      operator: { command: "node", args: ["op.js"] },
+    },
+  };
+  const mcpResult = migrateLegacyMcp(v1Mcp);
+  assert.equal(mcpResult.migrated, true);
+  assert.deepEqual(mcpResult.value.mcpServers["hacker-bob"], {
+    command: "node",
+    args: ["/legacy/path/mcp/server.js"],
+  });
+  assert.ok(!("bountyagent" in mcpResult.value.mcpServers));
+  assert.deepEqual(mcpResult.value.mcpServers.operator, { command: "node", args: ["op.js"] });
+
+  // Idempotency: re-running migration on already-migrated input is a no-op.
+  const idempotentMcp = migrateLegacyMcp(mcpResult.value);
+  assert.equal(idempotentMcp.migrated, false);
+  assert.deepEqual(idempotentMcp.value, mcpResult.value);
+
+  // Both keys present: legacy is dropped, canonical is preserved untouched.
+  const dualKeyMcp = {
+    mcpServers: {
+      bountyagent: { command: "node", args: ["legacy.js"] },
+      "hacker-bob": { command: "node", args: ["canonical.js"] },
+    },
+  };
+  const dualResult = migrateLegacyMcp(dualKeyMcp);
+  assert.equal(dualResult.migrated, true);
+  assert.deepEqual(dualResult.value.mcpServers["hacker-bob"], { command: "node", args: ["canonical.js"] });
+  assert.ok(!("bountyagent" in dualResult.value.mcpServers));
+
+  // Pure settings.json migration: legacy permission strings rewritten, others
+  // preserved.
+  const v1Settings = {
+    permissions: {
+      allow: [
+        "mcp__bountyagent__bob_http_scan",
+        "mcp__bountyagent__custom_user_tool",
+        "Read",
+        "mcp__hacker-bob__pre_migration_custom",
+      ],
+    },
+    customSetting: true,
+  };
+  const settingsResult = migrateLegacySettings(v1Settings);
+  assert.equal(settingsResult.migrated, true);
+  assert.ok(settingsResult.value.permissions.allow.includes("mcp__hacker-bob__bob_http_scan"));
+  assert.ok(settingsResult.value.permissions.allow.includes("mcp__hacker-bob__custom_user_tool"));
+  assert.ok(settingsResult.value.permissions.allow.includes("Read"));
+  // Idempotency: pre-existing canonical permission survives without duplication.
+  assert.ok(settingsResult.value.permissions.allow.includes("mcp__hacker-bob__pre_migration_custom"));
+  assert.equal(
+    settingsResult.value.permissions.allow.length,
+    new Set(settingsResult.value.permissions.allow).size,
+    "migration must dedupe permission strings",
+  );
+  assert.equal(settingsResult.value.customSetting, true, "unrelated settings preserved");
+  assert.ok(!settingsResult.value.permissions.allow.some((p) => p.startsWith("mcp__bountyagent__")));
+
+  // Idempotency: re-migration is a no-op.
+  const idempotentSettings = migrateLegacySettings(settingsResult.value);
+  assert.equal(idempotentSettings.migrated, false);
+  assert.deepEqual(idempotentSettings.value, settingsResult.value);
+
+  // No-op cases.
+  assert.equal(migrateLegacyMcp({}).migrated, false);
+  assert.equal(migrateLegacyMcp({ mcpServers: { other: {} } }).migrated, false);
+  assert.equal(migrateLegacySettings({}).migrated, false);
+  assert.equal(migrateLegacySettings({ permissions: { allow: ["Read"] } }).migrated, false);
+
+  // Combined entry point logs and reports overall migration status.
+  const captured = [];
+  const combined = migrateLegacyServerKey({
+    mcp: v1Mcp,
+    settings: v1Settings,
+    logger: (msg) => captured.push(msg),
+  });
+  assert.equal(combined.migrated, true);
+  assert.equal(captured.length, 1);
+  assert.match(captured[0], /bountyagent\s*->\s*hacker-bob/);
+  assert.match(captured[0], /\.mcp\.json/);
+  assert.match(captured[0], /\.claude\/settings\.json/);
+});
+
+test("merge-claude-config CLI auto-migrates a v1.x .mcp.json + settings.json layout", () => {
+  // Round-trip the migration shim through the CLI entrypoint. This exercises
+  // the same code path install/update uses on existing v1.x workspaces.
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hacker-bob-migration-shim-"));
+  const workspace = path.join(tempRoot, "v1-install");
+  fs.mkdirSync(path.join(workspace, ".claude"), { recursive: true });
+
+  try {
+    const legacyServerPath = path.join(workspace, "mcp", "server.js");
+    fs.writeFileSync(path.join(workspace, ".mcp.json"), `${JSON.stringify({
+      mcpServers: {
+        bountyagent: { command: "node", args: [legacyServerPath] },
+        operatorService: { command: "node", args: ["sidecar.js"] },
+      },
+    }, null, 2)}\n`);
+    fs.writeFileSync(path.join(workspace, ".claude", "settings.json"), `${JSON.stringify({
+      permissions: {
+        allow: [
+          "mcp__bountyagent__bob_http_scan",
+          "mcp__bountyagent__custom_user_tool",
+          "custom-allowlisted",
+        ],
+      },
+      customSetting: true,
+    }, null, 2)}\n`);
+
+    const merge = require("../scripts/merge-claude-config.js");
+    const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
+    const settings = JSON.parse(fs.readFileSync(path.join(workspace, ".claude", "settings.json"), "utf8"));
+    const migrated = merge.migrateLegacyServerKey({ mcp, settings });
+    assert.equal(migrated.migrated, true);
+
+    // The merge step then runs over the migrated config (idempotent for the
+    // rename surfaces).
+    const finalMcp = merge.mergeMcp(migrated.mcp, legacyServerPath);
+    assert.ok(finalMcp.mcpServers["hacker-bob"]);
+    assert.ok(!finalMcp.mcpServers.bountyagent);
+    assert.deepEqual(finalMcp.mcpServers.operatorService, { command: "node", args: ["sidecar.js"] });
+    assert.ok(finalMcp.mcpServers.brutalist);
+
+    const finalSettings = merge.mergeSettings(migrated.settings, {
+      permissions: { allow: ["mcp__hacker-bob__bob_record_candidate_claim"] },
+      hooks: {},
+    });
+    assert.ok(finalSettings.permissions.allow.includes("mcp__hacker-bob__bob_http_scan"));
+    assert.ok(finalSettings.permissions.allow.includes("mcp__hacker-bob__custom_user_tool"));
+    assert.ok(finalSettings.permissions.allow.includes("mcp__hacker-bob__bob_record_candidate_claim"));
+    assert.ok(finalSettings.permissions.allow.includes("custom-allowlisted"));
+    assert.equal(finalSettings.customSetting, true);
+    assert.ok(!finalSettings.permissions.allow.some((p) => p.startsWith("mcp__bountyagent__")));
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 });

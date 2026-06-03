@@ -8,9 +8,8 @@ const {
   computeAdjudicationPlanHash,
   hashCanonicalJson,
 } = require("../mcp/lib/verification-contracts.js");
-const {
-  recordFinding,
-} = require("../mcp/lib/finding-store.js");
+const recordCandidateClaimTool = require("../mcp/lib/tools/record-candidate-claim.js");
+const recordFinding = recordCandidateClaimTool.handler;
 const {
   readGradeVerdict,
   writeGradeVerdict,
@@ -67,12 +66,14 @@ function withTempHome(fn) {
 test("session state contract normalizes and reads the shared state shape", () => {
   withTempHome(() => {
     const domain = "state-contract.example";
+    // Cycle D.3 removed state.explored / state.terminally_blocked /
+    // state.lead_surface_ids from the session-state contract; the legacy
+    // disjointness invariant is gone because the frontier projection is
+    // self-disjoint (latest surface-state event wins).
     const raw = {
       target: domain,
       target_url: `https://${domain}`,
-      phase: "HUNT",
-      explored: ["surface-a"],
-      terminally_blocked: [],
+      phase: "EVALUATE",
     };
     fs.mkdirSync(sessionDir(domain), { recursive: true });
     writeFileAtomic(statePath(domain), `${JSON.stringify(raw, null, 2)}\n`);
@@ -87,14 +88,10 @@ test("session state contract normalizes and reads the shared state shape", () =>
     assert.equal(read.state.block_internal_hosts_source, "legacy_default");
     assert.equal(read.state.egress_profile, "default");
     assert.equal(read.state.verification_schema_version, null);
-
-    assert.throws(
-      () => normalizeSessionStateDocument({
-        ...raw,
-        terminally_blocked: [{ surface_id: "surface-a", blocked_at_wave: 1, blockers: [{ kind: "auth_missing" }] }],
-      }, domain),
-      /state\.explored and state\.terminally_blocked must be disjoint/,
-    );
+    // The deleted projection fields no longer appear on the normalized state.
+    assert.ok(!Object.prototype.hasOwnProperty.call(read.state, "explored"));
+    assert.ok(!Object.prototype.hasOwnProperty.call(read.state, "terminally_blocked"));
+    assert.ok(!Object.prototype.hasOwnProperty.call(read.state, "lead_surface_ids"));
   });
 });
 
@@ -181,7 +178,7 @@ function writeVerifyState(domain, stateFields, overrides = {}) {
     target_url: `https://${domain}`,
     deep_mode: false,
     phase: "VERIFY",
-    hunt_wave: 0,
+    evaluation_wave: 0,
     pending_wave: null,
     total_findings: 1,
     explored: [],
@@ -416,7 +413,13 @@ test("verification adjudication and grade writers use the session lock before mu
   });
 });
 
-test("verification status contract keeps v2 snapshot drift aligned between context and analytics", () => {
+test("verification status contract reports frozen-payload rounds as current even after findings.jsonl mutation", () => {
+  // Cycle C.4: the verification snapshot is sourced from the immutable
+  // claim-freeze.json, so a brutalist round that covers the frozen
+  // CandidateClaim set must continue to read as `current: true` even when a
+  // new finding is appended to findings.jsonl after the snapshot. The freeze
+  // hash is the integrity check; the live findings ledger is no longer
+  // re-scanned on every status read.
   withTempHome(() => {
     const domain = "verification-status-v2.example.com";
     seedFinding(domain);
@@ -431,7 +434,7 @@ test("verification status contract keeps v2 snapshot drift aligned between conte
     writeVerificationRound({
       target_domain: domain,
       round: "brutalist",
-      notes: "v2 current before drift",
+      notes: "v2 current before findings.jsonl mutation",
       verification_attempt_id: entry.state_fields.verification_attempt_id,
       verification_snapshot_hash: entry.state_fields.verification_snapshot_hash,
       round_profile: "brutalist",
@@ -448,15 +451,15 @@ test("verification status contract keeps v2 snapshot drift aligned between conte
 
     const context = JSON.parse(readVerificationContext({ target_domain: domain }));
     const analytics = readSessionArtifactSummary(domain);
-    assert.equal(context.round_status.brutalist.current, false);
-    assert.equal(analytics.verification.rounds.brutalist.current, false);
-    assert.equal(context.round_status.brutalist.stale, true);
-    assert.equal(analytics.verification.rounds.brutalist.stale, true);
+    assert.equal(context.round_status.brutalist.current, true);
+    assert.equal(analytics.verification.rounds.brutalist.current, true);
+    assert.equal(context.round_status.brutalist.stale, false);
+    assert.equal(analytics.verification.rounds.brutalist.stale, false);
     assert.equal(
       analytics.verification.rounds.brutalist.blocker_reason,
       context.round_status.brutalist.blocker_reason,
     );
-    assert.match(context.round_status.brutalist.blocker_reason, /VERIFY input changed after snapshot/);
+    assert.equal(context.round_status.brutalist.blocker_reason, null);
   });
 });
 

@@ -47,7 +47,7 @@ const LOCAL_INSTALL_METADATA_FILES = new Set([
 ]);
 
 const REQUIRED_SUPPORT_SURFACES = Object.freeze([
-  ".hacker-bob/knowledge/hunter-techniques.json",
+  ".hacker-bob/knowledge/evaluator-techniques.json",
   ".hacker-bob/bypass-tables/graphql.txt",
   ".hacker-bob/bypass-tables/oauth-oidc.txt",
   "bin/hacker-bob.js",
@@ -62,7 +62,7 @@ const REQUIRED_SUPPORT_SURFACES = Object.freeze([
   "testing/policy-replay/replay.mjs",
   "testing/policy-replay/tune.mjs",
   "testing/policy-replay/bench.mjs",
-  "testing/policy-replay/cases/sample-hunter-refusal.json",
+  "testing/policy-replay/cases/sample-evaluator-refusal.json",
   "testing/policy-replay/prompts/00-baseline.md",
   "testing/policy-replay/prompts/01-scope-anchor.md",
 ]);

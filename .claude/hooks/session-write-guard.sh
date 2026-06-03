@@ -1,6 +1,7 @@
 #!/bin/bash
 # Session write guard hook — PreToolUse on Bash and Write
-# Blocks direct writes to MCP-owned files in ~/bounty-agent-sessions/
+# Blocks direct writes to MCP-owned files in ~/hacker-bob-sessions/
+# (also enforced against the legacy ~/bounty-agent-sessions/ root)
 # Forces agents to use MCP tools for structured output
 # Exit 0 = allow, Exit 2 = block
 
@@ -16,7 +17,13 @@ import shlex
 import sys
 
 
-SESSIONS_ROOT = pathlib.Path.home() / "bounty-agent-sessions"
+# Cycle P.2: guard both canonical and legacy session roots so MCP-owned
+# files stay protected across the v2.0/v2.1 coexistence window.
+SESSIONS_ROOTS = (
+    pathlib.Path.home() / "hacker-bob-sessions",
+    pathlib.Path.home() / "bounty-agent-sessions",
+)
+SESSIONS_ROOT = SESSIONS_ROOTS[0]
 
 # Files that MUST be written through MCP tools only
 MCP_OWNED_EXACT = {
@@ -65,14 +72,14 @@ MCP_OWNED_PATTERNS = [
 ]
 
 # Files that agents are allowed to write directly. JSON entries here are
-# compact recon/report artifacts; bulky raw captures remain blocked by name on
+# compact surface-discovery/report artifacts; bulky raw captures remain blocked by name on
 # the read side and should not be written as ad hoc session files.
 AGENT_ALLOWED_EXACT = {
     "chains.md",
     "report.md",
     "attack_surface.json",
     "deep-summary.json",
-    "recon-summary.json",
+    "surface-discovery-summary.json",
     "scope-warnings.log",
     "deny-list.txt",
 }
@@ -111,11 +118,13 @@ def resolve_path(raw_path):
 
 
 def is_in_session_dir(resolved):
-    try:
-        resolved.resolve(strict=False).relative_to(SESSIONS_ROOT.resolve(strict=False))
-        return True
-    except (ValueError, OSError):
-        return False
+    for root in SESSIONS_ROOTS:
+        try:
+            resolved.resolve(strict=False).relative_to(root.resolve(strict=False))
+            return True
+        except (ValueError, OSError):
+            continue
+    return False
 
 
 def check_file(raw_path):
@@ -209,7 +218,7 @@ def check_mutating_path_commands(command):
             if blocked:
                 block(
                     f"BLOCKED: Bash {command_name} on '{blocked}' in session directory. "
-                    f"Use the appropriate bountyagent MCP tool instead."
+                    f"Use the appropriate hacker-bob MCP tool instead."
                 )
 
 
@@ -229,7 +238,7 @@ if "file_path" in tool_input:
     if blocked:
         block(
             f"BLOCKED: Direct write to '{blocked}' in session directory. "
-            f"Use the appropriate bountyagent MCP tool instead."
+            f"Use the appropriate hacker-bob MCP tool instead."
         )
     raise SystemExit(0)
 
@@ -254,7 +263,7 @@ if has_redirects:
         if blocked:
             block(
                 f"BLOCKED: Bash redirect to '{blocked}' in session directory. "
-                f"Use the appropriate bountyagent MCP tool instead."
+                f"Use the appropriate hacker-bob MCP tool instead."
             )
 
 # Extract and check inline script file writes (open(), Path().write_text(), etc.)
@@ -264,7 +273,7 @@ if has_open_call:
         if blocked:
             block(
                 f"BLOCKED: Inline script writes to '{blocked}' in session directory. "
-                f"Use the appropriate bountyagent MCP tool instead."
+                f"Use the appropriate hacker-bob MCP tool instead."
             )
 
 raise SystemExit(0)

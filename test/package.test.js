@@ -57,7 +57,7 @@ test("dependency freshness check warns on stale but current PSL metadata", () =>
     "--metadata-file",
     fixturePath,
     "--now",
-    "2026-06-10T00:00:00.000Z",
+    "2026-05-17T00:00:00.000Z",
   ], {
     cwd: ROOT,
     encoding: "utf8",
@@ -66,12 +66,11 @@ test("dependency freshness check warns on stale but current PSL metadata", () =>
 
   assert.match(output, /OK PSL overlay escape hatch remains implemented without runtime network refresh/);
   assert.match(output, /OK psl lockfile version matches npm latest 1\.15\.0/);
-  assert.match(output, /WARN psl@1\.15\.0 latest publish age \d+\.\d days exceeds warning threshold 180 days; lockfile is still npm latest/);
-  assert.match(output, /INFO psl freshness owner: Public Suffix List scope ownership/);
+  assert.match(output, /WARN psl@1\.15\.0 latest publish age \d+\.\d days exceeds warning threshold 180 days/);
   assert.match(output, /Dependency freshness check passed with 1 warning\(s\)\./);
 });
 
-test("dependency freshness check fails when PSL is behind latest", () => {
+test("dependency freshness check fails when PSL lockfile is behind latest", () => {
   assert.throws(() => withDependencyFreshnessFixture({
     version: "1.16.0",
     "dist-tags": { latest: "1.16.0" },
@@ -104,8 +103,9 @@ test("canonical package lists shipped Claude hooks explicitly", () => {
     "bob-egress.js",
     "bob-export.js",
     "bob-update.js",
-    "bounty-statusline.js",
-    "hunter-subagent-stop.js",
+    "bob-statusline.js",
+    "agent-run-start.js",
+    "agent-run-stop.js",
     "session-read-guard.sh",
     "session-write-guard.sh",
   ]) {
@@ -140,11 +140,12 @@ test("npm package contains runtime surfaces and excludes test/cache artifacts", 
       assert.equal(isExcludedCanonicalPackageFile(excluded), true, `${excluded} should be denied by policy`);
     }
 
-    // Backstop against accidental bloat (a stray node_modules, cache, or test
-    // fixture would add megabytes); the real exclusions are asserted per-file
-    // below. Raised 2.5 MB -> 3 MB after shipped docs/prompts grew the canonical
-    // package past the old ceiling (packed ~2.51 MB at v1.3.4, all intended to
-    // ship per the docs/** files glob and expectedCanonicalFiles()).
+    // Pack-size budget raised to 3 MB to accommodate the kimi adapter family
+    // (adapters/kimi/*, scripts/lib/kimi-role-renderer.js, scripts/lib/install-fs.js,
+    // packages/hacker-bob-kimi/*) absorbed from PR #58 alongside the existing
+    // Y.3 Stage c substrate growth (evidence_refs[] validator + LARGE_BODY_THRESHOLD_BYTES
+    // export + EVIDENCE_REF_HANDLE_PREFIXES constant on bob_write_chain_rollup
+    // per Y-P14b / O4).
     assert.ok(pack.size < 3000000, `npm pack size ${pack.size} exceeds 3 MB threshold`);
 
     for (const file of files) {
@@ -175,6 +176,7 @@ test("npm package contains runtime surfaces and excludes test/cache artifacts", 
       assert.notEqual(file, ".claude/hooks/bob-update-lib.js", "hook-local update library should not be packed");
       assert.ok(!LOCAL_INSTALL_METADATA_FILES.has(file), `${file} should not be packed`);
       assert.ok(!file.includes("bounty-agent-sessions"), `${file} should not be packed`);
+      assert.ok(!file.includes("hacker-bob-sessions"), `${file} should not be packed`);
       assert.ok(!file.includes(".cache/"), `${file} should not be packed`);
       if (isPackedTextFile(file)) {
         const sourcePath = path.join(ROOT, file);

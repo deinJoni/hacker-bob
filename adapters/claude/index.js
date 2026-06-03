@@ -12,7 +12,6 @@ const {
 const {
   updateClaudeRoleFiles,
 } = require("../../scripts/lib/claude-role-renderer.js");
-const { createSafeInstallFs } = require("../../scripts/lib/install-fs.js");
 
 const id = "claude";
 const DEFAULT_ROOT = path.join(__dirname, "..", "..");
@@ -20,8 +19,9 @@ const DEFAULT_ROOT = path.join(__dirname, "..", "..");
 const HOOK_FILES = Object.freeze([
   "session-read-guard.sh",
   "session-write-guard.sh",
-  "bounty-statusline.js",
-  "hunter-subagent-stop.js",
+  "bob-statusline.js",
+  "agent-run-start.js",
+  "agent-run-stop.js",
   "bob-egress.js",
   "bob-export.js",
   "bob-update.js",
@@ -38,7 +38,8 @@ const STALE_HOOK_FILES = Object.freeze([
 const EXECUTABLE_HOOKS = Object.freeze([
   "session-read-guard.sh",
   "session-write-guard.sh",
-  "hunter-subagent-stop.js",
+  "agent-run-start.js",
+  "agent-run-stop.js",
   "bob-egress.js",
   "bob-export.js",
   "bob-update.js",
@@ -50,10 +51,11 @@ const BOB_COMMAND_FILES = Object.freeze([
   "bob-update.md",
   "bob-egress.md",
   "bob-export.md",
+  "bob-evaluate.md",
 ]);
 
 const LEGACY_BOB_COMMAND_FILES = Object.freeze([
-  "hunt.md",
+  "evaluate.md",
   "status.md",
   "debug.md",
   "update.md",
@@ -71,16 +73,57 @@ const COMMAND_SPECS = Object.freeze({
 });
 
 const BOB_SKILLS = Object.freeze([
-  "bob-hunt",
-  "bob-oss",
+  "bob-evaluate-runner",
   "bob-status",
   "bob-debug",
 ]);
 
+// Legacy Claude skill directory names that prior installer generations created
+// under .claude/skills/ and must be swept on install/upgrade. `bob-evaluate`
+// was the orchestrator skill name before it was renamed to bob-evaluate-runner
+// to keep Claude Code's slash-command picker from showing two /bob-evaluate
+// entries (one for the command file, one for the skill). `bob-hunt` was the
+// v1.x hunt→evaluate rename predecessor.
 const LEGACY_BOB_SKILLS = Object.freeze([
   "bountyagent",
   "bountyagentdebug",
   "bountyagentstatus",
+  "bob-hunt",
+  "bob-evaluate",
+]);
+
+// Legacy agent files left behind by prior rename generations. The "hunter-*"
+// family pre-dated "evaluator-*"; "recon-agent" / "deep-recon-agent" pre-dated
+// "surface-discovery-*". These names no longer exist in the source tree, so
+// any survivor inside a target install came from a v1.x install and must be
+// removed on upgrade to avoid the operator launching stale agents.
+const LEGACY_AGENT_FILES = Object.freeze([
+  "hunter-agent.md",
+  "hunter-cosmwasm-agent.md",
+  "hunter-evm-agent.md",
+  "hunter-move-agent.md",
+  "hunter-substrate-agent.md",
+  "hunter-svm-agent.md",
+  "recon-agent.md",
+  "deep-recon-agent.md",
+]);
+
+// Legacy hook files renamed across the v1.x -> v2.x line. `bob-statusline.js`
+// is the current name for what was `bounty-statusline.js`; `agent-run-stop.js`
+// replaced `hunter-subagent-stop.js`. The settings.json migration shim
+// rewrites the command strings; this list is for sweeping the files
+// themselves off disk.
+const LEGACY_HOOK_FILES = Object.freeze([
+  "hunter-subagent-stop.js",
+  "bounty-statusline.js",
+]);
+
+// Settings-side rewrites that mirror LEGACY_HOOK_FILES. The merge shim walks
+// every hook entry and rewrites stale filenames embedded in command strings
+// (e.g. `node "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/hunter-subagent-stop.js"`).
+const LEGACY_HOOK_COMMAND_REWRITES = Object.freeze([
+  Object.freeze({ from: "hunter-subagent-stop.js", to: "agent-run-stop.js" }),
+  Object.freeze({ from: "bounty-statusline.js", to: "bob-statusline.js" }),
 ]);
 
 function isPlainObject(value) {
@@ -116,10 +159,12 @@ function managedDirs() {
   return [
     path.join(".claude", "commands", "bob"),
     path.join(".claude", "commands"),
-    path.join(".claude", "skills", "bob-hunt"),
-    path.join(".claude", "skills", "bob-oss"),
+    path.join(".claude", "skills", "bob-evaluate-runner"),
     path.join(".claude", "skills", "bob-status"),
     path.join(".claude", "skills", "bob-debug"),
+    // Legacy skill directories — managed for cleanup on uninstall/upgrade.
+    path.join(".claude", "skills", "bob-evaluate"),
+    path.join(".claude", "skills", "bob-hunt"),
     path.join(".claude", "skills", "bountyagent"),
     path.join(".claude", "skills", "bountyagentdebug"),
     path.join(".claude", "skills", "bountyagentstatus"),
@@ -183,7 +228,7 @@ function renderExportCommand() {
     "Run:",
     '   `node "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/bob-export.js" "${CLAUDE_PROJECT_DIR:-$PWD}"`',
     "",
-    "Report the helper output exactly. Do not add flags or run a hunt.",
+    "Report the helper output exactly. Do not add flags or run a evaluate.",
     "",
   ].join("\n");
 }
@@ -273,7 +318,7 @@ function requiredBobMcpPermissions(bobSettings) {
   return (bobSettings.permissions && Array.isArray(bobSettings.permissions.allow)
     ? bobSettings.permissions.allow
     : []
-  ).filter((permission) => permission.startsWith("mcp__bountyagent__"));
+  ).filter((permission) => permission.startsWith("mcp__hacker-bob__"));
 }
 
 function settingsMissingPermissions(settings, bobSettings) {
@@ -352,65 +397,67 @@ function install({
   removeIfExists,
   serverPath,
   writeJson,
-  installFs,
 }) {
-  const safeFs = installFs || createSafeInstallFs(targetAbs, { label: "install target" });
-  const safeReadJsonIfExists = readJsonIfExists || ((filePath, fallback) => safeFs.readJsonIfExists(filePath, fallback, {
-    kind: "config file",
-    symlink: "reject",
-  }));
-  const safeWriteJson = writeJson || ((filePath, value, optionsForFile = {}) => safeFs.writeJson(filePath, value, optionsForFile));
-  const safeRemoveIfExists = removeIfExists || ((filePath) => safeFs.removePath(filePath));
-  const safeCopyDirFiles = copyDirFiles || ((sourceDir, destinationDir, predicate) => safeFs.copyDirFiles(sourceDir, destinationDir, predicate));
-  const safeCopyFile = copyFile || ((source, destination, mode) => safeFs.copyFile(source, destination, mode));
   const claudeDir = path.join(targetAbs, ".claude");
-  safeFs.mkdirp(claudeDir);
+  fsSafeMkdir(claudeDir);
   for (const dirname of ["agents", "commands", "rules", "hooks", "skills", "bob"]) {
-    safeFs.mkdirp(path.join(claudeDir, dirname));
+    fsSafeMkdir(path.join(claudeDir, dirname));
   }
   for (const hook of STALE_HOOK_FILES) {
-    safeRemoveIfExists(path.join(claudeDir, "hooks", hook));
+    removeIfExists(path.join(claudeDir, "hooks", hook));
+  }
+  // Sweep legacy v1.x agent/hook files left behind by prior rename
+  // generations. Idempotent: no-op when the legacy files are absent.
+  for (const legacyAgent of LEGACY_AGENT_FILES) {
+    removeIfExists(path.join(claudeDir, "agents", legacyAgent));
+  }
+  for (const legacyHook of LEGACY_HOOK_FILES) {
+    removeIfExists(path.join(claudeDir, "hooks", legacyHook));
   }
 
-  const agents = safeCopyDirFiles(
+  const agents = copyDirFiles(
     path.join(sourceRoot, ".claude", "agents"),
     path.join(claudeDir, "agents"),
     (name) => name.endsWith(".md"),
   );
 
-  safeRemoveIfExists(path.join(claudeDir, "commands", "bountyagent.md"));
-  safeRemoveIfExists(path.join(claudeDir, "commands", "bountyagentdebug.md"));
+  removeIfExists(path.join(claudeDir, "commands", "bountyagent.md"));
+  removeIfExists(path.join(claudeDir, "commands", "bountyagentdebug.md"));
   for (const legacyCommand of LEGACY_BOB_COMMAND_FILES) {
-    safeRemoveIfExists(path.join(claudeDir, "commands", "bob", legacyCommand));
+    removeIfExists(path.join(claudeDir, "commands", "bob", legacyCommand));
   }
-  safeFs.removeEmptyDirIfExists(path.join(claudeDir, "commands", "bob"));
+  removeEmptyDirIfExists(path.join(claudeDir, "commands", "bob"));
   for (const legacySkill of LEGACY_BOB_SKILLS) {
-    safeFs.removePath(path.join(claudeDir, "skills", legacySkill), { recursive: true });
+    fs.rmSync(path.join(claudeDir, "skills", legacySkill), { force: true, recursive: true });
   }
   for (const commandId of commandIds()) {
-    safeFs.writeTextFile(
+    writeTextFile(
       path.join(claudeDir, "commands", commandSpec(commandId).file),
       renderCommand(commandId),
-      { kind: "generated file" },
     );
   }
 
-  // Copy static command files (not renderer-driven). bob-egress.md is hand-
-  // authored and shipped verbatim; the renderer pattern is only used for
-  // commands that have dynamic per-host content like bob-update.md.
-  safeCopyFile(
+  // Copy static command files (not renderer-driven). bob-egress.md and
+  // bob-evaluate.md are hand-authored and shipped verbatim; the renderer
+  // pattern is only used for commands that have dynamic per-host content
+  // like bob-update.md.
+  copyFile(
     path.join(sourceRoot, ".claude", "commands", "bob-egress.md"),
     path.join(claudeDir, "commands", "bob-egress.md"),
   );
+  copyFile(
+    path.join(sourceRoot, ".claude", "commands", "bob-evaluate.md"),
+    path.join(claudeDir, "commands", "bob-evaluate.md"),
+  );
 
   for (const skill of BOB_SKILLS) {
-    safeCopyFile(
+    copyFile(
       path.join(sourceRoot, ".claude", "skills", skill, "SKILL.md"),
       path.join(claudeDir, "skills", skill, "SKILL.md"),
     );
   }
 
-  const rules = safeCopyDirFiles(
+  const rules = copyDirFiles(
     path.join(sourceRoot, ".claude", "rules"),
     path.join(claudeDir, "rules"),
     (name) => name.endsWith(".md"),
@@ -418,7 +465,7 @@ function install({
 
   for (const hook of HOOK_FILES) {
     const mode = EXECUTABLE_HOOKS.includes(hook) ? 0o755 : undefined;
-    safeCopyFile(
+    copyFile(
       path.join(sourceRoot, ".claude", "hooks", hook),
       path.join(claudeDir, "hooks", hook),
       mode,
@@ -433,30 +480,22 @@ function install({
     ensureEgressProfilesConfig,
     ensureEgressProfilesExample,
   } = require("../../mcp/lib/egress-profiles.js");
-  ensureEgressProfilesExample(targetAbs, { installFs: safeFs });
-  ensureEgressProfilesConfig(targetAbs, { installFs: safeFs });
+  ensureEgressProfilesExample(targetAbs);
+  ensureEgressProfilesConfig(targetAbs);
 
   const mcpPath = path.join(targetAbs, ".mcp.json");
   const settingsPath = path.join(claudeDir, "settings.json");
   const mergedConfig = mergeConfig({
-    existingMcp: safeReadJsonIfExists(mcpPath, {}),
-    existingSettings: safeReadJsonIfExists(settingsPath, {}),
+    existingMcp: readJsonIfExists(mcpPath, {}),
+    existingSettings: readJsonIfExists(settingsPath, {}),
     serverPath,
   });
-  safeWriteJson(mcpPath, mergedConfig.mcp, {
-    kind: ".mcp.json",
-    rejectExistingSymlink: true,
-  });
-  safeWriteJson(settingsPath, mergedConfig.settings, {
-    kind: ".claude/settings.json",
-    rejectExistingSymlink: true,
-  });
+  writeJson(mcpPath, mergedConfig.mcp);
+  writeJson(settingsPath, mergedConfig.settings);
 
   const installManifest = manifest || {};
-  safeFs.writeTextFile(path.join(claudeDir, "bob", "VERSION"), `${installManifest.version || "0.0.0"}\n`, {
-    kind: ".claude/bob/VERSION",
-  });
-  safeWriteJson(path.join(claudeDir, "bob", "install.json"), {
+  fs.writeFileSync(path.join(claudeDir, "bob", "VERSION"), `${installManifest.version || "0.0.0"}\n`, "utf8");
+  writeJson(path.join(claudeDir, "bob", "install.json"), {
     schema_version: 1,
     bob_version: installManifest.version || "0.0.0",
     installed_at: installedAt || new Date().toISOString(),
@@ -555,10 +594,10 @@ function doctor({
 
   const mcpPath = path.join(targetAbs, ".mcp.json");
   const mcp = jsonReadCheck(checks, mcpPath, checkId("mcp_json"), targetAbs);
-  if (mcp && mcpServerMatches(mcp.mcpServers && mcp.mcpServers.bountyagent, targetAbs)) {
-    addCheck(checks, "ok", checkId("mcp_server_config"), ".mcp.json points bountyagent at this project's mcp/server.js");
+  if (mcp && mcpServerMatches(mcp.mcpServers && mcp.mcpServers["hacker-bob"], targetAbs)) {
+    addCheck(checks, "ok", checkId("mcp_server_config"), ".mcp.json points hacker-bob at this project's mcp/server.js");
   } else if (mcp) {
-    addCheck(checks, "error", checkId("mcp_server_config"), ".mcp.json is missing the Bob-managed bountyagent server entry");
+    addCheck(checks, "error", checkId("mcp_server_config"), ".mcp.json is missing the Bob-managed hacker-bob server entry");
   }
 
   // brutalist MCP is optional — check is informational only, never errors.
@@ -651,7 +690,7 @@ function doctor({
     "case-schema.mjs",
     "bench.mjs",
     "README.md",
-    path.join("cases", "sample-hunter-refusal.json"),
+    path.join("cases", "sample-evaluator-refusal.json"),
   ];
   const missingPolicyReplay = POLICY_REPLAY_FILES
     .map((name) => path.join("testing", "policy-replay", name))
@@ -676,13 +715,25 @@ function removeMcpConfig(targetAbs, result, helpers) {
     result.skipped.push({ type: "config", path: ".mcp.json", reason: `invalid JSON: ${error.message || String(error)}` });
     return;
   }
-  if (!isPlainObject(mcp) || !isPlainObject(mcp.mcpServers) || !("bountyagent" in mcp.mcpServers)) return;
-  if (!mcpServerMatches(mcp.mcpServers.bountyagent, targetAbs)) {
-    result.skipped.push({ type: "config", path: ".mcp.json", reason: "bountyagent server entry is not Bob-managed" });
+  if (!isPlainObject(mcp) || !isPlainObject(mcp.mcpServers)) return;
+  // Uninstall must clean up both the canonical `hacker-bob` server key and
+  // the legacy `bountyagent` key that older v1.x installs may still carry
+  // (the v2.0 install migration shim normally rewrites these on first install/
+  // update, but uninstall must be self-contained if migration was skipped).
+  const legacyServerKey = "bountyagent";
+  const serverKeyCandidates = ["hacker-bob", legacyServerKey].filter((key) => key in mcp.mcpServers);
+  if (serverKeyCandidates.length === 0) return;
+  const mismatchedKeys = serverKeyCandidates.filter((key) => !mcpServerMatches(mcp.mcpServers[key], targetAbs));
+  if (mismatchedKeys.length === serverKeyCandidates.length) {
+    result.skipped.push({ type: "config", path: ".mcp.json", reason: `${mismatchedKeys.join(", ")} server entry is not Bob-managed` });
     return;
   }
   const next = { ...mcp, mcpServers: { ...mcp.mcpServers } };
-  delete next.mcpServers.bountyagent;
+  for (const key of serverKeyCandidates) {
+    if (mcpServerMatches(mcp.mcpServers[key], targetAbs)) {
+      delete next.mcpServers[key];
+    }
+  }
   // Also remove the Bob-managed brutalist entry if present and unmodified.
   // Operator overrides (different command/args) are preserved.
   if (
@@ -818,8 +869,11 @@ module.exports = {
   COMMAND_SPECS,
   EXECUTABLE_HOOKS,
   HOOK_FILES,
+  LEGACY_AGENT_FILES,
   LEGACY_BOB_COMMAND_FILES,
   LEGACY_BOB_SKILLS,
+  LEGACY_HOOK_COMMAND_REWRITES,
+  LEGACY_HOOK_FILES,
   config,
   commandIds,
   commandOutputPath,
@@ -834,3 +888,12 @@ module.exports = {
   uninstall,
   updateCommandFiles,
 };
+
+function fsSafeMkdir(dirPath) {
+  fs.mkdirSync(dirPath, { recursive: true });
+}
+
+function removeEmptyDirIfExists(dirPath) {
+  if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) return;
+  if (fs.readdirSync(dirPath).length === 0) fs.rmdirSync(dirPath);
+}

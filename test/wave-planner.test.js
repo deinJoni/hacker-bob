@@ -4,6 +4,9 @@ const {
   isOpenForAssignment,
   planNextWave,
 } = require("../mcp/lib/wave-planner.js");
+const {
+  DEFAULT_QUEUE_POLICY,
+} = require("../mcp/lib/queue-policy.js");
 
 function surface(id, priority, score = 0) {
   return {
@@ -13,8 +16,21 @@ function surface(id, priority, score = 0) {
   };
 }
 
+function planned(agent, surfaceId) {
+  return {
+    agent,
+    surface_id: surfaceId,
+    task_lens: DEFAULT_QUEUE_POLICY.default_wave_task_lens,
+    budget: { ...DEFAULT_QUEUE_POLICY.default_wave_task_budget },
+  };
+}
+
 test("planNextWave wave 1 orders buckets, fills to target, caps high-priority overflow, and labels after dedupe", () => {
-  const state = { hunt_wave: 0, pending_wave: null, explored: [], terminally_blocked: [], lead_surface_ids: [] };
+  // Cycle D.3 removed the state.explored / state.terminally_blocked /
+  // state.lead_surface_ids projection arrays; planNextWave accepts the
+  // projected sets explicitly via exploredSurfaceIds /
+  // terminallyBlockedSurfaceIds / leadSurfaceIds options.
+  const state = { evaluation_wave: 0, pending_wave: null };
   const highOverflow = planNextWave({
     state,
     surfaces: [
@@ -27,15 +43,18 @@ test("planNextWave wave 1 orders buckets, fills to target, caps high-priority ov
       surface("h7", "HIGH", 1),
       surface("m1", "MEDIUM", 100),
     ],
+    exploredSurfaceIds: [],
+    terminallyBlockedSurfaceIds: [],
+    leadSurfaceIds: [],
   });
   assert.equal(highOverflow.decision, "start_wave");
   assert.deepEqual(highOverflow.assignments, [
-    { agent: "a1", surface_id: "h1" },
-    { agent: "a2", surface_id: "h2" },
-    { agent: "a3", surface_id: "h3" },
-    { agent: "a4", surface_id: "h4" },
-    { agent: "a5", surface_id: "h5" },
-    { agent: "a6", surface_id: "h6" },
+    planned("a1", "h1"),
+    planned("a2", "h2"),
+    planned("a3", "h3"),
+    planned("a4", "h4"),
+    planned("a5", "h5"),
+    planned("a6", "h6"),
   ]);
 
   const fill = planNextWave({
@@ -47,22 +66,22 @@ test("planNextWave wave 1 orders buckets, fills to target, caps high-priority ov
       surface("high-b", "HIGH", 5),
       surface("med-a", "MEDIUM", 50),
     ],
+    exploredSurfaceIds: [],
+    terminallyBlockedSurfaceIds: [],
+    leadSurfaceIds: [],
   });
   assert.deepEqual(fill.assignments, [
-    { agent: "a1", surface_id: "high-a" },
-    { agent: "a2", surface_id: "high-b" },
-    { agent: "a3", surface_id: "med-a" },
-    { agent: "a4", surface_id: "med-b" },
+    planned("a1", "high-a"),
+    planned("a2", "high-b"),
+    planned("a3", "med-a"),
+    planned("a4", "med-b"),
   ]);
 });
 
 test("planNextWave wave 2+ prioritizes open requeue, lead IDs, remaining priorities, and dedupes earlier buckets", () => {
   const state = {
-    hunt_wave: 1,
+    evaluation_wave: 1,
     pending_wave: null,
-    explored: ["done"],
-    terminally_blocked: [{ surface_id: "blocked", blocked_at_wave: 1, blockers: [{ kind: "auth_missing" }] }],
-    lead_surface_ids: ["lead-high", "requeue-high", "missing-lead"],
   };
   const surfaces = [
     surface("requeue-high", "HIGH", 20),
@@ -79,7 +98,14 @@ test("planNextWave wave 2+ prioritizes open requeue, lead IDs, remaining priorit
     { surface_id: "blocked", status: "promising", endpoint: "/c", bug_class: "auth" },
   ];
 
-  const plan = planNextWave({ state, surfaces, coverageRecords });
+  const plan = planNextWave({
+    state,
+    surfaces,
+    coverageRecords,
+    exploredSurfaceIds: ["done"],
+    terminallyBlockedSurfaceIds: ["blocked"],
+    leadSurfaceIds: ["lead-high", "requeue-high", "missing-lead"],
+  });
   assert.deepEqual(plan.buckets.map((bucket) => [bucket.name, bucket.surface_ids]), [
     ["open_requeue", ["requeue-high"]],
     ["lead_surface_ids", ["lead-high"]],
@@ -88,40 +114,44 @@ test("planNextWave wave 2+ prioritizes open requeue, lead IDs, remaining priorit
     ["low", ["low"]],
   ]);
   assert.deepEqual(plan.assignments, [
-    { agent: "a1", surface_id: "requeue-high" },
-    { agent: "a2", surface_id: "lead-high" },
-    { agent: "a3", surface_id: "critical" },
-    { agent: "a4", surface_id: "medium" },
+    planned("a1", "requeue-high"),
+    planned("a2", "lead-high"),
+    planned("a3", "critical"),
+    planned("a4", "medium"),
   ]);
 });
 
 test("isOpenForAssignment excludes invalid, explored, and terminally blocked surfaces only", () => {
+  // Projection sets are passed explicitly after D.3; state.json no longer
+  // carries the explored / terminally_blocked arrays.
   const state = {
-    explored: ["done"],
-    terminally_blocked: [{ surface_id: "blocked", blocked_at_wave: 1, blockers: [{ kind: "auth_missing" }] }],
     dead_ends: ["/closed-endpoint"],
     waf_blocked_endpoints: ["/waf"],
   };
-  const surfaceIdSet = new Set(["open", "done", "blocked"]);
-  assert.equal(isOpenForAssignment("open", state, { surfaceIdSet }), true);
-  assert.equal(isOpenForAssignment("done", state, { surfaceIdSet }), false);
-  assert.equal(isOpenForAssignment("blocked", state, { surfaceIdSet }), false);
-  assert.equal(isOpenForAssignment("missing", state, { surfaceIdSet }), false);
-  assert.equal(isOpenForAssignment("", state, { surfaceIdSet }), false);
+  const options = {
+    surfaceIdSet: new Set(["open", "done", "blocked"]),
+    exploredSurfaceIds: new Set(["done"]),
+    terminallyBlockedSurfaceIds: new Set(["blocked"]),
+  };
+  assert.equal(isOpenForAssignment("open", state, options), true);
+  assert.equal(isOpenForAssignment("done", state, options), false);
+  assert.equal(isOpenForAssignment("blocked", state, options), false);
+  assert.equal(isOpenForAssignment("missing", state, options), false);
+  assert.equal(isOpenForAssignment("", state, options), false);
 });
 
-test("planNextWave returns pending-wave reconcile before selecting candidates", () => {
+test("planNextWave returns pending-wave settle before selecting candidates", () => {
   const plan = planNextWave({
     state: {
-      hunt_wave: 2,
+      evaluation_wave: 2,
       pending_wave: 3,
-      explored: [],
-      terminally_blocked: [],
-      lead_surface_ids: [],
     },
     surfaces: [surface("high", "CRITICAL", 100)],
+    exploredSurfaceIds: [],
+    terminallyBlockedSurfaceIds: [],
+    leadSurfaceIds: [],
   });
-  assert.equal(plan.decision, "pending_wave_reconcile");
+  assert.equal(plan.decision, "pending_wave_settle");
   assert.deepEqual(plan.assignments, []);
   assert.deepEqual(plan.buckets, []);
   assert.equal(plan.pending_wave, 3);

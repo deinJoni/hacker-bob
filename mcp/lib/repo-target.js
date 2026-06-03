@@ -1,89 +1,346 @@
 "use strict";
 
+// Cycle O.1 of Plane O: repo-bound target axis. This module owns the
+// SessionNucleus and state.json initialization path for OSS sessions.
+// A repo session derives its `target_domain` from the absolute repo
+// path so reopening the same checkout from any working directory
+// always lands on the same session.
+//
+// Plane O invariant O-P1 (local-repo first) is enforced via
+// governance-contracts.assertRepoRootPath: the path must exist as a
+// local directory before binding. No clone-from-remote happens here.
+
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { execFileSync } = require("child_process");
+
 const {
-  assertNonEmptyString,
   assertBoolean,
+  assertNonEmptyString,
   normalizeOptionalText,
 } = require("./validation.js");
 const {
-  attackSurfacePath,
+  assertSafeDomain,
   repoChecksJsonlPath,
   repoInventoryPath,
-  sessionsRoot,
+  sessionDir,
+  sessionNucleusPath,
+  statePath,
 } = require("./paths.js");
 const {
+  buildSessionNucleus,
+  normalizeTargetRepo,
+} = require("./governance-contracts.js");
+const {
+  resolveEgressProfile,
+} = require("./egress-profiles.js");
+const {
+  buildInitialSessionState,
+  egressProfileStateFields,
+  deriveBlockInternalHostsPolicy,
+} = require("./session-state-contracts.js");
+const {
   appendJsonlLine,
+  isSessionDirEffectivelyEmpty,
   withSessionLock,
-  writeFileAtomic,
 } = require("./storage.js");
 const {
-  initSession,
-} = require("./session-state.js");
+  ERROR_CODES,
+  ToolError,
+} = require("./envelope.js");
 const {
-  readSessionStateStrict,
+  hashDocumentExcluding,
+  writeJsonDocument,
+} = require("./fabric-common.js");
+const {
+  writeSessionStateDocument,
 } = require("./session-state-store.js");
+const {
+  readSessionNucleus,
+} = require("./governance-store.js");
+const {
+  appendSessionEvent,
+} = require("./session-events.js");
+const {
+  hashCanonicalJson,
+} = require("./verification-contracts.js");
+const {
+  safeAppendPipelineEventDirect,
+} = require("./pipeline-events.js");
+const {
+  buildGovernanceContextFromNucleus,
+} = require("./governance-context.js");
+const {
+  appendFrontierEvent,
+} = require("./frontier-events.js");
+const {
+  scheduleMaterialization,
+} = require("./frontier-materialize-debounce.js");
+const {
+  redactTextSensitiveValues,
+  validateNoSensitiveMaterial,
+} = require("./sensitive-material.js");
+
+// Cycle O.1: SAFE_NAME_PATTERN keeps the basename safe for the
+// target_domain slug. Any character outside `[A-Za-z0-9._-]` is folded
+// to a single dash; leading/trailing dashes are trimmed. Empty
+// basenames (e.g. trailing slash on root) fall back to "repo".
+function safeBasename(value) {
+  const base = path.basename(value || "").trim();
+  if (!base) return "repo";
+  const folded = base.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return folded || "repo";
+}
+
+function sha8(value) {
+  return crypto.createHash("sha256").update(String(value)).digest("hex").slice(0, 8);
+}
+
+function sha64(value) {
+  return crypto.createHash("sha256").update(String(value)).digest("hex");
+}
+
+function deriveRepoTargetDomain(realpathValue) {
+  const name = safeBasename(realpathValue);
+  return `repo-${name}-${sha8(realpathValue)}`;
+}
+
+function deriveRepoHashFromPath(realpathValue) {
+  // Stable 64-hex digest of the canonical path. Trimmed to 64 chars so
+  // it shares the validation envelope with explicit git commit hashes
+  // (which can be 40 hex chars).
+  return sha64(realpathValue);
+}
+
+// Translate a friendly error code from assertRepoRootPath into a
+// structured ToolError so callers (bob_init_repo_session) surface the
+// repo_path_not_found / repo_path_not_directory contract explicitly.
+function repoPathError(error) {
+  if (error && error.code === "repo_path_not_found") {
+    return new ToolError(ERROR_CODES.INVALID_ARGUMENTS, error.message || "repo path not found", {
+      repo_error_code: "repo_path_not_found",
+    });
+  }
+  if (error && error.code === "repo_path_not_directory") {
+    return new ToolError(ERROR_CODES.INVALID_ARGUMENTS, error.message || "repo path is not a directory", {
+      repo_error_code: "repo_path_not_directory",
+    });
+  }
+  return null;
+}
+
+function initRepoSession({
+  repo_path: repoPath,
+  target_domain: requestedTargetDomain = null,
+  source_url: sourceUrl = null,
+  branch = null,
+  commit = null,
+  deep_mode: deepMode = false,
+  egress_profile: requestedEgressProfile = null,
+} = {}) {
+  let targetRepo;
+  try {
+    targetRepo = normalizeTargetRepo({
+      root_path: repoPath,
+      source_url: sourceUrl,
+      branch,
+      commit,
+    }, "target_repo");
+  } catch (error) {
+    const mapped = repoPathError(error);
+    if (mapped) throw mapped;
+    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, error.message || String(error));
+  }
+
+  const canonicalRoot = targetRepo.root_path;
+  const derivedDomain = deriveRepoTargetDomain(canonicalRoot);
+
+  let domain;
+  if (requestedTargetDomain != null) {
+    const trimmed = assertNonEmptyString(requestedTargetDomain, "target_domain");
+    assertSafeDomain(trimmed);
+    // Accept any safe slug the operator provides — supports the documented
+    // --target-id <id> override for stable/memorable repo session names. The
+    // derived slug remains the default when no override is supplied.
+    domain = trimmed;
+  } else {
+    domain = derivedDomain;
+  }
+
+  const repoHash = (targetRepo.commit && /^[0-9a-f]{8,64}$/i.test(targetRepo.commit))
+    ? targetRepo.commit.toLowerCase()
+    : deriveRepoHashFromPath(canonicalRoot);
+
+  const normalizedDeepMode = deepMode == null ? false : assertBoolean(deepMode, "deep_mode");
+  const profileName = requestedEgressProfile == null
+    ? "default"
+    : assertNonEmptyString(requestedEgressProfile, "egress_profile");
+
+  return withSessionLock(domain, () => {
+    const dir = sessionDir(domain);
+    const filePath = statePath(domain);
+
+    if (fs.existsSync(filePath)) {
+      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Session already initialized: ${filePath}`);
+    }
+    if (!isSessionDirEffectivelyEmpty(dir)) {
+      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Session directory is not empty: ${dir}`);
+    }
+
+    const egressProfile = resolveEgressProfile(profileName);
+    const egressFields = egressProfileStateFields(egressProfile);
+    const internalHostPolicy = deriveBlockInternalHostsPolicy({
+      checkpointMode: "normal",
+      legacyDefault: false,
+    });
+
+    const sessionNucleus = buildSessionNucleus({
+      target_domain: domain,
+      target_repo: targetRepo,
+      repo_hash: repoHash,
+      scope_policy: {
+        target_domain: domain,
+        target_repo: targetRepo,
+        ...internalHostPolicy,
+      },
+      egress_identity: egressFields,
+      auth_context: {
+        auth_status: "pending",
+      },
+      operator_constraint: {
+        handoff_provenance_required: true,
+      },
+    });
+    writeJsonDocument(sessionNucleusPath(domain), sessionNucleus);
+    appendSessionEvent({
+      target_domain: domain,
+      kind: "governance.session.initialized",
+      nucleus_hash: sessionNucleus.nucleus_hash,
+      payload: {
+        nucleus_hash: sessionNucleus.nucleus_hash,
+        scope_policy_hash: hashCanonicalJson(sessionNucleus.scope_policy),
+        egress_identity_hash: hashCanonicalJson(sessionNucleus.egress_identity),
+        auth_context_hash: hashCanonicalJson(sessionNucleus.auth_context),
+        operator_constraint_hash: hashCanonicalJson(sessionNucleus.operator_constraint),
+        repo_hash: sessionNucleus.repo_hash,
+      },
+    });
+
+    const state = buildInitialSessionState(domain, null, {
+      deepMode: normalizedDeepMode,
+      egressProfile,
+      blockInternalHostsPolicy: sessionNucleus.scope_policy,
+      targetRepo,
+      repoHash,
+    });
+    writeSessionStateDocument(domain, {}, state);
+    safeAppendPipelineEventDirect(domain, "session_started", {
+      lifecycle_state: state.lifecycle_state,
+      source: "bob_init_repo_session",
+      deep_mode: state.deep_mode,
+      checkpoint_mode: state.checkpoint_mode,
+      block_internal_hosts: state.block_internal_hosts,
+      block_internal_hosts_source: state.block_internal_hosts_source,
+      repo_hash: repoHash,
+      ...egressFields,
+    }, buildGovernanceContextFromNucleus(sessionNucleus));
+
+    return {
+      created: true,
+      session_dir: dir,
+      target_domain: domain,
+      target_repo: targetRepo,
+      repo_hash: repoHash,
+      nucleus_hash: sessionNucleus.nucleus_hash,
+      lifecycle_state: state.lifecycle_state,
+      deep_mode: state.deep_mode,
+      egress_profile: state.egress_profile,
+    };
+  });
+}
+
+function readRepoSession(targetDomain) {
+  const domain = assertNonEmptyString(targetDomain, "target_domain");
+  const nucleus = readSessionNucleus(domain);
+  if (!nucleus || nucleus.scope_policy == null || nucleus.scope_policy.target_repo == null) {
+    throw new ToolError(
+      ERROR_CODES.STATE_CONFLICT,
+      `target_domain ${domain} is not a repo session`,
+    );
+  }
+  return {
+    target_domain: nucleus.target_domain,
+    target_repo: nucleus.scope_policy.target_repo,
+    repo_hash: nucleus.repo_hash || null,
+    nucleus_hash: nucleus.nucleus_hash,
+    lifecycle_state: nucleus.lifecycle_state,
+  };
+}
+
+// Cycle O.2: repo-inventory walks the bound repo and emits frontier
+// `surface.observed` events for each enumerated artefact. The walker
+// honours `.gitignore`, default-excludes heavy build/vendor trees,
+// halts on symlink loops, and caps the walk at 50k files so that
+// `init_repo_session(node_modules-monorepo/)` does not exhaust memory.
 
 const REPO_INVENTORY_VERSION = 1;
-const REPO_CHECK_LOG_MAX_RECORDS = 1000;
-const MAX_WALK_FILES = 5000;
-const MAX_FILE_BYTES = 250000;
-const MAX_MATCHES = 20;
+const REPO_WALK_MAX_FILES = 50000;
+const REPO_WALK_PROBE_MAX_BYTES = 64 * 1024; // cap text probes (NFS detection)
 
-const IGNORED_DIRS = new Set([
+// Default-excluded directory names (per O.2 spec). These are layered ON TOP
+// of .gitignore patterns; .gitignore is the authoritative source for a
+// per-repo override, the default list captures heavy directories that are
+// almost always ignored even when no .gitignore exists.
+const DEFAULT_EXCLUDED_DIRS = Object.freeze(new Set([
   ".git",
-  ".hg",
-  ".svn",
   "node_modules",
-  "vendor",
-  "dist",
-  "build",
-  ".next",
-  ".nuxt",
-  "coverage",
-  ".cache",
-  ".turbo",
-  ".venv",
-  "venv",
-  "__pycache__",
   "target",
-]);
+  "build",
+  "dist",
+  "vendor",
+  ".venv",
+  "__pycache__",
+  "coverage",
+]));
 
-const MANIFEST_NAMES = new Set([
+// Manifest filenames that flag a package/module surface.
+const MANIFEST_NAMES = Object.freeze(new Set([
   "package.json",
-  "package-lock.json",
-  "pnpm-lock.yaml",
-  "yarn.lock",
-  "bun.lockb",
-  "requirements.txt",
-  "pyproject.toml",
-  "Pipfile",
-  "poetry.lock",
-  "go.mod",
-  "go.sum",
   "Cargo.toml",
-  "Cargo.lock",
-  "Gemfile",
-  "Gemfile.lock",
-  "composer.json",
-  "composer.lock",
+  "go.mod",
+  "requirements.txt",
+  "setup.py",
+  "pyproject.toml",
   "pom.xml",
   "build.gradle",
   "build.gradle.kts",
-]);
+  "Gemfile",
+  "composer.json",
+]));
 
-const DOC_NAMES = new Set([
-  "README.md",
-  "SECURITY.md",
-  "CONTRIBUTING.md",
-  "CHANGELOG.md",
-  "docs/README.md",
-]);
+// Lockfiles paired with the manifest for "has_lockfile" signalling.
+const LOCKFILE_NAMES = Object.freeze(new Set([
+  "package-lock.json",
+  "yarn.lock",
+  "pnpm-lock.yaml",
+  "Cargo.lock",
+  "go.sum",
+  "Pipfile.lock",
+  "poetry.lock",
+  "Gemfile.lock",
+  "composer.lock",
+]));
 
-const NATIVE_CODE_EXTENSIONS = new Set([
+// Native build files — presence promotes the repo to NATIVE-CODE surface.
+const NATIVE_BUILD_NAMES = Object.freeze(new Set([
+  "CMakeLists.txt",
+  "configure.ac",
+  "Makefile.am",
+  "Makefile",
+  "meson.build",
+]));
+
+const NATIVE_SOURCE_EXTENSIONS = Object.freeze(new Set([
   ".c",
   ".cc",
   ".cpp",
@@ -91,836 +348,1313 @@ const NATIVE_CODE_EXTENSIONS = new Set([
   ".h",
   ".hh",
   ".hpp",
-  ".ipp",
-  ".inl",
+]));
+
+// CI/CD config paths. The first match wins; we want the file relative path
+// to land on the materialized surface so downstream readers can locate it.
+const CI_CONFIG_MATCHERS = Object.freeze([
+  (rel) => rel.startsWith(".github/workflows/") && /\.ya?ml$/i.test(rel),
+  (rel) => rel === ".gitlab-ci.yml",
+  (rel) => rel === "Jenkinsfile",
+  (rel) => rel === ".circleci/config.yml",
 ]);
 
-const NATIVE_BUILD_FILE_RE = /(^|\/)(CMakeLists\.txt|Makefile|Makefile\.am|configure|configure\.ac|configure\.in|meson\.build|meson_options\.txt|SConstruct|SConscript)$/;
-
-// --- Reachability + severity-ceiling classification ----------------------
-// A memory-safety bug's realistic severity ceiling is set by HOW attacker
-// input reaches it. A network-reachable listener (daemon/server/RPC) feeding a
-// parser is AV:N (CRITICAL-capable); a pure local-file parser library is AV:L
-// (MEDIUM-realistic). Bob historically stamped every native surface a flat
-// HIGH, so a .dwg reader looked identical to an NFS daemon and the planner
-// burned its top slot proving an OOB-read that could only ever grade MEDIUM.
-// These helpers stamp each surface with network_reachable / attack_vector /
-// severity_ceiling so routing and the operator can triage the ceiling up front.
-// Socket/RPC/TLS call signals. Bare `bind`/`accept`/`recv` are intentionally
-// excluded — they collide with std::bind, visitor.accept, etc. The tokens in
-// NETWORK_TOKEN_RE carry the socket-setup confidence instead.
-// Prefix families (xdr_*, evhttp_*, uv_tcp_*) must consume the rest of the
-// identifier — including digits, e.g. xdr_uint32_t / xdr_int64_t — before
-// `\s*\(`; a bare prefix only matches nonexistent literals like `xdr_x(`.
-const NETWORK_CONTENT_RE = /\b(accept4|recvfrom|recvmsg|WSAStartup|getaddrinfo|svc_run|svc_register|svc_create|xdr_[a-z0-9_]+|clnt_create|rpcb_set|MHD_start_daemon|evhttp_[a-z0-9_]+|uv_tcp_[a-z0-9_]+|SSL_accept|gnutls_handshake|bindresvport)\s*\(/;
-// socket()/listen() are the only libc tokens common enough to double as C++
-// method names (emitter.listen(), acceptor.socket()); require they not be
-// member-/pointer-/identifier-prefixed so event helpers don't read as daemons.
-const NETWORK_SOCKET_RE = /(?<![\w.>])(socket|listen)\s*\(/;
-const NETWORK_TOKEN_RE = /\b(INADDR_ANY|SOCK_STREAM|SOCK_DGRAM|AF_INET6?|sockaddr_in6?|htons|in_port_t)\b/;
-// Bundled test/example/fuzz/benchmark code routinely contains socket/server
-// code that is NOT part of the shipping daemon or library; excluding these dirs
-// from the reachability scan stops a local-file parser that ships a demo server
-// from being mis-stamped network-reachable (AV:N/CRITICAL).
-const NON_SHIPPING_DIR_RE = /(^|\/)(tests?|examples?|samples?|demos?|fuzz|fuzzing|benchmarks?|contrib|third[_-]?party|3rdparty|fixtures?|testdata)\//i;
-const SERVICE_UNIT_RE = /(^|\/)[^/]+\.(service|socket)$/;
-const SERVER_PATH_RE = /(^|\/)(daemon|daemons|server|servers|httpd|net|rpc|proto|protocol|listener|ipc)\//i;
-const SERVER_FILE_RE = /(^|\/)[^/]*(server|daemon|listener|socket|httpd|rpcsvc)[^/]*\.(c|cc|cpp|cxx|h|hpp)$/i;
-const ENTRYPOINT_FILE_RE = /(^|\/)(main|app|service|net|socket|server|daemon|rpc|http|listen)\w*\.(c|cc|cpp|cxx)$/i;
-const DOCKERFILE_RE = /(^|\/)Dockerfile([.-][\w.-]+)?$/;
-const NETWORK_SCAN_LIMIT = 50;
-const NETWORK_FALLBACK_LIMIT = 80;
-
-const CEILING_RANK = Object.freeze({ critical: 4, high: 3, medium: 2, low: 1, none: 0 });
-
-function maxCeiling(a, b) {
-  return (CEILING_RANK[b] || 0) > (CEILING_RANK[a] || 0) ? b : a;
-}
-
-// Stamp the realistic severity ceiling for a surface given its reachability.
-// Ceiling is the best credible case for that surface class; the verifier/grader
-// still set the actual severity from proven impact.
-function severityCeilingForSurface(surfaceType, networkReachable) {
-  switch (surfaceType) {
-    case "oss_native_code":
-      return networkReachable ? "critical" : "medium";
-    case "oss_api_schema":
-    case "oss_authz":
-      return networkReachable ? "high" : "medium";
-    case "oss_dependency":
-    case "oss_ci_cd":
-      // Supply-chain (release-pipeline MITM / workflow injection) is real but
-      // realistically grades MEDIUM in the corpus (libarchive, exiv2) and is
-      // gated on a maintainer/release action — keep it medium so it does not
-      // mask a memory-safety target's true (capped) ceiling in the warning.
-      return "medium";
-    case "oss_secrets_config":
-      return "medium";
-    case "oss_docs_behavior":
-      return "low";
-    default:
-      return "medium";
-  }
-}
-
-function attackVectorForSurface(surfaceType, networkReachable) {
-  if (surfaceType === "oss_dependency" || surfaceType === "oss_ci_cd") return "supply_chain";
-  if (surfaceType === "oss_native_code" || surfaceType === "oss_api_schema" || surfaceType === "oss_authz") {
-    return networkReachable ? "network" : "local";
-  }
-  return "local";
-}
-
-// Per-path reachability attribution. The repo-wide severity_ceiling stays the
-// best-case (max-credible) ceiling; this map tells the hunter WHICH files/dirs
-// carry the listener (pursue the CRITICAL primitive there) and which native dirs
-// look local-only (record an honest MEDIUM), so a repo that is both a daemon and
-// a pile of local parsers is not blanket-steered with one verdict. Flat string
-// arrays only — the brief copies scalars/arrays by default but skips objects.
-const REACH_ANCHOR_PREFIXES = ["net_call:", "server_path:", "systemd_unit:", "expose:"];
-
-function dirPrefixesAtDepth(files, maxDepth, cap) {
-  const dirs = new Set();
-  for (const file of files) {
-    if (!file.includes("/")) continue;
-    const parts = file.split("/");
-    dirs.add(parts.slice(0, Math.min(maxDepth, parts.length - 1)).join("/"));
-  }
-  return Array.from(dirs).slice(0, cap);
-}
-
-function reachabilityAttribution(signals, nativeFiles) {
-  const anchors = [];
-  for (const signal of signals) {
-    const prefix = REACH_ANCHOR_PREFIXES.find((p) => signal.startsWith(p));
-    if (prefix) anchors.push(signal.slice(prefix.length));
-  }
-  const anchorFiles = Array.from(new Set(anchors));
-  const reachableDirs = dirPrefixesAtDepth(anchorFiles, 2, 20);
-  const localDirs = dirPrefixesAtDepth(nativeFiles, 2, 200).filter(
-    (dir) => !reachableDirs.some((rd) => dir === rd || dir.startsWith(`${rd}/`) || rd.startsWith(`${dir}/`)),
-  ).slice(0, 20);
-  return {
-    network_reachable_anchors: anchorFiles.slice(0, 20),
-    network_reachable_dirs: reachableDirs,
-    local_only_candidate_dirs: localDirs,
-  };
-}
-
-// Scan a repo for evidence of an in-process network listener that could feed
-// attacker-controlled input into a parser. Bounded I/O: priority files first
-// (path/name suggests a server), then a capped fallback sweep of native files.
-function detectNetworkReachability(repoPath, files) {
-  const signals = [];
-  // Reachability must reflect the SHIPPING daemon/library, not bundled test
-  // harnesses, examples, or fuzzers (which routinely contain socket/server code).
-  const shippingFiles = files.filter((file) => !NON_SHIPPING_DIR_RE.test(file));
-  const nativeFiles = shippingFiles.filter((file) => NATIVE_CODE_EXTENSIONS.has(path.extname(file).toLowerCase()));
-  for (const file of shippingFiles) {
-    if (SERVICE_UNIT_RE.test(file)) signals.push(`systemd_unit:${file}`);
-  }
-  const priority = nativeFiles.filter((file) => SERVER_PATH_RE.test(file) || SERVER_FILE_RE.test(file));
-  for (const file of priority) signals.push(`server_path:${file}`);
-  const dockerfiles = shippingFiles.filter((file) => DOCKERFILE_RE.test(file));
-  const scanList = Array.from(new Set([
-    ...priority,
-    ...nativeFiles.filter((file) => ENTRYPOINT_FILE_RE.test(file)),
-    ...dockerfiles,
-  ])).slice(0, NETWORK_SCAN_LIMIT);
-  let netHit = false;
-  for (const file of scanList) {
-    const text = safeReadText(repoPath, file, 150000);
-    if (!text) continue;
-    if (DOCKERFILE_RE.test(file)) {
-      if (/\bEXPOSE\s+\d/.test(text)) { signals.push(`expose:${file}`); netHit = true; }
-      continue;
-    }
-    if (NETWORK_CONTENT_RE.test(text) || NETWORK_SOCKET_RE.test(text) || NETWORK_TOKEN_RE.test(text)) {
-      signals.push(`net_call:${file}`);
-      netHit = true;
-      if (signals.length >= 14) break;
-    }
-  }
-  if (!netHit) {
-    for (const file of nativeFiles.slice(0, NETWORK_FALLBACK_LIMIT)) {
-      const text = safeReadText(repoPath, file, 150000);
-      if (!text) continue;
-      if (NETWORK_CONTENT_RE.test(text) || NETWORK_SOCKET_RE.test(text)) { signals.push(`net_call:${file}`); netHit = true; break; }
-    }
-  }
-  const signalsOut = Array.from(new Set(signals)).slice(0, 14);
-  const reachable = netHit || signals.some((s) => s.startsWith("systemd_unit:"));
-  return {
-    network_reachable: reachable,
-    signals: signalsOut,
-    attribution: reachable ? reachabilityAttribution(signalsOut, nativeFiles) : null,
-  };
-}
-
-// --- Incomplete-fix residual hunting seed ---------------------------------
-// The highest-yield HIGH method in Bob's corpus (netatalk's 2 HIGH) is finding
-// the sibling/adjacent code paths a recent security patch did NOT cover. Mine
-// the repo's own recent history + changelog for security fixes and hand the
-// hunter concrete recently-patched anchors to sibling-hunt. Output is an array
-// of concise STRINGS (the brief caps array items via String()).
-const SECURITY_KEYWORD_RE = /\b(CVE-\d{4}-\d+|GHSA-[\w-]+|overflow|out[- ]of[- ]bounds|\bOOB\b|use[- ]after[- ]free|\bUAF\b|double[- ]free|buffer overrun|heap corruption|integer (?:overflow|underflow)|bounds[- ]check|sanitiz(?:e|er)|memory safety|security (?:fix|issue)|vulnerabilit|null (?:deref|pointer)|segfault|infinite loop|denial of service|\bDoS\b|malformed|crafted)/i;
-const RESIDUAL_DOC_NAMES = new Set([
-  "CHANGELOG.md", "CHANGELOG", "ChangeLog", "CHANGES", "CHANGES.md",
-  "NEWS", "NEWS.md", "SECURITY.md", "RELEASE_NOTES.md", "HISTORY.md",
+// Entry-point detectors. Each returns true when the file/path indicates an
+// executable / main entry. Directory-shaped patterns are also recognised so
+// e.g. `bin/foo` and `cmd/server/main.go` both surface.
+const ENTRY_POINT_MATCHERS = Object.freeze([
+  (rel) => rel.startsWith("bin/"),
+  (rel) => rel.startsWith("cmd/"),
+  (rel) => /(^|\/)src\/main\.[a-z0-9]+$/i.test(rel),
+  (rel) => /(^|\/)index\.[a-z0-9]+$/i.test(rel),
+  (rel) => /(^|\/)__main__\.py$/.test(rel),
 ]);
-const RESIDUAL_GIT_TIMEOUT_MS = 15000;
-const RESIDUAL_MAX_TARGETS = 18;
-const RESIDUAL_GIT_PATHSPEC_MAX = 40;
 
-function extractResidualFromDocs(repoPath, files) {
-  const leads = [];
-  const docCandidates = files.filter((file) => RESIDUAL_DOC_NAMES.has(path.basename(file)));
-  for (const file of docCandidates.slice(0, 6)) {
-    const text = safeReadText(repoPath, file, 200000);
-    if (!text) continue;
-    const lines = text.split(/\r?\n/);
-    for (let i = 0; i < lines.length && leads.length < 12; i += 1) {
-      const line = lines[i].trim().replace(/^[-*#\s]+/, "");
-      if (line.length < 8) continue;
-      if (SECURITY_KEYWORD_RE.test(line)) {
-        leads.push(`changelog:${path.basename(file)}: ${line.slice(0, 200)}`);
+// Special config names that should surface as their own "config" event.
+const CONFIG_MATCHERS = Object.freeze([
+  (rel) => /(^|\/)\.env(\..+)?$/.test(rel),
+  (rel) => rel === "Dockerfile",
+  (rel) => /(^|\/)Dockerfile(\..+)?$/.test(rel),
+  (rel) => rel === "docker-compose.yml" || rel === "docker-compose.yaml",
+  (rel) => rel.startsWith(".devcontainer/"),
+]);
+
+// File-extension → language hint map. Lightweight and intentionally bounded;
+// the hypergraph only needs a per-module language signal, not full LOC.
+const LANGUAGE_BY_EXT = Object.freeze({
+  ".js": "javascript",
+  ".jsx": "javascript",
+  ".mjs": "javascript",
+  ".cjs": "javascript",
+  ".ts": "typescript",
+  ".tsx": "typescript",
+  ".py": "python",
+  ".go": "go",
+  ".rs": "rust",
+  ".rb": "ruby",
+  ".php": "php",
+  ".java": "java",
+  ".kt": "kotlin",
+  ".kts": "kotlin",
+  ".scala": "scala",
+  ".cs": "csharp",
+  ".c": "c",
+  ".h": "c",
+  ".cc": "cpp",
+  ".cpp": "cpp",
+  ".cxx": "cpp",
+  ".hh": "cpp",
+  ".hpp": "cpp",
+  ".swift": "swift",
+  ".m": "objc",
+  ".mm": "objc",
+});
+
+// Ecosystem mapping for dependency observations.
+const ECOSYSTEM_BY_MANIFEST = Object.freeze({
+  "package.json": "npm",
+  "Cargo.toml": "cargo",
+  "go.mod": "go",
+  "requirements.txt": "pypi",
+  "setup.py": "pypi",
+  "pyproject.toml": "pypi",
+  "pom.xml": "maven",
+  "build.gradle": "gradle",
+  "build.gradle.kts": "gradle",
+  "Gemfile": "rubygems",
+  "composer.json": "composer",
+});
+
+// NFS/XDR shape detection — when present, prepare_env can preload extra
+// libtirpc/krb5/ssl/nfs packages. We deliberately read a small probe of the
+// build file rather than scanning every .c file.
+const NFS_XDR_SIGNALS = Object.freeze([
+  /libtirpc/i,
+  /libnfs\.h/i,
+  /rpc\/xdr\.h/i,
+  /\bxdr_/i,
+]);
+
+// Minimal .gitignore parser. Supports negation (`!pattern`), trailing slashes
+// (directory-only), and glob characters via a converted RegExp. We do not
+// implement the full git wildmatch semantics — the tradeoff is intentional:
+// the bounded surface enumeration here is a hint to the orchestrator, not
+// the authoritative file ACL. The session-read-guard remains the trust root
+// for sensitive paths.
+function compileGitignorePatterns(text) {
+  const lines = text.split(/\r?\n/);
+  const patterns = [];
+  for (const raw of lines) {
+    const trimmed = raw.replace(/\s+$/, "");
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    let pattern = trimmed;
+    let negated = false;
+    if (pattern.startsWith("!")) {
+      negated = true;
+      pattern = pattern.slice(1);
+    }
+    let directoryOnly = false;
+    if (pattern.endsWith("/")) {
+      directoryOnly = true;
+      pattern = pattern.slice(0, -1);
+    }
+    if (!pattern) continue;
+    const anchoredAtRoot = pattern.startsWith("/");
+    if (anchoredAtRoot) pattern = pattern.slice(1);
+    // Convert glob → regex. * matches anything but `/`; ** matches across
+    // path separators; ? matches single non-`/` char. Other regex metas
+    // are escaped.
+    let regex = "";
+    for (let i = 0; i < pattern.length; i++) {
+      const ch = pattern[i];
+      if (ch === "*" && pattern[i + 1] === "*") {
+        regex += ".*";
+        i += 1;
+      } else if (ch === "*") {
+        regex += "[^/]*";
+      } else if (ch === "?") {
+        regex += "[^/]";
+      } else if (/[.+^${}()|[\]\\]/.test(ch)) {
+        regex += "\\" + ch;
+      } else {
+        regex += ch;
       }
     }
+    const prefix = anchoredAtRoot ? "^" : "(?:^|.*/)";
+    const compiled = new RegExp(`${prefix}${regex}${directoryOnly ? "(?:/|$)" : "$"}`);
+    patterns.push({ regex: compiled, negated, directoryOnly });
   }
-  return leads;
+  return patterns;
 }
 
-// Build a git pathspec that targets where native source actually lives. Prefer
-// depth-2 dirs (e.g. src/parsers) for precision; collapse to top-level dirs if a
-// wide flat layout would blow the pathspec budget. Root-level native files are
-// passed as explicit paths. Never fall back to "." (whole repo) — that drags
-// doc/vendor churn in as false residual seeds.
-function residualGitPathspec(nativeSourceFiles) {
-  const depth1 = new Set();
-  const depth2 = new Set();
-  const rootFiles = [];
-  for (const file of nativeSourceFiles) {
-    if (!file.includes("/")) { rootFiles.push(file); continue; }
-    const parts = file.split("/");
-    depth1.add(parts[0]);
-    depth2.add(parts.slice(0, Math.min(2, parts.length - 1)).join("/"));
+function matchesGitignore(patterns, relativePath, isDirectory) {
+  let ignored = false;
+  for (const { regex, negated, directoryOnly } of patterns) {
+    if (directoryOnly && !isDirectory) continue;
+    if (regex.test(relativePath)) {
+      ignored = !negated;
+    }
   }
-  const dirs = depth2.size <= RESIDUAL_GIT_PATHSPEC_MAX ? depth2 : depth1;
-  return [
-    ...Array.from(dirs).slice(0, RESIDUAL_GIT_PATHSPEC_MAX),
-    ...rootFiles.slice(0, RESIDUAL_GIT_PATHSPEC_MAX),
-  ];
+  return ignored;
 }
 
-function extractResidualFromGit(repoPath, nativeSourceFiles) {
-  if (!fs.existsSync(path.join(repoPath, ".git"))) return [];
-  const pathspec = residualGitPathspec(nativeSourceFiles);
-  if (pathspec.length === 0) return [];
-  let out = "";
+function loadGitignore(rootPath) {
+  const candidate = path.join(rootPath, ".gitignore");
+  if (!fs.existsSync(candidate)) return [];
   try {
-    out = execFileSync("git", [
-      "-C", repoPath, "log", "--no-merges",
-      "--since=9 months ago", "--max-count=600",
-      "--pretty=format:%h%x1f%s",
-      "--", ...pathspec,
-    ], {
-      encoding: "utf8",
-      timeout: RESIDUAL_GIT_TIMEOUT_MS,
-      maxBuffer: 8 * 1024 * 1024,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
+    const raw = fs.readFileSync(candidate, "utf8");
+    return compileGitignorePatterns(raw);
   } catch {
     return [];
   }
-  const leads = [];
-  for (const line of out.split(/\r?\n/)) {
-    if (!line) continue;
-    const sep = line.indexOf("\x1f");
-    if (sep < 0) continue;
-    const hash = line.slice(0, sep);
-    const subject = line.slice(sep + 1);
-    if (subject && SECURITY_KEYWORD_RE.test(subject)) {
-      leads.push(`git:${hash}: ${subject.slice(0, 200)}`);
-      if (leads.length >= 15) break;
-    }
-  }
-  return leads;
 }
 
-// Recently-patched security anchors (git commits first — most precise — then
-// changelog lines). The hunter sibling-hunts these: same struct, adjacent
-// count/length field, parallel branch the patch did not bound.
-function extractResidualHuntTargets(repoPath, files, nativeSourceFiles) {
-  // nativeSourceFiles is the UNCAPPED native set (computed once by the caller).
-  // The 120-cap display slice must NOT be used here — on a large daemon
-  // (netatalk-class) the alphabetically-first 120 files starve recently-patched
-  // dirs like libatalk/ or sys/, and incomplete-fix residual hunting is the
-  // highest-yield HIGH method in the corpus, so that bias matters most here.
-  const gitLeads = extractResidualFromGit(repoPath, nativeSourceFiles);
-  const docLeads = extractResidualFromDocs(repoPath, files);
-  return Array.from(new Set([...gitLeads, ...docLeads])).slice(0, RESIDUAL_MAX_TARGETS);
+// Symlink-loop guard. Tracks the device+inode pair for every directory we
+// descend into; a repeat visit halts that branch cleanly without throwing.
+function statKey(stat) {
+  return `${stat.dev}:${stat.ino}`;
 }
 
-function shortHash(value) {
-  return crypto.createHash("sha256").update(String(value)).digest("hex").slice(0, 12);
-}
-
-function slugify(value) {
-  const slug = String(value || "repo")
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48);
-  return slug || "repo";
-}
-
-function normalizeRepoPath(repoPath) {
-  const raw = assertNonEmptyString(repoPath, "repo_path");
-  const resolved = path.resolve(raw);
-  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
-    throw new Error(`repo_path must be an existing directory: ${resolved}`);
-  }
-  const real = fs.realpathSync(resolved);
-  const sessionsBase = path.resolve(sessionsRoot());
-  if (fs.existsSync(sessionsBase)) {
-    const sessions = fs.realpathSync(sessionsBase);
-    if (real === sessions || real.startsWith(`${sessions}${path.sep}`)) {
-      throw new Error("repo_path must not point inside Bob session storage");
-    }
-  }
-  return real;
-}
-
-function makeRepoTargetId(repoPath, explicitTargetId = null) {
-  const explicit = normalizeOptionalText(explicitTargetId, "target_domain");
-  if (explicit) {
-    if (/[\/\\]/.test(explicit) || /(?:^|\.)\.\.(?:\.|$)/.test(explicit)) {
-      throw new Error(`target_domain contains invalid path characters: ${explicit}`);
-    }
-    return explicit;
-  }
-  const basename = slugify(path.basename(repoPath));
-  return `repo-${basename}-${shortHash(repoPath)}`;
-}
-
-function readGitMetadata(repoPath) {
-  const gitDir = path.join(repoPath, ".git");
-  if (!fs.existsSync(gitDir)) return {};
-  try {
-    const head = fs.readFileSync(path.join(gitDir, "HEAD"), "utf8").trim();
-    if (head.startsWith("ref: ")) {
-      const ref = head.slice("ref: ".length);
-      const branch = ref.split("/").pop() || null;
-      const refPath = path.join(gitDir, ref);
-      const commit = fs.existsSync(refPath) ? fs.readFileSync(refPath, "utf8").trim() : null;
-      return { branch, commit };
-    }
-    return { commit: head };
-  } catch {
-    return {};
+class RepoTooLargeError extends Error {
+  constructor(limit) {
+    super(`repo_too_large: walked over ${limit} files; rerun against a narrower repo_path`);
+    this.code = "repo_too_large";
+    this.limit = limit;
   }
 }
 
-function initRepoSession(args) {
-  const repoPath = normalizeRepoPath(args.repo_path);
-  const targetDomain = makeRepoTargetId(repoPath, args.target_domain || args.target_id);
-  const sourceUrl = normalizeOptionalText(args.source_url, "source_url");
-  const git = readGitMetadata(repoPath);
-  const result = JSON.parse(initSession({
-    target_domain: targetDomain,
-    target_url: `repo://${targetDomain}`,
-    target_kind: "repo",
-    deep_mode: args.deep_mode === true,
-    repo: {
-      root_path: repoPath,
-      source_url: sourceUrl,
-      branch: normalizeOptionalText(args.branch, "branch") || git.branch,
-      commit: normalizeOptionalText(args.commit, "commit") || git.commit,
-    },
-  }));
-  return JSON.stringify({
-    ...result,
-    target_domain: targetDomain,
-    repo_path: repoPath,
-  }, null, 2);
-}
-
-function walkRepoFiles(repoPath) {
+function walkRepo(rootPath, gitignorePatterns) {
   const files = [];
-  const visit = (dir) => {
-    if (files.length >= MAX_WALK_FILES) return;
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
+  const visited = new Set();
+  const queue = [{ absPath: rootPath, relPath: "" }];
+  while (queue.length > 0) {
+    if (files.length > REPO_WALK_MAX_FILES) {
+      throw new RepoTooLargeError(REPO_WALK_MAX_FILES);
+    }
+    const { absPath, relPath } = queue.shift();
+    let stat;
+    try {
+      stat = fs.statSync(absPath);
+    } catch {
+      continue;
+    }
+    if (!stat.isDirectory()) continue;
+    const key = statKey(stat);
+    if (visited.has(key)) continue;
+    visited.add(key);
+    let entries;
+    try {
+      entries = fs.readdirSync(absPath, { withFileTypes: true });
+    } catch {
+      continue;
+    }
     for (const entry of entries) {
-      if (files.length >= MAX_WALK_FILES) break;
-      const full = path.join(dir, entry.name);
-      const relative = path.relative(repoPath, full).split(path.sep).join("/");
-      if (entry.isDirectory()) {
-        if (!IGNORED_DIRS.has(entry.name)) visit(full);
-      } else if (entry.isFile()) {
-        files.push(relative);
+      const childAbs = path.join(absPath, entry.name);
+      const childRel = relPath ? `${relPath}/${entry.name}` : entry.name;
+      let isDir = entry.isDirectory();
+      let isFile = entry.isFile();
+      if (entry.isSymbolicLink()) {
+        try {
+          const linkStat = fs.statSync(childAbs);
+          isDir = linkStat.isDirectory();
+          isFile = linkStat.isFile();
+        } catch {
+          continue;
+        }
+      }
+      if (isDir) {
+        if (DEFAULT_EXCLUDED_DIRS.has(entry.name)) continue;
+        if (matchesGitignore(gitignorePatterns, childRel, true)) continue;
+        queue.push({ absPath: childAbs, relPath: childRel });
+      } else if (isFile) {
+        if (matchesGitignore(gitignorePatterns, childRel, false)) continue;
+        if (files.length >= REPO_WALK_MAX_FILES) {
+          throw new RepoTooLargeError(REPO_WALK_MAX_FILES);
+        }
+        files.push(childRel);
       }
     }
-  };
-  visit(repoPath);
+  }
   return files.sort();
 }
 
-function safeReadText(repoPath, relativePath, maxBytes = MAX_FILE_BYTES) {
-  const full = resolveRepoFile(repoPath, relativePath);
-  const stat = fs.statSync(full);
-  if (!stat.isFile() || stat.size > maxBytes) return null;
-  const buffer = fs.readFileSync(full);
-  if (buffer.includes(0)) return null;
-  return buffer.toString("utf8");
-}
-
-function parsePackageJson(repoPath, relativePath) {
+function safeReadProbe(absPath, maxBytes = REPO_WALK_PROBE_MAX_BYTES) {
   try {
-    const parsed = JSON.parse(safeReadText(repoPath, relativePath) || "{}");
-    const deps = [
-      ...Object.keys(parsed.dependencies || {}),
-      ...Object.keys(parsed.devDependencies || {}),
-      ...Object.keys(parsed.peerDependencies || {}),
-      ...Object.keys(parsed.optionalDependencies || {}),
-    ].sort();
-    return {
-      file: relativePath,
-      name: typeof parsed.name === "string" ? parsed.name : null,
-      scripts: Object.keys(parsed.scripts || {}).sort(),
-      dependencies: Array.from(new Set(deps)).slice(0, 200),
-    };
+    const fd = fs.openSync(absPath, "r");
+    try {
+      const buf = Buffer.alloc(maxBytes);
+      const bytesRead = fs.readSync(fd, buf, 0, maxBytes, 0);
+      const slice = buf.subarray(0, bytesRead);
+      if (slice.includes(0)) return null;
+      return slice.toString("utf8");
+    } finally {
+      fs.closeSync(fd);
+    }
   } catch {
-    return { file: relativePath, parse_error: true };
+    return null;
   }
 }
 
-function detectTechStack(files, packageManifests) {
-  const stack = new Set();
-  if (files.some((f) => f.endsWith("package.json"))) stack.add("JavaScript/Node.js");
-  if (files.some((f) => f.endsWith("tsconfig.json"))) stack.add("TypeScript");
-  if (files.some((f) => f.endsWith("pyproject.toml") || f.endsWith("requirements.txt"))) stack.add("Python");
-  if (files.some((f) => f.endsWith("go.mod"))) stack.add("Go");
-  if (files.some((f) => f.endsWith("Cargo.toml"))) stack.add("Rust");
-  if (files.some((f) => f.endsWith("Gemfile"))) stack.add("Ruby");
-  if (files.some((f) => f.endsWith("composer.json"))) stack.add("PHP");
-  if (files.some((f) => NATIVE_CODE_EXTENSIONS.has(path.extname(f).toLowerCase()))) stack.add("C/C++");
-  if (files.some((f) => /(^|\/)CMakeLists\.txt$/.test(f))) stack.add("CMake");
-  if (files.some((f) => /(^|\/)(configure|configure\.ac|Makefile\.am)$/.test(f))) stack.add("Autotools");
-  const deps = packageManifests.flatMap((m) => m.dependencies || []);
-  if (deps.some((d) => d === "next")) stack.add("Next.js");
-  if (deps.some((d) => d === "react" || d === "react-dom")) stack.add("React");
-  if (deps.some((d) => d === "express" || d === "fastify" || d === "koa")) stack.add("Node web API");
-  if (deps.some((d) => d.includes("graphql"))) stack.add("GraphQL");
-  return Array.from(stack).sort();
-}
-
-function collectEnvKeyHints(repoPath, files) {
-  const candidates = files.filter((file) => /\.(env|env\.example|env\.sample)$/.test(file) || /\.env\.(example|sample|template)$/.test(file));
-  const keys = new Set();
-  for (const file of candidates.slice(0, 20)) {
-    const text = safeReadText(repoPath, file, 50000);
-    if (!text) continue;
-    for (const line of text.split(/\r?\n/)) {
-      const match = line.match(/^\s*([A-Z0-9_]{3,80})\s*=/);
-      if (match) keys.add(match[1]);
+function detectNfsXdrShape(rootPath, files) {
+  // Scan a bounded number of native-build files for NFS/XDR signals. The
+  // probe stays under 64KiB per file so a pathological CMakeLists does not
+  // dominate the inventory time budget.
+  for (const file of files) {
+    const base = path.basename(file);
+    if (!NATIVE_BUILD_NAMES.has(base)) continue;
+    const probe = safeReadProbe(path.join(rootPath, file));
+    if (!probe) continue;
+    for (const re of NFS_XDR_SIGNALS) {
+      if (re.test(probe)) return true;
     }
   }
-  return Array.from(keys).sort().slice(0, 80);
+  // Also check for libnfs.h / rpc/xdr.h in any header file path.
+  for (const file of files) {
+    if (/libnfs\.h$/i.test(file)) return true;
+    if (/(^|\/)rpc\/xdr\.h$/i.test(file)) return true;
+  }
+  return false;
 }
 
-function hasAny(files, predicate) {
-  return files.filter(predicate).slice(0, 120);
+function detectEcosystemForManifest(base) {
+  return ECOSYSTEM_BY_MANIFEST[base] || null;
 }
 
-function makeSurface({
-  id, title, surfaceType, priority, files, techStack, bugHints, flows, evidence,
-  params = [], networkReachable = false, attackVector = null, severityCeiling = null,
-  residualHuntTargets = null, attribution = null,
+function findLockfileForManifest(manifestRel, files) {
+  const dir = path.dirname(manifestRel);
+  for (const file of files) {
+    if (path.dirname(file) !== dir) continue;
+    if (LOCKFILE_NAMES.has(path.basename(file))) return file;
+  }
+  return null;
+}
+
+function classifyFile(rel) {
+  const base = path.basename(rel);
+  const ext = path.extname(rel).toLowerCase();
+  const manifest = MANIFEST_NAMES.has(base);
+  const ci = CI_CONFIG_MATCHERS.some((fn) => fn(rel));
+  const config = CONFIG_MATCHERS.some((fn) => fn(rel));
+  const entry = ENTRY_POINT_MATCHERS.some((fn) => fn(rel));
+  const language = LANGUAGE_BY_EXT[ext] || null;
+  const nativeSource = NATIVE_SOURCE_EXTENSIONS.has(ext);
+  const nativeBuild = NATIVE_BUILD_NAMES.has(base);
+  return {
+    base,
+    ext,
+    manifest,
+    ci,
+    config,
+    entry,
+    language,
+    nativeSource,
+    nativeBuild,
+  };
+}
+
+function safeSurfaceId(rel, prefix) {
+  // Convert a relative path into a deterministic, path-safe surface id.
+  // The surface id flows into materialized indexes so it must avoid path
+  // characters that surface-router or downstream consumers may interpret.
+  const slug = rel.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return `${prefix}:${slug || "root"}`;
+}
+
+function emitSurfaceObserved({
+  domain,
+  surfaceId,
+  kind,
+  title,
+  payload,
+  emittedCount,
 }) {
-  const ceiling = severityCeiling || severityCeilingForSurface(surfaceType, networkReachable);
-  const vector = attackVector || attackVectorForSurface(surfaceType, networkReachable);
-  const surface = {
-    id,
-    name: title,
-    hosts: ["repo://local"],
-    tech_stack: techStack,
-    endpoints: files,
-    interesting_params: params,
-    nuclei_hits: [],
-    priority,
-    surface_type: surfaceType,
-    network_reachable: networkReachable,
-    attack_vector: vector,
-    severity_ceiling: ceiling,
-    bug_class_hints: bugHints,
-    high_value_flows: flows,
-    evidence,
-    ranking: {
-      version: 1,
-      score: priority === "HIGH" ? 80 : priority === "MEDIUM" ? 55 : 30,
-      priority,
-      reasons: [`repo_surface:${surfaceType}`, `files:${files.length}`, `ceiling:${ceiling}`, `vector:${vector}`],
-    },
-  };
-  if (Array.isArray(residualHuntTargets) && residualHuntTargets.length > 0) {
-    surface.residual_hunt_targets = residualHuntTargets.slice(0, 20);
-  }
-  // Per-path attack-vector hints (flat string arrays so they ride the brief's
-  // copy-by-default path). The best-case severity_ceiling above is unchanged;
-  // these only tell the hunter which paths justify AV:N vs which look AV:L.
-  if (attribution && typeof attribution === "object") {
-    for (const field of ["network_reachable_anchors", "network_reachable_dirs", "local_only_candidate_dirs"]) {
-      if (Array.isArray(attribution[field]) && attribution[field].length > 0) {
-        surface[field] = attribution[field].slice(0, 20);
-      }
-    }
-  }
-  return surface;
+  const safePayload = { ...payload, kind, title };
+  // O-P7: every Plane O frontier payload pre-flighted before append. The
+  // normalizePlainObject path inside appendFrontierEvent already invokes
+  // validateNoSensitiveMaterial; this redundant call gives a stable
+  // error path in tests when a producer regression slips through.
+  validateNoSensitiveMaterial(safePayload, `repo_inventory.${kind}`);
+  appendFrontierEvent({
+    target_domain: domain,
+    kind: "surface.observed",
+    surface_id: surfaceId,
+    payload: safePayload,
+    source: { artifact: "repo-inventory.json", tool: "bob_repo_inventory" },
+  });
+  emittedCount.value += 1;
 }
 
-function buildRepoInventory(args) {
-  const domain = assertNonEmptyString(args.target_domain, "target_domain");
-  const { state } = readSessionStateStrict(domain);
-  if (state.target_kind !== "repo" || !state.repo || !state.repo.root_path) {
-    throw new Error("bounty_repo_inventory requires a repo session initialized by bounty_init_repo_session");
-  }
-  const repoPath = normalizeRepoPath(state.repo.root_path);
-  if (args.repo_path != null) {
-    const requestedRepoPath = normalizeRepoPath(args.repo_path);
-    if (requestedRepoPath !== repoPath) {
-      throw new Error("repo_path must match the initialized repo session root");
+function buildInventoryProjection(domain, repoRoot, files) {
+  const modules = [];
+  const dependencies = [];
+  const entryPoints = [];
+  const ciPipelines = [];
+  const configs = [];
+  const manifests = [];
+  const languageCounts = {};
+  let nativeSourceCount = 0;
+  let nativeBuildCount = 0;
+
+  for (const rel of files) {
+    const info = classifyFile(rel);
+    if (info.language) {
+      languageCounts[info.language] = (languageCounts[info.language] || 0) + 1;
+      // Emit a code_module surface per source file so the frontier carries
+      // every code-shaped signal. To avoid blowing the materialized index
+      // for very large repos we only emit code_module for native sources
+      // here; non-native languages still aggregate via the language counts
+      // and per-language dependency observations.
     }
+    if (info.nativeSource) {
+      nativeSourceCount += 1;
+      modules.push({
+        rel,
+        language: info.language || "c",
+        nativeSource: true,
+        nativeBuild: false,
+      });
+    }
+    if (info.nativeBuild) {
+      nativeBuildCount += 1;
+      modules.push({
+        rel,
+        language: "c",
+        nativeSource: false,
+        nativeBuild: true,
+      });
+    }
+    if (info.manifest) {
+      manifests.push(rel);
+      const ecosystem = detectEcosystemForManifest(info.base) || "unknown";
+      const hasLockfile = findLockfileForManifest(rel, files) != null;
+      dependencies.push({ rel, ecosystem, hasLockfile });
+    }
+    if (info.ci) ciPipelines.push(rel);
+    if (info.entry) entryPoints.push(rel);
+    if (info.config) configs.push(rel);
   }
-  const files = walkRepoFiles(repoPath);
-  const manifests = files.filter((file) => MANIFEST_NAMES.has(path.basename(file)));
-  const packageManifests = manifests
-    .filter((file) => path.basename(file) === "package.json")
-    .map((file) => parsePackageJson(repoPath, file));
-  const techStack = detectTechStack(files, packageManifests);
-  const lockfiles = manifests.filter((file) => /lock|sum$/.test(path.basename(file)) || file.endsWith("pnpm-lock.yaml"));
-  // Compute the native-source set once: the uncapped set feeds residual git
-  // mining (which must see every dir), the 120-slice is the surface display cap.
-  const allNativeSourceFiles = files.filter((file) => NATIVE_CODE_EXTENSIONS.has(path.extname(file).toLowerCase()));
-  const nativeSourceFiles = allNativeSourceFiles.slice(0, 120);
-  const nativeBuildFiles = hasAny(files, (file) => NATIVE_BUILD_FILE_RE.test(file));
-  const nativeFiles = Array.from(new Set([
-    ...nativeBuildFiles,
-    ...nativeSourceFiles,
-  ])).slice(0, 160);
-  const apiFiles = hasAny(files, (file) => (
-    /(^|\/)(routes?|api|controllers?|handlers?|server)\b/i.test(file) ||
-    /openapi|swagger|schema\.graphql|graphql/i.test(file) ||
-    /(^|\/)(pages|app)\/api\//.test(file)
-  ));
-  const authFiles = hasAny(files, (file) => (
-    /auth|jwt|oauth|session|middleware|permission|policy|guard|rbac|acl/i.test(file) &&
-    // Project-metadata files match /auth/ ("AUTHORS") but are not auth code.
-    !/(^|\/)(AUTHORS|CONTRIBUTORS|MAINTAINERS|CODEOWNERS)(\.[\w-]+)?$/i.test(file)
-  ));
-  const ciFiles = hasAny(files, (file) => (
-    file.startsWith(".github/workflows/") ||
-    file === ".gitlab-ci.yml" ||
-    file === "Dockerfile" ||
-    file.endsWith("Dockerfile") ||
-    file.includes("docker-compose") ||
-    /\.(tf|tfvars|yml|yaml)$/.test(file) && /deploy|ci|workflow|pipeline|infra|terraform/i.test(file)
-  ));
-  const configFiles = hasAny(files, (file) => (
-    /(^|\/)\.env(\.|$)/.test(file) ||
-    /config|secret|credential|settings/i.test(file)
-  ));
-  const docFiles = hasAny(files, (file) => DOC_NAMES.has(file) || file.startsWith("docs/") && /\.md$/i.test(file));
-  const envKeyHints = collectEnvKeyHints(repoPath, files);
-  const reach = detectNetworkReachability(repoPath, files);
-  // Auth/authz guarding a network API is itself network-reachable even when the
-  // listener is in a sibling component the content scan did not sample.
-  const authNetworkReachable = reach.network_reachable || apiFiles.length > 0;
-  const residualHuntTargets = allNativeSourceFiles.length > 0
-    ? extractResidualHuntTargets(repoPath, files, allNativeSourceFiles)
-    : [];
 
-  const surfaces = [];
-  if (manifests.length > 0) {
-    surfaces.push(makeSurface({
-      id: "OSS-DEPENDENCY",
-      title: "Dependency and package metadata",
-      surfaceType: "oss_dependency",
-      priority: lockfiles.length > 0 ? "HIGH" : "MEDIUM",
-      files: manifests.slice(0, 120),
-      techStack,
-      bugHints: ["dependency_confusion", "vulnerable_dependency", "supply_chain"],
-      flows: ["install", "build", "release"],
-      evidence: [`${manifests.length} package/dependency manifest files`, `${lockfiles.length} lockfiles`],
-      params: packageManifests.flatMap((m) => m.scripts || []).slice(0, 40),
-    }));
-  }
-  if (nativeFiles.length > 0) {
-    surfaces.push(makeSurface({
-      id: "OSS-NATIVE-CODE",
-      title: "Native code parser, protocol, and memory-safety review",
-      surfaceType: "oss_native_code",
-      // Reachability sets the ceiling: a network-fed parser (AV:N) is
-      // CRITICAL-capable and stays top priority; a pure local-file parser
-      // library (AV:L) is MEDIUM-realistic and is down-ranked so it does not
-      // crowd out a genuine daemon/server surface.
-      priority: reach.network_reachable ? "HIGH" : "MEDIUM",
-      networkReachable: reach.network_reachable,
-      attribution: reach.attribution,
-      residualHuntTargets,
-      files: nativeFiles,
-      techStack,
-      bugHints: [
-        "bounds_check",
-        "integer_truncation",
-        "signed_unsigned_mismatch",
-        "parser_state_machine",
-        "memory_lifetime",
-        "path_handling",
-      ],
-      flows: ["protocol parsing", "network input", "filesystem paths", "fuzz/sanitizer replay"],
-      evidence: [
-        `${nativeSourceFiles.length} C/C++ source/header files`,
-        `${nativeBuildFiles.length} native build files`,
-      ],
-    }));
-  }
-  if (apiFiles.length > 0) {
-    surfaces.push(makeSurface({
-      id: "OSS-API-SCHEMA",
-      title: "API routes and schemas",
-      surfaceType: "oss_api_schema",
-      priority: "HIGH",
-      networkReachable: true,
-      files: apiFiles,
-      techStack,
-      bugHints: ["idor", "authz", "ssrf", "injection", "graphql"],
-      flows: ["api", "routing", "request handling"],
-      evidence: [`${apiFiles.length} route/schema candidates`],
-    }));
-  }
-  if (authFiles.length > 0) {
-    surfaces.push(makeSurface({
-      id: "OSS-AUTHZ",
-      title: "Authentication and authorization code",
-      surfaceType: "oss_authz",
-      priority: "HIGH",
-      networkReachable: authNetworkReachable,
-      files: authFiles,
-      techStack,
-      bugHints: ["authz", "jwt_oauth", "session_fixation", "privilege_escalation"],
-      flows: ["login", "session", "permission checks"],
-      evidence: [`${authFiles.length} auth-sensitive files`],
-    }));
-  }
-  if (ciFiles.length > 0) {
-    surfaces.push(makeSurface({
-      id: "OSS-CI-CD",
-      title: "CI/CD, container, and deployment config",
-      surfaceType: "oss_ci_cd",
-      priority: "MEDIUM",
-      files: ciFiles,
-      techStack,
-      bugHints: ["workflow_injection", "secret_exposure", "supply_chain"],
-      flows: ["ci", "release", "deployment"],
-      evidence: [`${ciFiles.length} CI/deployment files`],
-    }));
-  }
-  if (configFiles.length > 0) {
-    surfaces.push(makeSurface({
-      id: "OSS-SECRETS-CONFIG",
-      title: "Configuration and secret handling",
-      surfaceType: "oss_secrets_config",
-      priority: envKeyHints.length > 0 ? "HIGH" : "MEDIUM",
-      files: configFiles,
-      techStack,
-      bugHints: ["secret_exposure", "misconfiguration", "insecure_defaults"],
-      flows: ["configuration", "environment", "secrets"],
-      evidence: [`${configFiles.length} config/secret-related files`, `${envKeyHints.length} env key names in examples/templates`],
-      params: envKeyHints,
-    }));
-  }
-  surfaces.push(makeSurface({
-    id: "OSS-DOCS-BEHAVIOR",
-    title: "Security docs and documented behavior",
-    surfaceType: "oss_docs_behavior",
-    priority: docFiles.length > 0 ? "MEDIUM" : "LOW",
-    files: docFiles.slice(0, 120),
-    techStack,
-    bugHints: ["docs_vs_behavior", "unsafe_defaults", "missing_security_policy"],
-    flows: ["installation", "configuration", "security policy"],
-    evidence: docFiles.length > 0 ? [`${docFiles.length} docs files`] : ["No common security/README docs found"],
-  }));
-
-  const reachabilitySummary = {
-    max_credible_severity_ceiling: surfaces.reduce(
-      (acc, surface) => maxCeiling(acc, surface.severity_ceiling || "none"),
-      "none",
-    ),
-    network_reachable: surfaces.some((surface) => surface.network_reachable),
-    network_reachable_surface_ids: surfaces
-      .filter((surface) => surface.network_reachable)
-      .map((surface) => surface.id),
-    surface_ceilings: surfaces.map((surface) => ({
-      id: surface.id,
-      severity_ceiling: surface.severity_ceiling,
-      attack_vector: surface.attack_vector,
-      network_reachable: surface.network_reachable,
-    })),
-    signals: reach.signals,
-    native_attack_vector_map: reach.attribution,
-  };
-
-  const inventory = {
-    version: REPO_INVENTORY_VERSION,
-    target_domain: domain,
-    repo_path: repoPath,
-    generated_at: new Date().toISOString(),
-    reachability: reachabilitySummary,
-    counts: {
-      files: files.length,
-      manifests: manifests.length,
-      lockfiles: lockfiles.length,
-      package_manifests: packageManifests.length,
-      native_source_files: nativeSourceFiles.length,
-      native_build_files: nativeBuildFiles.length,
-      residual_hunt_targets: residualHuntTargets.length,
-      surfaces: surfaces.length,
-    },
-    tech_stack: techStack,
+  const nfsShape = detectNfsXdrShape(repoRoot, files);
+  return {
+    modules,
+    dependencies,
+    entryPoints,
+    ciPipelines,
+    configs,
     manifests,
-    package_manifests: packageManifests,
-    lockfiles,
-    native_source_files: nativeSourceFiles,
-    native_build_files: nativeBuildFiles,
-    api_files: apiFiles,
-    auth_files: authFiles,
-    ci_files: ciFiles,
-    config_files: configFiles,
-    doc_files: docFiles,
-    env_key_hints: envKeyHints,
-    residual_hunt_targets: residualHuntTargets,
+    languageCounts,
+    nativeSourceCount,
+    nativeBuildCount,
+    nfsShape,
   };
-  const attackSurface = {
-    domain,
-    target_kind: "repo",
-    repo_path: repoPath,
-    reachability: reachabilitySummary,
-    surfaces,
-  };
-
-  return withSessionLock(domain, () => {
-    writeFileAtomic(repoInventoryPath(domain), `${JSON.stringify(inventory, null, 2)}\n`);
-    writeFileAtomic(attackSurfacePath(domain), `${JSON.stringify(attackSurface, null, 2)}\n`);
-    return JSON.stringify({
-      version: 1,
-      target_domain: domain,
-      repo_inventory_path: repoInventoryPath(domain),
-      attack_surface_path: attackSurfacePath(domain),
-      counts: inventory.counts,
-      surface_ids: surfaces.map((surface) => surface.id),
-      reachability: reachabilitySummary,
-      residual_hunt_targets: residualHuntTargets,
-    }, null, 2);
-  });
 }
 
-function resolveRepoFile(repoPath, relativePath) {
-  const normalized = assertNonEmptyString(relativePath, "file_path");
-  if (path.isAbsolute(normalized)) {
-    throw new Error("file_path must be repo-relative");
+function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOverride } = {}) {
+  const domain = assertSafeDomain(targetDomain);
+  const repoSession = readRepoSession(domain);
+  const root = repoPathOverride
+    ? assertNonEmptyString(repoPathOverride, "repo_path")
+    : repoSession.target_repo.root_path;
+  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
+    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `repo_path is not a directory: ${root}`);
   }
-  const full = path.resolve(repoPath, normalized);
-  const realRoot = fs.realpathSync(repoPath);
-  const parent = fs.existsSync(full) ? fs.realpathSync(full) : path.resolve(path.dirname(full));
-  if (parent !== realRoot && !parent.startsWith(`${realRoot}${path.sep}`)) {
-    throw new Error("file_path escapes repo root");
-  }
-  return full;
-}
 
-function repoCheck(args) {
-  const domain = assertNonEmptyString(args.target_domain, "target_domain");
-  const { state } = readSessionStateStrict(domain);
-  if (state.target_kind !== "repo" || !state.repo || !state.repo.root_path) {
-    throw new Error("bounty_repo_check requires a repo session");
-  }
-  const repoPath = normalizeRepoPath(state.repo.root_path);
-  const filePath = normalizeOptionalText(args.file_path, "file_path");
-  const pattern = normalizeOptionalText(args.pattern, "pattern");
-  const regex = args.regex == null ? false : assertBoolean(args.regex, "regex");
-  const checkType = normalizeOptionalText(args.check_type, "check_type") || "file_contains";
-  const record = {
-    version: 1,
-    target_domain: domain,
-    ts: new Date().toISOString(),
-    check_type: checkType,
-    file_path: filePath,
-    pattern: pattern ? "[provided]" : null,
-    regex,
-    ok: false,
-    matches: [],
-  };
-
-  if (!filePath) {
-    record.ok = true;
-    record.reason = "repo session exists";
-  } else {
-    const full = resolveRepoFile(repoPath, filePath);
-    record.exists = fs.existsSync(full) && fs.statSync(full).isFile();
-    if (!record.exists) {
-      record.reason = "file_missing";
-    } else if (!pattern) {
-      record.ok = true;
-      record.reason = "file_exists";
-    } else {
-      const text = safeReadText(repoPath, filePath);
-      if (text == null) {
-        record.reason = "file_unreadable_or_too_large";
-      } else {
-        let matcher;
-        try {
-          matcher = regex
-            ? new RegExp(pattern, "g")
-            : new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
-        } catch {
-          record.reason = "invalid_regex";
-        }
-        if (matcher) {
-          const lines = text.split(/\r?\n/);
-          for (let index = 0; index < lines.length && record.matches.length < MAX_MATCHES; index += 1) {
-            matcher.lastIndex = 0;
-            if (matcher.test(lines[index])) {
-              record.matches.push({
-                line: index + 1,
-                excerpt: lines[index].trim().slice(0, 240),
-              });
-            }
-          }
-          record.ok = record.matches.length > 0;
-          record.reason = record.ok ? "pattern_found" : "pattern_not_found";
-        }
-      }
+  const gitignorePatterns = loadGitignore(root);
+  let files;
+  try {
+    files = walkRepo(root, gitignorePatterns);
+  } catch (error) {
+    if (error && error.code === "repo_too_large") {
+      throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, error.message, {
+        repo_error_code: "repo_too_large",
+        limit: error.limit,
+      });
     }
+    throw error;
   }
+  const projection = buildInventoryProjection(domain, root, files);
 
   return withSessionLock(domain, () => {
-    appendJsonlLine(repoChecksJsonlPath(domain), record, { maxRecords: REPO_CHECK_LOG_MAX_RECORDS });
-    return JSON.stringify({
-      version: 1,
+    const generatedAt = new Date().toISOString();
+    const emittedCount = { value: 0 };
+
+    // Per-module frontier events.
+    for (const mod of projection.modules) {
+      emitSurfaceObserved({
+        domain,
+        surfaceId: safeSurfaceId(mod.rel, "repo:module"),
+        kind: "code_module",
+        title: mod.rel,
+        payload: {
+          file_path: mod.rel,
+          language: mod.language,
+          native_source: mod.nativeSource,
+          native_build: mod.nativeBuild,
+        },
+        emittedCount,
+      });
+    }
+
+    // Per-manifest frontier event.
+    for (const manifestPath of projection.manifests) {
+      const ecosystem = detectEcosystemForManifest(path.basename(manifestPath)) || "unknown";
+      emitSurfaceObserved({
+        domain,
+        surfaceId: safeSurfaceId(manifestPath, "repo:manifest"),
+        kind: "manifest",
+        title: manifestPath,
+        payload: {
+          file_path: manifestPath,
+          ecosystem,
+        },
+        emittedCount,
+      });
+    }
+
+    // Per-dependency frontier event (one per manifest, top-level only).
+    for (const dep of projection.dependencies) {
+      emitSurfaceObserved({
+        domain,
+        surfaceId: safeSurfaceId(`${dep.rel}#deps`, "repo:dependency"),
+        kind: "dependency",
+        title: dep.rel,
+        payload: {
+          manifest_path: dep.rel,
+          ecosystem: dep.ecosystem,
+          has_lockfile: dep.hasLockfile,
+        },
+        emittedCount,
+      });
+    }
+
+    // Per-CI-pipeline frontier event.
+    for (const ci of projection.ciPipelines) {
+      emitSurfaceObserved({
+        domain,
+        surfaceId: safeSurfaceId(ci, "repo:ci"),
+        kind: "ci_pipeline",
+        title: ci,
+        payload: {
+          file_path: ci,
+        },
+        emittedCount,
+      });
+    }
+
+    // Per-entry-point frontier event.
+    for (const entry of projection.entryPoints) {
+      emitSurfaceObserved({
+        domain,
+        surfaceId: safeSurfaceId(entry, "repo:entry"),
+        kind: "entry_point",
+        title: entry,
+        payload: {
+          file_path: entry,
+        },
+        emittedCount,
+      });
+    }
+
+    // Per-config frontier event (NEVER reads file contents — just the path
+    // and basename. Secret values live in the file itself and would land in
+    // session-read-guard's protected list, not in the inventory payload).
+    for (const cfg of projection.configs) {
+      emitSurfaceObserved({
+        domain,
+        surfaceId: safeSurfaceId(cfg, "repo:config"),
+        kind: "config",
+        title: cfg,
+        payload: {
+          file_path: cfg,
+        },
+        emittedCount,
+      });
+    }
+
+    try {
+      scheduleMaterialization(domain);
+    } catch {
+      // Best-effort: the next producer event will trigger materialization.
+    }
+
+    const inventory = {
+      version: REPO_INVENTORY_VERSION,
       target_domain: domain,
-      repo_checks_path: repoChecksJsonlPath(domain),
-      check: record,
-    }, null, 2);
+      repo_path: root,
+      generated_at: generatedAt,
+      counts: {
+        files: files.length,
+        manifests: projection.manifests.length,
+        dependencies: projection.dependencies.length,
+        entry_points: projection.entryPoints.length,
+        ci_pipelines: projection.ciPipelines.length,
+        configs: projection.configs.length,
+        code_modules: projection.modules.length,
+        native_source_files: projection.nativeSourceCount,
+        native_build_files: projection.nativeBuildCount,
+        surface_events_emitted: emittedCount.value,
+      },
+      languages: projection.languageCounts,
+      nfs_xdr_shape: projection.nfsShape,
+      manifests: projection.manifests,
+      ci_pipelines: projection.ciPipelines,
+      entry_points: projection.entryPoints,
+      configs: projection.configs,
+    };
+    // O-P7: validate the persisted document before it lands on disk. The
+    // inventory carries only file paths and structural counts — no file
+    // contents — but the scrub is still asserted so future fields don't
+    // accidentally leak.
+    validateNoSensitiveMaterial(inventory, "repo_inventory");
+    inventory.inventory_hash = hashDocumentExcluding(inventory, [
+      "generated_at",
+      "inventory_hash",
+    ]);
+    writeJsonDocument(repoInventoryPath(domain), inventory);
+    return {
+      created: true,
+      target_domain: domain,
+      repo_path: root,
+      repo_inventory_path: repoInventoryPath(domain),
+      counts: inventory.counts,
+      inventory_hash: inventory.inventory_hash,
+      nfs_xdr_shape: projection.nfsShape,
+    };
   });
+}
+
+// Cycle O.5: read-only repo evidence probe. `bob_repo_check` performs a
+// bounded file lookup (existence + optional literal-substring or regex
+// match) and appends a structured JSONL row to `repo-checks.jsonl`. Per
+// O-P1 it never mutates the bound repo. Per O-P7, every excerpt of a
+// matched line MUST flow through `redactTextSensitiveValues` before
+// landing on disk so that grepping a synthetic `.env` for `API_KEY=.*`
+// does not leak the literal secret bytes into a session artifact.
+//
+// Read cap is 4 MB. Files larger than the cap produce a structured
+// `file_too_large` error; the operator can re-target a narrower probe
+// (semgrep / grep) instead of slurping a multi-GiB asset into RAM.
+
+const REPO_CHECK_VERSION = 1;
+const REPO_CHECK_MAX_FILE_BYTES = 4 * 1024 * 1024; // 4 MB hard cap
+// Cap the number of excerpts written per check so a regex like `.*` against a
+// gigantic file does not produce a multi-megabyte JSONL row. The matched_lines
+// array is then truncated and `matched_lines_truncated` is set on the row.
+const REPO_CHECK_MAX_EXCERPTS = 200;
+// Cap each excerpt's pre-redaction length so a single very-long line does not
+// bloat the JSONL row beyond the 4 KB sensitive-material text cap. The
+// validator throws if a string exceeds 4000 chars; we trim defensively before
+// invoking it so callers see a structured `excerpt_too_long` truncation
+// rather than a thrown error mid-write.
+const REPO_CHECK_MAX_EXCERPT_CHARS = 1024;
+const REPO_CHECK_TYPES = Object.freeze(new Set([
+  "file_exists",
+  "file_contains",
+  "regex_match",
+]));
+
+const REPO_CHECK_REPLAY_CONTEXT_KEYS = Object.freeze(new Set([
+  "wave",
+  "agent",
+  "surface_id",
+  "task_lens",
+  "technique_pack_id",
+  "purpose",
+  "operator_note",
+]));
+
+// Reuse the same {wave, agent, ...} shape as bob_repo_docker_run so an
+// evaluator can correlate a check against the dispatch context that
+// produced it. Out-of-band keys are silently dropped; string values are
+// trimmed to 256 chars; numbers pass through. Anything else throws.
+function normalizeRepoCheckReplayContext(value) {
+  if (value == null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "replay_context must be an object when provided",
+    );
+  }
+  const out = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (!REPO_CHECK_REPLAY_CONTEXT_KEYS.has(key)) continue;
+    if (raw == null) continue;
+    if (typeof raw === "number") {
+      out[key] = raw;
+      continue;
+    }
+    if (typeof raw === "string") {
+      const trimmed = raw.trim();
+      if (trimmed.length > 256) {
+        throw new ToolError(
+          ERROR_CODES.INVALID_ARGUMENTS,
+          `replay_context.${key} must be at most 256 characters`,
+        );
+      }
+      if (trimmed) out[key] = trimmed;
+      continue;
+    }
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `replay_context.${key} must be a string or number`,
+    );
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+// Validate a relative file_path against the session's bound repo root. The
+// returned absolute path is guaranteed to be inside the repo root (escape via
+// `..` segments or absolute paths is rejected) so the probe can't read
+// arbitrary files on the operator's machine (e.g. `/etc/shadow`).
+function resolveRepoFilePath(repoRoot, filePath) {
+  const raw = assertNonEmptyString(filePath, "file_path");
+  if (path.isAbsolute(raw)) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "file_path must be a relative path under the bound repo root",
+      { repo_error_code: "file_path_must_be_relative" },
+    );
+  }
+  const joined = path.join(repoRoot, raw);
+  const resolved = path.resolve(joined);
+  // Re-resolve the repo root too so symlinks at the root don't shift the
+  // containment check.
+  const rootResolved = path.resolve(repoRoot);
+  const rel = path.relative(rootResolved, resolved);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "file_path escapes the bound repo root",
+      { repo_error_code: "file_path_escapes_repo_root" },
+    );
+  }
+  return resolved;
+}
+
+// Compile a regex pattern with optional flags after the trailing `/`. The
+// pattern shape we accept is the operator's raw string; we always enforce
+// the multi-line flag because matched_lines walks per line. The pattern
+// arrives un-anchored so callers can probe substrings without ^/$.
+function compileRepoCheckRegex(pattern) {
+  const raw = assertNonEmptyString(pattern, "regex");
+  let body = raw;
+  let flags = "m";
+  // Allow `/pattern/flags` shape for symmetry with grep/semgrep operator
+  // habits, but treat a bare string as the literal regex body.
+  const slashMatch = /^\/(.+)\/([gimsuy]*)$/.exec(raw);
+  if (slashMatch) {
+    body = slashMatch[1];
+    flags = slashMatch[2] || "";
+    if (!flags.includes("m")) flags += "m";
+  }
+  try {
+    return new RegExp(body, flags);
+  } catch (error) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `regex pattern is invalid: ${error.message || error}`,
+      { repo_error_code: "regex_invalid" },
+    );
+  }
+}
+
+// Per Plane O tests, a probe of a binary file MUST NOT crash and MUST NOT
+// land the binary blob inside an excerpt. We probe the first 8 KiB of the
+// file for a NUL byte (the canonical "binary" signal) and bail out before
+// any decoding work happens. The caller still gets `matched: false` plus a
+// `binary: true` flag on the row so a reviewer can see the probe ran.
+function probeIsBinary(buffer) {
+  const head = buffer.subarray(0, Math.min(buffer.length, 8192));
+  return head.includes(0);
+}
+
+function hashBuffer(buffer) {
+  return crypto.createHash("sha256").update(buffer).digest("hex");
+}
+
+// Build matched_lines[]. Each entry carries the 1-based line number, the
+// 0-based byte offset of the line within the file, and a REDACTED excerpt.
+// Per O-P7 the excerpt MUST flow through `redactTextSensitiveValues`
+// BEFORE any append; the redaction is the load-bearing primitive, not a
+// downstream nicety. The validator runs after the redaction as a
+// belt-and-suspenders fail-closed: if a future change accidentally widens
+// the excerpt format to carry a key/value pair shaped like a credential,
+// `validateNoSensitiveMaterial` raises and the write never lands.
+function buildMatchedLines(text, predicate) {
+  const lines = text.split(/\r?\n/);
+  const matched = [];
+  let truncated = false;
+  let scanned = 0;
+  let charOffset = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (predicate(line)) {
+      if (matched.length >= REPO_CHECK_MAX_EXCERPTS) {
+        truncated = true;
+        break;
+      }
+      const rawExcerpt = line.length > REPO_CHECK_MAX_EXCERPT_CHARS
+        ? `${line.slice(0, REPO_CHECK_MAX_EXCERPT_CHARS)}…`
+        : line;
+      const redacted = redactTextSensitiveValues(rawExcerpt);
+      matched.push({
+        line: i + 1,
+        offset: charOffset,
+        excerpt: redacted,
+      });
+    }
+    scanned += 1;
+    charOffset += line.length + 1; // account for the line terminator
+  }
+  return { matched, truncated, scanned };
+}
+
+// Plane X Cycle X.7 (X-P9 retrofit): distilled summary for a repo_check
+// row. Brief renderers inline this; matched_lines[] stays as the body
+// (resolved via `bob_resolve_body(repo_check:<check_id>)`). The summary
+// shape is bounded by construction — top 3 matches, 120-char excerpts,
+// fixed scalar fields — so the X-P9 2KB hard cap is structurally honored.
+const REPO_CHECK_SUMMARY_EXCERPT_MAX_CHARS = 120;
+const REPO_CHECK_SUMMARY_TOP_N = 3;
+
+function buildRepoCheckSummary({ check_id, file_path: filePath, file_hash, matched_lines }) {
+  const lines = Array.isArray(matched_lines) ? matched_lines : [];
+  const top = lines.slice(0, REPO_CHECK_SUMMARY_TOP_N).map((entry) => {
+    const excerpt = typeof entry.excerpt === "string" ? entry.excerpt : "";
+    const redacted = excerpt.length > REPO_CHECK_SUMMARY_EXCERPT_MAX_CHARS
+      ? `${excerpt.slice(0, REPO_CHECK_SUMMARY_EXCERPT_MAX_CHARS)}…`
+      : excerpt;
+    return {
+      line_num: entry.line,
+      excerpt_hash: crypto.createHash("sha256").update(excerpt).digest("hex"),
+      redacted_excerpt: redacted,
+    };
+  });
+  return {
+    check_id,
+    file_path: filePath,
+    file_hash,
+    match_count: lines.length,
+    top_3_match_lines: top,
+  };
+}
+
+function repoCheck({
+  target_domain: targetDomain,
+  check_type: checkType = null,
+  file_path: filePath = null,
+  pattern = null,
+  regex = null,
+  replay_context: replayContextRaw = null,
+} = {}) {
+  const domain = assertSafeDomain(targetDomain);
+  const repoSession = readRepoSession(domain);
+  const repoRoot = repoSession.target_repo.root_path;
+
+  // Resolve check_type. When unspecified, infer from the optional pattern/regex
+  // arguments: `regex` → regex_match, `pattern` → file_contains, else
+  // file_exists. Explicit `check_type` always wins.
+  let normalizedType;
+  if (checkType != null) {
+    normalizedType = assertNonEmptyString(checkType, "check_type");
+    if (!REPO_CHECK_TYPES.has(normalizedType)) {
+      throw new ToolError(
+        ERROR_CODES.INVALID_ARGUMENTS,
+        `check_type must be one of ${Array.from(REPO_CHECK_TYPES).join(", ")}`,
+        { repo_error_code: "check_type_invalid" },
+      );
+    }
+  } else if (regex != null && String(regex).trim()) {
+    normalizedType = "regex_match";
+  } else if (pattern != null && String(pattern).trim()) {
+    normalizedType = "file_contains";
+  } else {
+    normalizedType = "file_exists";
+  }
+
+  if (filePath == null || !String(filePath).trim()) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "file_path is required",
+      { repo_error_code: "file_path_required" },
+    );
+  }
+
+  const normalizedReplayContext = normalizeRepoCheckReplayContext(replayContextRaw);
+
+  // Pattern/regex shape requirements per check_type. file_exists ignores
+  // both inputs; file_contains requires `pattern`; regex_match requires
+  // `regex`. The explicit guard makes the row's `pattern`/`regex` fields
+  // unambiguous downstream.
+  let literalPattern = null;
+  let regexPattern = null;
+  let compiledRegex = null;
+  if (normalizedType === "file_contains") {
+    literalPattern = assertNonEmptyString(pattern, "pattern");
+  } else if (normalizedType === "regex_match") {
+    regexPattern = assertNonEmptyString(regex, "regex");
+    compiledRegex = compileRepoCheckRegex(regexPattern);
+  }
+
+  const absPath = resolveRepoFilePath(repoRoot, filePath);
+
+  let stat;
+  try {
+    stat = fs.statSync(absPath);
+  } catch (error) {
+    if (error && error.code === "ENOENT") {
+      // file_exists is the canonical "answer is no" path; record the row
+      // and return cleanly. file_contains / regex_match on a missing file
+      // also returns matched:false but with `not_found:true` so the
+      // operator can distinguish "file present, no match" from "file
+      // never existed".
+      const row = {
+        version: REPO_CHECK_VERSION,
+        check_id: `chk_${sha8(`${domain}|${filePath}|${normalizedType}|${Date.now()}`)}_${Date.now()}`,
+        check_type: normalizedType,
+        target_domain: domain,
+        file_path: filePath,
+        pattern: literalPattern,
+        regex: regexPattern,
+        matched: false,
+        matched_lines: [],
+        file_hash: null,
+        not_found: true,
+        ts: new Date().toISOString(),
+      };
+      if (normalizedReplayContext) row.replay_context = normalizedReplayContext;
+      row.summary = buildRepoCheckSummary({
+        check_id: row.check_id,
+        file_path: filePath,
+        file_hash: null,
+        matched_lines: [],
+      });
+      validateNoSensitiveMaterial(row, "repo_checks");
+      withSessionLock(domain, () => {
+        appendJsonlLine(repoChecksJsonlPath(domain), row);
+      });
+      return {
+        created: true,
+        check_id: row.check_id,
+        check_type: normalizedType,
+        target_domain: domain,
+        file_path: filePath,
+        matched: false,
+        not_found: true,
+        matched_lines: [],
+        file_hash: null,
+        summary: row.summary,
+      };
+    }
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `file_path stat failed: ${error.message || error}`,
+      { repo_error_code: "file_stat_failed" },
+    );
+  }
+
+  if (!stat.isFile()) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "file_path is not a regular file",
+      { repo_error_code: "file_path_not_a_file" },
+    );
+  }
+
+  if (stat.size > REPO_CHECK_MAX_FILE_BYTES) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `file_path exceeds ${REPO_CHECK_MAX_FILE_BYTES} byte cap (size=${stat.size})`,
+      {
+        repo_error_code: "file_too_large",
+        limit_bytes: REPO_CHECK_MAX_FILE_BYTES,
+        size_bytes: stat.size,
+      },
+    );
+  }
+
+  const buffer = fs.readFileSync(absPath);
+  const fileHash = hashBuffer(buffer);
+  const isBinary = probeIsBinary(buffer);
+
+  let matched = false;
+  let matchedLines = [];
+  let matchedLinesTruncated = false;
+  let scannedLines = 0;
+
+  if (normalizedType === "file_exists") {
+    matched = true;
+  } else if (isBinary) {
+    // Binary file: never decode, never excerpt. Record matched:false plus a
+    // `binary:true` flag so the reviewer can see the probe ran.
+    matched = false;
+  } else {
+    const text = buffer.toString("utf8");
+    let predicate;
+    if (normalizedType === "file_contains") {
+      predicate = (line) => line.includes(literalPattern);
+    } else {
+      // For regex_match, predicate must use a per-line probe; the `m` flag
+      // is enforced by the compiler so multiline patterns work too.
+      predicate = (line) => {
+        compiledRegex.lastIndex = 0;
+        return compiledRegex.test(line);
+      };
+    }
+    const result = buildMatchedLines(text, predicate);
+    matched = result.matched.length > 0;
+    matchedLines = result.matched;
+    matchedLinesTruncated = result.truncated;
+    scannedLines = result.scanned;
+  }
+
+  const row = {
+    version: REPO_CHECK_VERSION,
+    check_id: `chk_${sha8(`${domain}|${filePath}|${normalizedType}|${Date.now()}`)}_${Date.now()}`,
+    check_type: normalizedType,
+    target_domain: domain,
+    file_path: filePath,
+    pattern: literalPattern,
+    regex: regexPattern,
+    matched,
+    matched_lines: matchedLines,
+    matched_lines_truncated: matchedLinesTruncated,
+    scanned_lines: scannedLines,
+    file_hash: fileHash,
+    file_size: stat.size,
+    binary: isBinary,
+    not_found: false,
+    ts: new Date().toISOString(),
+  };
+  if (normalizedReplayContext) row.replay_context = normalizedReplayContext;
+  // Plane X Cycle X.7 (X-P9 retrofit): distilled summary field.
+  // matched_lines[] stays as the body (existing readers unchanged); the
+  // summary becomes the brief-inlinable form. Per X-P9 the summary is
+  // bounded by its shape (top_3 + 120-char excerpt), so it stays well
+  // under the 2KB hard cap regardless of file size or match count.
+  row.summary = buildRepoCheckSummary({
+    check_id: row.check_id,
+    file_path: filePath,
+    file_hash: fileHash,
+    matched_lines: matchedLines,
+  });
+
+  // O-P7: dual-mode scrubbing. matched_lines[].excerpt is already redacted
+  // via redactTextSensitiveValues above (the load-bearing primitive for
+  // free-form excerpts that legitimately contain `KEY=value` syntax).
+  // The rest of the row (file_path, pattern, regex, replay_context,
+  // metadata) goes through validateNoSensitiveMaterial as a
+  // belt-and-suspenders check against structural regressions — a future
+  // change that renamed `excerpt` to `api_key_value` would trip the
+  // SENSITIVE_KEY_RE and fail closed before append. We validate a deep
+  // copy of the row with the already-redacted excerpts stripped so the
+  // structural check sees only fields under its contract.
+  const validationProbe = {
+    ...row,
+    matched_lines: matchedLines.map(({ line, offset }) => ({ line, offset })),
+    // The X.7 summary inlines redacted excerpts (already scrubbed via
+    // redactTextSensitiveValues); strip them from the probe so the
+    // structural validator sees only the scalar fields under its
+    // contract, mirroring the matched_lines treatment above.
+    summary: row.summary ? {
+      ...row.summary,
+      top_3_match_lines: row.summary.top_3_match_lines.map(({ line_num, excerpt_hash }) => ({ line_num, excerpt_hash })),
+    } : undefined,
+  };
+  validateNoSensitiveMaterial(validationProbe, "repo_checks");
+  withSessionLock(domain, () => {
+    appendJsonlLine(repoChecksJsonlPath(domain), row);
+  });
+
+  return {
+    created: true,
+    check_id: row.check_id,
+    check_type: normalizedType,
+    target_domain: domain,
+    file_path: filePath,
+    matched,
+    matched_lines: matchedLines,
+    matched_lines_truncated: matchedLinesTruncated,
+    scanned_lines: scannedLines,
+    file_hash: fileHash,
+    file_size: stat.size,
+    binary: isBinary,
+    not_found: false,
+    summary: row.summary,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cycle O.6 — OSS observation kinds.
+//
+// These are `kind` VALUES inside `observation.recorded` payloads — NOT new
+// top-level FRONTIER_EVENT_KINDS. Producers stamp them on
+// `payload.observation_kind` (matching the T.5 jwt_observed precedent).
+// Pack-surfacing predicates (cli-tool-packs.js applicable_when) read the
+// observation list and fire on these kind values.
+//
+// Per O-P7 every payload must pass `validateNoSensitiveMaterial`. The
+// recorder builds the payload, validates it, then appends a `surface.observed`
+// or `observation.recorded` event with the appropriate observation_kind
+// stamped on `payload`.
+//
+// NO raw secret values. config_misuse_observed carries `value_hash` (sha256)
+// not the raw value; dependency_observed carries only `known_cve_ids[]` plus
+// metadata (no advisory body); unsafe_sink_observed carries only the symbol
+// name + sink classification (no code snippet); crash_observed carries an
+// `asan_report_hash` (sha256) not the raw report.
+
+const OSS_OBSERVATION_KIND_VALUES = Object.freeze([
+  "dependency_observed",
+  "unsafe_sink_observed",
+  "crash_observed",
+  "config_misuse_observed",
+]);
+
+function isOssObservationKind(value) {
+  return typeof value === "string" && OSS_OBSERVATION_KIND_VALUES.includes(value);
+}
+
+// Cycle Y.1 — Capability observation kinds register at the same
+// `observation.recorded` dispatch point as OSS kinds and the T.5
+// jwt_observed precedent. They are SIBLINGS of OSS_OBSERVATION_KIND_VALUES
+// — no top-level FRONTIER_EVENT_KIND is added (Y-P1 / X-P8). The shape +
+// witness validators live in capability-observations.js; this module
+// re-exports the closed-enum predicate so producers that already filter
+// `observation.recorded` payloads by kind family can branch on capability
+// kinds without crossing module boundaries.
+const {
+  CAPABILITY_OBSERVATION_KIND_VALUES,
+  isCapabilityObservationKind,
+} = require("./capability-observations.js");
+
+// Field-shape validators per observation kind. Each returns the normalized
+// payload (after a deep-clone-and-validate pass) or throws a structured
+// ToolError when the shape is wrong. The validator does NOT enrich the
+// payload — producers are responsible for providing every required field.
+
+function assertNonEmptyStringField(value, fieldName) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `${fieldName} must be a non-empty string`,
+    );
+  }
+  return value.trim();
+}
+
+function assertOptionalStringField(value, fieldName) {
+  if (value == null) return null;
+  return assertNonEmptyStringField(value, fieldName);
+}
+
+function assertOptionalIntegerField(value, fieldName) {
+  if (value == null) return null;
+  if (!Number.isInteger(value)) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `${fieldName} must be an integer`,
+    );
+  }
+  return value;
+}
+
+function assertOptionalStringArray(value, fieldName) {
+  if (value == null) return null;
+  if (!Array.isArray(value)) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `${fieldName} must be a string array`,
+    );
+  }
+  const out = [];
+  for (let i = 0; i < value.length; i += 1) {
+    const entry = value[i];
+    if (typeof entry !== "string" || !entry.trim()) {
+      throw new ToolError(
+        ERROR_CODES.INVALID_ARGUMENTS,
+        `${fieldName}[${i}] must be a non-empty string`,
+      );
+    }
+    out.push(entry.trim());
+  }
+  return out;
+}
+
+function assertBooleanField(value, fieldName) {
+  if (typeof value !== "boolean") {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `${fieldName} must be a boolean`,
+    );
+  }
+  return value;
+}
+
+function buildDependencyObservedPayload(input) {
+  const payload = {
+    observation_kind: "dependency_observed",
+    ecosystem: assertNonEmptyStringField(input.ecosystem, "ecosystem"),
+    package: assertNonEmptyStringField(input.package, "package"),
+    version: assertNonEmptyStringField(input.version, "version"),
+    manifest_path: assertNonEmptyStringField(input.manifest_path, "manifest_path"),
+    has_lockfile: assertBooleanField(input.has_lockfile, "has_lockfile"),
+  };
+  const cveIds = assertOptionalStringArray(input.known_cve_ids, "known_cve_ids");
+  if (cveIds && cveIds.length > 0) {
+    payload.known_cve_ids = cveIds;
+  }
+  validateNoSensitiveMaterial(payload, "oss_observation.dependency_observed");
+  return payload;
+}
+
+function buildUnsafeSinkObservedPayload(input) {
+  const payload = {
+    observation_kind: "unsafe_sink_observed",
+    file_path: assertNonEmptyStringField(input.file_path, "file_path"),
+    symbol: assertNonEmptyStringField(input.symbol, "symbol"),
+    sink_kind: assertNonEmptyStringField(input.sink_kind, "sink_kind"),
+    language: assertNonEmptyStringField(input.language, "language"),
+  };
+  validateNoSensitiveMaterial(payload, "oss_observation.unsafe_sink_observed");
+  return payload;
+}
+
+function buildCrashObservedPayload(input) {
+  const payload = {
+    observation_kind: "crash_observed",
+    harness: assertNonEmptyStringField(input.harness, "harness"),
+    exit_code: assertOptionalIntegerField(input.exit_code, "exit_code"),
+    asan_report_hash: assertNonEmptyStringField(input.asan_report_hash, "asan_report_hash"),
+  };
+  if (payload.exit_code == null) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "exit_code is required for crash_observed",
+    );
+  }
+  const filePath = assertOptionalStringField(input.file_path, "file_path");
+  if (filePath) payload.file_path = filePath;
+  const signal = assertOptionalStringField(input.signal, "signal");
+  if (signal) payload.signal = signal;
+  validateNoSensitiveMaterial(payload, "oss_observation.crash_observed");
+  return payload;
+}
+
+function buildConfigMisuseObservedPayload(input) {
+  // `key` carries the config key name (not the secret value); `value_hash` is
+  // a sha256 of the value bytes so downstream can dedupe / fingerprint without
+  // ever persisting the raw value. The sensitive-material guard will reject
+  // payloads where `key` matches the SENSITIVE_KEY_RE pattern unless the
+  // suffix is safe; producers SHOULD pass a safe-shaped key like
+  // `config_misuse_key` and stash the raw key in a separate field — but here
+  // we accept the raw config key because operators expect to see
+  // "TLS_CIPHER_LIST" or "debug_mode" verbatim. The guard runs against the
+  // OUTER payload object's keys, not on the string value held in `key`.
+  const payload = {
+    observation_kind: "config_misuse_observed",
+    file_path: assertNonEmptyStringField(input.file_path, "file_path"),
+    key: assertNonEmptyStringField(input.key, "key"),
+    value_hash: assertNonEmptyStringField(input.value_hash, "value_hash"),
+    misuse_class: assertNonEmptyStringField(input.misuse_class, "misuse_class"),
+  };
+  validateNoSensitiveMaterial(payload, "oss_observation.config_misuse_observed");
+  return payload;
+}
+
+const OSS_OBSERVATION_BUILDERS = Object.freeze({
+  dependency_observed: buildDependencyObservedPayload,
+  unsafe_sink_observed: buildUnsafeSinkObservedPayload,
+  crash_observed: buildCrashObservedPayload,
+  config_misuse_observed: buildConfigMisuseObservedPayload,
+});
+
+function buildOssObservationPayload(kind, input) {
+  const builder = OSS_OBSERVATION_BUILDERS[kind];
+  if (!builder) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `Unknown OSS observation kind: ${kind}`,
+    );
+  }
+  if (input == null || typeof input !== "object" || Array.isArray(input)) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `OSS observation payload for ${kind} must be a plain object`,
+    );
+  }
+  return builder(input);
+}
+
+// Emit an `observation.recorded` frontier event carrying an OSS observation
+// payload. Producers (static analyzers via bob_repo_check, fuzz runs via
+// bob_repo_docker_run, dependency walkers via bob_repo_inventory follow-ups)
+// call this with the kind + structured payload.
+function recordOssObservation({
+  target_domain: targetDomain,
+  surface_id: surfaceId,
+  observation_kind: observationKind,
+  payload,
+  source_ref: sourceRef = null,
+} = {}) {
+  const domain = assertSafeDomain(targetDomain);
+  const sid = assertNonEmptyStringField(surfaceId, "surface_id");
+  const kind = assertNonEmptyStringField(observationKind, "observation_kind");
+  if (!isOssObservationKind(kind)) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `observation_kind must be one of ${OSS_OBSERVATION_KIND_VALUES.join(", ")}`,
+    );
+  }
+  const builtPayload = buildOssObservationPayload(kind, payload);
+  const event = appendFrontierEvent({
+    target_domain: domain,
+    kind: "observation.recorded",
+    surface_id: sid,
+    payload: builtPayload,
+    source: {
+      artifact: "repo-inventory.json",
+      ref: sourceRef == null ? null : String(sourceRef),
+    },
+  });
+  try {
+    scheduleMaterialization(domain);
+  } catch {
+    // Best-effort: the next producer event will trigger materialization.
+  }
+  return event;
 }
 
 module.exports = {
-  NATIVE_CODE_EXTENSIONS,
-  REPO_INVENTORY_VERSION,
-  buildRepoInventory,
+  deriveRepoTargetDomain,
+  deriveRepoHashFromPath,
   initRepoSession,
-  makeRepoTargetId,
-  normalizeRepoPath,
+  readRepoSession,
+  buildRepoInventory,
   repoCheck,
-  walkRepoFiles,
+  buildRepoCheckSummary,
+  // Exposed for cross-module reuse / tests.
+  REPO_CHECK_MAX_FILE_BYTES,
+  REPO_CHECK_MAX_EXCERPTS,
+  REPO_CHECK_SUMMARY_EXCERPT_MAX_CHARS,
+  REPO_CHECK_SUMMARY_TOP_N,
+  REPO_CHECK_TYPES,
+  REPO_WALK_MAX_FILES,
+  RepoTooLargeError,
+  safeBasename,
+  sha8,
+  // Cycle O.6 OSS observation kinds.
+  OSS_OBSERVATION_KIND_VALUES,
+  OSS_OBSERVATION_BUILDERS,
+  isOssObservationKind,
+  buildOssObservationPayload,
+  recordOssObservation,
+  // Cycle Y.1 capability observation kinds (siblings of OSS kinds; both
+  // ride observation.recorded — Y-P1 / X-P8 honored).
+  CAPABILITY_OBSERVATION_KIND_VALUES,
+  isCapabilityObservationKind,
 };
+
+// Quieter shadow imports kept for parity with other session-init paths.
+// eslint-disable-next-line no-unused-vars
+const _unusedNormalizeOptionalText = normalizeOptionalText;
