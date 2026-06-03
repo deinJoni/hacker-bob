@@ -93,6 +93,13 @@ const EVALUATOR_ROLE_BUNDLES_BY_CAPABILITY_PACK = Object.freeze({
   smart_contract_sui: Object.freeze(["evaluator-shared", "evaluator-move"]),
   smart_contract_substrate: Object.freeze(["evaluator-shared", "evaluator-substrate"]),
   smart_contract_cosmwasm: Object.freeze(["evaluator-shared", "evaluator-cosmwasm"]),
+  oss_dependency: Object.freeze(["evaluator-shared", "evaluator-oss"]),
+  oss_native_code: Object.freeze(["evaluator-shared", "evaluator-oss"]),
+  oss_api_schema: Object.freeze(["evaluator-shared", "evaluator-oss"]),
+  oss_authz: Object.freeze(["evaluator-shared", "evaluator-oss"]),
+  oss_ci_cd: Object.freeze(["evaluator-shared", "evaluator-oss"]),
+  oss_secrets_config: Object.freeze(["evaluator-shared", "evaluator-oss"]),
+  oss_docs_behavior: Object.freeze(["evaluator-shared", "evaluator-oss"]),
 });
 
 // Defensive default when a Surface node's metadata doesn't classify into a

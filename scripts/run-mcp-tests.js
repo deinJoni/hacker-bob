@@ -15,20 +15,11 @@ function main() {
     throw new Error("test/mcp-test-manifest.json must contain a non-empty array of test file paths");
   }
 
-  const testProjectDir = fs.mkdtempSync(path.join(os.tmpdir(), "bountyagent-mcp-project-"));
-  let result;
-  try {
-    result = spawnSync(process.execPath, ["--test", ...manifest], {
-      cwd: ROOT,
-      env: {
-        ...process.env,
-        BOB_PROJECT_DIR: testProjectDir,
-      },
-      stdio: "inherit",
-    });
-  } finally {
-    fs.rmSync(testProjectDir, { recursive: true, force: true });
-  }
+  const result = spawnSync(process.execPath, ["--test", ...manifest], {
+    cwd: ROOT,
+    env: process.env,
+    stdio: "inherit",
+  });
 
   if (result.error) throw result.error;
   if (result.status !== 0) {

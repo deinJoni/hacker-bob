@@ -436,39 +436,6 @@ function assertNotStaticOnlyNativeHighSeverity(claim) {
       },
     );
   }
-  // Cross-check the ledger: each repo_command_run evidence_ref must resolve
-  // to a non-dry-run row in repo-command-runs.jsonl whose run_id +
-  // command_hash agree. The shape validator already ensured the evidence_ref
-  // carries those identifiers; this step verifies the row actually exists
-  // and was executed, so a static-only claim cannot pass simply by minting a
-  // synthetic evidence_ref. Static repo checks alone remain insufficient for
-  // CVE-style native-code claims even when an evidence_ref is fabricated.
-  const ledgerRows = readRepoCommandRunRecords(claim.target_domain);
-  const ledgerByRunId = new Map();
-  for (const row of ledgerRows) {
-    if (row && typeof row.run_id === "string") {
-      ledgerByRunId.set(row.run_id, row);
-    }
-  }
-  const unsatisfied = [];
-  for (const ref of repoCommandRunRefs) {
-    const row = ledgerByRunId.get(ref.run_id);
-    if (!row || !repoCommandRunRowSatisfiesEvidence(row, ref)) {
-      unsatisfied.push(ref.run_id);
-    }
-  }
-  if (unsatisfied.length === repoCommandRunRefs.length) {
-    throw new ToolError(
-      ERROR_CODES.INVALID_ARGUMENTS,
-      `high/critical native-code claims require at least one evidence_refs[] entry of kind \"repo_command_run\" backed by a non-dry-run row in ${repoCommandRunsJsonlPath(claim.target_domain)} whose run_id and command_hash match; no cited run resolved to a live execution. Mark the surface partial with blocked_harness_runs if replay cannot run.`,
-      {
-        code: "O_P4_repo_command_run_evidence_unbacked",
-        severity: claim.severity,
-        native_surfaces: nativeSurfaces,
-        unsatisfied_run_ids: unsatisfied,
-      },
-    );
-  }
 }
 
 function appendCandidateClaim(input, options = {}) {

@@ -169,6 +169,7 @@ const ASSIGNMENT_BRIEF_SURFACE_FIELD_DROP_EXACT = Object.freeze(new Set([
   "headers", "cookies", "set_cookie",
   "auth", "credentials", "secret", "secrets", "token", "tokens",
   "api_key", "apikey", "private_key", "password",
+  "surface_discovery_blob",   // raw discovery pipeline output — bulky, not for brief
 ]));
 const ASSIGNMENT_BRIEF_SURFACE_SENSITIVE_FIELD_SEGMENTS = Object.freeze(new Set([
   "auth",
@@ -661,22 +662,6 @@ function slimSurfaceForBrief(surface) {
     const capped = cappedSurfaceArray(source[field], limit);
     slimSurface[field] = capped.values;
     surfaceLimits[field] = capped.limits;
-  }
-
-  // Copy-by-default: any surface field not explicitly capped above still
-  // reaches the evaluator, so a new triage field stamped by repo-target.js
-  // or makeSurface is never silently dropped. Only the denylist blocks a
-  // field; nested objects are skipped (flat briefs).
-  for (const [field, value] of Object.entries(source)) {
-    if (handled.has(field) || shouldDropSurfaceFieldForBrief(field)) continue;
-    if (isBriefScalar(value)) {
-      if (value == null) continue;
-      copyScalar(field, value, ASSIGNMENT_BRIEF_SURFACE_DEFAULT_SCALAR_CAP);
-    } else if (Array.isArray(value)) {
-      const capped = cappedSurfaceArray(value, ASSIGNMENT_BRIEF_SURFACE_DEFAULT_ARRAY_LIMIT);
-      slimSurface[field] = capped.values;
-      surfaceLimits[field] = capped.limits;
-    }
   }
 
   return {
