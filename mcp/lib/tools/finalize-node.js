@@ -515,12 +515,14 @@ module.exports = Object.freeze({
     required: ["target_domain", "node_id", "prep_token", "agent_output"],
   },
   handler,
-  // orchestrator + graph-scheduler are the dispatch authorities. The
-  // `evaluator-spawn` bundle (Plane X Cycle X.10) gets the tool too as
-  // read-only-of-own-context per the X-P7 ergonomics trade — the
-  // generic agent shell carries it for self-awareness; orchestrator
-  // owns the actual finalize call against external state.
-  role_bundles: ["orchestrator", "evaluator-spawn"],
+  // Orchestrator is the only finalize authority. evaluator-spawn was
+  // previously listed here for "self-awareness" but bob_finalize_node
+  // trusts caller-supplied agent_output.tool_invocations[] — a spawned
+  // evaluator with this access could self-finalize while omitting or
+  // under-reporting its own tool calls, defeating the X.6 tool-constraint
+  // detector. The evaluator-spawn prompt (step 7) already states "The
+  // orchestrator runs bob_finalize_node" — keep the security model aligned.
+  role_bundles: ["orchestrator"],
   mutating: true,
   global_preapproval: false,
   network_access: false,

@@ -166,12 +166,12 @@ test("buildDockerRunArgv emits --pids-limit 1024 (O-P3)", () => {
   assert.equal(valueAfterFlag(argv.args, "--pids-limit"), "1024");
 });
 
-test("buildDockerRunArgv emits --read-only-tmpfs (O-P3)", () => {
+test("buildDockerRunArgv emits --read-only (O-P3)", () => {
   const argv = buildDockerRunArgv({
     repoRoot: "/r", workDir: "/w", imageTag: "img:t", command: ["x"],
     allowNetwork: false, repoMountMode: "read_only", egressProfile: null,
   });
-  assert.ok(argv.args.includes("--read-only-tmpfs"), "expected --read-only-tmpfs flag");
+  assert.ok(argv.args.includes("--read-only"), "expected --read-only flag");
 });
 
 test("buildDockerRunArgv emits --tmpfs /tmp:size=512m (O-P3)", () => {
@@ -378,7 +378,7 @@ test("repoDockerRun live mode constructs argv with every O-P3 sandbox flag (per-
     assert.equal(valueAfterFlag(capturedArgs, "--cpus"), "2");
     assert.equal(valueAfterFlag(capturedArgs, "--memory"), "4g");
     assert.equal(valueAfterFlag(capturedArgs, "--pids-limit"), "1024");
-    assert.ok(capturedArgs.includes("--read-only-tmpfs"));
+    assert.ok(capturedArgs.includes("--read-only"));
     assert.equal(valueAfterFlag(capturedArgs, "--tmpfs"), "/tmp:size=512m");
 
     // Mounts: /src read-only, /work writable.

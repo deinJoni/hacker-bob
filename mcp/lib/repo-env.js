@@ -847,7 +847,7 @@ function buildDockerRunArgv({
   args.push("--cpus", "2");
   args.push("--memory", "4g");
   args.push("--pids-limit", "1024");
-  args.push("--read-only-tmpfs");
+  args.push("--read-only");
   args.push("--tmpfs", "/tmp:size=512m");
   // Mounts: /src is the bound repo (read-only by default), /work is
   // session-scoped writable space for build artefacts.

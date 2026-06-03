@@ -159,13 +159,9 @@ function initRepoSession({
   if (requestedTargetDomain != null) {
     const trimmed = assertNonEmptyString(requestedTargetDomain, "target_domain");
     assertSafeDomain(trimmed);
-    if (trimmed !== derivedDomain) {
-      throw new ToolError(
-        ERROR_CODES.INVALID_ARGUMENTS,
-        `target_domain does not match derived repo slug; got ${trimmed}, expected ${derivedDomain}`,
-        { expected_target_domain: derivedDomain, provided_target_domain: trimmed },
-      );
-    }
+    // Accept any safe slug the operator provides — supports the documented
+    // --target-id <id> override for stable/memorable repo session names. The
+    // derived slug remains the default when no override is supplied.
     domain = trimmed;
   } else {
     domain = derivedDomain;

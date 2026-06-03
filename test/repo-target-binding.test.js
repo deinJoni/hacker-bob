@@ -258,13 +258,12 @@ test("readRepoSession round-trips the bound target_repo and repo_hash", () => {
   });
 });
 
-test("explicit target_domain must match the derived repo slug", () => {
+test("explicit target_domain is accepted as a custom safe slug (supports --target-id override)", () => {
   withTempHome(() => {
     const repoPath = makeTempRepoDir();
-    assert.throws(
-      () => initRepoSession({ repo_path: repoPath, target_domain: "repo-bogus-deadbeef" }),
-      /does not match derived repo slug/,
-    );
+    const customSlug = "repo-myproject-stable";
+    const result = initRepoSession({ repo_path: repoPath, target_domain: customSlug });
+    assert.equal(result.target_domain, customSlug);
   });
 });
 

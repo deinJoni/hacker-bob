@@ -75,12 +75,15 @@ async function handler(args = {}) {
     // already-closed and non-record_mode paths `recorded` is absent — there
     // is nothing to ingest and idempotent close is a no-op.
     const buffered = wasRecording && Array.isArray(result && result.recorded) ? result.recorded : [];
-    const ingestSlice = buffered.slice(0, MAX_CLOSE_INGEST_RECORDS);
-    const overflow = buffered.length - ingestSlice.length;
 
+    // Ingest in batches so overflow records aren't dropped silently. The
+    // subprocess buffer was already drained by closeSession; if we cap the
+    // import here, the remaining records have no recovery path.
     let importSummary = { imported: 0, duplicates: 0, rejected: 0, traffic_path: null };
-    if (ingestSlice.length > 0) {
-      const entries = ingestSlice.map((record) => buildImportEntry(record, sessionId));
+    let importError = null;
+    for (let offset = 0; offset < buffered.length; offset += MAX_CLOSE_INGEST_RECORDS) {
+      const slice = buffered.slice(offset, offset + MAX_CLOSE_INGEST_RECORDS);
+      const entries = slice.map((record) => buildImportEntry(record, sessionId));
       try {
         const raw = importHttpTraffic({
           target_domain: targetDomain,
@@ -90,25 +93,22 @@ async function handler(args = {}) {
         });
         const envelope = typeof raw === "string" ? JSON.parse(raw) : raw;
         if (envelope && typeof envelope === "object") {
-          importSummary = {
-            imported: envelope.imported || 0,
-            duplicates: envelope.duplicates || 0,
-            rejected: envelope.rejected || 0,
-            traffic_path: envelope.traffic_path || null,
-          };
+          importSummary.imported += envelope.imported || 0;
+          importSummary.duplicates += envelope.duplicates || 0;
+          importSummary.rejected += envelope.rejected || 0;
+          if (!importSummary.traffic_path && envelope.traffic_path) {
+            importSummary.traffic_path = envelope.traffic_path;
+          }
         }
       } catch (err) {
         // Ingestion failure surfaces structured but does not block the close
         // result — the subprocess has already been torn down by closeSession.
-        importSummary = {
-          imported: 0,
-          duplicates: 0,
-          rejected: 0,
-          traffic_path: null,
-          error: err && err.message ? err.message : String(err),
-        };
+        // Capture the first error; subsequent batches stop.
+        importError = err && err.message ? err.message : String(err);
+        break;
       }
     }
+    if (importError) importSummary.error = importError;
 
     // Idempotency: closeSession reports closed: false for
     // browser_session_not_found (the entry is already gone from the registry
@@ -125,7 +125,7 @@ async function handler(args = {}) {
       ingested_count: importSummary.imported,
       duplicates: importSummary.duplicates,
       rejected: importSummary.rejected,
-      overflow_count: overflow > 0 ? overflow : 0,
+      overflow_count: 0,
       traffic_path: importSummary.traffic_path || null,
     });
   } catch (err) {

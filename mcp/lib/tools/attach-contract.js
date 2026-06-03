@@ -213,7 +213,7 @@ module.exports = Object.freeze({
               properties: {
                 id: { type: "string" },
                 kind: { type: "string", enum: [...WITNESS_KIND_VALUES] },
-                predicate: { type: "object" },
+                predicate: { type: "object", additionalProperties: true },
               },
               required: ["id", "kind", "predicate"],
             },

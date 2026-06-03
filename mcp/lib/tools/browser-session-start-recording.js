@@ -209,7 +209,7 @@ module.exports = Object.freeze({
           type: "object",
           properties: {
             action: { type: "string" },
-            args: { type: "object" },
+            args: { type: "object", additionalProperties: true },
           },
           required: ["action"],
         },
