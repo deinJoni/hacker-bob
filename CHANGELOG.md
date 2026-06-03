@@ -65,7 +65,39 @@ Release notes: [docs/releases/v2.0.0.md](docs/releases/v2.0.0.md).
 - v1.3.6 follow-up: complete removal of the `legacy_unverified` handoff path. v1.3.5 keeps the path behind the per-session `handoff_provenance_required` flag so sessions initialised on v1.3.5+ already fail-closed; v1.3.6 will drop the legacy branch entirely from `wave-handoff-contracts.js`, `phase-gates.js`, `pipeline-session-artifacts.js`, and `wave-handoff-store.js`.
 - v1.3.6 follow-up: end-to-end live policy-replay smoke. v1.3.5 fixes SDK package + native-binary resolution from an installed workspace's `testing/policy-replay/replay.mjs`, but does not exercise `query()` invocation. v1.3.6 will add a Claude-OAuth-gated live-replay smoke test so binary lookup is verified beyond static resolution.
 
-## [1.3.5] - 2026-05-25
+## [1.3.5] - 2026-06-03
+
+### OSS repo hunting mode
+
+- Added `/bob-oss` (Claude) and `$bob-oss` (Codex) for authorized OSS repository security research. The skill accepts a GitHub URL, clones into a sandboxed session directory, scaffolds a Docker toolchain image via `bounty_repo_prepare_env`, and runs the full Bob hunter pipeline (recon → hunt → verify → grade → report) against the local repo surface.
+- Added `bounty_repo_docker_run`, `bounty_repo_check`, `bounty_repo_inventory`, `bounty_repo_prepare_env`, `bounty_import_static_artifact`, and `bounty_static_scan` MCP tools covering sandboxed Docker execution, repo health checks, source inventory, static artifact ingestion, and CodeQL/Semgrep static scanning.
+- Added a `native` surface type handled by a shared `hunter-agent` with OSS-specific brief: ASAN/libFuzzer/Valgrind harness building, static-scan result ingestion, and coverage-guided fuzzing within the Docker sandbox.
+- Added per-path reachability and severity-ceiling triage: the OSS hunter brief includes a `reachability` object per finding with `caller_path`, `trigger_conditions`, and `severity_ceiling` so the grader can downgrade unbounded heap findings gated behind CLI-local or daemon-only call paths.
+- Added local OSS session dashboard (`/bob-status` renders `oss-dashboard.html`) showing active repo sessions, per-session phase/finding counts, and open blockers without requiring a live MCP connection.
+- Hardened the OSS Docker proof gate: `bounty_repo_docker_run` rejects runs that lack a prior successful `bounty_repo_prepare_env` image, and hunter briefs cap array fields so a large source tree cannot overflow the context window.
+- Added OSS planning docs at `docs/OSS_MODE_MVP.md` covering the sandboxing contract, harness patterns, and escalation path from ASAN crash to CVE submission.
+- Added pcap build detection and attribution credit fields to `hunter-techniques.json` for network-protocol fuzz harnesses.
+
+### Kimi CLI adapter
+
+- Added a Kimi CLI adapter (`adapters/kimi/`) that mirrors the Codex adapter shape: six Bob skills (`bob-hunt`, `bob-debug`, `bob-status`, `bob-update`, `bob-export`, `bob-egress`), adapter config, and role rendering via `scripts/lib/kimi-role-renderer.js` + `scripts/generate-kimi-roles.js`.
+- Published a thin `hacker-bob-kimi` wrapper package (`packages/hacker-bob-kimi/`) that pins `--adapter kimi` and delegates to the canonical `hacker-bob` CLI, matching the existing `hacker-bob-cc` and `hacker-bob-codex` wrappers.
+- Wired Kimi into install + lifecycle plumbing: `scripts/install.js` and `scripts/lifecycle.js` now route to the Kimi adapter, `dev-sync.sh` covers the Kimi workspace, and `bin/hacker-bob.js` recognizes `--adapter kimi`.
+- Centralized the wrapper-package and install-metadata registries in `scripts/lib/package-policy.js` so `release-check.js`, `test/package.test.js`, and adapter detection see all three wrappers through a single source.
+- Added Kimi coverage to the adapter test surfaces (`test/adapter-detection.test.js`, `test/cli.test.js`, `test/install-smoke.test.js`, `test/mcp-server.test.js`, `test/package.test.js`, `test/prompt-contracts.test.js`) and documented the adapter in `docs/ADAPTERS.md`, `docs/FIRST_RUN.md`, and `docs/TROUBLESHOOTING.md`.
+- Restored the explicit `severity: null` schema entry in `mcp/lib/tools/write-verification-round.js` that regressed during the runtime-contracts refactor, so verification rounds that legitimately drop severity to null pass tool validation.
+
+### CVE feed matching and public intel
+
+- Wired CVE feed matching into `bounty_public_intel`: the tool now cross-references NVD/GHSA feeds against the session's target domain and known surface endpoints, surfacing relevant recent CVEs as ranked leads in the hunter brief.
+
+### Installer and dependency hardening
+
+- Hardened installer writes against symlinks: `scripts/install.js` now resolves symlinks before writing any Bob-owned file, preventing a TOCTOU attack where a malicious symlink placed in `.claude/` could redirect an install write to an arbitrary path.
+- Added `bounty_warn_stale_psl` (surfaced via `/bob-status`) that flags when the installed Public Suffix List dependency is more than 90 days old, so domain-scoping checks remain accurate against new TLDs and private-domain additions.
+- Isolated MCP egress profile tests so `egress-profiles.json` reads and writes during `npm test` cannot interfere with an active operator workspace.
+- Strengthened attribution on `hunter-techniques.json` so technique entries carry a `source` field referencing the originating research or CVE advisory.
+- Added Codex review guidance (`docs/CODEX_REVIEW.md`) covering how to run and interpret Codex-adapter hunts alongside Claude-adapter hunts.
 
 ### Runtime contracts and release gates
 
