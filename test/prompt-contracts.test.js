@@ -533,7 +533,7 @@ test("no rendered artifact leaks an unsubstituted {{...}} placeholder", () => {
 // =============================================================================
 
 test("adapter registry exposes the shared lifecycle surface", () => {
-  assert.deepEqual(Object.keys(ADAPTERS).sort(), ["claude", "codex", "generic-mcp"].sort());
+  assert.deepEqual(Object.keys(ADAPTERS).sort(), ["claude", "codex", "generic-mcp", "kimi"].sort());
   for (const id of Object.keys(ADAPTERS)) {
     const adapter = getAdapter(id);
     assert.equal(adapter.id, id);
@@ -1289,7 +1289,7 @@ test("installer and dev-sync ship the Claude command + skill set with no legacy 
 
 test("dev-sync accepts adapters and gates Claude-specific sync paths", () => {
   const devSync = readFile("dev-sync.sh");
-  assert.match(devSync, /--adapter claude\|codex\|generic-mcp\|all/);
+  assert.match(devSync, /--adapter claude\|codex\|generic-mcp\|kimi\|all/);
   assert.match(devSync, /ADAPTER="claude"/);
   assert.match(devSync, /if adapter_includes "claude"; then\s+sync_claude_adapter/s);
 });
