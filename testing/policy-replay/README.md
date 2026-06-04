@@ -59,3 +59,10 @@ The runner emits one machine-readable JSON object with `ok`, `case_id`, `agent_t
 ## Local Dependencies
 
 Live replay requires `@anthropic-ai/claude-agent-sdk` and a working local Claude OAuth login. CI-safe dry-run and schema tests do not invoke Claude and do not require credentials.
+
+## Live Smoke Design
+
+The live `query()` smoke is intentionally not part of default CI until the
+repository has an owned Claude credential and rotation policy. See
+`testing/policy-replay/LIVE_SMOKE_DESIGN.md` for the gated workflow, fixture
+shape, acceptance criteria, and failure-mode runbook.

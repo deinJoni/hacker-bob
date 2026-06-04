@@ -222,18 +222,7 @@ function signingKeyForAssignments(targetDomain, assignments) {
     : null;
 }
 
-// Read the session's handoff_provenance_required flag directly. Returns false
-// for missing/legacy/malformed sessions, matching the v1.3.5 soft-migration model.
-function readHandoffProvenanceRequired(targetDomain) {
-  try {
-    const raw = readJsonFile(statePath(targetDomain));
-    return raw && raw.handoff_provenance_required === true;
-  } catch {
-    return false;
-  }
-}
-
-function validateHandoffMetadata(document, { targetDomain, wave, agent, surfaceId, assignment, signingKey, requireProvenance = false }) {
+function validateHandoffMetadata(document, { targetDomain, wave, agent, surfaceId, assignment, signingKey }) {
   if (!isPlainObject(document)) throw new Error("handoff payload must be an object");
   if (document.target_domain != null && document.target_domain !== targetDomain) throw new Error("target_domain mismatch");
   if (parseWaveId(document.wave) !== wave) throw new Error("wave mismatch");
@@ -242,7 +231,7 @@ function validateHandoffMetadata(document, { targetDomain, wave, agent, surfaceI
   if (!["complete", "partial"].includes(capString(document.surface_status, 40))) {
     throw new Error("invalid surface_status");
   }
-  validateHandoffProvenance(document, assignment, { signingKey, requireProvenance });
+  validateHandoffProvenance(document, assignment, { signingKey });
 }
 
 function readWaveReadiness(targetDomain, waveNumber, handoffListing = null) {
@@ -275,7 +264,6 @@ function readWaveReadiness(targetDomain, waveNumber, handoffListing = null) {
   } catch (error) {
     signingKeyError = error;
   }
-  const requireProvenance = readHandoffProvenanceRequired(targetDomain);
   const handoffFiles = listHandoffFiles(artifacts.dir, wave, handoffListing);
   result.handoffs_total = handoffFiles.length;
   const handoffPathByAgent = new Map();
@@ -305,7 +293,6 @@ function readWaveReadiness(targetDomain, waveNumber, handoffListing = null) {
         surfaceId: assignment.surface_id,
         assignment,
         signingKey,
-        requireProvenance,
       });
       result.received_agents.push(assignment.agent);
     } catch {
@@ -564,7 +551,6 @@ function summarizeStructuredHandoffChainNotes(targetDomain, handoffListing = nul
     unsigned_handoff_count: 0,
   };
   if (!fs.existsSync(dir)) return summary;
-  const requireProvenance = readHandoffProvenanceRequired(targetDomain);
   const assignmentContexts = new Map();
 
   function contextFor(wave, agent) {
@@ -618,7 +604,6 @@ function summarizeStructuredHandoffChainNotes(targetDomain, handoffListing = nul
         surfaceId: assignment.surface_id,
         assignment,
         signingKey,
-        requireProvenance,
       });
       chainNotes = normalizeStringArray(document.chain_notes, "chain_notes");
     } catch (error) {

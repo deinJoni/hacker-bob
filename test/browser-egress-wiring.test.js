@@ -40,22 +40,20 @@ async function callTool(toolName, args) {
   return JSON.parse(raw);
 }
 
-// resolveEgressProfile uses projectRootFromMcp() by default — which resolves
-// to the repo root (mcp/.., i.e. /Users/noot/Documents/hacker-bob). To avoid
-// stomping on the operator's real egress-profiles.json we write the fixture
-// directly under the repo's .claude/bob path, then restore the previous
-// contents after each test. This mirrors withRepoEgressConfig() from
-// test/mcp-server.test.js.
-function withRepoEgressConfig(document, fn) {
-  const repoRoot = path.resolve(__dirname, "..");
-  const filePath = path.join(repoRoot, ".claude", "bob", "egress-profiles.json");
-  const existed = fs.existsSync(filePath);
-  const previous = existed ? fs.readFileSync(filePath, "utf8") : null;
+// resolveEgressProfile uses projectRootFromMcp() by default. Point
+// BOB_PROJECT_DIR at a temp project root so the default path is exercised
+// without touching the operator's real .claude/bob/egress-profiles.json.
+function withDefaultEgressConfig(document, fn) {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-browser-egress-project-"));
+  const filePath = path.join(projectRoot, ".claude", "bob", "egress-profiles.json");
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(document, null, 2)}\n`, "utf8");
+  const previousProjectDir = process.env.BOB_PROJECT_DIR;
+  process.env.BOB_PROJECT_DIR = projectRoot;
   const cleanup = () => {
-    if (existed) fs.writeFileSync(filePath, previous, "utf8");
-    else fs.rmSync(filePath, { force: true });
+    if (previousProjectDir === undefined) delete process.env.BOB_PROJECT_DIR;
+    else process.env.BOB_PROJECT_DIR = previousProjectDir;
+    fs.rmSync(projectRoot, { recursive: true, force: true });
   };
   try {
     const result = fn();
@@ -191,7 +189,7 @@ test("resolveBrowserEgressProfile: invalid name shape → egress_profile_invalid
 });
 
 test("resolveBrowserEgressProfile: nonexistent profile → egress_profile_not_found", () => {
-  withRepoEgressConfig({
+  withDefaultEgressConfig({
     version: 1,
     profiles: [
       { name: "default", proxy_url: null, region: null, description: "Direct", enabled: true },
@@ -206,7 +204,7 @@ test("resolveBrowserEgressProfile: nonexistent profile → egress_profile_not_fo
 });
 
 test("resolveBrowserEgressProfile: disabled profile → egress_profile_disabled", () => {
-  withRepoEgressConfig({
+  withDefaultEgressConfig({
     version: 1,
     profiles: [
       { name: "default", proxy_url: null, region: null, description: "Direct", enabled: true },
@@ -227,7 +225,7 @@ test("resolveBrowserEgressProfile: disabled profile → egress_profile_disabled"
 });
 
 test("resolveBrowserEgressProfile: env var not set → egress_profile_env_missing", () => {
-  withRepoEgressConfig({
+  withDefaultEgressConfig({
     version: 1,
     profiles: [
       { name: "default", proxy_url: null, region: null, description: "Direct", enabled: true },
@@ -250,7 +248,7 @@ test("resolveBrowserEgressProfile: env var not set → egress_profile_env_missin
 });
 
 test("resolveBrowserEgressProfile: clean resolve → ok:true with parsed proxy", () => {
-  withRepoEgressConfig({
+  withDefaultEgressConfig({
     version: 1,
     profiles: [
       { name: "default", proxy_url: null, region: null, description: "Direct", enabled: true },
@@ -349,7 +347,7 @@ test("bob_browser_session_start: egress_profile=default → ok with same direct 
 });
 
 test("bob_browser_session_start: nonexistent profile → egress_profile_not_found, subprocess NOT spawned", { skip: !PATCHRIGHT_AVAILABLE }, async () => {
-  await withRepoEgressConfig({
+  await withDefaultEgressConfig({
     version: 1,
     profiles: [
       { name: "default", proxy_url: null, region: null, description: "Direct", enabled: true },
@@ -375,7 +373,7 @@ test("bob_browser_session_start: nonexistent profile → egress_profile_not_foun
 });
 
 test("bob_browser_session_start: disabled profile → egress_profile_disabled, subprocess NOT spawned", { skip: !PATCHRIGHT_AVAILABLE }, async () => {
-  await withRepoEgressConfig({
+  await withDefaultEgressConfig({
     version: 1,
     profiles: [
       { name: "default", proxy_url: null, region: null, description: "Direct", enabled: true },
@@ -408,7 +406,7 @@ test("bob_browser_session_start: disabled profile → egress_profile_disabled, s
 });
 
 test("bob_browser_session_start: env var unset → egress_profile_env_missing, subprocess NOT spawned", { skip: !PATCHRIGHT_AVAILABLE }, async () => {
-  await withRepoEgressConfig({
+  await withDefaultEgressConfig({
     version: 1,
     profiles: [
       { name: "default", proxy_url: null, region: null, description: "Direct", enabled: true },
@@ -442,7 +440,7 @@ test("bob_browser_session_start: env var unset → egress_profile_env_missing, s
 });
 
 test("bob_browser_session_start: resolved profile → startSession receives parsed proxy and response carries egress_profile_resolved", { skip: !PATCHRIGHT_AVAILABLE }, async () => {
-  await withRepoEgressConfig({
+  await withDefaultEgressConfig({
     version: 1,
     profiles: [
       { name: "default", proxy_url: null, region: null, description: "Direct", enabled: true },
@@ -496,7 +494,7 @@ test("bob_browser_session_start: resolved profile → startSession receives pars
 // ── bob_browser_session_start_recording mirrors session_start ──
 
 test("bob_browser_session_start_recording: resolved profile → startSession receives parsed proxy + record_mode and response carries egress_profile_resolved", { skip: !PATCHRIGHT_AVAILABLE }, async () => {
-  await withRepoEgressConfig({
+  await withDefaultEgressConfig({
     version: 1,
     profiles: [
       { name: "default", proxy_url: null, region: null, description: "Direct", enabled: true },
@@ -550,7 +548,7 @@ test("bob_browser_session_start_recording: resolved profile → startSession rec
 });
 
 test("bob_browser_session_start_recording: nonexistent profile → egress_profile_not_found, subprocess NOT spawned", { skip: !PATCHRIGHT_AVAILABLE }, async () => {
-  await withRepoEgressConfig({
+  await withDefaultEgressConfig({
     version: 1,
     profiles: [
       { name: "default", proxy_url: null, region: null, description: "Direct", enabled: true },
@@ -679,7 +677,7 @@ test("bob_browser_session_start_recording inputSchema declares optional egress_p
 // mean the proxy config was dropped.
 
 test("patchright smoke: Chromium attempts to dial the configured proxy (connection error proves the proxy was honored)", { skip: !PATCHRIGHT_AVAILABLE }, async () => {
-  await withRepoEgressConfig({
+  await withDefaultEgressConfig({
     version: 1,
     profiles: [
       { name: "default", proxy_url: null, region: null, description: "Direct", enabled: true },

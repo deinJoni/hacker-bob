@@ -25,6 +25,17 @@ const {
 const {
   writeFileAtomic,
 } = require("../mcp/lib/storage.js");
+const {
+  loadWaveAssignments,
+} = require("../mcp/lib/assignments.js");
+const {
+  ensureHandoffSigningKey,
+  readHandoffSigningKey,
+} = require("../mcp/lib/handoff-signing-key.js");
+const {
+  sha256Hex,
+  signHandoffProvenance,
+} = require("../mcp/lib/wave-handoff-contracts.js");
 
 function withTempHome(fn) {
   const previousHome = process.env.HOME;
@@ -42,17 +53,33 @@ function withTempHome(fn) {
   }
 }
 
+function seededHandoffToken(domain, waveNumber, agent) {
+  return `test-handoff-token:${domain}:w${waveNumber}:${agent}`;
+}
+
 function writeAssignments(domain, waveNumber, assignments) {
   fs.mkdirSync(sessionDir(domain), { recursive: true });
+  const persistedAssignments = assignments.map((assignment) => ({
+    ...assignment,
+    handoff_token_required: true,
+    handoff_token_sha256: assignment.handoff_token_sha256 || sha256Hex(
+      seededHandoffToken(domain, waveNumber, assignment.agent),
+    ),
+  }));
   writeFileAtomic(waveAssignmentsPath(domain, waveNumber), `${JSON.stringify({
     wave_number: waveNumber,
-    assignments,
+    handoff_tokens_required: true,
+    assignments: persistedAssignments,
   }, null, 2)}\n`);
+  ensureHandoffSigningKey(domain);
 }
 
 function writeHandoff(domain, wave, agent, surfaceId, fields = {}) {
   fs.mkdirSync(sessionDir(domain), { recursive: true });
-  writeFileAtomic(path.join(sessionDir(domain), `handoff-${wave}-${agent}.json`), `${JSON.stringify({
+  const waveNumber = Number(String(wave).replace(/^w/i, ""));
+  const assignment = loadWaveAssignments(domain, waveNumber).assignmentByAgent.get(agent);
+  assert.ok(assignment, `missing seeded assignment for ${agent}`);
+  const payload = {
     target_domain: domain,
     wave,
     agent,
@@ -68,7 +95,16 @@ function writeHandoff(domain, wave, agent, surfaceId, fields = {}) {
     waf_blocked_endpoints: [],
     lead_surface_ids: [],
     ...fields,
-  }, null, 2)}\n`);
+  };
+  const signed = signHandoffProvenance(
+    payload.provenance == null ? { ...payload, provenance: "verified" } : payload,
+    readHandoffSigningKey(domain),
+    { assignment },
+  );
+  writeFileAtomic(
+    path.join(sessionDir(domain), `handoff-${wave}-${agent}.json`),
+    `${JSON.stringify(signed, null, 2)}\n`,
+  );
 }
 
 test("getLatestMergedWavePartialSurfaceIds returns [] when no merges have happened", () => {

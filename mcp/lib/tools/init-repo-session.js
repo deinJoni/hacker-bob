@@ -29,6 +29,10 @@ module.exports = Object.freeze({
         "type": "string",
         "description": "Absolute path to a locally-checked-out repository. Plane O O-P1 forbids remote clones; the path must already exist as a directory."
       },
+      "target_domain": {
+        "type": "string",
+        "description": "Optional custom safe-slug override for the derived repo target_domain (supports --target-id stability across path changes). When omitted, the slug is derived from the canonical repo path."
+      },
       "source_url": {
         "type": "string",
         "description": "Optional upstream URL (e.g. https://github.com/org/repo). Stored for provenance; never used to clone."

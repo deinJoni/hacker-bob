@@ -56,6 +56,7 @@ Downstream consumers should:
 - Update phase-driven scripts to call `bob_advance_session(to_state)` with the new lifecycle state enum; the old `bounty_transition_phase(target_phase)` shim still routes but emits a deprecation event and is removed in v2.1.0.
 - Treat `~/bounty-agent-sessions/` as legacy-read-only. New sessions are written to `~/hacker-bob-sessions/`; legacy directories are copied on first read and preserved on disk until `--purge-legacy-session-root` lands in v2.1.0.
 - Read findings through `claims.jsonl` (`CandidateClaim` shape). The legacy `findings.jsonl` writer is retained for back-compat reads through v2.0.x and removed in a later release.
+- Update verification-round and repo-init callers for two intentional schema tightenings: `bob_write_verification_round.results[]` now requires `finding_id`, `disposition`, `severity`, `reportable`, `reasoning`, `repro_steps`, and `evidence_refs`; `bob_init_session` rejects `target_repo` with `INVALID_ARGUMENTS` and `redirect_to_tool: "bob_init_repo_session"`.
 
 Release notes: [docs/releases/v2.0.0.md](docs/releases/v2.0.0.md).
 

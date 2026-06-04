@@ -414,12 +414,11 @@ function buildInitialSessionState(domain, targetUrl, {
     verification_attempt_id: null,
     verification_snapshot_hash: null,
     verification_entered_at: null,
-    // New v1.3.5 sessions opt into mandatory handoff provenance. When true,
-    // validateHandoffProvenance refuses legacy_unverified handoffs, closing
-    // the assignment-file-downgrade attack documented in R1-HIGH-#1. Pre-v1.3.5
-    // sessions whose state.json lacks this field default to false (legacy
-    // compat) per the normalizer. Full removal of the legacy path is scheduled
-    // for v1.3.6 with deliberate test-fixture migration.
+    // The v1.3.5 handoff_provenance_required flag is retained on disk for
+    // round-trip stability and operator visibility, but the runtime no longer
+    // branches on it: v1.3.6 removed the legacy_unverified handoff path so
+    // signed handoffs are unconditionally required. New sessions still
+    // serialize the field as true; legacy sessions roundtrip as-is.
     handoff_provenance_required: true,
   };
 }
