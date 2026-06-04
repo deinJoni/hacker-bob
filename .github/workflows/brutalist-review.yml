@@ -39,6 +39,8 @@ jobs:
           mkdir -p "$HOME/.codex"
           printf '[features]\nimage_generation = false\n' > "$HOME/.codex/config.toml"
       - name: Brutalist review
+        # Advisory reviewer only; CI remains the hard merge gate.
+        continue-on-error: true
         # Pinned to the immutable v1.14.7 commit SHA, not the mutable tag — this
         # action receives credentials below, so it must not move.
         uses: ejmockler/brutalist-mcp/packages/github-action@15cedc8159a54662fa741395746d4aa0e161a3b4 # v1.14.7
