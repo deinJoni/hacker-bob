@@ -58,8 +58,14 @@ const {
 } = require("../scripts/lib/claude-role-renderer.js");
 const {
   CODEX_SKILL_SPECS,
+  CODEX_WORKER_CONTRACT_ROLE_IDS,
   renderCodexSkill,
 } = require("../scripts/lib/codex-role-renderer.js");
+const {
+  KIMI_SKILL_SPECS,
+  KIMI_WORKER_CONTRACT_ROLE_IDS,
+  renderKimiSkill,
+} = require("../scripts/lib/kimi-role-renderer.js");
 const {
   CODEX_ROLE_SPECS,
 } = require("../adapters/codex/role-specs.js");
@@ -494,6 +500,75 @@ test("Codex skills render exactly from the shared role model", () => {
   }
 });
 
+test("Kimi skills render exactly from the shared role model", () => {
+  for (const [skillId, spec] of Object.entries(KIMI_SKILL_SPECS)) {
+    assert.equal(
+      readFile(spec.output_path),
+      renderKimiSkill(skillId),
+      `${spec.output_path} drifted from ${skillId}`,
+    );
+  }
+});
+
+test("Kimi and Codex orchestrators embed the identical worker-contract role set, including the generic evaluator-spawn shell", () => {
+  // The kimi-connector regression dropped the generic TaskGraph evaluator
+  // shell from the Kimi appendix while the file-drift check still passed
+  // (renderer output and on-disk file stayed in sync, both missing it). Lock
+  // the cross-adapter invariant directly: both adapters embed the same set of
+  // Bob worker-role contracts; host differences live in how each contract is
+  // rendered, not in which contracts are present.
+  assert.ok(
+    KIMI_WORKER_CONTRACT_ROLE_IDS.includes("evaluator-spawn"),
+    "Kimi worker contracts must include the generic evaluator-spawn shell",
+  );
+  assert.deepEqual(
+    [...KIMI_WORKER_CONTRACT_ROLE_IDS],
+    [...CODEX_WORKER_CONTRACT_ROLE_IDS],
+    "Kimi and Codex worker-contract role lists must stay in parity",
+  );
+});
+
+test("Kimi orchestrator skill renders TaskGraph contracts with host-correct text", () => {
+  const body = readFile("adapters/kimi/skills/bob-evaluate/SKILL.md");
+  // The generic evaluator-spawn contract and its TaskGraph dispatch tool must
+  // render into the Kimi appendix (the exact gap the regression introduced).
+  assert.match(body, /BEGIN evaluator-spawn CONTRACT/);
+  assert.match(body, /END evaluator-spawn CONTRACT/);
+  assertToolReferenced(body, "bob_prepare_node");
+  // Host-text replacements must not silently go dead when the shared role
+  // bodies change wording: the Claude-specific phrasing must be rewritten for
+  // Kimi, not leaked verbatim nor mangled by the generic Claude Code -> Kimi
+  // CLI rule (e.g. "Kimi CLI enforces `maxTurns`").
+  assert.doesNotMatch(body, /enforces `maxTurns`/);
+  assert.doesNotMatch(body, /Evaluator waves MUST use the host's asynchronous/);
+  // The Kimi-specific rewrite of that line must be present.
+  assert.match(body, /Evaluator waves MUST use Agent with run_in_background/);
+});
+
+test("every Kimi skill is host-correct: no Claude/Codex syntax and no stale v1 vocabulary", () => {
+  // Mirrors the Codex "must not leak Claude-specific syntax" guard, but across
+  // ALL Kimi skills (derived from the renderer specs so new skills are guarded
+  // automatically) and with the inverse host expectation: Kimi legitimately
+  // uses Agent(subagent_type="coder") / run_in_background, so those are NOT
+  // forbidden — Codex-isms, Claude-isms, and stale pre-v2.1 tokens are.
+  for (const spec of Object.values(KIMI_SKILL_SPECS)) {
+    const body = readFile(spec.output_path);
+    // Must not pretend to be the Codex adapter.
+    assert.doesNotMatch(body, /\bCodex\b/, `${spec.output_path} leaks "Codex"`);
+    assert.doesNotMatch(body, /spawn_agent|close_agent/, `${spec.output_path} leaks Codex spawn verbs`);
+    assert.doesNotMatch(body, /\$bob-[a-z]/, `${spec.output_path} leaks the Codex $bob- command form`);
+    // Must not pretend to be the Claude adapter.
+    assert.doesNotMatch(body, /CLAUDE_PROJECT_DIR|SubagentStop|Claude Code/, `${spec.output_path} leaks Claude-specific syntax`);
+    assert.doesNotMatch(body, new RegExp(MCP_PERMISSION_PREFIX.replace(/_/g, "\\_")), `${spec.output_path} leaks Claude MCP permission strings`);
+    // Must not carry stale pre-v2.1 vocabulary (the kimi-connector regression).
+    assert.doesNotMatch(body, /`bounty_\*`/, `${spec.output_path} carries the stale bounty_* tool glob`);
+    assert.doesNotMatch(body, /\bBOB_HUNTER_DONE\b/, `${spec.output_path} carries the stale BOB_HUNTER_DONE marker`);
+    assert.doesNotMatch(body, /\bhunter\b/, `${spec.output_path} carries the stale "hunter" role token`);
+    assert.doesNotMatch(body, /\bdeep-recon\b|\brecon-agent\b/, `${spec.output_path} carries stale recon role tokens`);
+    assert.doesNotMatch(body, /\bbountyagent\b/, `${spec.output_path} carries the legacy bountyagent server key`);
+  }
+});
+
 test("Claude agent colors use supported values", () => {
   for (const [roleId, spec] of Object.entries(CLAUDE_ROLE_SPECS)) {
     if (spec.kind !== "agent") continue;
@@ -518,9 +593,10 @@ test("no rendered artifact leaks an unsubstituted {{...}} placeholder", () => {
       .filter((name) => name.endsWith(".md"))
       .map((name) => `.claude/agents/${name}`),
     ".claude/skills/bob-evaluate-runner/SKILL.md",
-    "adapters/codex/skills/bob-evaluate/SKILL.md",
-    "adapters/codex/skills/bob-status/SKILL.md",
-    "adapters/codex/skills/bob-debug/SKILL.md",
+    // Cover the full Codex + Kimi skill sets (all six skill ids each), derived
+    // from the renderer specs so newly added skills are guarded automatically.
+    ...Object.values(CODEX_SKILL_SPECS).map((spec) => spec.output_path),
+    ...Object.values(KIMI_SKILL_SPECS).map((spec) => spec.output_path),
   ];
   for (const relativePath of generatedFiles) {
     const matches = readFile(relativePath).match(/\{\{[A-Z][A-Z0-9_]+\}\}/g) || [];
