@@ -109,6 +109,8 @@ const {
   BLOCKED_PREREQ_KIND_VALUES,
   HANDOFF_PROVENANCE_MODEL,
   normalizeBlockedPrereqs,
+  sha256Hex,
+  signHandoffProvenance,
   validateWaveHandoffPayload,
 } = require("../mcp/lib/wave-handoff-contracts.js");
 
@@ -161,6 +163,9 @@ const {
   appendJsonlLine,
   writeFileAtomic,
 } = require("../mcp/lib/storage.js");
+const {
+  loadWaveAssignments,
+} = require("../mcp/lib/assignments.js");
 const {
   clearOperatorNote,
   clearTerminalBlock,
@@ -305,8 +310,11 @@ const {
   waveHandoffStatus,
   waveStatus,
   writeHandoff,
-  writeWaveHandoff,
+  writeWaveHandoff: writeWaveHandoffRaw,
 } = require("../mcp/lib/waves.js");
+const {
+  ensureHandoffSigningKey,
+} = require("../mcp/lib/handoff-signing-key.js");
 const {
   readPipelineAnalytics,
   readPipelineEvents,
@@ -838,19 +846,21 @@ function oversizedTechniqueKnowledge({
   };
 }
 
-function withRepoEgressConfig(document, fn) {
-  const filePath = egressProfiles.egressProfilesPath(ROOT);
-  const existed = fs.existsSync(filePath);
-  const previous = existed ? fs.readFileSync(filePath, "utf8") : null;
+function withDefaultEgressConfig(document, fn) {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-egress-project-"));
+  const filePath = egressProfiles.egressProfilesPath(projectRoot);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(document, null, 2)}\n`, "utf8");
+  const previousProjectDir = process.env.BOB_PROJECT_DIR;
+  process.env.BOB_PROJECT_DIR = projectRoot;
 
   const cleanup = () => {
-    if (existed) {
-      fs.writeFileSync(filePath, previous, "utf8");
+    if (previousProjectDir === undefined) {
+      delete process.env.BOB_PROJECT_DIR;
     } else {
-      fs.rmSync(filePath, { force: true });
+      process.env.BOB_PROJECT_DIR = previousProjectDir;
     }
+    fs.rmSync(projectRoot, { recursive: true, force: true });
   };
 
   try {
@@ -1184,6 +1194,51 @@ function seedSessionState(domain, overrides = {}) {
   return state;
 }
 
+const SEEDED_HANDOFF_TOKENS = new Map();
+
+function seededHandoffTokenKey(domain, waveNumber, agent) {
+  return `${domain}\u0000${waveNumber}\u0000${agent}`;
+}
+
+function seededHandoffToken(domain, waveNumber, agent) {
+  const key = seededHandoffTokenKey(domain, waveNumber, agent);
+  let token = SEEDED_HANDOFF_TOKENS.get(key);
+  if (!token) {
+    token = `test-handoff-token:${domain}:w${waveNumber}:${agent}`;
+    SEEDED_HANDOFF_TOKENS.set(key, token);
+  }
+  return token;
+}
+
+function writeWaveHandoff(args) {
+  const waveNumber = Number(String(args.wave || "").replace(/^w/i, ""));
+  if (!args.handoff_token && Number.isInteger(waveNumber) && waveNumber > 0) {
+    const token = SEEDED_HANDOFF_TOKENS.get(
+      seededHandoffTokenKey(args.target_domain, waveNumber, args.agent),
+    );
+    if (token) {
+      return writeWaveHandoffRaw({ ...args, handoff_token: token });
+    }
+  }
+  return writeWaveHandoffRaw(args);
+}
+
+function writeSignedStoredHandoff(domain, waveNumber, agent, payload) {
+  const dir = sessionDir(domain);
+  const assignment = loadWaveAssignments(domain, waveNumber).assignmentByAgent.get(agent);
+  assert.ok(assignment, `missing seeded assignment for ${agent}`);
+  const signed = signHandoffProvenance(
+    payload.provenance == null ? { ...payload, provenance: "verified" } : payload,
+    ensureHandoffSigningKey(domain),
+    { assignment },
+  );
+  writeFileAtomic(
+    path.join(dir, `handoff-w${waveNumber}-${agent}.json`),
+    `${JSON.stringify(signed, null, 2)}\n`,
+  );
+  return signed;
+}
+
 function seedAssignments(domain, waveNumber, assignments) {
   const dir = sessionDir(domain);
   fs.mkdirSync(dir, { recursive: true });
@@ -1232,12 +1287,22 @@ function seedAssignments(domain, waveNumber, assignments) {
       persisted.evaluator_agent = route.evaluator_agent;
       persisted.brief_profile = route.brief_profile;
     }
+    if (persisted.handoff_token_required == null) {
+      persisted.handoff_token_required = true;
+    }
+    if (persisted.handoff_token_sha256 == null) {
+      persisted.handoff_token_sha256 = sha256Hex(
+        seededHandoffToken(domain, waveNumber, persisted.agent),
+      );
+    }
     return persisted;
   });
   writeFileAtomic(path.join(dir, `wave-${waveNumber}-assignments.json`), `${JSON.stringify({
     wave_number: waveNumber,
+    handoff_tokens_required: true,
     assignments: persistedAssignments,
   }, null, 2)}\n`);
+  ensureHandoffSigningKey(domain);
 }
 
 function seedAttackSurface(domain, surfaceIds = ["surface-a", "surface-b", "surface-c"]) {
@@ -3310,16 +3375,17 @@ test("pipeline analytics backfills legacy sessions from artifacts without an eve
     });
     seedAttackSurfaces(domain, [{ id: "surface-a", hosts: [`https://${domain}`], priority: "HIGH" }]);
     seedAssignments(domain, 1, [{ agent: "a1", surface_id: "surface-a" }]);
-    writeFileAtomic(path.join(sessionDir(domain), "handoff-w1-a1.json"), `${JSON.stringify({
+    writeSignedStoredHandoff(domain, 1, "a1", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
       surface_id: "surface-a",
       surface_status: "complete",
+      summary: "a1 completed surface-a.",
       dead_ends: [],
       waf_blocked_endpoints: [],
       lead_surface_ids: [],
-    }, null, 2)}\n`);
+    });
     appendCandidateClaim({
       target_domain: domain,
       title: "Legacy IDOR",
@@ -3388,12 +3454,18 @@ test("pipeline analytics backfills legacy sessions from artifacts without an eve
         version: 1,
         target_domain: domain,
         round,
+        notes: `Legacy ${round} verification confirmed the finding.`,
         results: [{
           finding_id: "F-1",
           disposition: "confirmed",
           severity: "high",
           reportable: true,
           reasoning: "Legacy verification confirmed the finding.",
+          repro_steps: [
+            "Authenticate as a legacy account holder.",
+            "Request /api/export with another account_id value.",
+          ],
+          evidence_refs: ["candidate_claim:F-1"],
         }],
       }, null, 2)}\n`);
     }
@@ -4222,7 +4294,7 @@ test("bob_init_session rejects proxy-backed sessions that would claim internal-h
       ],
     };
 
-    await withRepoEgressConfig(document, async () => {
+    await withDefaultEgressConfig(document, async () => {
       await withEnv({ BOB_EGRESS_OPERATOR_PROXY: "http://proxy.example:8080" }, async () => {
         const rejected = await executeTool("bob_init_session", {
           target_domain: "proxy-paranoid.example.com",
@@ -5417,8 +5489,7 @@ test("bob_apply_wave_merge merges state, findings, requeues, and scope exclusion
       bypass_attempts_grouped: [],
       suspicion_flags: [],
       provenance: {
-        verified_agents: [],
-        legacy_unverified_agents: ["a1", "a2"],
+        verified_agents: ["a1", "a2"],
       },
     });
     assert.deepEqual(result.findings, {
@@ -6697,23 +6768,24 @@ test("bob_write_wave_handoff writes matching markdown and json with normalized d
     assert.equal(fs.readFileSync(result.written_md, "utf8"), content);
 
     const payload = JSON.parse(fs.readFileSync(result.written_json, "utf8"));
-    assert.deepEqual(payload, {
-      target_domain: domain,
-      wave: "w1",
-      agent: "a1",
-      surface_id: "surface-a",
-      surface_type: null,
-      surface_status: "complete",
-      provenance: "legacy_unverified",
-      summary: "Freeform handoff summary.",
-      chain_notes: [],
-      blocked_harness_runs: [],
-      blocked_prereqs: [],
-      bypass_attempts: [],
-      dead_ends: [],
-      waf_blocked_endpoints: [],
-      lead_surface_ids: [],
-    });
+    assert.equal(payload.target_domain, domain);
+    assert.equal(payload.wave, "w1");
+    assert.equal(payload.agent, "a1");
+    assert.equal(payload.surface_id, "surface-a");
+    assert.equal(payload.surface_type, null);
+    assert.equal(payload.surface_status, "complete");
+    assert.equal(payload.provenance, "verified");
+    assert.equal(payload.provenance_model, HANDOFF_PROVENANCE_MODEL);
+    assert.match(payload.provenance_assignment_hash, /^[0-9a-f]{64}$/);
+    assert.ok(payload.provenance_signature);
+    assert.equal(payload.summary, "Freeform handoff summary.");
+    assert.deepEqual(payload.chain_notes, []);
+    assert.deepEqual(payload.blocked_harness_runs, []);
+    assert.deepEqual(payload.blocked_prereqs, []);
+    assert.deepEqual(payload.bypass_attempts, []);
+    assert.deepEqual(payload.dead_ends, []);
+    assert.deepEqual(payload.waf_blocked_endpoints, []);
+    assert.deepEqual(payload.lead_surface_ids, []);
   });
 });
 
@@ -7181,14 +7253,14 @@ test("merge re-derives smart_contract surface_type even when stored handoff cach
     // by manually crafting the stored payload. The merge must re-derive and reject.
     const dir = sessionDir(domain);
     fs.mkdirSync(dir, { recursive: true });
-    writeFileAtomic(path.join(dir, "handoff-w1-a1.json"), `${JSON.stringify({
+    writeSignedStoredHandoff(domain, 1, "a1", {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
       surface_id: "surface-a",
       surface_type: null,
       surface_status: "complete",
-      provenance: "legacy_unverified",
+      provenance: "verified",
       summary: "Audit confirms fixed.",
       chain_notes: [],
       blocked_harness_runs: [],
@@ -7196,7 +7268,7 @@ test("merge re-derives smart_contract surface_type even when stored handoff cach
       dead_ends: [],
       waf_blocked_endpoints: [],
       lead_surface_ids: [],
-    }, null, 2)}\n`);
+    });
 
     const merged = JSON.parse(mergeWaveHandoffs({ target_domain: domain, wave_number: 1 }));
     // Stored null is overridden by attack_surface.json re-derive: SC gate fires,
@@ -7393,7 +7465,6 @@ test("tokenized wave handoffs require the correct token and report verified prov
     assert.equal(merged.data.status, "merged");
     assert.deepEqual(merged.data.merge.provenance, {
       verified_agents: ["a1"],
-      legacy_unverified_agents: [],
     });
   });
 });
@@ -7705,7 +7776,7 @@ test("bob_finalize_agent_run allows valid handoff and records metadata-only tele
     assert.deepEqual(direct.handoff, {
       present: true,
       valid: true,
-      provenance: "legacy_unverified",
+      provenance: "verified",
       surface_status: "complete",
       summary_present: true,
       chain_notes_count: 1,
@@ -8255,7 +8326,7 @@ test("evaluator SubagentStop hook writes metadata-only allowed run telemetry", (
     assert.deepEqual(event.handoff, {
       present: true,
       valid: true,
-      provenance: "legacy_unverified",
+      provenance: "verified",
       surface_status: "complete",
       summary_present: true,
       chain_notes_count: 1,
@@ -8805,8 +8876,7 @@ test("bob_merge_wave_handoffs merges valid handoffs and dedupes optional arrays"
       bypass_attempts_grouped: [],
       suspicion_flags: [],
       provenance: {
-        verified_agents: [],
-        legacy_unverified_agents: ["a1", "a2"],
+        verified_agents: ["a1", "a2"],
       },
     });
   });
@@ -8857,7 +8927,6 @@ test("bob_merge_wave_handoffs requeues missing and invalid assigned handoffs whi
       suspicion_flags: [],
       provenance: {
         verified_agents: [],
-        legacy_unverified_agents: [],
       },
     });
   });
@@ -8894,7 +8963,7 @@ test("bob_read_wave_handoffs returns validated structured summaries and ignores 
       surface_id: "surface-a",
       surface_type: null,
       surface_status: "complete",
-      provenance: "legacy_unverified",
+      provenance: "verified",
       summary: "A1 complete with an old dead end.",
       chain_notes: ["Old endpoint may chain into surface-b."],
       blocked_harness_runs: [],
@@ -14715,7 +14784,7 @@ test("bob_auto_signup rejects raw proxy arguments and uses egress profiles only"
       ],
     };
 
-    await withRepoEgressConfig(document, async () => {
+    await withDefaultEgressConfig(document, async () => {
       await withEnv({ BOB_EGRESS_BROWSER_PROXY: rawProxy }, async () => {
         const originalResolve = Module._resolveFilename;
         Module._resolveFilename = function patchedResolve(request, parent, isMain, options) {
@@ -14767,7 +14836,7 @@ test("bob_signup_detect uses egress profiles and rejects proxy-backed strict mod
       ],
     };
 
-    await withRepoEgressConfig(document, async () => {
+    await withDefaultEgressConfig(document, async () => {
       await withEnv({ BOB_EGRESS_DETECT_PROXY: ["http://", proxyAuthority, "@proxy.example:8080"].join("") }, async () => {
         let sawAgent = false;
         await withMockSafeFetch((url, requestOptions) => {
@@ -15062,7 +15131,7 @@ test("bob_http_scan records selected egress profile and passes a proxy agent wit
       ],
     };
 
-    await withRepoEgressConfig(document, async () => {
+    await withDefaultEgressConfig(document, async () => {
       await withEnv({ BOB_EGRESS_GR_RESIDENTIAL_PROXY: ["http://", proxyAuthority, "@127.0.0.1:8080"].join("") }, async () => {
         let sawAgent = false;
         await withMockSafeFetch((url, requestOptions) => {
@@ -15117,7 +15186,7 @@ test("bob_init_session binds egress profile identity without storing proxy secre
       ],
     };
 
-    await withRepoEgressConfig(document, async () => {
+    await withDefaultEgressConfig(document, async () => {
       await withEnv({ BOB_EGRESS_OPERATOR_PROXY: ["http://", proxyAuthority, "@proxy.example:8080"].join("") }, async () => {
         const result = await executeTool("bob_init_session", {
           target_domain: domain,
@@ -15229,7 +15298,7 @@ test("scope-blocked HTTP scans still reject initialized-session egress drift", a
       ],
     };
 
-    await withRepoEgressConfig(document, async () => {
+    await withDefaultEgressConfig(document, async () => {
       const init = await executeTool("bob_init_session", {
         target_domain: domain,
         target_url: `https://${domain}`,
@@ -15310,7 +15379,7 @@ test("session egress identity permits credential rotation but rejects route drif
       ],
     };
 
-    await withRepoEgressConfig(document, async () => {
+    await withDefaultEgressConfig(document, async () => {
       await withEnv({ BOB_EGRESS_OPERATOR_PROXY: `http://user:${firstSecret}@proxy.example:8080` }, async () => {
         const init = await executeTool("bob_init_session", {
           target_domain: domain,
@@ -15459,7 +15528,7 @@ test("bob_http_scan rejects env-resolved proxy query secrets", async () => {
       ],
     };
 
-    await withRepoEgressConfig(document, async () => {
+    await withDefaultEgressConfig(document, async () => {
       await withEnv({ BOB_EGRESS_QUERY_PROXY: `http://proxy.example:8080/?token=${rawProxySecret}` }, async () => {
         await withMockSafeFetch(() => {
           throw new Error("network should not be reached");
@@ -15497,7 +15566,7 @@ test("bob_http_scan rejects invalid egress profiles before sending network reque
       ],
     };
 
-    await withRepoEgressConfig(document, async () => {
+    await withDefaultEgressConfig(document, async () => {
       await withMockSafeFetch(() => {
         throw new Error("network should not be reached");
       }, async (requestedUrls) => {
@@ -15544,7 +15613,7 @@ test("bob_http_scan rejects inline proxy credentials in egress profile config", 
       ],
     };
 
-    await withRepoEgressConfig(document, async () => {
+    await withDefaultEgressConfig(document, async () => {
       await withMockSafeFetch(() => {
         throw new Error("network should not be reached");
       }, async (requestedUrls) => {
@@ -15582,7 +15651,7 @@ test("bob_http_scan rejects inline proxy query secrets in egress profile config"
       ],
     };
 
-    await withRepoEgressConfig(document, async () => {
+    await withDefaultEgressConfig(document, async () => {
       await withMockSafeFetch(() => {
         throw new Error("network should not be reached");
       }, async (requestedUrls) => {
@@ -15622,7 +15691,7 @@ test("bob_http_scan rejects proxy egress when strict internal-host blocking is r
       ],
     };
 
-    await withRepoEgressConfig(document, async () => {
+    await withDefaultEgressConfig(document, async () => {
       await withEnv({ BOB_EGRESS_OPERATOR_EU_PROXY: ["http://", proxyAuthority, "@proxy.example:8080"].join("") }, async () => {
         await withMockSafeFetch(() => {
           throw new Error("network should not be reached");
@@ -16687,7 +16756,7 @@ test("bob_read_assignment_brief returns surface, exclusions, and valid IDs", () 
       ],
     };
 
-    withRepoEgressConfig(document, () => {
+    withDefaultEgressConfig(document, () => {
     const expectedEgress = egressProfiles.egressProfileIdentityFields(
       egressProfiles.resolveEgressProfile("operator-eu"),
     );

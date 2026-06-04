@@ -3579,11 +3579,10 @@ authoritative evaluator completion record
 
 Important caution:
 
-For tokenized assignments, `provenance: "verified"` is accepted only when the
-handoff carries `provenance_model: "session_file_hmac_v1"` and a valid HMAC
-signature over the JSON payload. Legacy assignments without token hashes remain
-explicitly `legacy_unverified`; unsigned verified claims are invalid for
-tokenized waves.
+`provenance: "verified"` is accepted only when the handoff carries
+`provenance_model: "session_file_hmac_v1"` and a valid HMAC signature over the
+JSON payload. Assignments without token hashes are rejected; unsigned verified
+claims are invalid for every wave handoff.
 
 Markdown handoffs are ignored for machine merge. A Markdown-only handoff is not
 a completed wave handoff.

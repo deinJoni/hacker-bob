@@ -40,6 +40,97 @@ const { loadQueuePolicy } = require("./queue-policy.js");
 
 const PROMOTED_SURFACE_LEAD_LABEL = "promoted_surface_lead";
 
+// Fix #134 — sub-threshold rationale heuristic warning for external producers.
+// Known-internal source labels emitted by Bob's own producers (evaluator
+// agents, orchestrator, wave handoffs, surface-discovery flows). A lead
+// whose `source` string is in this set is treated as internal; anything
+// outside the set (or any `external_` prefix) is treated as external for
+// the soft-warning heuristic below. This list mirrors the producer entries
+// in mcp/lib/stigmergic-producers.js — keep additions in sync when new
+// internal lead producers are wired.
+const KNOWN_INTERNAL_LEAD_SOURCES = new Set([
+  "evaluator",
+  "orchestrator",
+  "wave_handoff",
+  "surface_discovery",
+  "deep_surface_discovery",
+  "bob_record_surface_leads",
+  "bob_promote_surface_leads",
+  "bob_import_http_traffic",
+  "bob_static_scan",
+  "bob_http_scan",
+  "bob_extract_routes",
+  "bob_route_surfaces",
+]);
+
+function isExternalProducerLead(lead) {
+  const producerKind = typeof lead.producer_kind === "string" ? lead.producer_kind : "";
+  if (producerKind.startsWith("external_")) return true;
+  const sourceTool = lead.source && typeof lead.source === "object" && !Array.isArray(lead.source)
+    ? (typeof lead.source.tool === "string" ? lead.source.tool : "")
+    : (typeof lead.source === "string" ? lead.source : "");
+  if (!sourceTool) return false;
+  if (sourceTool.startsWith("external_")) return true;
+  return !KNOWN_INTERNAL_LEAD_SOURCES.has(sourceTool);
+}
+
+// Fix #134 — emit a soft observation.recorded warning for each
+// below-threshold lead that came from an external producer (source not in
+// the PRODUCERS manifest / KNOWN_INTERNAL_LEAD_SOURCES, or producer_kind
+// prefixed with `external_`) and lacks a rationale. Complements the
+// strict enforceLeadRationalePolicy gate (which only fires when the
+// queue-policy toggle is on). Best-effort: append failures are swallowed
+// so the record path never blocks on observability. Uses the existing
+// observation.recorded top-level kind per X-P8 (no new FRONTIER_EVENT_KIND).
+function warnExternalProducerMissingRationale(domain, normalizedLeads) {
+  let minScore;
+  try {
+    ({ minScore } = normalizePromotionOptions({}));
+  } catch {
+    return;
+  }
+  for (let i = 0; i < normalizedLeads.length; i += 1) {
+    const lead = normalizedLeads[i];
+    const score = typeof lead.score === "number" ? lead.score : 0;
+    if (score >= minScore) continue;
+    const rationale = typeof lead.rationale === "string" ? lead.rationale.trim() : "";
+    if (rationale) continue;
+    if (!isExternalProducerLead(lead)) continue;
+    const sourceLabel = lead.source && typeof lead.source === "object" && !Array.isArray(lead.source)
+      ? (typeof lead.source.tool === "string" ? lead.source.tool : null)
+      : (typeof lead.source === "string" ? lead.source : null);
+    try {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[surface-leads] external producer (${sourceLabel || "unknown"}) recorded sub-threshold lead `
+        + `(score=${score} < min_score=${minScore}) without rationale; lead_id=${lead.id || "(unassigned)"}`,
+      );
+    } catch {
+      // console may be unavailable in some hosts; swallow.
+    }
+    try {
+      appendFrontierEvent({
+        target_domain: domain,
+        kind: "observation.recorded",
+        payload: {
+          observation_kind: "external_producer_missing_rationale",
+          lead_id: lead.id || null,
+          lead_key: lead.key || null,
+          score,
+          min_score: minScore,
+          producer_source: sourceLabel,
+          producer_kind: typeof lead.producer_kind === "string" ? lead.producer_kind : null,
+          source_wave: lead.source_wave || null,
+          source_agent: lead.source_agent || null,
+        },
+        source: { artifact: "surface-leads.json", tool: "bob_record_surface_leads" },
+      });
+    } catch {
+      // Best-effort observability — never block the record path.
+    }
+  }
+}
+
 function slugify(value) {
   const slug = String(value || "lead")
     .toLowerCase()
@@ -190,6 +281,10 @@ function recordSurfaceLeadsInternal(domain, leads, context = {}) {
   // before any partial state is persisted.
   const normalizedLeads = leads.map((leadInput) => normalizeSurfaceLead(leadInput, context));
   enforceLeadRationalePolicy(domain, normalizedLeads);
+  // Fix #134 — soft warning path for external producers (independent of
+  // the strict queue-policy toggle). Runs after the strict gate so any
+  // INVALID_ARGUMENTS rejection still short-circuits before we warn.
+  warnExternalProducerMissingRationale(domain, normalizedLeads);
   for (const incoming of normalizedLeads) {
     const existing = byKey.get(incoming.key);
     const lead = existing

@@ -526,6 +526,13 @@ function validateExplicitAuthorityMap(registryTools) {
   for (const tool of registryTools) {
     if (tool.alias_of) continue;
     if (hasTargetDomain(tool) && !requiresTargetDomain(tool) && !Object.prototype.hasOwnProperty.call(MODE_RULES, tool.name)) {
+      // bootstrap_session tools create the authority record and may accept an
+      // optional target_domain (e.g. bob_init_repo_session derives the slug
+      // from repo_path unless the operator pins it via --target-id). Mode
+      // rules don't apply because there is no session to bind against yet.
+      if (EXPLICIT_AUTHORITY_CLASS_BY_TOOL[tool.name] === "bootstrap_session") {
+        continue;
+      }
       throw new Error(`optional target_domain tool lacks mode rules: ${tool.name}`);
     }
   }

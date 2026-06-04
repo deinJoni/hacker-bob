@@ -32,6 +32,16 @@ const {
 const {
   appendFrontierEvent,
 } = require("../mcp/lib/frontier-events.js");
+const {
+  loadWaveAssignments,
+} = require("../mcp/lib/assignments.js");
+const {
+  ensureHandoffSigningKey,
+} = require("../mcp/lib/handoff-signing-key.js");
+const {
+  sha256Hex,
+  signHandoffProvenance,
+} = require("../mcp/lib/wave-handoff-contracts.js");
 
 function withTempHome(fn) {
   const previousHome = process.env.HOME;
@@ -43,6 +53,10 @@ function withTempHome(fn) {
     process.env.HOME = previousHome;
     fs.rmSync(home, { recursive: true, force: true });
   }
+}
+
+function seededHandoffToken(domain, waveNumber, agent) {
+  return `test-handoff-token:${domain}:w${waveNumber}:${agent}`;
 }
 
 test("normalizePipelineEvent rejects secret-shaped operational reasons", () => {
@@ -220,20 +234,28 @@ test("session artifact analytics preserves artifact summary shape and value sema
         { id: "surface-c", priority: "LOW" },
       ],
     }, null, 2)}\n`, "utf8");
+    const assignment = {
+      agent: "a1",
+      surface_id: "surface-b",
+      handoff_token_required: true,
+      handoff_token_sha256: sha256Hex(seededHandoffToken(domain, 1, "a1")),
+    };
     fs.writeFileSync(assignmentFile, `${JSON.stringify({
       wave_number: 1,
-      assignments: [
-        { agent: "a1", surface_id: "surface-b" },
-      ],
+      handoff_tokens_required: true,
+      assignments: [assignment],
     }, null, 2)}\n`, "utf8");
-    fs.writeFileSync(path.join(dir, "handoff-w1-a1.json"), `${JSON.stringify({
+    const normalizedAssignment = loadWaveAssignments(domain, 1).assignmentByAgent.get("a1");
+    fs.writeFileSync(path.join(dir, "handoff-w1-a1.json"), `${JSON.stringify(signHandoffProvenance({
       target_domain: domain,
       wave: "w1",
       agent: "a1",
       surface_id: "surface-b",
       surface_status: "complete",
+      provenance: "verified",
+      summary: "a1 completed surface-b.",
       chain_notes: ["reuse the state-changing request in verification"],
-    }, null, 2)}\n`, "utf8");
+    }, ensureHandoffSigningKey(domain), { assignment: normalizedAssignment }), null, 2)}\n`, "utf8");
 
     const stateMtime = new Date("2026-05-17T00:00:00.000Z");
     const surfaceMtime = new Date("2026-05-17T00:01:00.000Z");

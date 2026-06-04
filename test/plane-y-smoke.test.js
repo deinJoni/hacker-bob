@@ -99,6 +99,14 @@ const {
 const {
   getLatestMergedWavePartialSurfaceIds,
 } = require("../mcp/lib/wave-handoff-store.js");
+const {
+  checkAssertionA,
+  checkAssertionB,
+  checkAssertionC,
+} = require("../scripts/check-stigmergy-coherence.js");
+const skillProtocolCoherence = require("../scripts/check-skill-protocol-coherence.js");
+const skillRuntimeConstraintDrift = require("../scripts/check-skill-runtime-constraint-drift.js");
+const skillSchedulerCoherence = require("../scripts/check-skill-scheduler-coherence.js");
 
 const BENCHMARK_BASELINE_PATH = path.join(
   REPO_ROOT,
@@ -174,6 +182,31 @@ function writeEvidenceFile(domain, relPath, size) {
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   // Fill with deterministic bytes so size is exact.
   fs.writeFileSync(abs, Buffer.alloc(size, "y"));
+}
+
+function withTempTree(fn) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bob-y13-negative-"));
+  try {
+    return fn(root);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function writeTempMarkdown(root, relPath, body) {
+  const abs = path.join(root, relPath);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, body);
+  return abs;
+}
+
+function parseRoleBundlesFromText(text) {
+  const match = text.match(/role_bundles\s*:\s*\[([^\]]*)\]/);
+  if (!match) return [];
+  return match[1]
+    .split(",")
+    .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+    .filter(Boolean);
 }
 
 function readBenchmarkBaseline() {
@@ -972,6 +1005,144 @@ test("Y.13 Subtest G-10 (rev 4.1 chain-bundle audit verification — defect 3)",
       `${tool} MUST carry the chain+evaluator-shared justification header comment (rev 4.1 defect 3 audit trail)`,
     );
   }
+});
+
+// ─── Y.13 deferred negative refinements (#128) ───────────────────────
+
+test("Y.13 deferred negative #1 — stigmergy gate rejects producer registered_consumers with no manifested consumer", () => {
+  const producer = Object.freeze({
+    producer_id: "y13_negative_orphaned_producer",
+    registered_consumers: Object.freeze(["consumer_not_in_manifest"]),
+  });
+  const violations = checkAssertionA([producer], STIGMERGIC_CONSUMERS);
+  assert.equal(violations.length, 1);
+  assert.equal(violations[0].kind, "producer_consumers_not_manifested");
+});
+
+test("Y.13 deferred negative #2 — stigmergy gate rejects unresolved consumer source token", () => {
+  withTempTree((root) => {
+    writeTempMarkdown(root, "agent.md", "this file intentionally lacks the required token\n");
+    const consumer = Object.freeze({
+      consumer_id: "y13_negative_unresolved_consumer_token",
+      source_location: Object.freeze({
+        file: "agent.md",
+        token_or_regex: "bob_read_chain_attempts",
+      }),
+      producer_id: STIGMERGIC_PRODUCERS[0].producer_id,
+      decision_boundary: "brief_composition",
+      rationale: "negative fixture for unresolved token",
+    });
+    const violations = checkAssertionB([consumer], root);
+    assert.equal(violations.length, 1);
+    assert.equal(violations[0].kind, "consumer_token_unresolved");
+  });
+});
+
+test("Y.13 deferred negative #3 — stigmergy gate rejects consumer producer_id outside closed manifest", () => {
+  const consumer = Object.freeze({
+    consumer_id: "y13_negative_unknown_producer",
+    source_location: Object.freeze({
+      file: "mcp/lib/stigmergic-consumers.js",
+      token_or_regex: "STIGMERGIC_CONSUMERS",
+    }),
+    producer_id: "not_a_manifested_producer",
+    decision_boundary: "brief_composition",
+    rationale: "negative fixture for orphan producer reference",
+  });
+  const violations = checkAssertionC([consumer]);
+  assert.equal(violations.length, 1);
+  assert.equal(violations[0].kind, "consumer_references_unknown_producer");
+});
+
+test("Y.13 deferred negative #4 — protocol gate rejects write-tool token without same-block @schema_ref", () => {
+  withTempTree((root) => {
+    const fixture = writeTempMarkdown(root, "skill.md", [
+      "---",
+      "name: y13-negative-protocol",
+      "---",
+      "## STATE: OPEN_FRONTIER",
+      "Call bob_write_chain_rollup after composing the chain narrative.",
+      "",
+    ].join("\n"));
+    const result = skillProtocolCoherence.runCheck({ additionalFiles: [fixture] });
+    assert.ok(
+      result.violations.some((v) =>
+        v.dimension === "D1_structural_containment" && v.token === "bob_write_chain_rollup"),
+      `expected D1_structural_containment for bob_write_chain_rollup, got ${JSON.stringify(result.violations)}`,
+    );
+  });
+});
+
+test("Y.13 deferred negative #5 — runtime-constraint gate rejects raw Bash read of sensitive session state", () => {
+  withTempTree((root) => {
+    const fixture = writeTempMarkdown(root, "runtime.md", [
+      "---",
+      "name: y13-negative-runtime",
+      "---",
+      "## STATE: OPEN_FRONTIER",
+      "Inspect state with Bash(\"cat ~/hacker-bob-sessions/example.com/state.json\").",
+      "",
+    ].join("\n"));
+    const result = skillRuntimeConstraintDrift.runCheck({ additionalFiles: [fixture] });
+    assert.ok(
+      result.violations.some((v) =>
+        v.constraint_id === "bob_owned_session_read_guard_sensitive_files"),
+      `expected sensitive-read runtime drift, got ${JSON.stringify(result.violations)}`,
+    );
+  });
+});
+
+test("Y.13 deferred negative #6 — scheduler-coherence gate rejects unknown @precondition directive", () => {
+  withTempTree((root) => {
+    const fixture = writeTempMarkdown(root, "scheduler.md", [
+      "---",
+      "name: y13-negative-scheduler",
+      "---",
+      "## STATE: CLAIM_FREEZE",
+      "<!-- @precondition: not_a_scheduler_precondition -->",
+      "",
+    ].join("\n"));
+    const result = skillSchedulerCoherence.runCheck({ additionalFiles: [fixture] });
+    assert.ok(
+      result.violations.some((v) =>
+        v.dimension === "S2_unknown_precondition" && v.token === "not_a_scheduler_precondition"),
+      `expected S2_unknown_precondition, got ${JSON.stringify(result.violations)}`,
+    );
+  });
+});
+
+test("Y.13 deferred negative #7 — terminal-table predicates detect Y.12 terminal drift", () => {
+  const drifted = [
+    "| Rev 3 | Rev 4.1 |",
+    "| --- | --- |",
+    "| Y.9 (terminal) | Y.12 (terminal) |",
+  ].join("\n");
+  assert.ok(
+    /Y\.12.*terminal|terminal.*Y\.12/i.test(drifted),
+    "negative fixture MUST trip the Y.12 terminal grep",
+  );
+  assert.ok(
+    /\(terminal\)\s*\|\s*Y\.(?!13\b)\d/.test(drifted),
+    "negative fixture MUST trip the non-Y.13 terminal-row drift grep",
+  );
+});
+
+test("Y.13 deferred negative #8 — chain-bundle audit detects missing justification header", () => {
+  const synthetic = [
+    "\"use strict\";",
+    "module.exports = {",
+    "  name: \"y13_negative_chain_bundle\",",
+    "  role_bundles: [\"chain\", \"evaluator-shared\"],",
+    "};",
+  ].join("\n");
+  const bundles = parseRoleBundlesFromText(synthetic);
+  assert.ok(bundles.includes("chain"));
+  assert.ok(bundles.includes("evaluator-shared"));
+  assert.equal(
+    /\/\/\s*chain\+evaluator-shared\s+justified:/i.test(synthetic),
+    false,
+    "negative fixture MUST be classified as an unjustified chain+evaluator-shared widening",
+  );
 });
 
 // ─── Step 8 — Benchmark assertion (smoke A-G wall-time within budget) ──

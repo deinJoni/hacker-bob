@@ -283,8 +283,17 @@ function classForTool(toolName) {
     // Lazy-require to avoid a load-order cycle (tool-registry imports
     // capability-packs, which on some test paths transitively loads this
     // module before the registry has finished initializing).
-    const { primaryToolName } = require("./tool-registry.js");
-    const primary = primaryToolName(toolName);
+    const registry = require("./tool-registry.js");
+    if (!registry || typeof registry.primaryToolName !== "function") {
+      // Registry module is mid-construction and has not yet attached the
+      // primaryToolName export. Throw so the surrounding catch falls through
+      // to the null return; dispatch will surface a STATE_CONFLICT instead
+      // of crashing with an opaque TypeError.
+      throw new Error(
+        "tool-registry.primaryToolName unavailable during load-order cycle",
+      );
+    }
+    const primary = registry.primaryToolName(toolName);
     if (primary && primary !== toolName) {
       return EXPLICIT_AUTHORITY_CLASS_BY_TOOL[primary] || null;
     }

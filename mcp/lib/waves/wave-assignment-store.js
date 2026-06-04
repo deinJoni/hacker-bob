@@ -22,9 +22,6 @@ const {
 const { appendFrontierEvent } = require("../frontier-events.js");
 const { scheduleMaterialization } = require("../frontier-materialize-debounce.js");
 const {
-  readSessionStateStrict,
-} = require("../session-state-store.js");
-const {
   validateAssignedWaveAgentSurface,
 } = require("../assignments.js");
 const {
@@ -197,15 +194,7 @@ function writeWaveHandoff(args) {
 
   return withSessionLock(domain, () => {
     const assignment = validateAssignedWaveAgentSurface(domain, wave, agent, surfaceId);
-    // Session state may be missing in narrow test paths; default to legacy mode.
-    let requireProvenance = false;
-    try {
-      const { state } = readSessionStateStrict(domain);
-      requireProvenance = state.handoff_provenance_required === true;
-    } catch {
-      requireProvenance = false;
-    }
-    const provenance = validateHandoffToken(assignment, args.handoff_token, { requireProvenance });
+    const provenance = validateHandoffToken(assignment, args.handoff_token);
 
     // Read surface_type from the immutable assignment file (captured at
     // start_wave); reading attack_surface.json would let an evaluator disable
@@ -253,9 +242,7 @@ function writeWaveHandoff(args) {
     if (surfaceLeadResult.lead_ids.length > 0) {
       handoff.surface_lead_ids = surfaceLeadResult.lead_ids;
     }
-    const persistedHandoff = provenance === "verified"
-      ? signHandoffProvenance(handoff, ensureHandoffSigningKey(domain), { assignment })
-      : handoff;
+    const persistedHandoff = signHandoffProvenance(handoff, ensureHandoffSigningKey(domain), { assignment });
 
     const dir = sessionDir(domain);
     const markdownPath = path.join(dir, `handoff-${wave}-${agent}.md`);
