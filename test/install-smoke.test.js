@@ -647,11 +647,30 @@ test("kimi adapter installs skills, registers the hacker-bob MCP key, and doctor
         operator: { command: "node", args: ["sibling.js"] },
       },
     }, null, 2)}\n`);
+    // Seed stale skill dirs from a prior build (bob-hunt v1, bob-evaluate-runner
+    // interim misname). A normal reinstall/update must sweep them so old prompts
+    // and tool names are never left exposed beside the current bob-evaluate
+    // skill — parity with the Codex and Claude install-time legacy sweep.
+    for (const legacySkill of ["bob-evaluate-runner", "bob-hunt"]) {
+      fs.mkdirSync(path.join(workspace, ".kimi", "skills", legacySkill), { recursive: true });
+      fs.writeFileSync(path.join(workspace, ".kimi", "skills", legacySkill, "SKILL.md"), `# stale ${legacySkill}\n`);
+    }
     KIMI_ADAPTER.install({ sourceRoot: ROOT, targetAbs: workspace, serverPath, manifest: { version: PACKAGE_VERSION, name: "hacker-bob" } });
     const migrated = JSON.parse(fs.readFileSync(path.join(workspace, ".kimi", "mcp.json"), "utf8"));
     assert.ok(migrated.mcpServers["hacker-bob"], "migration must add the hacker-bob key");
     assert.ok(!migrated.mcpServers.bountyagent, "migration must drop the legacy bountyagent key");
     assert.ok(migrated.mcpServers.operator, "migration must preserve operator-owned sibling servers");
+    // The reinstall swept the legacy skill dirs while keeping current skills.
+    for (const legacySkill of ["bob-evaluate-runner", "bob-hunt"]) {
+      assert.ok(
+        !fs.existsSync(path.join(workspace, ".kimi", "skills", legacySkill, "SKILL.md")),
+        `${legacySkill} legacy skill must be swept on reinstall`,
+      );
+    }
+    assert.ok(
+      fs.existsSync(path.join(workspace, ".kimi", "skills", "bob-evaluate", "SKILL.md")),
+      "current bob-evaluate skill must survive the legacy sweep",
+    );
 
     const dryRun = KIMI_ADAPTER.uninstall({ sourceRoot: ROOT, targetAbs: workspace, dryRun: true });
     assert.equal(dryRun.dry_run, true);

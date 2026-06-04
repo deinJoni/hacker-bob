@@ -26,7 +26,7 @@ Compose `~/hacker-bob-sessions/[domain]/report.md` via `bob_compose_report` with
 3. For each REPORTABLE finding (filtered by the gate above), branch first by `finding.capability_pack`, then by `finding.surface_type`:
 
    **OSS repo findings** (`capability_pack` starts with `"oss_"`):
-   - If you need a final file-existence spot check, use `bounty_repo_check({ target_domain, file_path, pattern?, check_type? })` without unsupported fields such as `description` or background-run flags; `replay_context` is for verifier/evidence replay, not report rendering.
+   - If you need a final file-existence spot check, use `bob_repo_check({ target_domain, file_path, pattern?, check_type? })` without unsupported fields such as `description` or background-run flags; `replay_context` is for verifier/evidence replay, not report rendering.
    - Render file-first maintainer proof: `file_path` or `endpoint`, `symbol`, manifest/package/version fields when present, affected build/test path, and the shortest repro command. If Docker replay was used, include only the bounded command/status/run ID from the evidence pack, not raw logs.
    - Explain reachability: attacker-controlled input, user/maintainer action, CI event, package install path, config path, or protocol message that reaches the vulnerable code. For native C/C++ findings, name the parser/state transition and malformed field/object.
    - Impact must be concrete: memory corruption, denial of service, arbitrary file/path effect, secret exposure, authz bypass, supply-chain compromise, or documented unsafe behavior. Do not report style issues or speculative hardening.

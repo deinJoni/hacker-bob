@@ -107,6 +107,16 @@ function install({
     safeFs.mkdirp(path.join(kimiDir, dirname));
   }
 
+  // Sweep stale skill dirs left by prior installs (bob-hunt v1,
+  // bob-evaluate-runner interim misname) before copying current skills, so a
+  // normal install/update never leaves old prompts/tool names beside the
+  // current bob-evaluate skill. Mirrors the Codex removeLegacyDirectSkillDirs
+  // sweep and Claude's legacy-skill rmSync loop; uninstall and dev-sync already
+  // remove these. Idempotent: a no-op when the legacy dirs are absent.
+  for (const legacySkill of LEGACY_BOB_SKILLS) {
+    safeFs.removePath(path.join(kimiDir, "skills", legacySkill), { recursive: true });
+  }
+
   for (const skill of BOB_SKILLS) {
     const sourceSkillDir = path.join(sourceRoot, "adapters", "kimi", "skills", skill);
     const targetSkillDir = path.join(kimiDir, "skills", skill);
