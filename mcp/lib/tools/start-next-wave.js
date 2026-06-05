@@ -29,6 +29,5 @@ module.exports = Object.freeze({
     "wave-N-assignments.json",
     "state.json",
     "surface-leads.json",
-    "attack_surface.json",
   ],
 });
