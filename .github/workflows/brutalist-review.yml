@@ -1,10 +1,9 @@
 name: Brutalist Review
 
-# claude + codex review on every PR, posted as inline comments.
-# Codex auth: the noot-1 broker pushes a fresh ChatGPT-plan access_token
-# (refresh blanked) to the CODEX_AUTH secret out-of-band (no tailnet, no
-# inbound). CI just reads it; codex never refreshes. The image_generation
-# tool is disabled (codex#21952 gpt-image-2 bug).
+# Claude + Codex review on trusted maintainer PRs, posted as inline comments.
+# CODEX_AUTH is the full ~/.codex/auth.json stored as a GitHub Actions secret.
+# Refresh it with `codex login` + `gh secret set CODEX_AUTH` if auth fails.
+# The image_generation tool is disabled (codex#21952 gpt-image-2 bug).
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -19,36 +18,43 @@ concurrency:
 
 jobs:
   brutalist:
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(fromJSON('["vmihalis","ejmockler"]'), github.event.pull_request.user.login)
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          fetch-depth: 0
+          fetch-depth: 2
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
       - name: Install CLI critics
+        working-directory: .github/brutalist-tools
         run: |
-          # Pin every critic CLI — an unpinned @latest runs before secrets exist,
-          # but a planted binary persists and later receives the OAuth tokens.
-          npm install -g @brutalist/mcp@1.14.7 @anthropic-ai/claude-code@2.1.162 @openai/codex@0.136.0
+          npm ci
+          echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
           # codex: disable the broken built-in image_generation tool (gpt-image-2)
           mkdir -p "$HOME/.codex"
           printf '[features]\nimage_generation = false\n' > "$HOME/.codex/config.toml"
       - name: Brutalist review
+        id: brutalist-review
         # Advisory reviewer only; CI remains the hard merge gate.
         continue-on-error: true
         # Pinned to the immutable v1.14.7 commit SHA, not the mutable tag — this
         # action receives credentials below, so it must not move.
         uses: ejmockler/brutalist-mcp/packages/github-action@15cedc8159a54662fa741395746d4aa0e161a3b4 # v1.14.7
         env:
-          BRUTALIST_TIMEOUT: "900000"
-          BRUTALIST_ORCHESTRATOR_TIMEOUT_MS: "1500000"
+          BRUTALIST_TIMEOUT: "600000"
+          BRUTALIST_ORCHESTRATOR_TIMEOUT_MS: "900000"
         with:
           github-token: ${{ github.token }}
           anthropic-oauth-token: ${{ secrets.ANTHROPIC_OAUTH_TOKEN }}
           codex-auth: ${{ secrets.CODEX_AUTH }}
           minimum-severity: medium
+      - name: Report advisory reviewer failure
+        if: steps.brutalist-review.outcome == 'failure'
+        run: echo "::warning title=Brutalist Review::Advisory review failed; CI remains the hard merge gate."
