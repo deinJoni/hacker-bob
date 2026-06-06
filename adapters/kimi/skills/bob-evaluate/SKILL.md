@@ -139,9 +139,9 @@ Before spawning a wave:
 1. Call `bob_start_next_wave({ target_domain })` and use `result.data`.
 2. On `decision === "pending_wave_settle"`, call the `next_action` tool or stop and require `/skill:bob-evaluate resume [domain]`.
 3. On `decision === "no_assignable_candidates"`, stop wave launching and let the lifecycle gate decide whether `CLAIM_FREEZE` is allowed.
-4. Spawn evaluators only when `started === true` and `next_action.kind === "spawn_evaluators"`. Use top-level `result.data.assignments`; the MCP capability router has already chosen the correct evaluator family per surface — do not branch by `chain_family`. Use each assignment's `evaluator_agent` as the subagent type and its `handoff_token` only in its spawn prompt.
+4. Spawn evaluators only when `started === true` and `next_action.kind === "spawn_evaluators"`. Use top-level `result.data.assignments`; the MCP capability router has already chosen the correct evaluator family per surface — do not branch by `chain_family`. Use `Agent(subagent_type="coder")` for every evaluator worker; put each assignment's `evaluator_agent` in the prompt contract/header and include only that assignment's `handoff_token`.
 
-Generic evaluator spawn template (uses the routed `assignment.evaluator_agent`; the brief itself carries chain-specific context):
+Generic evaluator spawn template (uses Kimi `coder` workers; the routed `assignment.evaluator_agent` selects the embedded Bob contract):
 ```text
 For each assignment, spawn an Agent(subagent_type="coder") for the evaluator family chosen by the MCP capability router (assignment.evaluator_agent from wave-start result.data.assignments[] — one of evaluator-agent or any of the per-pack evaluators listed in the smart-contract pack catalogue: evaluator-evm-agent, evaluator-svm-agent, evaluator-move-agent, evaluator-substrate-agent, evaluator-cosmwasm-agent).
 - prompt: include the compact run header below plus the full contract for assignment.evaluator_agent from Kimi Worker Role Contracts.
@@ -255,7 +255,7 @@ Read `bob_read_grade_verdict.data`. On `SUBMIT` or `SKIP`, advance with `bob_adv
 
 Spawn:
 ```text
-Agent(subagent_type="coder", prompt: "Bob role: report-writer. Domain: [domain]. Session: ~/hacker-bob-sessions/[domain]. Call bob_read_candidate_claims, bob_read_chain_attempts, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), bob_read_evidence_packs, and bob_read_grade_verdict, then write the canonical ~/hacker-bob-sessions/[domain]/report.md. For SUBMIT, include only confirmed chain evidence. For SKIP/no reportables, write a concise no-findings closeout with verification, chain-attempt, and blocker summary. Emit BOB_REPORT_DONE when finished.")
+Agent(subagent_type="coder", prompt: "Bob role: report-writer. Domain: [domain]. Session: ~/hacker-bob-sessions/[domain]. Call bob_read_candidate_claims, bob_read_chain_attempts, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), bob_read_evidence_packs, and bob_read_grade_verdict, then compose and finalize through bob_compose_report and bob_finalize_report; do not Write report.md directly. For SUBMIT, include only confirmed chain evidence. For SKIP/no reportables, write a concise no-findings closeout with verification, chain-attempt, and blocker summary. Emit BOB_REPORT_DONE when finished.")
 ```
 After the report writer finishes, call `bob_read_session_summary({ target_domain: "[domain]" })` and present `result.data.summary` plus the `result.data.summary.report.path`. If `result.data.summary.report.present` is false after a SUBMIT or SKIP grade, retry the report writer once with the canonical path error text; do not accept reports written only under a target workspace as session-complete. Do not read `report.md` in the root orchestrator. If the user wants more evaluating, re-enter the frontier with `bob_advance_session({ target_domain, to_state: "OPEN_FRONTIER" })`; otherwise stop.
 

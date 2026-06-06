@@ -122,7 +122,7 @@ function kimiLaunchTemplates() {
     ].join("\n"),
     "{{SPAWN_REPORTER_AGENT}}": [
       "```text",
-      `Agent(subagent_type="coder", prompt: "Bob role: report-writer. Domain: [domain]. Session: ~/hacker-bob-sessions/[domain]. Call bob_read_candidate_claims, bob_read_chain_attempts, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), bob_read_evidence_packs, and bob_read_grade_verdict, then write the canonical ~/hacker-bob-sessions/[domain]/report.md. For SUBMIT, include only confirmed chain evidence. For SKIP/no reportables, write a concise no-findings closeout with verification, chain-attempt, and blocker summary. Emit BOB_REPORT_DONE when finished.")`,
+      `Agent(subagent_type="coder", prompt: "Bob role: report-writer. Domain: [domain]. Session: ~/hacker-bob-sessions/[domain]. Call bob_read_candidate_claims, bob_read_chain_attempts, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), bob_read_evidence_packs, and bob_read_grade_verdict, then compose and finalize through bob_compose_report and bob_finalize_report; do not Write report.md directly. For SUBMIT, include only confirmed chain evidence. For SKIP/no reportables, write a concise no-findings closeout with verification, chain-attempt, and blocker summary. Emit BOB_REPORT_DONE when finished.")`,
       "```",
     ].join("\n"),
     "{{SPAWN_EVIDENCE_AGENT}}": [
@@ -141,6 +141,8 @@ function applyKimiHostText(document) {
     )
     .replace(/Use host-normal agent permissions by default/g, "Use normal Agent permissions by default")
     .replace(/Evaluator waves MUST use the host's asynchronous\/background worker mechanism when available\./g, "Evaluator waves MUST use Agent with run_in_background: true when the host supports it.")
+    .replace(/Use each assignment's `evaluator_agent` as the subagent type and its `handoff_token` only in its spawn prompt\./g, 'Use `Agent(subagent_type="coder")` for every evaluator worker; put each assignment\'s `evaluator_agent` in the prompt contract/header and include only that assignment\'s `handoff_token`.')
+    .replace(/Generic evaluator spawn template \(uses the routed `assignment\.evaluator_agent`; the brief itself carries chain-specific context\):/g, 'Generic evaluator spawn template (uses Kimi `coder` workers; the routed `assignment.evaluator_agent` selects the embedded Bob contract):')
     .replace(/host stop hooks are only adapter guardrails/g, "Kimi subagent completion is only an adapter guardrail")
     .replace(/Claude Code enforces `maxTurns` as a turn budget, not a raw tool-call budget\./g, "The host may enforce turn budgets differently from raw tool-call budgets.")
     .replace(/Paste in the current agent session\./g, "Paste in the current Kimi CLI session.")

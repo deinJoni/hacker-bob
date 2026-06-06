@@ -543,6 +543,15 @@ test("Kimi orchestrator skill renders TaskGraph contracts with host-correct text
   assert.doesNotMatch(body, /Evaluator waves MUST use the host's asynchronous/);
   // The Kimi-specific rewrite of that line must be present.
   assert.match(body, /Evaluator waves MUST use Agent with run_in_background/);
+  // Kimi does not install Bob evaluator subagents; evaluator_agent selects the
+  // embedded Bob contract while the host subagent remains Kimi's coder.
+  assert.doesNotMatch(body, /Use each assignment's `evaluator_agent` as the subagent type/);
+  assert.match(body, /Use `Agent\(subagent_type="coder"\)` for every evaluator worker/);
+  assert.match(body, /Generic evaluator spawn template \(uses Kimi `coder` workers/);
+  // Report rendering is MCP-owned; the Kimi launch prompt must not ask the
+  // worker to Write the audit-graded report path directly.
+  assert.doesNotMatch(body, /then write the canonical ~\/hacker-bob-sessions\/\[domain\]\/report\.md/);
+  assert.match(body, /compose and finalize through bob_compose_report and bob_finalize_report; do not Write report\.md directly/);
 });
 
 test("every Kimi skill is host-correct: no Claude/Codex syntax and no stale v1 vocabulary", () => {
