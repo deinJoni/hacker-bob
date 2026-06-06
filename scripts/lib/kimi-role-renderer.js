@@ -139,6 +139,8 @@ function applyKimiHostText(document) {
       "{{STATUS_UPDATE_CACHE_COMMAND}}",
       'node -e "const update=require(\'./mcp/lib/update-check.js\'); console.log(JSON.stringify(update.readUpdateCache(process.cwd()) || null, null, 2));"',
     )
+    .replace(/First, read the passive update cache if the helper is installed:\n```\n/g, "First, read the passive update cache if the helper is installed:\n```bash\n")
+    .replace(/After resolving `target_domain`, call:\n```\n/g, "After resolving `target_domain`, call:\n```text\n")
     .replace(/Use host-normal agent permissions by default/g, "Use normal Agent permissions by default")
     .replace(/Evaluator waves MUST use the host's asynchronous\/background worker mechanism when available\./g, "Evaluator waves MUST use Agent with run_in_background: true when the host supports it.")
     .replace(/Use each assignment's `evaluator_agent` as the subagent type and its `handoff_token` only in its spawn prompt\./g, 'Use `Agent(subagent_type="coder")` for every evaluator worker; put each assignment\'s `evaluator_agent` in the prompt contract/header and include only that assignment\'s `handoff_token`.')
