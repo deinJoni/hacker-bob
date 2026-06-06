@@ -51,6 +51,30 @@ function lifecycleOverrideEvents(domain) {
   return readSessionEvents(domain).filter((event) => event.kind === "governance.lifecycle.override");
 }
 
+const TOPOLOGY_ONLY_FORCEABLE_GATES = Object.freeze(new Map([
+  ["VERIFY->GRADE", { blocked_by: "verification_stale", code: "verification_chain_incomplete" }],
+  ["GRADE->REPORT", { blocked_by: "evidence_incomplete", code: "evidence_packs_invalid" }],
+]));
+
+function advanceTopology(domain, toState) {
+  try {
+    return JSON.parse(advanceSession({ target_domain: domain, to_state: toState }));
+  } catch (error) {
+    if (!error || error.code !== "STATE_CONFLICT") throw error;
+    const details = error.details || {};
+    const gate = TOPOLOGY_ONLY_FORCEABLE_GATES.get(`${details.from}->${details.to}`);
+    if (!gate || details.blocked_by !== gate.blocked_by || details.code !== gate.code) {
+      throw error;
+    }
+    return JSON.parse(advanceSession({
+      target_domain: domain,
+      to_state: toState,
+      override: "operator_force",
+      override_reason: "topology-only lifecycle test bypasses external artifact gates",
+    }));
+  }
+}
+
 test("bob_advance_session rejects an unreachable target with a structured no_transition blocker", () => {
   withTempHome(() => {
     const domain = "block.example.com";
@@ -112,7 +136,7 @@ test("bob_advance_session drives SETUP -> OPEN_FRONTIER -> CLAIM_FREEZE -> VERIF
 
     let priorHash = initialNucleus.nucleus_hash;
     for (const target of sequence) {
-      const result = JSON.parse(advanceSession({ target_domain: domain, to_state: target }));
+      const result = advanceTopology(domain, target);
       assert.equal(result.advanced, true);
       assert.equal(result.to_state, target);
       assert.equal(result.prior_nucleus_hash, priorHash);
@@ -201,19 +225,19 @@ test("bob_advance_session honors D3 bidirectional edges (CLAIM_FREEZE <-> OPEN_F
     bootstrapDomain(domain);
 
     // SETUP -> OPEN_FRONTIER -> CLAIM_FREEZE -> OPEN_FRONTIER (D3).
-    advanceSession({ target_domain: domain, to_state: "OPEN_FRONTIER" });
-    advanceSession({ target_domain: domain, to_state: "CLAIM_FREEZE" });
-    const reopened = JSON.parse(advanceSession({ target_domain: domain, to_state: "OPEN_FRONTIER" }));
+    advanceTopology(domain, "OPEN_FRONTIER");
+    advanceTopology(domain, "CLAIM_FREEZE");
+    const reopened = advanceTopology(domain, "OPEN_FRONTIER");
     assert.equal(reopened.from_state, "CLAIM_FREEZE");
     assert.equal(reopened.to_state, "OPEN_FRONTIER");
     assert.equal(readSessionNucleus(domain).lifecycle_state, "OPEN_FRONTIER");
 
     // Walk forward to REPORT and then re-enter OPEN_FRONTIER.
-    advanceSession({ target_domain: domain, to_state: "CLAIM_FREEZE" });
-    advanceSession({ target_domain: domain, to_state: "VERIFY" });
-    advanceSession({ target_domain: domain, to_state: "GRADE" });
-    advanceSession({ target_domain: domain, to_state: "REPORT" });
-    const reentry = JSON.parse(advanceSession({ target_domain: domain, to_state: "OPEN_FRONTIER" }));
+    advanceTopology(domain, "CLAIM_FREEZE");
+    advanceTopology(domain, "VERIFY");
+    advanceTopology(domain, "GRADE");
+    advanceTopology(domain, "REPORT");
+    const reentry = advanceTopology(domain, "OPEN_FRONTIER");
     assert.equal(reentry.from_state, "REPORT");
     assert.equal(reentry.to_state, "OPEN_FRONTIER");
     assert.equal(readSessionNucleus(domain).lifecycle_state, "OPEN_FRONTIER");

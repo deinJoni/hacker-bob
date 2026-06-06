@@ -77,6 +77,14 @@ const STIGMERGIC_PRODUCERS = Object.freeze([
       "evaluator_spawn_friction_log_on_internal_error",
     ]),
   }),
+  Object.freeze({
+    producer_id: "repo_inventory_reachability_stamp",
+    mcp_tool_or_artifact: "bob_repo_inventory / buildRepoInventory",
+    trace_shape_ref: "mcp/lib/reachability.js#classifyRepoReachability",
+    registered_consumers: Object.freeze([
+      "assignment_brief_reachability_triage_renderer",
+    ]),
+  }),
 ]);
 
 const PRODUCER_IDS = Object.freeze(

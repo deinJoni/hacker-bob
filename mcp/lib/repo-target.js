@@ -80,6 +80,12 @@ const {
   redactTextSensitiveValues,
   validateNoSensitiveMaterial,
 } = require("./sensitive-material.js");
+const {
+  classifyRepoReachability,
+} = require("./reachability.js");
+const {
+  NATIVE_SOURCE_EXTENSIONS,
+} = require("./native-extensions.js");
 
 // Cycle O.1: SAFE_NAME_PATTERN keeps the basename safe for the
 // target_domain slug. Any character outside `[A-Za-z0-9._-]` is folded
@@ -340,16 +346,6 @@ const NATIVE_BUILD_NAMES = Object.freeze(new Set([
   "meson.build",
 ]));
 
-const NATIVE_SOURCE_EXTENSIONS = Object.freeze(new Set([
-  ".c",
-  ".cc",
-  ".cpp",
-  ".cxx",
-  ".h",
-  ".hh",
-  ".hpp",
-]));
-
 // CI/CD config paths. The first match wins; we want the file relative path
 // to land on the materialized surface so downstream readers can locate it.
 const CI_CONFIG_MATCHERS = Object.freeze([
@@ -434,6 +430,11 @@ const NFS_XDR_SIGNALS = Object.freeze([
   /rpc\/xdr\.h/i,
   /\bxdr_/i,
 ]);
+
+const RESIDUAL_TARGET_LIMIT = 20;
+const RESIDUAL_SOURCE_LINE_LIMIT = 12;
+const RESIDUAL_SECURITY_LINE_RE = /\b(CVE-\d{4}-\d{4,}|GHSA-[a-z0-9-]+|buffer overflow|heap overflow|stack overflow|overflow|underflow|use-after-free|uaf|out[- ]of[- ]bounds|oob|memory corruption|crash|segfault|security|vulnerab)\b/i;
+const RESIDUAL_SOURCE_FILE_RE = /(^|\/)(CHANGELOG|CHANGES|NEWS|RELEASES?|SECURITY)(\.[^/]*)?$/i;
 
 // Minimal .gitignore parser. Supports negation (`!pattern`), trailing slashes
 // (directory-only), and glob characters via a converted RegExp. We do not
@@ -578,9 +579,18 @@ function walkRepo(rootPath, gitignorePatterns) {
   return files.sort();
 }
 
-function safeReadProbe(absPath, maxBytes = REPO_WALK_PROBE_MAX_BYTES) {
+function pathWithinRoot(rootReal, candidateReal) {
+  const relative = path.relative(rootReal, candidateReal);
+  return relative === "" || (relative && !relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function safeReadProbe(rootPath, relPath, maxBytes = REPO_WALK_PROBE_MAX_BYTES) {
   try {
-    const fd = fs.openSync(absPath, "r");
+    const rootReal = fs.realpathSync(rootPath);
+    const absPath = path.resolve(rootReal, relPath);
+    const realPath = fs.realpathSync(absPath);
+    if (!pathWithinRoot(rootReal, realPath)) return null;
+    const fd = fs.openSync(realPath, "r");
     try {
       const buf = Buffer.alloc(maxBytes);
       const bytesRead = fs.readSync(fd, buf, 0, maxBytes, 0);
@@ -602,7 +612,7 @@ function detectNfsXdrShape(rootPath, files) {
   for (const file of files) {
     const base = path.basename(file);
     if (!NATIVE_BUILD_NAMES.has(base)) continue;
-    const probe = safeReadProbe(path.join(rootPath, file));
+    const probe = safeReadProbe(rootPath, file);
     if (!probe) continue;
     for (const re of NFS_XDR_SIGNALS) {
       if (re.test(probe)) return true;
@@ -614,6 +624,45 @@ function detectNfsXdrShape(rootPath, files) {
     if (/(^|\/)rpc\/xdr\.h$/i.test(file)) return true;
   }
   return false;
+}
+
+function uniqueStrings(values, limit = null) {
+  const out = [];
+  const seen = new Set();
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+    if (limit != null && out.length >= limit) break;
+  }
+  return out;
+}
+
+function detectResidualLinesFromFiles(repoRoot, files) {
+  const targets = [];
+  for (const file of files) {
+    if (!RESIDUAL_SOURCE_FILE_RE.test(file)) continue;
+    const text = safeReadProbe(repoRoot, file);
+    if (!text) continue;
+    const lines = text.split(/\r?\n/);
+    let captured = 0;
+    for (const line of lines) {
+      const trimmed = line.trim().replace(/^\s*[-*]\s*/, "");
+      if (!trimmed || !RESIDUAL_SECURITY_LINE_RE.test(trimmed)) continue;
+      targets.push(`${file}: ${redactTextSensitiveValues(trimmed)}`);
+      captured += 1;
+      if (captured >= RESIDUAL_SOURCE_LINE_LIMIT) break;
+    }
+  }
+  return targets;
+}
+
+function detectResidualHuntTargets(repoRoot, files, modules) {
+  const nativeModules = modules.filter((mod) => mod && (mod.nativeSource || mod.nativeBuild));
+  if (nativeModules.length === 0) return [];
+  return uniqueStrings(detectResidualLinesFromFiles(repoRoot, files), RESIDUAL_TARGET_LIMIT);
 }
 
 function detectEcosystemForManifest(base) {
@@ -735,6 +784,7 @@ function buildInventoryProjection(domain, repoRoot, files) {
   }
 
   const nfsShape = detectNfsXdrShape(repoRoot, files);
+  const residualHuntTargets = detectResidualHuntTargets(repoRoot, files, modules);
   return {
     modules,
     dependencies,
@@ -746,18 +796,28 @@ function buildInventoryProjection(domain, repoRoot, files) {
     nativeSourceCount,
     nativeBuildCount,
     nfsShape,
+    residualHuntTargets,
   };
 }
 
 function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOverride } = {}) {
   const domain = assertSafeDomain(targetDomain);
   const repoSession = readRepoSession(domain);
-  const root = repoPathOverride
+  const requestedRoot = repoPathOverride
     ? assertNonEmptyString(repoPathOverride, "repo_path")
     : repoSession.target_repo.root_path;
-  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
-    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `repo_path is not a directory: ${root}`);
+  if (!fs.existsSync(requestedRoot) || !fs.statSync(requestedRoot).isDirectory()) {
+    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `repo_path is not a directory: ${requestedRoot}`);
   }
+  const canonicalRoot = fs.realpathSync(requestedRoot);
+  const canonicalSessionRoot = fs.realpathSync(repoSession.target_repo.root_path);
+  const relativeToSessionRoot = path.relative(canonicalSessionRoot, canonicalRoot);
+  if (relativeToSessionRoot.startsWith("..") || path.isAbsolute(relativeToSessionRoot)) {
+    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "repo_path must stay within the initialized repo session root", {
+      repo_error_code: "repo_path_mismatch",
+    });
+  }
+  const root = canonicalRoot;
 
   const gitignorePatterns = loadGitignore(root);
   let files;
@@ -773,6 +833,12 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
     throw error;
   }
   const projection = buildInventoryProjection(domain, root, files);
+  const reachability = classifyRepoReachability({
+    repoRoot: root,
+    files,
+    projection,
+    surfaceIdForRel: (rel) => safeSurfaceId(rel, "repo:module"),
+  });
 
   return withSessionLock(domain, () => {
     const generatedAt = new Date().toISOString();
@@ -780,6 +846,7 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
 
     // Per-module frontier events.
     for (const mod of projection.modules) {
+      const reachabilityStamp = reachability.perSurface.get(mod.rel);
       emitSurfaceObserved({
         domain,
         surfaceId: safeSurfaceId(mod.rel, "repo:module"),
@@ -787,9 +854,18 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
         title: mod.rel,
         payload: {
           file_path: mod.rel,
+          surface_type: mod.nativeSource || mod.nativeBuild ? "oss_native_code" : "code_module",
           language: mod.language,
           native_source: mod.nativeSource,
           native_build: mod.nativeBuild,
+          ...(reachabilityStamp ? {
+            network_reachable: reachabilityStamp.network_reachable,
+            attack_vector: reachabilityStamp.attack_vector,
+            severity_ceiling: reachabilityStamp.severity_ceiling,
+            network_reachable_anchors: reachabilityStamp.network_reachable_anchors,
+            network_reachable_dirs: reachabilityStamp.network_reachable_dirs,
+            local_only_candidate_dirs: reachabilityStamp.local_only_candidate_dirs,
+          } : {}),
         },
         emittedCount,
       });
@@ -805,6 +881,7 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
         title: manifestPath,
         payload: {
           file_path: manifestPath,
+          surface_type: "oss_dependency",
           ecosystem,
         },
         emittedCount,
@@ -820,6 +897,7 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
         title: dep.rel,
         payload: {
           manifest_path: dep.rel,
+          surface_type: "oss_dependency",
           ecosystem: dep.ecosystem,
           has_lockfile: dep.hasLockfile,
         },
@@ -836,6 +914,7 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
         title: ci,
         payload: {
           file_path: ci,
+          surface_type: "oss_ci_cd",
         },
         emittedCount,
       });
@@ -850,6 +929,7 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
         title: entry,
         payload: {
           file_path: entry,
+          surface_type: "oss_api_schema",
         },
         emittedCount,
       });
@@ -866,6 +946,7 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
         title: cfg,
         payload: {
           file_path: cfg,
+          surface_type: "oss_secrets_config",
         },
         emittedCount,
       });
@@ -892,10 +973,13 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
         code_modules: projection.modules.length,
         native_source_files: projection.nativeSourceCount,
         native_build_files: projection.nativeBuildCount,
+        residual_hunt_targets: projection.residualHuntTargets.length,
         surface_events_emitted: emittedCount.value,
       },
       languages: projection.languageCounts,
       nfs_xdr_shape: projection.nfsShape,
+      residual_hunt_targets: projection.residualHuntTargets,
+      reachability: reachability.reachability,
       manifests: projection.manifests,
       ci_pipelines: projection.ciPipelines,
       entry_points: projection.entryPoints,
@@ -919,6 +1003,8 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
       counts: inventory.counts,
       inventory_hash: inventory.inventory_hash,
       nfs_xdr_shape: projection.nfsShape,
+      residual_hunt_targets: projection.residualHuntTargets,
+      reachability: inventory.reachability,
     };
   });
 }
