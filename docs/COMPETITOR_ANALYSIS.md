@@ -1,8 +1,8 @@
 # Hacker Bob — Competitive Analysis & Adaptation Backlog
 
-*Scope: synthesis of Bob's profile, three adjacent projects (raptor, CyberStrikeAI, poc-lab), three head-to-head comparisons, and an adversarial skeptic pass that checked every candidate against Bob's live `main`. Repo root: `/Users/memehalis/sec/hacker-bob`; paths below are repo-relative to match Bob's own conventions.*
+*Scope: synthesis of Bob's profile, three adjacent projects (raptor, CyberStrikeAI, poc-lab), three head-to-head comparisons, and an adversarial skeptic pass that checked every candidate against Bob's live `main`. Paths below are repo-relative to match Bob's own conventions.*
 
-> **Editor's correction (orchestrator, verified 2026-06-07).** An earlier draft of this document carried a disclaimer claiming the three external repos were "not present anywhere on this machine" and that all external-tool claims were unverified. **That disclaimer was wrong** — it resulted from a `find` run against `/Users/memehalis` when the repos were actually cloned to `/tmp/bob-compare`. The Phase-1 reader agents *did* read the real source (21 transcripts reference that path). The orchestrator then **independently re-verified every load-bearing external fact** against the live clones:
+> **Editor's correction (orchestrator, verified 2026-06-06 UTC).** An earlier draft of this document carried a disclaimer claiming the three external repos were "not present anywhere on this machine" and that all external-tool claims were unverified. **That disclaimer was wrong** — it resulted from a home-directory search while the source clones were under a temporary comparison workspace. The Phase-1 reader agents *did* read the real source. The external revisions checked were `gadievron/raptor@4a1fae590cd593ef464d058d2b3a8da7de07d4fd`, `Ed1s0nZ/CyberStrikeAI@c2f8ebc7430569c7ea65ace71cbe7033018ed4a8`, and `Unclecheng-li/poc-lab@53724519e0e1690557cd4dcce58085248b7589b4`. The orchestrator then **independently re-verified every load-bearing external fact** against those live clones:
 >
 > | Claim | Verified reality |
 > |---|---|
