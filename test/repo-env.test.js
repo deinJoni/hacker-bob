@@ -631,9 +631,12 @@ test("prepareRepoEnv allow_network=true injects egress proxy via --build-arg (no
   // can assert the proxy flows through --build-arg and never lands in the
   // resulting Dockerfile.
   await withTempHome(async () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-repo-env-project-"));
+    const previousProjectDir = process.env.BOB_PROJECT_DIR;
+    process.env.BOB_PROJECT_DIR = projectRoot;
+
     const repoRoot = makeTempRepoDir();
     write(repoRoot, "package.json", JSON.stringify({ name: "x" }));
-    const init = initRepoSession({ repo_path: repoRoot });
 
     const calls = [];
     const runtime = {
@@ -651,13 +654,9 @@ test("prepareRepoEnv allow_network=true injects egress proxy via --build-arg (no
 
     // Inject a synthetic proxy via the egress profile by writing the
     // proxy URL into the resolved egress profile through the env var hook.
-    // The default profile uses proxy_url: null; to test proxy routing we
-    // pre-resolve a custom profile by writing a project egress-profiles.json.
-    // projectRootFromMcp resolves to <repo-root>; __dirname here is
-    // <repo-root>/test, so a single dirname() climb gets us there.
-    const projectRoot = path.dirname(__dirname);
+    // Use an isolated BOB_PROJECT_DIR so this test never mutates the shared
+    // repo-root egress-profiles.json consumed by the full MCP test manifest.
     const egressPath = path.join(projectRoot, ".claude", "bob", "egress-profiles.json");
-    const originalEgress = fs.existsSync(egressPath) ? fs.readFileSync(egressPath, "utf8") : null;
     fs.mkdirSync(path.dirname(egressPath), { recursive: true });
     fs.writeFileSync(
       egressPath,
@@ -688,6 +687,7 @@ test("prepareRepoEnv allow_network=true injects egress proxy via --build-arg (no
     const originalProxyEnv = process.env.BOB_TEST_PROXY_URL;
     process.env.BOB_TEST_PROXY_URL = "http://proxy.invalid:3128/";
     try {
+      const init = initRepoSession({ repo_path: repoRoot });
       await prepareRepoEnv({
         target_domain: init.target_domain,
         dry_run: false,
@@ -722,8 +722,9 @@ test("prepareRepoEnv allow_network=true injects egress proxy via --build-arg (no
     } finally {
       if (originalProxyEnv === undefined) delete process.env.BOB_TEST_PROXY_URL;
       else process.env.BOB_TEST_PROXY_URL = originalProxyEnv;
-      if (originalEgress != null) fs.writeFileSync(egressPath, originalEgress);
-      else fs.rmSync(egressPath, { force: true });
+      if (previousProjectDir === undefined) delete process.env.BOB_PROJECT_DIR;
+      else process.env.BOB_PROJECT_DIR = previousProjectDir;
+      fs.rmSync(projectRoot, { recursive: true, force: true });
     }
   });
 });

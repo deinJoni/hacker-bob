@@ -99,6 +99,17 @@ const STIGMERGIC_CONSUMERS = Object.freeze([
     rationale:
       "evaluator-spawn logs friction on unexpected MCP INTERNAL_ERROR",
   }),
+  Object.freeze({
+    consumer_id: "assignment_brief_reachability_triage_renderer",
+    source_location: Object.freeze({
+      file: "mcp/lib/assignment-brief.js",
+      token_or_regex: /attack_vector[\s\S]*severity_ceiling[\s\S]*network_reachable/,
+    }),
+    producer_id: "repo_inventory_reachability_stamp",
+    decision_boundary: "brief_composition",
+    rationale:
+      "evaluator brief whitelists reachability triage fields so AV:N surfaces are pursued",
+  }),
 ]);
 
 const CONSUMER_IDS = Object.freeze(
