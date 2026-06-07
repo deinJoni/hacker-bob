@@ -58,7 +58,7 @@ Verification confirmed the single contested fact and surfaced a second silent re
 
 ## New nodes to add
 
-```
+```text
 X10 — Reasoning-divergence adjudication
   kind: X   tier: Δ2   type: harden
   intent: Catch the "two rounds agree on disposition/severity/reportable but
