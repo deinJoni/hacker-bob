@@ -11,6 +11,9 @@ const {
   detectNetworkReachability,
   safeReadText,
 } = require("../mcp/lib/reachability.js");
+const {
+  computeReachabilityDisposition,
+} = require("../mcp/lib/reachability-ceiling.js");
 
 function withRepo(files, fn) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "bob-reachability-"));
@@ -200,3 +203,52 @@ test("token-only native headers do not create network reachability", () => withR
   assert.equal(header.attack_vector, "local");
   assert.equal(header.severity_ceiling, "medium");
 }));
+
+test("computeReachabilityDisposition caps, certifies, and preserves unknowns", () => {
+  assert.deepEqual(
+    computeReachabilityDisposition("high", {
+      severity_ceiling: "medium",
+      attack_vector: "local",
+      network_reachable: false,
+    }),
+    {
+      recorded_severity: "high",
+      severity_ceiling: "medium",
+      attack_vector: "local",
+      network_reachable: false,
+      graded_severity: "medium",
+      disposition: "capped",
+      defensible: false,
+    },
+  );
+
+  assert.deepEqual(
+    computeReachabilityDisposition("high", {
+      severity_ceiling: "critical",
+      attack_vector: "network",
+      network_reachable: true,
+    }),
+    {
+      recorded_severity: "high",
+      severity_ceiling: "critical",
+      attack_vector: "network",
+      network_reachable: true,
+      graded_severity: "high",
+      disposition: "lifted",
+      defensible: true,
+    },
+  );
+
+  assert.deepEqual(
+    computeReachabilityDisposition("medium", null),
+    {
+      recorded_severity: "medium",
+      severity_ceiling: "unknown",
+      attack_vector: "unknown",
+      network_reachable: null,
+      graded_severity: "medium",
+      disposition: "unknown",
+      defensible: false,
+    },
+  );
+});

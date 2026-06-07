@@ -4,7 +4,7 @@
 //
 // Asserts:
 //   * STIGMERGIC_CONSUMERS is Object.freeze'd (closed list).
-//   * Exactly 7 canonical consumer entries per Y-D19 rev 4.1 + Plane-Delta S12.
+//   * Exactly 8 canonical consumer entries per Y-D19 rev 4.1 + Plane-Delta S12/C9.
 //   * Every entry carries the required keys (consumer_id,
 //     source_location: {file, token_or_regex}, producer_id,
 //     decision_boundary, rationale).
@@ -38,6 +38,7 @@ const CANONICAL_CONSUMER_IDS = [
   "write_chain_rollup_evidence_refs_validator",
   "evaluator_spawn_friction_log_on_internal_error",
   "assignment_brief_reachability_triage_renderer",
+  "grade_verdict_reachability_ceiling_reconciler",
 ];
 
 test("STIGMERGIC_CONSUMERS is Object.freeze'd and elements are frozen", () => {
@@ -58,8 +59,8 @@ test("STIGMERGIC_CONSUMERS is Object.freeze'd and elements are frozen", () => {
   assert.equal(Object.isFrozen(DECISION_BOUNDARY_VALUES), true);
 });
 
-test("STIGMERGIC_CONSUMERS contains exactly the 7 canonical Y-D19/Plane-Delta entries", () => {
-  assert.equal(STIGMERGIC_CONSUMERS.length, 7);
+test("STIGMERGIC_CONSUMERS contains exactly the 8 canonical Y-D19/Plane-Delta entries", () => {
+  assert.equal(STIGMERGIC_CONSUMERS.length, 8);
   const actualIds = STIGMERGIC_CONSUMERS.map((c) => c.consumer_id).sort();
   const expectedIds = [...CANONICAL_CONSUMER_IDS].sort();
   assert.deepEqual(

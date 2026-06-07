@@ -417,6 +417,16 @@ test("CandidateClaim severity and status enums are stable, complete sets", () =>
   }
 });
 
+test("reporter prompt renders reachability graded severity when C9 stamps it", () => {
+  const reporterPrompt = fs.readFileSync(
+    path.join(__dirname, "..", "prompts", "roles", "reporter.md"),
+    "utf8",
+  );
+  assert.match(reporterPrompt, /reachability\.graded_severity/);
+  assert.match(reporterPrompt, /public severity/);
+  assert.match(reporterPrompt, /reachability disposition/);
+});
+
 // =============================================================================
 // SECTION 5 — Structural invariance (the P.4 guarantee)
 // =============================================================================

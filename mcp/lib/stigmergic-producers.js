@@ -83,6 +83,7 @@ const STIGMERGIC_PRODUCERS = Object.freeze([
     trace_shape_ref: "mcp/lib/reachability.js#classifyRepoReachability",
     registered_consumers: Object.freeze([
       "assignment_brief_reachability_triage_renderer",
+      "grade_verdict_reachability_ceiling_reconciler",
     ]),
   }),
 ]);

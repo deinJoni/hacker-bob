@@ -14,14 +14,33 @@ const {
   readSessionNucleus,
 } = require("../mcp/lib/governance-store.js");
 const {
+  repoInventoryPath,
   sessionEventsJsonlPath,
+  statePath,
 } = require("../mcp/lib/paths.js");
 const {
   readSessionEvents,
 } = require("../mcp/lib/session-events.js");
 const {
   allowedTargetsFor,
+  evaluateLifecycleTransition,
 } = require("../mcp/lib/lifecycle-gates.js");
+const {
+  appendCandidateClaim,
+} = require("../mcp/lib/claims.js");
+const {
+  buildClaimFreeze,
+} = require("../mcp/lib/claim-freeze.js");
+const {
+  writeEvidencePacks,
+} = require("../mcp/lib/evidence.js");
+const {
+  buildRepoInventory,
+  initRepoSession,
+} = require("../mcp/lib/repo-target.js");
+const {
+  writeVerificationRound,
+} = require("../mcp/lib/verification-round-store.js");
 
 function withTempHome(fn) {
   const previousHome = process.env.HOME;
@@ -41,6 +60,88 @@ function withTempHome(fn) {
 
 function bootstrapDomain(domain) {
   initSession({ target_domain: domain, target_url: `https://${domain}/` });
+}
+
+function writeRepoFile(root, relativePath, content) {
+  const filePath = path.join(root, relativePath);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, content, "utf8");
+}
+
+function verificationResult(findingId = "F-1", overrides = {}) {
+  return {
+    finding_id: findingId,
+    disposition: "confirmed",
+    severity: "high",
+    reportable: true,
+    reasoning: "Fresh replay confirmed the finding against the current target state.",
+    ...overrides,
+  };
+}
+
+function evidencePack(findingId = "F-1") {
+  return {
+    finding_id: findingId,
+    sample_type: "repo replay",
+    sample_count: 1,
+    aggregate_counts: { affected_objects_sampled: 1 },
+    representative_samples: [{
+      request_ref: "repo-check:1",
+      endpoint: "src/parser.c",
+      auth_profile: "repo",
+      status: 0,
+      observed_fields: ["asan"],
+      redacted_object_id: "local-input",
+    }],
+    sensitive_clusters: ["none"],
+    replay_summary: "Verification replay confirmed the native finding.",
+    redaction_notes: "No secrets captured.",
+    report_snippet: "A crafted input triggers a native parser crash.",
+  };
+}
+
+function seedRepoVerification(home, {
+  targetDomain,
+  surfaceId,
+  surfaceIds = null,
+  runInventory = true,
+} = {}) {
+  const repo = path.join(home, targetDomain);
+  fs.mkdirSync(repo, { recursive: true });
+  writeRepoFile(repo, "CMakeLists.txt", "cmake_minimum_required(VERSION 3.22)\nproject(lifecycle_gate C)\n");
+  writeRepoFile(repo, "src/parser.c", "int parse_packet(const char *buf, int len){ return len > 0 ? buf[0] : 0; }\n");
+  const init = initRepoSession({ repo_path: repo, target_domain: targetDomain });
+  if (runInventory) {
+    buildRepoInventory({ target_domain: init.target_domain });
+  }
+  appendCandidateClaim({
+    target_domain: init.target_domain,
+    title: "Native parser over-read",
+    summary: "Parser reads past the available buffer.",
+    severity: "medium",
+    status: "candidate",
+    surface_ids: surfaceIds || [surfaceId],
+    evidence_refs: [{
+      kind: "finding",
+      finding_id: "F-1",
+      content_hash: "0".repeat(64),
+    }],
+    impact: "Parser crash on crafted local input.",
+  });
+  buildClaimFreeze(init.target_domain, {
+    write: true,
+    now: new Date("2026-05-27T01:00:00.000Z"),
+  });
+  for (const round of ["brutalist", "balanced", "final"]) {
+    writeVerificationRound({
+      target_domain: init.target_domain,
+      round,
+      notes: null,
+      results: [verificationResult("F-1")],
+    });
+  }
+  writeEvidencePacks({ target_domain: init.target_domain, packs: [evidencePack("F-1")] });
+  return init.target_domain;
 }
 
 function lifecycleAdvancedEvents(domain) {
@@ -216,6 +317,133 @@ test("bob_advance_session with override: operator_force advances despite a no_tr
     assert.equal(advances.length, 1, "override path still emits the lifecycle.advanced event");
     assert.equal(advances[0].payload.from_state, "SETUP");
     assert.equal(advances[0].payload.to_state, "VERIFY");
+  });
+});
+
+test("VERIFY -> GRADE blocks repo sessions when I9 exists but a reportable finding has no reachability stamp", () => {
+  withTempHome((home) => {
+    const domain = seedRepoVerification(home, {
+      targetDomain: "reachability-missing-gate",
+      surfaceId: "repo:module:missing-surface.c",
+      runInventory: true,
+    });
+
+    const evaluation = evaluateLifecycleTransition({
+      target_domain: domain,
+      from_state: "VERIFY",
+      to_state: "GRADE",
+    });
+
+    assert.equal(evaluation.blockers.length, 1);
+    assert.equal(evaluation.blockers[0].code, "reachability_stamp_missing");
+    assert.equal(evaluation.blockers[0].blocked_by, "reachability_absent");
+    assert.deepEqual(evaluation.blockers[0].missing_finding_ids, ["F-1"]);
+  });
+});
+
+test("VERIFY -> GRADE treats malformed I9 reachability as present but unresolved", () => {
+  withTempHome((home) => {
+    const domain = seedRepoVerification(home, {
+      targetDomain: "reachability-malformed-gate",
+      surfaceId: "repo:module:src-parser.c",
+      runInventory: true,
+    });
+    const inventoryPath = repoInventoryPath(domain);
+    const inventory = JSON.parse(fs.readFileSync(inventoryPath, "utf8"));
+    inventory.reachability = {
+      max_credible_severity_ceiling: "medium",
+      network_reachable: false,
+    };
+    fs.writeFileSync(inventoryPath, JSON.stringify(inventory), "utf8");
+
+    const evaluation = evaluateLifecycleTransition({
+      target_domain: domain,
+      from_state: "VERIFY",
+      to_state: "GRADE",
+    });
+
+    assert.equal(evaluation.blockers.length, 1);
+    assert.equal(evaluation.blockers[0].code, "reachability_stamp_missing");
+    assert.deepEqual(evaluation.blockers[0].missing_finding_ids, ["F-1"]);
+  });
+});
+
+test("VERIFY -> GRADE blocks when a frozen repo module surface is missing from partial I9 inventory", () => {
+  withTempHome((home) => {
+    const domain = seedRepoVerification(home, {
+      targetDomain: "reachability-partial-gate",
+      surfaceId: "repo:module:src-parser.c",
+      surfaceIds: ["repo:module:src-parser.c", "repo:module:missing-surface.c"],
+      runInventory: true,
+    });
+
+    const evaluation = evaluateLifecycleTransition({
+      target_domain: domain,
+      from_state: "VERIFY",
+      to_state: "GRADE",
+    });
+
+    assert.equal(evaluation.blockers.length, 1);
+    assert.equal(evaluation.blockers[0].code, "reachability_stamp_missing");
+    assert.deepEqual(evaluation.blockers[0].missing_finding_ids, ["F-1"]);
+  });
+});
+
+test("VERIFY -> GRADE reachability gate ignores repo surfaces I9 does not stamp", () => {
+  withTempHome((home) => {
+    const domain = seedRepoVerification(home, {
+      targetDomain: "reachability-non-native-noop",
+      surfaceId: "repo:manifest:package.json",
+      runInventory: true,
+    });
+
+    const evaluation = evaluateLifecycleTransition({
+      target_domain: domain,
+      from_state: "VERIFY",
+      to_state: "GRADE",
+    });
+
+    assert.deepEqual(evaluation.blockers, []);
+  });
+});
+
+test("VERIFY -> GRADE reachability gate fails closed when session state is malformed", () => {
+  withTempHome((home) => {
+    const domain = seedRepoVerification(home, {
+      targetDomain: "reachability-state-malformed",
+      surfaceId: "repo:module:src-parser.c",
+      runInventory: true,
+    });
+    fs.writeFileSync(statePath(domain), "{", "utf8");
+
+    const evaluation = evaluateLifecycleTransition({
+      target_domain: domain,
+      from_state: "VERIFY",
+      to_state: "GRADE",
+    });
+
+    assert.equal(evaluation.blockers.length, 1);
+    assert.equal(evaluation.blockers[0].code, "reachability_stamp_missing");
+    assert.equal(evaluation.blockers[0].blocked_by, "reachability_absent");
+    assert.match(evaluation.blockers[0].message, /session state unavailable/);
+  });
+});
+
+test("VERIFY -> GRADE reachability gate no-ops for repo sessions before I9 inventory exists", () => {
+  withTempHome((home) => {
+    const domain = seedRepoVerification(home, {
+      targetDomain: "reachability-absent-noop",
+      surfaceId: "repo:module:missing-surface.c",
+      runInventory: false,
+    });
+
+    const evaluation = evaluateLifecycleTransition({
+      target_domain: domain,
+      from_state: "VERIFY",
+      to_state: "GRADE",
+    });
+
+    assert.deepEqual(evaluation.blockers, []);
   });
 });
 
