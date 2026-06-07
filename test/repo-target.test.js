@@ -404,6 +404,52 @@ test("residual hunting seeds recently-patched security fixes into repo inventory
   );
 }));
 
+test("repo inventory aggregates fuzz seed corpora without reading file contents", () => withTempHome((home) => {
+  const repo = path.join(home, "seeded-parser");
+  fs.mkdirSync(repo, { recursive: true });
+  writeFile(repo, "CMakeLists.txt", "cmake_minimum_required(VERSION 3.22)\nproject(seeded C)\n");
+  writeFile(repo, "src/decode.c", "int decode(const unsigned char *b, int n){ return n > 0 ? b[0] : 0; }\n");
+  writeFile(repo, "fuzz/corpus/packet-a.bin", "AAAA");
+  writeFile(repo, "fuzz/corpus/packet-b.bin", "BBBBBB");
+  writeFile(repo, "seeds/minimal.dat", "seed");
+  writeFile(repo, "parser_seed_corpus.zip", "zip-bytes");
+
+  const init = parseResult(initRepoSession({ repo_path: repo, target_domain: "repo-seeded-parser" }));
+  const inventory = parseResult(buildRepoInventory({ target_domain: init.target_domain }));
+  assert.equal(inventory.counts.seed_corpus, 3);
+  assert.match(inventory.seed_corpus_hash, /^[a-f0-9]{64}$/);
+
+  const byPath = new Map(inventory.seed_corpus.map((entry) => [entry.rel_path, entry]));
+  const fuzzCorpus = byPath.get("fuzz/corpus");
+  assert.ok(fuzzCorpus, "expected fuzz/corpus seed aggregate");
+  assert.equal(fuzzCorpus.file_count, 2);
+  assert.equal(fuzzCorpus.total_bytes, 10);
+  assert.equal(fuzzCorpus.has_zip, false);
+  assert.deepEqual(fuzzCorpus.sample_rels, ["fuzz/corpus/packet-a.bin", "fuzz/corpus/packet-b.bin"]);
+  assert.match(fuzzCorpus.manifest_hash, /^[a-f0-9]{64}$/);
+
+  const zipCorpus = byPath.get("parser_seed_corpus.zip");
+  assert.ok(zipCorpus, "expected OSS-Fuzz *_seed_corpus.zip aggregate");
+  assert.equal(zipCorpus.file_count, 1);
+  assert.equal(zipCorpus.has_zip, true);
+}));
+
+test("seed corpus aggregation ignores symlinked files outside the repo root", () => withTempHome((home) => {
+  const repo = path.join(home, "seed-symlink");
+  const outside = path.join(home, "outside-seeds");
+  fs.mkdirSync(repo, { recursive: true });
+  fs.mkdirSync(outside, { recursive: true });
+  writeFile(repo, "CMakeLists.txt", "cmake_minimum_required(VERSION 3.22)\nproject(seed_symlink C)\n");
+  writeFile(outside, "case.bin", "outside");
+  fs.symlinkSync(outside, path.join(repo, "seeds"), "dir");
+
+  const init = parseResult(initRepoSession({ repo_path: repo, target_domain: "repo-seed-symlink" }));
+  const inventory = parseResult(buildRepoInventory({ target_domain: init.target_domain }));
+  assert.deepEqual(inventory.seed_corpus, []);
+  assert.match(inventory.seed_corpus_hash, /^[a-f0-9]{64}$/);
+  assert.equal(inventory.counts.seed_corpus, 0);
+}));
+
 test("repo Docker environment plan and dry-run command stay session-scoped", () => withTempHome(async (home) => {
   const repo = path.join(home, "libnfs-like");
   fs.mkdirSync(repo, { recursive: true });

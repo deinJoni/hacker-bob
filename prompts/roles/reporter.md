@@ -31,6 +31,9 @@ Compose `~/hacker-bob-sessions/[domain]/report.md` via `bob_compose_report` with
    - Severity: use `bob_read_grade_verdict.findings[].reachability.graded_severity` when present; otherwise use the final-verifier severity. If reachability is present, include `recorded_severity`, `graded_severity`, `attack_vector`, and `disposition` in one concise sentence so an AV:L cap is visible in the report.
    - Explain reachability: attacker-controlled input, user/maintainer action, CI event, package install path, config path, or protocol message that reaches the vulnerable code. For native C/C++ findings, name the parser/state transition and malformed field/object.
    - Impact must be concrete: memory corruption, denial of service, arbitrary file/path effect, secret exposure, authz bypass, supply-chain compromise, or documented unsafe behavior. Do not report style issues or speculative hardening.
+   - CWE: choose a fixed CWE from the OSS impact class (examples: memory out-of-bounds -> CWE-125/CWE-787, use-after-free -> CWE-416, integer overflow -> CWE-190, improper access control/authz -> CWE-284/CWE-862/CWE-863, config secret exposure -> CWE-200/CWE-798, command/path injection -> CWE-77/CWE-22). Do not invent a custom category.
+   - Suggested CVSS-4.0: label it as suggested for triager re-score. Anchor the severity band to the final-verifier or graded severity, derive AV from the reachability prose (`network` -> AV:N, `local` -> AV:L), and set PR/UI from maintainer/user-action prerequisites. Do not imply a severity divergence from the grade verdict.
+   - References: include the CWE URL, a repo file:line permalink or stable repository path, and any upstream CVE/GHSA already present in the finding or evidence. Do not fabricate advisory or commit links.
    - Include false-positive notes and remediation tied to the exact code path, dependency pin, CI permission, config default, or docs mismatch.
 
    **HTTP findings** (`surface_type: "web"` or null):

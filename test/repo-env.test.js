@@ -223,6 +223,17 @@ test("recommendedCommandsFor c surfaces NFS/XDR note when shape detected", () =>
   assert.match(commands[0].description, /NFS\/XDR/);
 });
 
+test("recommendedCommandsFor c emits one fuzz seed command when seed corpus is present", () => {
+  const commands = recommendedCommandsFor("c", {
+    seedCorpus: [{ rel_path: "fuzz/corpus", file_count: 2 }],
+  });
+  const fuzzCommands = commands.filter((command) => command.role === "fuzz");
+  assert.equal(fuzzCommands.length, 1);
+  assert.equal(fuzzCommands[0].id, "fuzz_seed_probe");
+  assert.match(fuzzCommands[0].description, /fuzz\/corpus/);
+  assert.match(fuzzCommands[0].command[2], /find 'fuzz\/corpus'/);
+});
+
 test("every recommended_commands[].role is in RECOMMENDED_COMMAND_ROLES", () => {
   for (const lang of ["node", "python", "go", "rust", "ruby", "php", "java", "c"]) {
     const commands = recommendedCommandsFor(lang);
@@ -603,6 +614,27 @@ test("prepareRepoEnv reads nfs_xdr_shape from repo-inventory.json when present",
     assert.equal(repoEnv.detection.nfs_xdr_shape, true);
     // The C compose recipe surfaces the NFS note in its description.
     assert.match(repoEnv.recommended_commands[0].description, /NFS\/XDR/);
+  });
+});
+
+test("prepareRepoEnv threads seed_corpus from repo-inventory into C/C++ fuzz command", async () => {
+  await withTempHome(async () => {
+    const repoRoot = makeTempRepoDir();
+    write(repoRoot, "CMakeLists.txt", "cmake_minimum_required(VERSION 3.22)\nproject(seed C)\n");
+    write(repoRoot, "src/main.c", "int main(){return 0;}\n");
+    write(repoRoot, "fuzz/corpus/minimal.bin", "AAAA");
+    const init = initRepoSession({ repo_path: repoRoot });
+    buildRepoInventory({ target_domain: init.target_domain });
+
+    const result = await prepareRepoEnv({ target_domain: init.target_domain });
+    assert.equal(result.language, "c");
+    assert.equal(result.seed_corpus.length, 1);
+    assert.ok(result.recommended_commands.some((command) => command.role === "fuzz"));
+
+    const repoEnv = JSON.parse(fs.readFileSync(repoEnvJsonPath(init.target_domain), "utf8"));
+    assert.equal(repoEnv.detection.seed_corpus_count, 1);
+    assert.equal(repoEnv.seed_corpus[0].rel_path, "fuzz/corpus");
+    assert.ok(repoEnv.recommended_commands.some((command) => command.id === "fuzz_seed_probe"));
   });
 });
 

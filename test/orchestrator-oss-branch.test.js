@@ -45,7 +45,28 @@ const {
 const {
   OSS_LENSES,
   REPO_WORKFLOW_TEXT,
+  buildBriefExtrasForProfile,
+  readAssignmentBrief,
 } = require("../mcp/lib/assignment-brief.js");
+const {
+  initRepoSession,
+  buildRepoInventory,
+} = require("../mcp/lib/repo-target.js");
+const {
+  routeSurfaces,
+} = require("../mcp/lib/surface-router.js");
+const {
+  advanceSession,
+} = require("../mcp/lib/session-state.js");
+const {
+  startWave,
+} = require("../mcp/lib/waves.js");
+const {
+  materializeFrontier,
+} = require("../mcp/lib/frontier-materializer.js");
+const {
+  currentSurfaces,
+} = require("../mcp/lib/frontier-projections.js");
 
 const ROOT = path.join(__dirname, "..");
 
@@ -67,6 +88,26 @@ function tempRepoFixture() {
   fs.mkdirSync(path.join(dir, "src"));
   fs.writeFileSync(path.join(dir, "src", "index.js"), "module.exports = 1;\n");
   return dir;
+}
+
+function parseResult(value) {
+  return typeof value === "string" ? JSON.parse(value) : value;
+}
+
+function withTempHome(fn) {
+  const previousHome = process.env.HOME;
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bob-orch-oss-home-"));
+  process.env.HOME = tempHome;
+  try {
+    return fn(tempHome);
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  }
 }
 
 // ── Argument-axis branching (web vs OSS repo) ────────────────────────────────
@@ -360,6 +401,81 @@ test("repo-path dispatch: orchestrator narrative directs evaluators to bob_repo_
       `repo_workflow slice content must name '${tool}'`);
   }
 });
+
+test("OSS brief extras partition technique packs by task lens and keep CLI packs repo-scoped", () => {
+  const extras = buildBriefExtrasForProfile("oss", {
+    domain: "repo-oss-brief-direct",
+    surface: {
+      id: "repo:module:src-parser.c",
+      title: "src/parser.c",
+      surface_type: "oss_native_code",
+      endpoints: ["src/parser.c"],
+      language: "c",
+    },
+    assignment: {
+      surface_id: "repo:module:src-parser.c",
+      task_lens: "fuzz_run",
+    },
+    routeMetadata: {
+      capability_pack: "oss_native_code",
+      capability_pack_version: 1,
+      evaluator_agent: "evaluator-agent",
+      brief_profile: "oss",
+      context_budget: {
+        candidate_pack_limit: 5,
+        full_pack_read_limit: 2,
+        attempt_log_required: true,
+      },
+    },
+  });
+
+  assert.equal(extras.repo_workflow, REPO_WORKFLOW_TEXT);
+  assert.equal(extras.code_surface_pack.route_metadata.brief_profile, "oss");
+  assert.ok(extras.technique_packs.selected.some((pack) => pack.id === "oss_native_code"));
+  assert.ok(extras.technique_packs.other_applicable.some((pack) => pack.id === "oss_ci_cd"));
+  assert.equal(extras.technique_packs.selection_limits.selected_count, extras.technique_packs.selected.length);
+  assert.match(extras.cli_tools, /semgrep|trivy/);
+});
+
+test("readAssignmentBrief accepts routed OSS brief_profile and emits OSS technique packs", () => withTempHome((home) => {
+  const repo = path.join(home, "brief-oss-native");
+  fs.mkdirSync(repo, { recursive: true });
+  fs.writeFileSync(path.join(repo, "CMakeLists.txt"), "cmake_minimum_required(VERSION 3.22)\nproject(brief_oss C)\n");
+  fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "src", "parser.c"), "int parse(const char *b, int n){ return n > 0 ? b[0] : 0; }\n");
+
+  const init = parseResult(initRepoSession({ repo_path: repo, target_domain: "repo-brief-oss-native" }));
+  parseResult(buildRepoInventory({ target_domain: init.target_domain }));
+  materializeFrontier(init.target_domain, { write: true });
+  parseResult(routeSurfaces({ target_domain: init.target_domain }));
+  const surfaces = currentSurfaces(init.target_domain).surfaces;
+  const nativeSurface = surfaces.find((surface) => surface.title === "src/parser.c");
+  assert.ok(nativeSurface, "expected native parser surface");
+  parseResult(advanceSession({ target_domain: init.target_domain, to_state: "OPEN_FRONTIER" }));
+  const wave = parseResult(startWave({
+    target_domain: init.target_domain,
+    wave_number: 1,
+    assignments: [{
+      agent: "a1",
+      surface_id: nativeSurface.id,
+      task_lens: "taint_trace",
+    }],
+  }));
+  const assignment = wave.assignments[0];
+  assert.equal(assignment.capability_pack, "oss_native_code");
+  assert.equal(assignment.brief_profile, "oss");
+
+  const brief = JSON.parse(readAssignmentBrief({
+    target_domain: init.target_domain,
+    wave: "w1",
+    agent: "a1",
+  }));
+  assert.equal(brief.run_context.brief_profile, "oss");
+  assert.equal(brief.run_context.capability_pack, "oss_native_code");
+  assert.ok(brief.repo_workflow);
+  assert.ok(brief.technique_packs.selected.some((pack) => pack.id === "oss_native_code"));
+  assert.ok(!String(JSON.stringify(brief)).includes("Unsupported brief profile"));
+}));
 
 // ── Re-entry simulation: synthesized pending wave → reconciliation first ─────
 

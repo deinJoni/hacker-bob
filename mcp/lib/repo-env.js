@@ -204,7 +204,21 @@ function detectLanguageProfile(repoRoot) {
 // C/C++:   uses the `compose` role to stage `/src` into `/work/repo` before
 //          building, because the repo mount stays read-only and CMake wants
 //          to write into the source tree's parent.
-function recommendedCommandsFor(language, { nfsXdrShape = false } = {}) {
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+function firstSeedCorpusRel(seedCorpus) {
+  if (!Array.isArray(seedCorpus)) return null;
+  for (const entry of seedCorpus) {
+    if (entry && typeof entry.rel_path === "string" && entry.rel_path.trim()) {
+      return entry.rel_path.trim();
+    }
+  }
+  return null;
+}
+
+function recommendedCommandsFor(language, { nfsXdrShape = false, seedCorpus = [] } = {}) {
   if (language === "node") {
     return [
       {
@@ -318,7 +332,7 @@ function recommendedCommandsFor(language, { nfsXdrShape = false } = {}) {
     const staging =
       "cp -a /src/. /work/repo/ && cd /work/repo && cmake -S . -B build && cmake --build build && ctest --test-dir build --output-on-failure";
     const sanitizerNote = nfsXdrShape ? " (NFS/XDR shape detected — preload libtirpc/libssl/libkrb5)" : "";
-    return [
+    const commands = [
       {
         id: "build_and_test",
         description: `Stage /src into /work/repo, build with cmake, run ctest.${sanitizerNote}`,
@@ -326,6 +340,21 @@ function recommendedCommandsFor(language, { nfsXdrShape = false } = {}) {
         role: "compose",
       },
     ];
+    const seedRel = firstSeedCorpusRel(seedCorpus);
+    if (seedRel) {
+      const quotedSeedRel = shellQuote(seedRel);
+      commands.push({
+        id: "fuzz_seed_probe",
+        description: `Seed corpus discovered at ${seedRel}; adapt it to the repo's existing fuzz harness before non-dry-run replay.`,
+        command: [
+          "sh",
+          "-lc",
+          `cp -a /src/. /work/repo/ && cd /work/repo && find ${quotedSeedRel} -maxdepth 2 -type f | head -20`,
+        ],
+        role: "fuzz",
+      });
+    }
+    return commands;
   }
   return [];
 }
@@ -485,6 +514,7 @@ function buildRepoEnvDocument({
   egressProfileSummary,
   generatedAt,
   nfsXdrShape,
+  seedCorpus,
 }) {
   const doc = {
     version: REPO_ENV_VERSION,
@@ -496,6 +526,7 @@ function buildRepoEnvDocument({
       language: detection.language,
       marker: detection.marker,
       nfs_xdr_shape: nfsXdrShape,
+      seed_corpus_count: Array.isArray(seedCorpus) ? seedCorpus.length : 0,
     },
     base_image: baseImage,
     image_tag: imageTag,
@@ -504,6 +535,7 @@ function buildRepoEnvDocument({
     allow_network: allowNetwork,
     egress_profile: egressProfileSummary,
     dockerfile_path: dockerfileBobPath(targetDomain),
+    seed_corpus: Array.isArray(seedCorpus) ? seedCorpus : [],
     recommended_commands: recommendedCommands,
   };
   return doc;
@@ -523,6 +555,19 @@ function loadNfsXdrShape(targetDomain) {
     return Boolean(doc && doc.nfs_xdr_shape);
   } catch {
     return false;
+  }
+}
+
+function loadSeedCorpus(targetDomain) {
+  const { repoInventoryPath } = require("./paths.js");
+  const invPath = repoInventoryPath(targetDomain);
+  if (!fs.existsSync(invPath)) return [];
+  try {
+    const raw = fs.readFileSync(invPath, "utf8");
+    const doc = JSON.parse(raw);
+    return Array.isArray(doc && doc.seed_corpus) ? doc.seed_corpus : [];
+  } catch {
+    return [];
   }
 }
 
@@ -566,7 +611,8 @@ async function prepareRepoEnv({
     ? assertNonEmptyString(baseImageOverride, "base_image")
     : detection.base_image;
   const nfsXdrShape = loadNfsXdrShape(domain);
-  const recommendedCommands = recommendedCommandsFor(detection.language, { nfsXdrShape });
+  const seedCorpus = loadSeedCorpus(domain);
+  const recommendedCommands = recommendedCommandsFor(detection.language, { nfsXdrShape, seedCorpus });
   for (const command of recommendedCommands) {
     assertEnumValue(command.role, RECOMMENDED_COMMAND_ROLES, `recommended_commands[${command.id}].role`);
   }
@@ -632,6 +678,7 @@ async function prepareRepoEnv({
     egressProfileSummary,
     generatedAt,
     nfsXdrShape,
+    seedCorpus,
   });
   // O-P7: scrub-validate before persistence. The recommended_commands carry
   // shell strings; the validator already catches inline tokens like
@@ -697,6 +744,7 @@ async function prepareRepoEnv({
     base_image: baseImage,
     language: detection.language,
     nfs_xdr_shape: nfsXdrShape,
+    seed_corpus: seedCorpus,
     dry_run: normalizedDryRun,
     build_image: normalizedBuildImage,
     allow_network: normalizedAllowNetwork,
@@ -1389,6 +1437,7 @@ module.exports = {
   buildImageTag,
   detectLanguageProfile,
   recommendedCommandsFor,
+  loadSeedCorpus,
   assertNoEnvSecretLeak,
   dockerfileBobPath,
   readFirstLine,

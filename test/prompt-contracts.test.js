@@ -418,13 +418,35 @@ test("CandidateClaim severity and status enums are stable, complete sets", () =>
 });
 
 test("reporter prompt renders reachability graded severity when C9 stamps it", () => {
-  const reporterPrompt = fs.readFileSync(
-    path.join(__dirname, "..", "prompts", "roles", "reporter.md"),
-    "utf8",
-  );
+  const reporterPrompt = readFile("prompts/roles/reporter.md");
   assert.match(reporterPrompt, /reachability\.graded_severity/);
   assert.match(reporterPrompt, /public severity/);
   assert.match(reporterPrompt, /reachability disposition/);
+});
+
+test("reporter OSS branch carries CWE, suggested CVSS-4.0, and references guidance", () => {
+  const reporterPrompt = readFile("prompts/roles/reporter.md");
+  const ossBranchStart = reporterPrompt.indexOf("**OSS repo findings**");
+  const httpBranchStart = reporterPrompt.indexOf("**HTTP findings**");
+  assert.ok(ossBranchStart >= 0, "OSS branch must exist");
+  assert.ok(httpBranchStart > ossBranchStart, "HTTP branch must follow OSS branch");
+  const ossBranch = reporterPrompt.slice(ossBranchStart, httpBranchStart);
+  assert.match(ossBranch, /CWE/);
+  assert.match(ossBranch, /Suggested CVSS-4\.0/);
+  assert.match(ossBranch, /derive AV from the reachability prose|reachability prose/);
+  assert.match(ossBranch, /References/);
+  assert.match(ossBranch, /CVE\/GHSA|CVE|GHSA/);
+});
+
+test("evaluator OSS stanza tells fuzz_run to consume repo-env seed corpus commands", () => {
+  const evaluatorPrompt = readFile("prompts/roles/evaluator.md");
+  const ossBranchStart = evaluatorPrompt.indexOf("Repo-bound (OSS) surfaces");
+  assert.ok(ossBranchStart >= 0, "OSS evaluator stanza must exist");
+  const ossBranch = evaluatorPrompt.slice(ossBranchStart, ossBranchStart + 5000);
+  assert.match(ossBranch, /fuzz_run/);
+  assert.match(ossBranch, /recommended_commands\[\]/);
+  assert.match(ossBranch, /role: "fuzz"/);
+  assert.match(ossBranch, /seed-corpus|seed corpus/i);
 });
 
 // =============================================================================
@@ -866,10 +888,10 @@ test("capability packs expose versioned context budgets and complete spawn metad
     assert.equal(pack.capability_pack_version, 1);
     assert.ok(pack.evaluator_agent);
     assert.ok(pack.brief_profile);
-    if (pack.brief_profile === "web") {
-      assert.deepEqual(pack.context_budget, DEFAULT_CONTEXT_BUDGET);
-    } else {
+    if (pack.spawn.profile === "smart_contract") {
       assert.deepEqual(pack.context_budget, SMART_CONTRACT_CONTEXT_BUDGET);
+    } else {
+      assert.deepEqual(pack.context_budget, DEFAULT_CONTEXT_BUDGET);
     }
     assert.ok(pack.spawn, `pack ${pack.id} must declare a spawn block`);
     if (pack.spawn.profile === "smart_contract") {
@@ -1027,7 +1049,7 @@ test("evaluator agents stay under their MCP tool budget", () => {
   }
   for (const pack of Object.values(CAPABILITY_PACKS)) {
     const roleId = agentNameToRoleId[pack.evaluator_agent];
-    const budget = pack.brief_profile === "web" ? 43 : EVALUATOR_MCP_TOOL_BUDGET;
+    const budget = pack.spawn.profile === "web" ? 43 : EVALUATOR_MCP_TOOL_BUDGET;
     assert.ok(
       mcpToolNamesForRole(roleId).length <= budget,
       `pack ${pack.id} evaluator over budget (got ${mcpToolNamesForRole(roleId).length}, budget ${budget})`,

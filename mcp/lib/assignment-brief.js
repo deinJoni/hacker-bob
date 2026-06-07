@@ -22,6 +22,9 @@ const {
   readAttackSurfaceStrict,
 } = require("./attack-surface.js");
 const {
+  currentSurfaces,
+} = require("./frontier-projections.js");
+const {
   rankAttackSurfaces,
 } = require("./ranking.js");
 const {
@@ -77,6 +80,7 @@ const {
 } = require("./trace-reading-composer.js");
 const {
   EVALUATOR_KNOWLEDGE_MAX_CHARS,
+  OSS_TECHNIQUE_PACKS,
   evaluatorKnowledgeCandidatePaths,
   resolveEvaluatorKnowledge,
   selectTechniquePacksForSurface,
@@ -91,6 +95,9 @@ const {
   DEMOTION_SCORE_PENALTY,
   loadPackTelemetry,
 } = require("./pack-telemetry.js");
+const {
+  safeGovernanceContextForDomain,
+} = require("./governance-context.js");
 const {
   checkCliToolInstallation,
   presenceCachePath,
@@ -335,6 +342,55 @@ function buildTechniquePacksSlice(context) {
     base.lens_partitioned = true;
   }
   return base;
+}
+
+function ossTechniquePackForBrief(pack, { summary = true } = {}) {
+  const brief = {
+    id: pack.id,
+    title: pack.title,
+    ...(Array.isArray(pack.lens_affinity) ? { lens_affinity: pack.lens_affinity.slice() } : {}),
+  };
+  if (summary && typeof pack.summary === "string") {
+    brief.summary = pack.summary;
+  }
+  return brief;
+}
+
+function partitionOssTechniquePacksByLens(packs, taskLens) {
+  const packList = Array.isArray(packs) ? packs : [];
+  if (!isOssLens(taskLens)) {
+    return {
+      selected: packList.map((pack) => ossTechniquePackForBrief(pack)),
+      other_applicable: [],
+    };
+  }
+  const selected = [];
+  const otherApplicable = [];
+  for (const pack of packList) {
+    const affinity = Array.isArray(pack.lens_affinity) ? pack.lens_affinity : [];
+    if (affinity.includes(taskLens)) {
+      selected.push(ossTechniquePackForBrief(pack));
+    } else {
+      otherApplicable.push(ossTechniquePackForBrief(pack, { summary: false }));
+    }
+  }
+  return {
+    selected,
+    other_applicable: otherApplicable,
+  };
+}
+
+function buildOssTechniquePacksSlice(taskLens) {
+  const partitioned = partitionOssTechniquePacksByLens(OSS_TECHNIQUE_PACKS, taskLens);
+  return {
+    selected: partitioned.selected,
+    other_applicable: partitioned.other_applicable,
+    selection_limits: {
+      selected_chars: JSON.stringify(partitioned.selected).length,
+      selected_count: partitioned.selected.length,
+    },
+    lens_partitioned: isOssLens(taskLens),
+  };
 }
 
 const SMART_CONTRACT_BRIEF_SLICE_REGISTRY = Object.freeze([
@@ -670,6 +726,25 @@ function slimSurfaceForBrief(surface) {
   };
 }
 
+function readSurfaceInfoForBrief(domain, routeMetadata) {
+  if (routeMetadata.brief_profile === "oss") {
+    const projected = currentSurfaces(domain);
+    if (projected.source === "missing") {
+      throw new Error(`Missing attack surface JSON: ${projected.path}`);
+    }
+    return projected;
+  }
+  try {
+    return readAttackSurfaceStrict(domain);
+  } catch (error) {
+    if (error && /^Missing attack surface JSON:/.test(error.message || "")) {
+      const projected = currentSurfaces(domain);
+      if (projected.source !== "missing") return projected;
+    }
+    throw error;
+  }
+}
+
 function readAssignmentBrief(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   const wave = parseWaveId(args.wave);
@@ -693,14 +768,17 @@ function readAssignmentBrief(args) {
   // smart_contract_* once SC packs are added) is accepted by assignment-brief.
   const routeMetadata = normalizeAssignmentRouteMetadata(assignment);
 
-  // 2. Load attack surface and find assigned surface
-  const attackSurface = readAttackSurfaceStrict(domain);
+  // 2. Load surfaces and find assigned surface. OSS repo sessions usually
+  // only have the materialized surface-index.json. Web/SC briefs prefer the
+  // legacy attack_surface.json when present because it carries rich cross-
+  // cutting fields (for example valid_surface_ids) that the projection trims.
+  const attackSurface = readSurfaceInfoForBrief(domain, routeMetadata);
   let surfacesForBrief = attackSurface.document.surfaces;
   // Ranking summarizes traffic + public intel per surface, neither of which
-  // a smart-contract evaluator consumes. Skip it for non-web profiles to avoid
+  // non-web evaluators consume. Skip it for non-web profiles to avoid
   // paying that I/O cost for a result we'd just drop.
-  const isSmartContractBrief = routeMetadata.brief_profile !== "web";
-  if (!isSmartContractBrief) {
+  const isWebBrief = routeMetadata.brief_profile === "web";
+  if (isWebBrief) {
     try {
       const ranked = rankAttackSurfaces(domain);
       if (ranked && Array.isArray(ranked.surfaces)) {
@@ -712,7 +790,7 @@ function readAssignmentBrief(args) {
     (s) => s.id === assignment.surface_id,
   );
   if (!surfaceObj) {
-    throw new Error(`Surface ${assignment.surface_id} not found in attack_surface.json`);
+    throw new Error(`Surface ${assignment.surface_id} not found in current surface projection`);
   }
 
   // 3. Read session state for exclusions
@@ -840,6 +918,9 @@ function buildBriefExtrasForProfile(profile, { domain, surface, assignment, rout
   if (registry === WEB_BRIEF_SLICE_REGISTRY) {
     return buildWebBriefExtras(domain, surface, routeMetadata, assignment);
   }
+  if (registry === OSS_BRIEF_SLICE_REGISTRY) {
+    return buildOssBriefExtras(domain, surface, routeMetadata, assignment);
+  }
   if (registry === SMART_CONTRACT_BRIEF_SLICE_REGISTRY) {
     return buildSmartContractBriefExtras(domain, surface, assignment);
   }
@@ -870,6 +951,8 @@ function buildCliToolSurfaceFingerprint(surfaceObj, brief_profile, domain) {
   if (typeof brief_profile === "string") {
     if (brief_profile === "web") {
       fingerprint.kind = "web";
+    } else if (brief_profile === "oss") {
+      fingerprint.kind = "repo";
     } else if (brief_profile.startsWith("smart_contract")) {
       fingerprint.kind = "smart_contract";
     }
@@ -1053,6 +1136,56 @@ function buildWebBriefExtras(domain, surfaceObj, routeMetadata, assignment) {
   // other than `browser_behavior_probe`.
   if (!extras.browser_workflow) {
     delete extras.browser_workflow;
+  }
+  return extras;
+}
+
+function buildOssBriefExtras(domain, surfaceObj, routeMetadata, assignment) {
+  const taskLens = assignment && typeof assignment.task_lens === "string" ? assignment.task_lens : null;
+  const slimSurface = slimSurfaceForBrief(surfaceObj);
+  const cliToolSurfaceFingerprint = buildCliToolSurfaceFingerprint(surfaceObj, routeMetadata.brief_profile, domain);
+  const cliToolObservations = buildCliToolObservationsSummary(surfaceObj);
+  const ossBriefContext = {
+    taskLens,
+    governance: safeGovernanceContextForDomain(domain),
+    goalOrientation: {
+      target_domain: domain,
+      task_lens: taskLens,
+      capability_pack: routeMetadata.capability_pack,
+      instruction:
+        "Repo-bound OSS assignment: pursue the assigned local code surface, keep evidence inside the repo or sandboxed /work area, and do not infer authorization for a hosted sibling.",
+    },
+    codeSurfacePack: {
+      assigned_surface: slimSurface.surface,
+      surface_limits: slimSurface.surface_limits,
+      route_metadata: {
+        capability_pack: routeMetadata.capability_pack,
+        capability_pack_version: routeMetadata.capability_pack_version,
+        evaluator_agent: routeMetadata.evaluator_agent,
+        brief_profile: routeMetadata.brief_profile,
+      },
+    },
+    ossTechniquePacks: buildOssTechniquePacksSlice(taskLens),
+    cliToolSurfaceFingerprint,
+    cliToolTaskLens: taskLens,
+    cliToolObservations,
+    cliToolTargetDomain: domain,
+    recapAndHandoff: {
+      completion:
+        "Before finalizing, log at least one completion-status technique attempt, write exactly one wave handoff for this surface, then call bob_finalize_agent_run.",
+      required_tools: [
+        "bob_log_technique_attempt",
+        "bob_write_wave_handoff",
+        "bob_finalize_agent_run",
+      ],
+    },
+  };
+  const extras = buildBriefExtrasFromRegistry(OSS_BRIEF_SLICE_REGISTRY, ossBriefContext);
+  if (!extras.repo_workflow) {
+    delete extras.repo_workflow;
+  }
+  if (!extras.cli_tools) {
+    delete extras.cli_tools;
   }
   return extras;
 }
@@ -1307,6 +1440,9 @@ module.exports = {
   BROWSER_BEHAVIOR_PROBE_LENS,
   BROWSER_BEHAVIOR_PROBE_WORKFLOW_TEXT,
   partitionTechniquePacksByLensAffinity,
+  partitionOssTechniquePacksByLens,
+  buildOssBriefExtras,
+  buildBriefExtrasForProfile,
   ASSIGNMENT_BRIEF_SLICE_REGISTRY,
   readAssignmentBrief,
   renderAvailableCliToolsSection,
