@@ -29,6 +29,7 @@ const DECISION_BOUNDARY_VALUES = Object.freeze([
   "handoff_receipt",
   "chain_attempt_proposal",
   "claim_recording",
+  "grade_time_reconciliation",
   "validator_invocation",
 ]);
 
@@ -109,6 +110,17 @@ const STIGMERGIC_CONSUMERS = Object.freeze([
     decision_boundary: "brief_composition",
     rationale:
       "evaluator brief whitelists reachability triage fields so AV:N surfaces are pursued",
+  }),
+  Object.freeze({
+    consumer_id: "grade_verdict_reachability_ceiling_reconciler",
+    source_location: Object.freeze({
+      file: "mcp/lib/grade-verdict-store.js",
+      token_or_regex: "reachabilityDispositionForFinding",
+    }),
+    producer_id: "repo_inventory_reachability_stamp",
+    decision_boundary: "grade_time_reconciliation",
+    rationale:
+      "grade verdicts consume I9 surface ceilings to cap local AV:L severity and certify AV:N findings",
   }),
 ]);
 

@@ -16,6 +16,14 @@ const MODULE_GUARD_TESTS = Object.freeze([
     ]),
   }),
   Object.freeze({
+    module: "mcp/lib/reachability-ceiling.js",
+    guards: Object.freeze([
+      "test/reachability.test.js",
+      "test/grade-from-frozen-payload.test.js",
+      "test/lifecycle-advance.test.js",
+    ]),
+  }),
+  Object.freeze({
     module: "mcp/lib/repo-target.js",
     guards: Object.freeze([
       "test/repo-target-binding.test.js",

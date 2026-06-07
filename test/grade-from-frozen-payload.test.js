@@ -31,6 +31,10 @@ const {
 const {
   appendCandidateClaim,
 } = require("../mcp/lib/claims.js");
+const {
+  buildRepoInventory,
+  initRepoSession,
+} = require("../mcp/lib/repo-target.js");
 const recordFindingTool = require("../mcp/lib/tools/record-candidate-claim.js");
 const {
   writeVerificationRound,
@@ -144,6 +148,35 @@ function gradeFinding(findingId = "F-1", overrides = {}) {
   };
 }
 
+function writeRepoFile(root, relativePath, content) {
+  const filePath = path.join(root, relativePath);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, content, "utf8");
+}
+
+function seedLocalParserRepo(home, targetDomain) {
+  const repo = path.join(home, targetDomain);
+  fs.mkdirSync(repo, { recursive: true });
+  writeRepoFile(repo, "CMakeLists.txt", "cmake_minimum_required(VERSION 3.22)\nproject(local_parser C)\n");
+  writeRepoFile(repo, "src/parser.c", "int parse_packet(const char *buf, int len){ return len > 0 ? buf[0] : 0; }\n");
+  writeRepoFile(repo, "server/httpd.c", [
+    "#include <sys/socket.h>",
+    "#include <netinet/in.h>",
+    "int serve(void){",
+    "  int fd = socket(AF_INET, SOCK_STREAM, 0);",
+    "  listen(fd, 16);",
+    "  return fd;",
+    "}",
+  ].join("\n"));
+  const init = initRepoSession({ repo_path: repo, target_domain: targetDomain });
+  buildRepoInventory({ target_domain: init.target_domain });
+  return {
+    target_domain: init.target_domain,
+    surface_id: "repo:module:src-parser.c",
+    network_surface_id: "repo:module:server-httpd.c",
+  };
+}
+
 function seedFinalVerificationFromFrozen(domain, { findingId = "F-1" } = {}) {
   // Dual-write seeds a single CandidateClaim alongside the Finding.
   recordFindingViaTool(domain, { endpoint: "https://victim.example/api/billing/1" });
@@ -197,6 +230,92 @@ test("grade verdict is bound to the frozen claim batch via claim_freeze_id", () 
 
     const read = JSON.parse(readGradeVerdict({ target_domain: domain }));
     assert.equal(read.claim_freeze_id, freeze.freeze_id);
+  });
+});
+
+test("reachability cap stamps graded severity without removing the reportable finding", () => {
+  withTempHome((home) => {
+    const repoSession = seedLocalParserRepo(home, "grade-reachability-cap");
+    const domain = repoSession.target_domain;
+    appendCandidateClaim({
+      target_domain: domain,
+      title: "Native parser over-read",
+      summary: "Local file parser reads past the available buffer.",
+      severity: "medium",
+      status: "candidate",
+      surface_ids: [repoSession.surface_id],
+      evidence_refs: [{
+        kind: "finding",
+        finding_id: "F-1",
+        content_hash: "0".repeat(64),
+      }],
+      impact: "Parser crash on crafted local input.",
+    });
+    buildClaimFreeze(domain, {
+      write: true,
+      now: new Date("2026-05-27T01:00:00.000Z"),
+    });
+    for (const round of ["brutalist", "balanced", "final"]) {
+      writeVerificationRound({
+        target_domain: domain,
+        round,
+        notes: null,
+        results: [verificationResult("F-1", { severity: "high", reportable: true })],
+      });
+    }
+    writeEvidencePacks({ target_domain: domain, packs: [evidencePack("F-1")] });
+
+    const written = JSON.parse(writeGradeVerdict({
+      target_domain: domain,
+      verdict: "SUBMIT",
+      total_score: 75,
+      findings: [gradeFinding("F-1")],
+    }));
+    assert.equal(written.verdict, "SUBMIT");
+    assert.equal(written.findings_count, 1, "cap must not remove the finding from the reportable grade set");
+
+    const onDisk = JSON.parse(fs.readFileSync(gradeArtifactPaths(domain).json, "utf8"));
+    assert.equal(onDisk.findings.length, 1);
+    assert.deepEqual(onDisk.findings[0].reachability, {
+      recorded_severity: "high",
+      severity_ceiling: "medium",
+      attack_vector: "local",
+      network_reachable: false,
+      graded_severity: "medium",
+      disposition: "capped",
+      defensible: false,
+    });
+
+    const read = JSON.parse(readGradeVerdict({ target_domain: domain }));
+    assert.equal(read.findings[0].reachability.graded_severity, "medium");
+    assert.equal(read.findings[0].reachability.disposition, "capped");
+
+    appendCandidateClaim({
+      target_domain: domain,
+      title: "Post-freeze network duplicate",
+      summary: "Live claim mutation must not change the frozen reachability surface.",
+      severity: "medium",
+      status: "candidate",
+      surface_ids: [repoSession.network_surface_id],
+      evidence_refs: [{
+        kind: "finding",
+        finding_id: "F-1",
+        content_hash: "0".repeat(64),
+      }],
+      impact: "Should not affect the frozen grade verdict.",
+    });
+    writeGradeVerdict({
+      target_domain: domain,
+      verdict: "SUBMIT",
+      total_score: 75,
+      findings: [gradeFinding("F-1")],
+    });
+    const reread = JSON.parse(readGradeVerdict({ target_domain: domain }));
+    assert.equal(
+      reread.findings[0].reachability.disposition,
+      "capped",
+      "reachability must resolve from the frozen claim batch, not post-freeze live claims",
+    );
   });
 });
 
