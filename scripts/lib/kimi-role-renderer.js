@@ -118,7 +118,7 @@ function kimiLaunchTemplates() {
     ].join("\n"),
     "{{SPAWN_REPORTER_AGENT}}": [
       "```text",
-      `Agent(subagent_type="coder", prompt: "Bob role: report-writer. Domain: [domain]. Session: ~/hacker-bob-sessions/[domain]. Call bob_read_candidate_claims, bob_read_chain_attempts, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), bob_read_evidence_packs, and bob_read_grade_verdict, then write the canonical ~/hacker-bob-sessions/[domain]/report.md. For SUBMIT, include only confirmed chain evidence. For SKIP/no reportables, write a concise no-findings closeout with verification, chain-attempt, and blocker summary. Emit BOB_REPORT_DONE when finished.")`,
+      `Agent(subagent_type="coder", prompt: "Bob role: report-writer. Domain: [domain]. Session: ~/hacker-bob-sessions/[domain]. Call bob_read_candidate_claims, bob_read_chain_attempts, bob_read_verification_round({ target_domain: '[domain]', round: 'final' }), bob_read_evidence_packs, and bob_read_grade_verdict, then compose sections and call bob_compose_report({ target_domain: '[domain]', sections, severity_summary, repro_steps_by_finding }) followed by bob_finalize_report({ target_domain: '[domain]' }). For SUBMIT, include only confirmed chain evidence. For SKIP/no reportables, compose a concise no-findings closeout with verification, chain-attempt, and blocker summary. Emit BOB_REPORT_DONE after bob_compose_report and bob_finalize_report complete.")`,
       "```",
     ].join("\n"),
     "{{SPAWN_EVIDENCE_AGENT}}": [

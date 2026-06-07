@@ -461,6 +461,18 @@ test("Kimi hunter catalogue routes OSS brief profiles through the generic worker
   assert.match(catalogue, /generic evaluator spawn template/);
 });
 
+test("Kimi reporter spawn uses structured report composition", () => {
+  const kimiSkill = readFile("adapters/kimi/skills/bob-evaluate-runner/SKILL.md");
+  const reporterStart = kimiSkill.indexOf('Bob role: report-writer');
+  assert.ok(reporterStart >= 0, "Kimi skill must render the reporter spawn prompt");
+  const reporterSpawn = kimiSkill.slice(reporterStart, reporterStart + 1200);
+  assert.match(reporterSpawn, /bob_compose_report/);
+  assert.match(reporterSpawn, /bob_finalize_report/);
+  assert.match(reporterSpawn, /confirmed chain evidence/);
+  assert.match(reporterSpawn, /BOB_REPORT_DONE/);
+  assert.doesNotMatch(reporterSpawn, /write the canonical .*report\.md/);
+});
+
 // =============================================================================
 // SECTION 5 — Structural invariance (the P.4 guarantee)
 // =============================================================================
