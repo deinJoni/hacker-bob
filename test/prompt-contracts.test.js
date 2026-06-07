@@ -787,6 +787,19 @@ test("orchestrator skill allowed-tools equal the orchestrator + auth permission 
   assert.deepEqual(mcpOnly, permissionsForRoleBundles(["orchestrator", "auth"]).slice().sort());
 });
 
+test("/bob-evaluate command loads the runner playbook directly and shares its registry tool bundle", () => {
+  // The runner skill is disable-model-invocation:true, so current Claude Code
+  // refuses Skill-tool invocation of it — a delegator command (allowed-tools:
+  // [Skill]) is dead on arrival. The command must instead carry the orchestrator
+  // bundle and read+execute the playbook. This binds the command to the same
+  // registry source as the skill so the two can never drift.
+  const cmd = readFile(".claude/commands/bob-evaluate.md");
+  const cmdTools = parseYamlListFrontmatter(cmd, "allowed-tools", "bob-evaluate.md");
+  assert.ok(!cmdTools.includes("Skill"), "bob-evaluate command must not delegate via the Skill tool");
+  assert.deepEqual(cmdTools.slice().sort(), hackerBobSkillAllowedTools().slice().sort());
+  assert.match(cmd, /\.claude\/skills\/bob-evaluate-runner\/SKILL\.md/, "command must load the runner playbook");
+});
+
 test("orchestrator skill stays bounded and reflects the lifecycle topology", () => {
   const lines = lineCount(".claude/skills/bob-evaluate-runner/SKILL.md");
   // Cycle O.1 added bob_init_repo_session to the orchestrator bundle, which
