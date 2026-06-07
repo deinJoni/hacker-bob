@@ -351,23 +351,27 @@ function writeGradeVerdict(args) {
 
   const finalReportableSeveritySet = requireFinalReportableSeveritySet(domain, findingIdSet);
   const missingReachability = missingReachabilityStampsForReportableFindings(domain);
-  if (missingReachability.reachability_present && missingReachability.missing.length > 0) {
+  if (missingReachability.missing.length > 0) {
+    const prefix = missingReachability.inventory_absent === true
+      ? "Reachability inventory is required before grading final reportable repo module findings: "
+      : "Reachability stamps are required for final reportable repo module findings before grading: ";
     throw new Error(
-      "Reachability stamps are required for final reportable repo module findings before grading: "
-      + missingReachability.missing.join(", "),
+      prefix + missingReachability.missing.join(", "),
     );
   }
   const finalSeverities = finalSeverityByFinding(domain);
   const findings = normalizedFindings.map((finding) => {
     const recordedSeverity = finalSeverities.get(finding.finding_id);
     if (!recordedSeverity) return finding;
+    const reachability = reachabilityDispositionForFinding({
+      domain,
+      findingId: finding.finding_id,
+      recordedSeverity,
+    });
+    if (reachability.disposition === "unknown") return finding;
     return {
       ...finding,
-      reachability: reachabilityDispositionForFinding({
-        domain,
-        findingId: finding.finding_id,
-        recordedSeverity,
-      }),
+      reachability,
     };
   });
 

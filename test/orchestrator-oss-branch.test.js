@@ -490,6 +490,7 @@ test("readAssignmentBrief accepts routed OSS brief_profile and emits OSS techniq
   }));
   assert.equal(brief.run_context.brief_profile, "oss");
   assert.equal(brief.run_context.capability_pack, "oss_native_code");
+  assert.deepEqual(brief.valid_surface_ids, surfaces.map((surface) => surface.id));
   assert.ok(brief.repo_workflow);
   assert.equal(brief.code_surface_pack.assigned_surface.file_path, "src/parser.c");
   assert.equal(brief.code_surface_pack.assigned_surface.language, "c");

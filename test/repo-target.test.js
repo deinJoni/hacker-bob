@@ -10,6 +10,7 @@ const {
   repoCommandRunsJsonlPath,
   repoDockerfilePath,
   repoEnvPath,
+  repoInventoryPath,
   surfaceRoutesPath,
 } = require("../mcp/lib/paths.js");
 const {
@@ -285,6 +286,15 @@ test("repo inventory stays bound to the initialized repo root", () => withTempHo
   const scopedInventory = parseResult(buildRepoInventory({ target_domain: init.target_domain, repo_path: serviceRepo }));
   assert.equal(scopedInventory.repo_path, fs.realpathSync(serviceRepo));
   assert.equal(scopedInventory.counts.files, 1);
+  const scopedDocument = JSON.parse(fs.readFileSync(repoInventoryPath(init.target_domain), "utf8"));
+  assert.deepEqual(scopedDocument.manifests, ["packages/service/package.json"]);
+  assert.ok(
+    repoSurfaces(init.target_domain).some((surface) => (
+      surface.title === "packages/service/package.json"
+      && surface.file_path === "packages/service/package.json"
+    )),
+    "scoped inventory must emit a session-root-relative manifest file_path",
+  );
 
   assert.throws(
     () => buildRepoInventory({ target_domain: init.target_domain, repo_path: otherRepo }),
@@ -405,6 +415,22 @@ test("residual hunting seeds recently-patched security fixes into repo inventory
   );
 }));
 
+test("residual hunting caps long changelog excerpts before inventory validation", () => withTempHome((home) => {
+  const repo = path.join(home, "residual-long-changelog");
+  fs.mkdirSync(repo, { recursive: true });
+  writeFile(repo, "CMakeLists.txt", "cmake_minimum_required(VERSION 3.22)\nproject(residual_long C)\n");
+  writeFile(repo, "src/decode.c", "int decode(const unsigned char *b, int n){ return len > 0 ? b[0] : 0; }\n");
+  writeFile(repo, "CHANGELOG.md", `- CVE-2026-99999 fixed in decode_chunk ${"A".repeat(5000)}\n`);
+
+  const init = parseResult(initRepoSession({ repo_path: repo, target_domain: "repo-residual-long-changelog" }));
+  const inventory = parseResult(buildRepoInventory({ target_domain: init.target_domain }));
+  assert.equal(inventory.counts.residual_hunt_targets, 1);
+  const [target] = inventory.residual_hunt_targets;
+  assert.ok(target.startsWith("CHANGELOG.md: CVE-2026-99999"));
+  assert.ok(target.endsWith("…"), "long residual excerpts must be visibly truncated");
+  assert.ok(target.length <= "CHANGELOG.md: ".length + 1025);
+}));
+
 test("repo inventory aggregates fuzz seed corpora without reading file contents", () => withTempHome((home) => {
   const repo = path.join(home, "seeded-parser");
   fs.mkdirSync(repo, { recursive: true });
@@ -465,6 +491,28 @@ test("seed corpus aggregation ignores symlinked files outside the repo root", ()
   assert.deepEqual(inventory.seed_corpus, []);
   assert.match(inventory.seed_corpus_hash, /^[a-f0-9]{64}$/);
   assert.equal(inventory.counts.seed_corpus, 0);
+}));
+
+test("repo inventory walk does not traverse symlinked directories outside the repo root", () => withTempHome((home) => {
+  const repo = path.join(home, "walk-symlink");
+  const outside = path.join(home, "outside-walk");
+  fs.mkdirSync(repo, { recursive: true });
+  fs.mkdirSync(outside, { recursive: true });
+  writeFile(repo, "CMakeLists.txt", "cmake_minimum_required(VERSION 3.22)\nproject(walk_symlink C)\n");
+  writeFile(outside, "package.json", JSON.stringify({ name: "outside-package" }, null, 2));
+  writeFile(outside, "src/escape.c", "int escape(void){ return 1; }\n");
+  try {
+    fs.symlinkSync(outside, path.join(repo, "vendor"), "dir");
+  } catch {
+    return;
+  }
+
+  const init = parseResult(initRepoSession({ repo_path: repo, target_domain: "repo-walk-symlink" }));
+  const inventory = parseResult(buildRepoInventory({ target_domain: init.target_domain }));
+  assert.equal(inventory.counts.files, 1);
+  assert.equal(inventory.counts.manifests, 0);
+  const document = JSON.parse(fs.readFileSync(repoInventoryPath(init.target_domain), "utf8"));
+  assert.deepEqual(document.manifests, []);
 }));
 
 test("repo Docker environment plan and dry-run command stay session-scoped", () => withTempHome(async (home) => {

@@ -258,6 +258,11 @@ test("grade verdict is bound to the frozen claim batch via claim_freeze_id", () 
       freeze.freeze_id,
       "persisted grade verdict must carry claim_freeze_id pointing at the source freeze",
     );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(onDisk.findings[0], "reachability"),
+      false,
+      "ordinary non-repo findings must not receive unknown reachability metadata",
+    );
 
     const read = JSON.parse(readGradeVerdict({ target_domain: domain }));
     assert.equal(read.claim_freeze_id, freeze.freeze_id);
@@ -391,6 +396,29 @@ test("grade verdict write rejects unresolved reachability for reportable repo mo
       }),
       /Reachability stamps are required.*F-1/,
       "direct grade writes must not bypass the repo-module reachability gate",
+    );
+  });
+});
+
+test("grade verdict write rejects absent reachability inventory for reportable repo module findings", () => {
+  withTempHome((home) => {
+    const repo = path.join(home, "grade-reachability-absent");
+    fs.mkdirSync(repo, { recursive: true });
+    writeRepoFile(repo, "CMakeLists.txt", "cmake_minimum_required(VERSION 3.22)\nproject(absent_inventory C)\n");
+    writeRepoFile(repo, "src/parser.c", "int parse_packet(const char *buf, int len){ return len > 0 ? buf[0] : 0; }\n");
+    const init = initRepoSession({ repo_path: repo, target_domain: "grade-reachability-absent" });
+    const domain = init.target_domain;
+    seedFrozenRepoFinding(domain, ["repo:module:src-parser.c"]);
+
+    assert.throws(
+      () => writeGradeVerdict({
+        target_domain: domain,
+        verdict: "SUBMIT",
+        total_score: 75,
+        findings: [gradeFinding("F-1")],
+      }),
+      /Reachability inventory is required.*F-1/,
+      "direct grade writes must fail closed when repo-inventory.json has no reachability cycle",
     );
   });
 });

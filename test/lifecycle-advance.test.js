@@ -104,6 +104,7 @@ function seedRepoVerification(home, {
   targetDomain,
   surfaceId,
   surfaceIds = null,
+  finalSeverity = "high",
   runInventory = true,
 } = {}) {
   const repo = path.join(home, targetDomain);
@@ -137,7 +138,7 @@ function seedRepoVerification(home, {
       target_domain: init.target_domain,
       round,
       notes: null,
-      results: [verificationResult("F-1")],
+      results: [verificationResult("F-1", { severity: finalSeverity })],
     });
   }
   writeEvidencePacks({ target_domain: init.target_domain, packs: [evidencePack("F-1")] });
@@ -429,11 +430,35 @@ test("VERIFY -> GRADE reachability gate fails closed when session state is malfo
   });
 });
 
-test("VERIFY -> GRADE reachability gate no-ops for repo sessions before I9 inventory exists", () => {
+test("VERIFY -> GRADE reachability gate fails closed for repo sessions before I9 inventory exists", () => {
   withTempHome((home) => {
     const domain = seedRepoVerification(home, {
-      targetDomain: "reachability-absent-noop",
-      surfaceId: "repo:module:missing-surface.c",
+      targetDomain: "reachability-absent-block",
+      surfaceId: "repo:module:src-parser.c",
+      runInventory: false,
+    });
+
+    const evaluation = evaluateLifecycleTransition({
+      target_domain: domain,
+      from_state: "VERIFY",
+      to_state: "GRADE",
+    });
+
+    assert.equal(evaluation.blockers.length, 1);
+    assert.equal(evaluation.blockers[0].code, "reachability_stamp_missing");
+    assert.equal(evaluation.blockers[0].blocked_by, "reachability_absent");
+    assert.deepEqual(evaluation.blockers[0].missing_finding_ids, ["F-1"]);
+    assert.match(evaluation.blockers[0].message, /no reachability inventory/);
+    assert.match(evaluation.blockers[0].message, /without an I9 ceiling/);
+  });
+});
+
+test("VERIFY -> GRADE reachability gate no-ops without inventory when no medium repo module finding is reportable", () => {
+  withTempHome((home) => {
+    const domain = seedRepoVerification(home, {
+      targetDomain: "reachability-absent-low-noop",
+      surfaceId: "repo:module:src-parser.c",
+      finalSeverity: "low",
       runInventory: false,
     });
 

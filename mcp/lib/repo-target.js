@@ -539,6 +539,7 @@ class RepoTooLargeError extends Error {
 
 function walkRepo(rootPath, gitignorePatterns) {
   const files = [];
+  const rootReal = fs.realpathSync(rootPath);
   const visited = new Set();
   const queue = [{ absPath: rootPath, relPath: "" }];
   while (queue.length > 0) {
@@ -569,6 +570,8 @@ function walkRepo(rootPath, gitignorePatterns) {
       let isFile = entry.isFile();
       if (entry.isSymbolicLink()) {
         try {
+          const childReal = fs.realpathSync(childAbs);
+          if (!pathWithinRoot(rootReal, childReal)) continue;
           const linkStat = fs.statSync(childAbs);
           isDir = linkStat.isDirectory();
           isFile = linkStat.isFile();
@@ -677,7 +680,11 @@ function detectResidualLinesFromFiles(repoRoot, files) {
     for (const line of lines) {
       const trimmed = line.trim().replace(/^\s*[-*]\s*/, "");
       if (!trimmed || !RESIDUAL_SECURITY_LINE_RE.test(trimmed)) continue;
-      targets.push(`${file}: ${redactTextSensitiveValues(trimmed)}`);
+      const excerpt = redactTextSensitiveValues(trimmed);
+      const capped = excerpt.length > REPO_CHECK_MAX_EXCERPT_CHARS
+        ? `${excerpt.slice(0, REPO_CHECK_MAX_EXCERPT_CHARS)}…`
+        : excerpt;
+      targets.push(`${file}: ${capped}`);
       captured += 1;
       if (captured >= RESIDUAL_SOURCE_LINE_LIMIT) break;
     }
@@ -928,6 +935,36 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
     });
   }
   const root = canonicalRoot;
+  const subdirPrefix = relativeToSessionRoot
+    ? relativeToSessionRoot.split(path.sep).join("/")
+    : "";
+  const rootRel = (rel) => {
+    const normalized = String(rel || "").split(path.sep).join("/");
+    if (!normalized) return normalized;
+    return subdirPrefix ? `${subdirPrefix}/${normalized}` : normalized;
+  };
+  const rootRelArray = (values) => (
+    Array.isArray(values) ? values.map((value) => rootRel(value)) : values
+  );
+  const rootRelResidualTarget = (target) => {
+    const separator = typeof target === "string" ? target.indexOf(": ") : -1;
+    if (separator === -1) return rootRel(target);
+    return `${rootRel(target.slice(0, separator))}${target.slice(separator)}`;
+  };
+  const rootRelSeedCorpusEntry = (entry) => ({
+    ...entry,
+    rel_path: rootRel(entry.rel_path),
+    sample_rels: rootRelArray(entry.sample_rels),
+  });
+  const rootRelReachabilityMap = (value) => {
+    if (value == null || typeof value !== "object" || Array.isArray(value)) return value;
+    return {
+      ...value,
+      network_reachable_anchors: rootRelArray(value.network_reachable_anchors),
+      network_reachable_dirs: rootRelArray(value.network_reachable_dirs),
+      local_only_candidate_dirs: rootRelArray(value.local_only_candidate_dirs),
+    };
+  };
 
   const gitignorePatterns = loadGitignore(root);
   let files;
@@ -947,8 +984,21 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
     repoRoot: root,
     files,
     projection,
-    surfaceIdForRel: (rel) => safeSurfaceId(rel, "repo:module"),
+    surfaceIdForRel: (rel) => safeSurfaceId(rootRel(rel), "repo:module"),
   });
+  const inventoryResidualHuntTargets = projection.residualHuntTargets.map(rootRelResidualTarget);
+  const inventorySeedCorpus = projection.seedCorpus.map(rootRelSeedCorpusEntry);
+  const inventorySeedCorpusHash = hashCanonicalJson({ seed_corpus: inventorySeedCorpus });
+  const reachabilitySummary = {
+    ...reachability.reachability,
+    surface_ceilings: Array.isArray(reachability.reachability.surface_ceilings)
+      ? reachability.reachability.surface_ceilings.map((entry) => ({
+        ...entry,
+        file_path: rootRel(entry.file_path),
+      }))
+      : reachability.reachability.surface_ceilings,
+    native_attack_vector_map: rootRelReachabilityMap(reachability.reachability.native_attack_vector_map),
+  };
 
   return withSessionLock(domain, () => {
     const generatedAt = new Date().toISOString();
@@ -957,13 +1007,14 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
     // Per-module frontier events.
     for (const mod of projection.modules) {
       const reachabilityStamp = reachability.perSurface.get(mod.rel);
+      const modRel = rootRel(mod.rel);
       emitSurfaceObserved({
         domain,
-        surfaceId: safeSurfaceId(mod.rel, "repo:module"),
+        surfaceId: safeSurfaceId(modRel, "repo:module"),
         kind: "code_module",
-        title: mod.rel,
+        title: modRel,
         payload: {
-          file_path: mod.rel,
+          file_path: modRel,
           surface_type: mod.nativeSource || mod.nativeBuild ? "oss_native_code" : "code_module",
           language: mod.language,
           native_source: mod.nativeSource,
@@ -972,9 +1023,9 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
             network_reachable: reachabilityStamp.network_reachable,
             attack_vector: reachabilityStamp.attack_vector,
             severity_ceiling: reachabilityStamp.severity_ceiling,
-            network_reachable_anchors: reachabilityStamp.network_reachable_anchors,
-            network_reachable_dirs: reachabilityStamp.network_reachable_dirs,
-            local_only_candidate_dirs: reachabilityStamp.local_only_candidate_dirs,
+            network_reachable_anchors: rootRelArray(reachabilityStamp.network_reachable_anchors),
+            network_reachable_dirs: rootRelArray(reachabilityStamp.network_reachable_dirs),
+            local_only_candidate_dirs: rootRelArray(reachabilityStamp.local_only_candidate_dirs),
           } : {}),
         },
         emittedCount,
@@ -984,13 +1035,14 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
     // Per-manifest frontier event.
     for (const manifestPath of projection.manifests) {
       const ecosystem = detectEcosystemForManifest(path.basename(manifestPath)) || "unknown";
+      const manifestRel = rootRel(manifestPath);
       emitSurfaceObserved({
         domain,
-        surfaceId: safeSurfaceId(manifestPath, "repo:manifest"),
+        surfaceId: safeSurfaceId(manifestRel, "repo:manifest"),
         kind: "manifest",
-        title: manifestPath,
+        title: manifestRel,
         payload: {
-          file_path: manifestPath,
+          file_path: manifestRel,
           surface_type: "oss_dependency",
           ecosystem,
         },
@@ -1000,13 +1052,14 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
 
     // Per-dependency frontier event (one per manifest, top-level only).
     for (const dep of projection.dependencies) {
+      const depRel = rootRel(dep.rel);
       emitSurfaceObserved({
         domain,
-        surfaceId: safeSurfaceId(`${dep.rel}#deps`, "repo:dependency"),
+        surfaceId: safeSurfaceId(`${depRel}#deps`, "repo:dependency"),
         kind: "dependency",
-        title: dep.rel,
+        title: depRel,
         payload: {
-          manifest_path: dep.rel,
+          manifest_path: depRel,
           surface_type: "oss_dependency",
           ecosystem: dep.ecosystem,
           has_lockfile: dep.hasLockfile,
@@ -1017,13 +1070,14 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
 
     // Per-CI-pipeline frontier event.
     for (const ci of projection.ciPipelines) {
+      const ciRel = rootRel(ci);
       emitSurfaceObserved({
         domain,
-        surfaceId: safeSurfaceId(ci, "repo:ci"),
+        surfaceId: safeSurfaceId(ciRel, "repo:ci"),
         kind: "ci_pipeline",
-        title: ci,
+        title: ciRel,
         payload: {
-          file_path: ci,
+          file_path: ciRel,
           surface_type: "oss_ci_cd",
         },
         emittedCount,
@@ -1032,13 +1086,14 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
 
     // Per-entry-point frontier event.
     for (const entry of projection.entryPoints) {
+      const entryRel = rootRel(entry);
       emitSurfaceObserved({
         domain,
-        surfaceId: safeSurfaceId(entry, "repo:entry"),
+        surfaceId: safeSurfaceId(entryRel, "repo:entry"),
         kind: "entry_point",
-        title: entry,
+        title: entryRel,
         payload: {
-          file_path: entry,
+          file_path: entryRel,
           surface_type: "oss_api_schema",
         },
         emittedCount,
@@ -1049,13 +1104,14 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
     // and basename. Secret values live in the file itself and would land in
     // session-read-guard's protected list, not in the inventory payload).
     for (const cfg of projection.configs) {
+      const cfgRel = rootRel(cfg);
       emitSurfaceObserved({
         domain,
-        surfaceId: safeSurfaceId(cfg, "repo:config"),
+        surfaceId: safeSurfaceId(cfgRel, "repo:config"),
         kind: "config",
-        title: cfg,
+        title: cfgRel,
         payload: {
-          file_path: cfg,
+          file_path: cfgRel,
           surface_type: "oss_secrets_config",
         },
         emittedCount,
@@ -1089,14 +1145,14 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
       },
       languages: projection.languageCounts,
       nfs_xdr_shape: projection.nfsShape,
-      residual_hunt_targets: projection.residualHuntTargets,
-      seed_corpus: projection.seedCorpus,
-      seed_corpus_hash: projection.seedCorpusHash,
-      reachability: reachability.reachability,
-      manifests: projection.manifests,
-      ci_pipelines: projection.ciPipelines,
-      entry_points: projection.entryPoints,
-      configs: projection.configs,
+      residual_hunt_targets: inventoryResidualHuntTargets,
+      seed_corpus: inventorySeedCorpus,
+      seed_corpus_hash: inventorySeedCorpusHash,
+      reachability: reachabilitySummary,
+      manifests: projection.manifests.map(rootRel),
+      ci_pipelines: projection.ciPipelines.map(rootRel),
+      entry_points: projection.entryPoints.map(rootRel),
+      configs: projection.configs.map(rootRel),
     };
     // O-P7: validate the persisted document before it lands on disk. The
     // inventory carries only file paths and structural counts — no file
@@ -1116,7 +1172,7 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
       counts: inventory.counts,
       inventory_hash: inventory.inventory_hash,
       nfs_xdr_shape: projection.nfsShape,
-      residual_hunt_targets: projection.residualHuntTargets,
+      residual_hunt_targets: inventoryResidualHuntTargets,
       seed_corpus: inventory.seed_corpus,
       seed_corpus_hash: inventory.seed_corpus_hash,
       reachability: inventory.reachability,

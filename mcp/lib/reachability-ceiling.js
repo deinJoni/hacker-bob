@@ -316,7 +316,17 @@ function reachabilityDispositionForFinding({ domain, findingId, recordedSeverity
 
 function missingReachabilityStampsForReportableFindings(domain) {
   if (!hasReachabilityInventory(domain)) {
-    return { reachability_present: false, missing: [] };
+    const missing = [];
+    for (const [findingId] of finalReportableFindingSeverities(domain)) {
+      if (findingHasReachabilityStampedSurface(domain, findingId)) {
+        missing.push(findingId);
+      }
+    }
+    return {
+      reachability_present: false,
+      inventory_absent: true,
+      missing,
+    };
   }
   const missing = [];
   for (const [findingId, severity] of finalReportableFindingSeverities(domain)) {
@@ -332,6 +342,7 @@ function missingReachabilityStampsForReportableFindings(domain) {
   }
   return {
     reachability_present: true,
+    inventory_absent: false,
     missing,
   };
 }

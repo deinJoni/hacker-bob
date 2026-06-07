@@ -87,16 +87,20 @@ function gateVerifyToGrade(context) {
   }
   try {
     const reachability = missingReachabilityStampsForReportableFindings(context.target_domain);
-    if (!reachability.reachability_present || reachability.missing.length === 0) return blockers;
+    if (reachability.missing.length === 0) return blockers;
+    const inventoryAbsent = reachability.inventory_absent === true;
     blockers.push({
       code: "reachability_stamp_missing",
       blocked_by: "reachability_absent",
       missing_finding_ids: reachability.missing,
-      message:
-        `VERIFY -> GRADE blocked: ${reachability.missing.length} final reportable finding(s)`
-        + " lack an I9 reachability stamp",
-      remediation:
-        "rerun bob_repo_inventory so repo-inventory.json carries surface_ceilings for the frozen claim surfaces",
+      message: inventoryAbsent
+        ? `VERIFY -> GRADE blocked: repo session has no reachability inventory; ${reachability.missing.length}`
+          + " final reportable repo-module finding(s) would be graded without an I9 ceiling"
+        : `VERIFY -> GRADE blocked: ${reachability.missing.length} final reportable finding(s)`
+          + " lack an I9 reachability stamp",
+      remediation: inventoryAbsent
+        ? "run bob_repo_inventory so repo-inventory.json carries surface_ceilings before grading"
+        : "rerun bob_repo_inventory so repo-inventory.json carries surface_ceilings for the frozen claim surfaces",
     });
   } catch (error) {
     blockers.push({

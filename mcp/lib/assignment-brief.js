@@ -992,7 +992,7 @@ function readAssignmentBrief(args) {
     agent,
     surface: slimSurface.surface,
     surface_limits: slimSurface.surface_limits,
-    valid_surface_ids: attackSurface.surface_ids,
+    valid_surface_ids: attackSurface.surface_ids || attackSurface.document.surfaces.map((s) => s.id),
     dead_ends: deadEndResult.filtered,
     waf_blocked_endpoints: wafResult.filtered,
     exclusions_summary: {
