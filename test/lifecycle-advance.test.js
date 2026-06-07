@@ -366,6 +366,24 @@ test("VERIFY -> GRADE treats malformed I9 reachability as present but unresolved
   });
 });
 
+test("VERIFY -> GRADE reachability gate ignores repo surfaces I9 does not stamp", () => {
+  withTempHome((home) => {
+    const domain = seedRepoVerification(home, {
+      targetDomain: "reachability-non-native-noop",
+      surfaceId: "repo:manifest:package.json",
+      runInventory: true,
+    });
+
+    const evaluation = evaluateLifecycleTransition({
+      target_domain: domain,
+      from_state: "VERIFY",
+      to_state: "GRADE",
+    });
+
+    assert.deepEqual(evaluation.blockers, []);
+  });
+});
+
 test("VERIFY -> GRADE reachability gate no-ops for repo sessions before I9 inventory exists", () => {
   withTempHome((home) => {
     const domain = seedRepoVerification(home, {

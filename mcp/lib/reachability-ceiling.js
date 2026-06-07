@@ -47,6 +47,9 @@ const REACHABILITY_SEVERITY_RANK = Object.freeze({
   high: 4,
   critical: 5,
 });
+const REACHABILITY_STAMPED_SURFACE_PREFIXES = Object.freeze([
+  "repo:module:",
+]);
 
 // C9 truth table:
 // - unknown reachability => preserve recorded severity, disposition unknown.
@@ -204,6 +207,15 @@ function surfaceIdsForFinding(domain, findingId) {
   return ids;
 }
 
+function isReachabilityStampedSurfaceId(surfaceId) {
+  return typeof surfaceId === "string"
+    && REACHABILITY_STAMPED_SURFACE_PREFIXES.some((prefix) => surfaceId.startsWith(prefix));
+}
+
+function findingHasReachabilityStampedSurface(domain, findingId) {
+  return surfaceIdsForFinding(domain, findingId).some(isReachabilityStampedSurfaceId);
+}
+
 function normalizeSurfaceCeilingEntry(entry) {
   if (entry == null || typeof entry !== "object" || Array.isArray(entry)) return null;
   if (typeof entry.id !== "string" || !entry.id) return null;
@@ -298,6 +310,7 @@ function missingReachabilityStampsForReportableFindings(domain) {
   }
   const missing = [];
   for (const [findingId, severity] of finalReportableFindingSeverities(domain)) {
+    if (!findingHasReachabilityStampedSurface(domain, findingId)) continue;
     const disposition = reachabilityDispositionForFinding({
       domain,
       findingId,
@@ -316,10 +329,13 @@ function missingReachabilityStampsForReportableFindings(domain) {
 module.exports = {
   ATTACK_VECTOR_VALUES,
   REACHABILITY_DISPOSITION_VALUES,
+  REACHABILITY_STAMPED_SURFACE_PREFIXES,
   SEVERITY_CEILING_VALUES,
   computeReachabilityDisposition,
   finalSeverityByFinding,
+  findingHasReachabilityStampedSurface,
   hasReachabilityInventory,
+  isReachabilityStampedSurfaceId,
   missingReachabilityStampsForReportableFindings,
   normalizeReachabilityDispositionStamp,
   reachabilityDispositionForFinding,

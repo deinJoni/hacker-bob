@@ -45,6 +45,7 @@ const {
 } = require("./verification-round-store.js");
 const {
   finalSeverityByFinding,
+  missingReachabilityStampsForReportableFindings,
   normalizeReachabilityDispositionStamp,
   reachabilityDispositionForFinding,
 } = require("./reachability-ceiling.js");
@@ -349,6 +350,13 @@ function writeGradeVerdict(args) {
   });
 
   const finalReportableSeveritySet = requireFinalReportableSeveritySet(domain, findingIdSet);
+  const missingReachability = missingReachabilityStampsForReportableFindings(domain);
+  if (missingReachability.reachability_present && missingReachability.missing.length > 0) {
+    throw new Error(
+      "Reachability stamps are required for final reportable repo module findings before grading: "
+      + missingReachability.missing.join(", "),
+    );
+  }
   const finalSeverities = finalSeverityByFinding(domain);
   const findings = normalizedFindings.map((finding) => {
     const recordedSeverity = finalSeverities.get(finding.finding_id);

@@ -319,6 +319,51 @@ test("reachability cap stamps graded severity without removing the reportable fi
   });
 });
 
+test("grade verdict write rejects unresolved reachability for reportable repo module findings", () => {
+  withTempHome((home) => {
+    const repoSession = seedLocalParserRepo(home, "grade-reachability-missing");
+    const domain = repoSession.target_domain;
+    appendCandidateClaim({
+      target_domain: domain,
+      title: "Native parser over-read",
+      summary: "Local file parser reads past the available buffer.",
+      severity: "medium",
+      status: "candidate",
+      surface_ids: ["repo:module:missing-surface.c"],
+      evidence_refs: [{
+        kind: "finding",
+        finding_id: "F-1",
+        content_hash: "0".repeat(64),
+      }],
+      impact: "Parser crash on crafted local input.",
+    });
+    buildClaimFreeze(domain, {
+      write: true,
+      now: new Date("2026-05-27T01:00:00.000Z"),
+    });
+    for (const round of ["brutalist", "balanced", "final"]) {
+      writeVerificationRound({
+        target_domain: domain,
+        round,
+        notes: null,
+        results: [verificationResult("F-1", { severity: "high", reportable: true })],
+      });
+    }
+    writeEvidencePacks({ target_domain: domain, packs: [evidencePack("F-1")] });
+
+    assert.throws(
+      () => writeGradeVerdict({
+        target_domain: domain,
+        verdict: "SUBMIT",
+        total_score: 75,
+        findings: [gradeFinding("F-1")],
+      }),
+      /Reachability stamps are required.*F-1/,
+      "direct grade writes must not bypass the repo-module reachability gate",
+    );
+  });
+});
+
 test("mutating claims.jsonl after the freeze does NOT change the grade verdict (frozen set authoritative)", () => {
   withTempHome(() => {
     const domain = "grade-frozen-stability.example.com";
