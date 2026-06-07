@@ -423,6 +423,61 @@ test("CandidateClaim severity and status enums are stable, complete sets", () =>
   }
 });
 
+test("reporter prompt renders reachability graded severity when C9 stamps it", () => {
+  const reporterPrompt = readFile("prompts/roles/reporter.md");
+  assert.match(reporterPrompt, /reachability\.graded_severity/);
+  assert.match(reporterPrompt, /public severity/);
+  assert.match(reporterPrompt, /reachability disposition/);
+});
+
+test("reporter OSS branch carries CWE, suggested CVSS-4.0, and references guidance", () => {
+  const reporterPrompt = readFile("prompts/roles/reporter.md");
+  const ossBranchStart = reporterPrompt.indexOf("**OSS repo findings**");
+  const httpBranchStart = reporterPrompt.indexOf("**HTTP findings**");
+  assert.ok(ossBranchStart >= 0, "OSS branch must exist");
+  assert.ok(httpBranchStart > ossBranchStart, "HTTP branch must follow OSS branch");
+  const ossBranch = reporterPrompt.slice(ossBranchStart, httpBranchStart);
+  assert.match(ossBranch, /CWE/);
+  assert.match(ossBranch, /Suggested CVSS-4\.0/);
+  assert.match(ossBranch, /derive AV from the reachability prose|reachability prose/);
+  assert.match(ossBranch, /References/);
+  assert.match(ossBranch, /stable remote\/commit URL/);
+  assert.match(ossBranch, /CVE\/GHSA|CVE|GHSA/);
+  assert.match(ossBranch, /Do not fabricate advisory, commit, or GitHub links/);
+});
+
+test("evaluator OSS stanza tells fuzz_run to consume readable repo-env recommendations", () => {
+  const evaluatorPrompt = readFile("prompts/roles/evaluator.md");
+  const ossBranchStart = evaluatorPrompt.indexOf("Repo-bound (OSS) surfaces");
+  assert.ok(ossBranchStart >= 0, "OSS evaluator stanza must exist");
+  const ossBranch = evaluatorPrompt.slice(ossBranchStart, ossBranchStart + 5000);
+  assert.match(ossBranch, /fuzz_run/);
+  assert.match(ossBranch, /repo_env_recommendations/);
+  assert.match(ossBranch, /recommended_commands\[\]/);
+  assert.match(ossBranch, /role: "fuzz"/);
+  assert.match(ossBranch, /command\.seed_path/);
+  assert.match(ossBranch, /seed-corpus|seed corpus/i);
+  assert.match(ossBranch, /Do not parse `description` prose or shell argv/);
+  assert.doesNotMatch(ossBranch, /read `repo-env\.json`/i);
+});
+
+// NOTE: the roadmap-era "Kimi hunter catalogue routes OSS brief profiles through
+// the generic worker path" test was dropped when Δ1 integrated onto main's Kimi v2
+// adapter (PR #67). Main's Kimi adapter does not yet render OSS brief-profile
+// routing; the roadmap Kimi-OSS feature + this test must be re-ported. Tracked in #65.
+
+test("Kimi reporter spawn uses structured report composition", () => {
+  const kimiSkill = readFile("adapters/kimi/skills/bob-evaluate/SKILL.md");
+  const reporterStart = kimiSkill.indexOf('Bob role: report-writer');
+  assert.ok(reporterStart >= 0, "Kimi skill must render the reporter spawn prompt");
+  const reporterSpawn = kimiSkill.slice(reporterStart, reporterStart + 1200);
+  assert.match(reporterSpawn, /bob_compose_report/);
+  assert.match(reporterSpawn, /bob_finalize_report/);
+  assert.match(reporterSpawn, /confirmed chain evidence/);
+  assert.match(reporterSpawn, /BOB_REPORT_DONE/);
+  assert.doesNotMatch(reporterSpawn, /write the canonical .*report\.md/);
+});
+
 // =============================================================================
 // SECTION 5 — Structural invariance (the P.4 guarantee)
 // =============================================================================
@@ -812,6 +867,19 @@ test("orchestrator skill allowed-tools equal the orchestrator + auth permission 
   assert.deepEqual(mcpOnly, permissionsForRoleBundles(["orchestrator", "auth"]).slice().sort());
 });
 
+test("/bob-evaluate command loads the runner playbook directly and shares its registry tool bundle", () => {
+  // The runner skill is disable-model-invocation:true, so current Claude Code
+  // refuses Skill-tool invocation of it — a delegator command (allowed-tools:
+  // [Skill]) is dead on arrival. The command must instead carry the orchestrator
+  // bundle and read+execute the playbook. This binds the command to the same
+  // registry source as the skill so the two can never drift.
+  const cmd = readFile(".claude/commands/bob-evaluate.md");
+  const cmdTools = parseYamlListFrontmatter(cmd, "allowed-tools", "bob-evaluate.md");
+  assert.ok(!cmdTools.includes("Skill"), "bob-evaluate command must not delegate via the Skill tool");
+  assert.deepEqual(cmdTools.slice().sort(), hackerBobSkillAllowedTools().slice().sort());
+  assert.match(cmd, /\.claude\/skills\/bob-evaluate-runner\/SKILL\.md/, "command must load the runner playbook");
+});
+
 test("orchestrator skill stays bounded and reflects the lifecycle topology", () => {
   const lines = lineCount(".claude/skills/bob-evaluate-runner/SKILL.md");
   // Cycle O.1 added bob_init_repo_session to the orchestrator bundle, which
@@ -941,10 +1009,10 @@ test("capability packs expose versioned context budgets and complete spawn metad
     assert.equal(pack.capability_pack_version, 1);
     assert.ok(pack.evaluator_agent);
     assert.ok(pack.brief_profile);
-    if (pack.brief_profile === "web") {
-      assert.deepEqual(pack.context_budget, DEFAULT_CONTEXT_BUDGET);
-    } else {
+    if (pack.spawn.profile === "smart_contract") {
       assert.deepEqual(pack.context_budget, SMART_CONTRACT_CONTEXT_BUDGET);
+    } else {
+      assert.deepEqual(pack.context_budget, DEFAULT_CONTEXT_BUDGET);
     }
     assert.ok(pack.spawn, `pack ${pack.id} must declare a spawn block`);
     if (pack.spawn.profile === "smart_contract") {
@@ -1102,7 +1170,7 @@ test("evaluator agents stay under their MCP tool budget", () => {
   }
   for (const pack of Object.values(CAPABILITY_PACKS)) {
     const roleId = agentNameToRoleId[pack.evaluator_agent];
-    const budget = pack.brief_profile === "web" ? 43 : EVALUATOR_MCP_TOOL_BUDGET;
+    const budget = pack.spawn.profile === "web" ? 43 : EVALUATOR_MCP_TOOL_BUDGET;
     assert.ok(
       mcpToolNamesForRole(roleId).length <= budget,
       `pack ${pack.id} evaluator over budget (got ${mcpToolNamesForRole(roleId).length}, budget ${budget})`,
