@@ -73,7 +73,16 @@ function gateVerifyToGrade(context) {
   try {
     const { state } = readSessionStateStrict(context.target_domain);
     if (!state || state.target_repo == null) return blockers;
-  } catch {
+  } catch (error) {
+    const message = compactError(error);
+    blockers.push({
+      code: "reachability_stamp_missing",
+      blocked_by: "reachability_absent",
+      message: `VERIFY -> GRADE blocked: session state unavailable for reachability checks: ${message}`,
+      error: message,
+      remediation:
+        "restore valid session state and rerun bob_repo_inventory so reachability stamps can be resolved",
+    });
     return blockers;
   }
   try {

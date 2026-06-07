@@ -25,6 +25,7 @@ const {
 const {
   evidencePackPaths,
   gradeArtifactPaths,
+  repoInventoryPath,
   sessionDir,
   verificationRoundPaths,
 } = require("../mcp/lib/paths.js");
@@ -175,6 +176,36 @@ function seedLocalParserRepo(home, targetDomain) {
     surface_id: "repo:module:src-parser.c",
     network_surface_id: "repo:module:server-httpd.c",
   };
+}
+
+function seedFrozenRepoFinding(domain, surfaceIds, { findingId = "F-1", severity = "high" } = {}) {
+  appendCandidateClaim({
+    target_domain: domain,
+    title: "Native parser over-read",
+    summary: "Local file parser reads past the available buffer.",
+    severity: "medium",
+    status: "candidate",
+    surface_ids: surfaceIds,
+    evidence_refs: [{
+      kind: "finding",
+      finding_id: findingId,
+      content_hash: "0".repeat(64),
+    }],
+    impact: "Parser crash on crafted input.",
+  });
+  buildClaimFreeze(domain, {
+    write: true,
+    now: new Date("2026-05-27T01:00:00.000Z"),
+  });
+  for (const round of ["brutalist", "balanced", "final"]) {
+    writeVerificationRound({
+      target_domain: domain,
+      round,
+      notes: null,
+      results: [verificationResult(findingId, { severity, reportable: true })],
+    });
+  }
+  writeEvidencePacks({ target_domain: domain, packs: [evidencePack(findingId)] });
 }
 
 function seedFinalVerificationFromFrozen(domain, { findingId = "F-1" } = {}) {
@@ -361,6 +392,66 @@ test("grade verdict write rejects unresolved reachability for reportable repo mo
       /Reachability stamps are required.*F-1/,
       "direct grade writes must not bypass the repo-module reachability gate",
     );
+  });
+});
+
+test("reachability aggregation keeps mixed frozen repo module surfaces capped by the local surface", () => {
+  withTempHome((home) => {
+    const repoSession = seedLocalParserRepo(home, "grade-reachability-mixed-surfaces");
+    const domain = repoSession.target_domain;
+    seedFrozenRepoFinding(domain, [repoSession.surface_id, repoSession.network_surface_id]);
+
+    writeGradeVerdict({
+      target_domain: domain,
+      verdict: "SUBMIT",
+      total_score: 75,
+      findings: [gradeFinding("F-1")],
+    });
+
+    const read = JSON.parse(readGradeVerdict({ target_domain: domain }));
+    assert.deepEqual(read.findings[0].reachability, {
+      recorded_severity: "high",
+      severity_ceiling: "medium",
+      attack_vector: "local",
+      network_reachable: false,
+      graded_severity: "medium",
+      disposition: "capped",
+      defensible: false,
+    });
+  });
+});
+
+test("reachability aggregation does not turn attack_vector network with network_reachable false into AV:N", () => {
+  withTempHome((home) => {
+    const repoSession = seedLocalParserRepo(home, "grade-reachability-network-false");
+    const domain = repoSession.target_domain;
+    const inventoryPath = repoInventoryPath(domain);
+    const inventory = JSON.parse(fs.readFileSync(inventoryPath, "utf8"));
+    const parserStamp = inventory.reachability.surface_ceilings.find((entry) => entry.id === repoSession.surface_id);
+    assert.ok(parserStamp, "repo inventory must include the parser reachability stamp");
+    parserStamp.attack_vector = "network";
+    parserStamp.network_reachable = false;
+    parserStamp.severity_ceiling = "critical";
+    fs.writeFileSync(inventoryPath, JSON.stringify(inventory), "utf8");
+    seedFrozenRepoFinding(domain, [repoSession.surface_id]);
+
+    writeGradeVerdict({
+      target_domain: domain,
+      verdict: "SUBMIT",
+      total_score: 75,
+      findings: [gradeFinding("F-1")],
+    });
+
+    const read = JSON.parse(readGradeVerdict({ target_domain: domain }));
+    assert.deepEqual(read.findings[0].reachability, {
+      recorded_severity: "high",
+      severity_ceiling: "critical",
+      attack_vector: "local",
+      network_reachable: false,
+      graded_severity: "high",
+      disposition: "unchanged",
+      defensible: false,
+    });
   });
 });
 

@@ -16,9 +16,6 @@ const {
   assertEnumValue,
 } = require("./validation.js");
 const {
-  readCandidateClaims,
-} = require("./claims.js");
-const {
   readCurrentClaimFreeze,
 } = require("./claim-freeze.js");
 const {
@@ -182,9 +179,11 @@ function hasReachabilityInventory(domain) {
 
 function claimsForFinding(domain, findingId) {
   const freeze = readCurrentClaimFreeze(domain);
-  const claims = freeze && Array.isArray(freeze.claims)
-    ? freeze.claims
-    : readCandidateClaims(domain);
+  if (!freeze) return [];
+  if (!Array.isArray(freeze.claims)) {
+    throw new Error("claim-freeze.json claims must be an array for reachability resolution");
+  }
+  const claims = freeze.claims;
   return claims.filter((claim) => {
     const refs = Array.isArray(claim.evidence_refs) ? claim.evidence_refs : [];
     return refs.some((ref) => (
@@ -216,6 +215,10 @@ function findingHasReachabilityStampedSurface(domain, findingId) {
   return surfaceIdsForFinding(domain, findingId).some(isReachabilityStampedSurfaceId);
 }
 
+function stampedSurfaceIdsForFinding(domain, findingId) {
+  return surfaceIdsForFinding(domain, findingId).filter(isReachabilityStampedSurfaceId);
+}
+
 function normalizeSurfaceCeilingEntry(entry) {
   if (entry == null || typeof entry !== "object" || Array.isArray(entry)) return null;
   if (typeof entry.id !== "string" || !entry.id) return null;
@@ -240,31 +243,38 @@ function resolveFindingReachability({ domain, findingId } = {}) {
   }
   const inventory = readReachabilityInventory(domain);
   if (!inventory) return null;
-  const surfaceIds = surfaceIdsForFinding(domain, findingId);
+  const surfaceIds = stampedSurfaceIdsForFinding(domain, findingId);
   if (surfaceIds.length === 0) return null;
   const wanted = new Set(surfaceIds);
-  const matched = [];
+  const matchedById = new Map();
   for (const entry of inventory.surface_ceilings) {
     const normalized = normalizeSurfaceCeilingEntry(entry);
-    if (normalized && wanted.has(normalized.id)) matched.push(normalized);
+    if (normalized && wanted.has(normalized.id) && !matchedById.has(normalized.id)) {
+      matchedById.set(normalized.id, normalized);
+    }
   }
-  if (matched.length === 0) return null;
+  const matched = [];
+  for (const surfaceId of surfaceIds) {
+    const entry = matchedById.get(surfaceId);
+    if (!entry) return null;
+    matched.push(entry);
+  }
 
   let selectedCeiling = matched[0].severity_ceiling;
-  let anyNetwork = false;
+  let allNetwork = true;
   let anyLocal = false;
   for (const entry of matched) {
-    if (severityRank(entry.severity_ceiling) > severityRank(selectedCeiling)) {
+    if (severityRank(entry.severity_ceiling) < severityRank(selectedCeiling)) {
       selectedCeiling = entry.severity_ceiling;
     }
-    if (entry.network_reachable === true || entry.attack_vector === "network") anyNetwork = true;
+    if (!(entry.network_reachable === true && entry.attack_vector === "network")) allNetwork = false;
     if (entry.network_reachable === false || entry.attack_vector === "local") anyLocal = true;
   }
 
   return {
     severity_ceiling: selectedCeiling,
-    attack_vector: anyNetwork ? "network" : (anyLocal ? "local" : "unknown"),
-    network_reachable: anyNetwork ? true : (anyLocal ? false : null),
+    attack_vector: allNetwork ? "network" : (anyLocal ? "local" : "unknown"),
+    network_reachable: allNetwork ? true : (anyLocal ? false : null),
   };
 }
 

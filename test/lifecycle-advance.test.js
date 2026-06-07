@@ -16,6 +16,7 @@ const {
 const {
   repoInventoryPath,
   sessionEventsJsonlPath,
+  statePath,
 } = require("../mcp/lib/paths.js");
 const {
   readSessionEvents,
@@ -102,6 +103,7 @@ function evidencePack(findingId = "F-1") {
 function seedRepoVerification(home, {
   targetDomain,
   surfaceId,
+  surfaceIds = null,
   runInventory = true,
 } = {}) {
   const repo = path.join(home, targetDomain);
@@ -118,7 +120,7 @@ function seedRepoVerification(home, {
     summary: "Parser reads past the available buffer.",
     severity: "medium",
     status: "candidate",
-    surface_ids: [surfaceId],
+    surface_ids: surfaceIds || [surfaceId],
     evidence_refs: [{
       kind: "finding",
       finding_id: "F-1",
@@ -366,6 +368,27 @@ test("VERIFY -> GRADE treats malformed I9 reachability as present but unresolved
   });
 });
 
+test("VERIFY -> GRADE blocks when a frozen repo module surface is missing from partial I9 inventory", () => {
+  withTempHome((home) => {
+    const domain = seedRepoVerification(home, {
+      targetDomain: "reachability-partial-gate",
+      surfaceId: "repo:module:src-parser.c",
+      surfaceIds: ["repo:module:src-parser.c", "repo:module:missing-surface.c"],
+      runInventory: true,
+    });
+
+    const evaluation = evaluateLifecycleTransition({
+      target_domain: domain,
+      from_state: "VERIFY",
+      to_state: "GRADE",
+    });
+
+    assert.equal(evaluation.blockers.length, 1);
+    assert.equal(evaluation.blockers[0].code, "reachability_stamp_missing");
+    assert.deepEqual(evaluation.blockers[0].missing_finding_ids, ["F-1"]);
+  });
+});
+
 test("VERIFY -> GRADE reachability gate ignores repo surfaces I9 does not stamp", () => {
   withTempHome((home) => {
     const domain = seedRepoVerification(home, {
@@ -381,6 +404,28 @@ test("VERIFY -> GRADE reachability gate ignores repo surfaces I9 does not stamp"
     });
 
     assert.deepEqual(evaluation.blockers, []);
+  });
+});
+
+test("VERIFY -> GRADE reachability gate fails closed when session state is malformed", () => {
+  withTempHome((home) => {
+    const domain = seedRepoVerification(home, {
+      targetDomain: "reachability-state-malformed",
+      surfaceId: "repo:module:src-parser.c",
+      runInventory: true,
+    });
+    fs.writeFileSync(statePath(domain), "{", "utf8");
+
+    const evaluation = evaluateLifecycleTransition({
+      target_domain: domain,
+      from_state: "VERIFY",
+      to_state: "GRADE",
+    });
+
+    assert.equal(evaluation.blockers.length, 1);
+    assert.equal(evaluation.blockers[0].code, "reachability_stamp_missing");
+    assert.equal(evaluation.blockers[0].blocked_by, "reachability_absent");
+    assert.match(evaluation.blockers[0].message, /session state unavailable/);
   });
 });
 
