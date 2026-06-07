@@ -662,7 +662,7 @@ function cappedBriefString(value, maxChars = REPO_ENV_STRING_MAX_CHARS) {
 function slimRepoEnvCommand(command) {
   if (command == null || typeof command !== "object" || Array.isArray(command)) return null;
   const slim = {};
-  for (const field of ["id", "role", "description"]) {
+  for (const field of ["id", "role", "description", "seed_path"]) {
     const value = cappedBriefString(command[field]);
     if (value) slim[field] = value;
   }

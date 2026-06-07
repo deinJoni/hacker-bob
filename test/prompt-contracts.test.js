@@ -435,7 +435,9 @@ test("reporter OSS branch carries CWE, suggested CVSS-4.0, and references guidan
   assert.match(ossBranch, /Suggested CVSS-4\.0/);
   assert.match(ossBranch, /derive AV from the reachability prose|reachability prose/);
   assert.match(ossBranch, /References/);
+  assert.match(ossBranch, /stable remote\/commit URL/);
   assert.match(ossBranch, /CVE\/GHSA|CVE|GHSA/);
+  assert.match(ossBranch, /Do not fabricate advisory, commit, or GitHub links/);
 });
 
 test("evaluator OSS stanza tells fuzz_run to consume readable repo-env recommendations", () => {
@@ -447,7 +449,9 @@ test("evaluator OSS stanza tells fuzz_run to consume readable repo-env recommend
   assert.match(ossBranch, /repo_env_recommendations/);
   assert.match(ossBranch, /recommended_commands\[\]/);
   assert.match(ossBranch, /role: "fuzz"/);
+  assert.match(ossBranch, /command\.seed_path/);
   assert.match(ossBranch, /seed-corpus|seed corpus/i);
+  assert.match(ossBranch, /Do not parse `description` prose or shell argv/);
   assert.doesNotMatch(ossBranch, /read `repo-env\.json`/i);
 });
 

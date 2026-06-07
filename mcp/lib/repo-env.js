@@ -18,8 +18,9 @@
 //         instruction so cross-session BuildKit layer-cache reuse can't
 //         smuggle a poisoned layer.
 //   O-D7  `recommended_commands[]` has the shape
-//         `{id, description, command: string[], role}` where `role ∈
-//         {build, test, fuzz, lint, compose}`.
+//         `{id, description, command: string[], role, seed_path?}` where `role ∈
+//         {build, test, fuzz, lint, compose}` and `seed_path` is a repo-relative
+//         path for seed-corpus commands.
 //   O-P7  Every persisted JSONL/JSON write routes through
 //         `validateNoSensitiveMaterial` before append. The generated
 //         Dockerfile is the only artefact that can carry a proxy reference,
@@ -347,6 +348,7 @@ function recommendedCommandsFor(language, { nfsXdrShape = false, seedCorpus = []
       commands.push({
         id: "fuzz_seed_probe",
         description: `Seed corpus discovered at ${seedRel}; adapt it to the repo's existing fuzz harness before non-dry-run replay.`,
+        seed_path: seedRel,
         command: [
           "sh",
           "-lc",

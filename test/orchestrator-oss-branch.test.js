@@ -496,7 +496,9 @@ test("readAssignmentBrief accepts routed OSS brief_profile and emits OSS techniq
   assert.equal(brief.code_surface_pack.assigned_surface.native_source, "true");
   assert.equal(brief.repo_env_recommendations.seed_corpus_count, 1);
   assert.equal(brief.repo_env_recommendations.seed_corpus[0].rel_path, "fuzz/corpus");
-  assert.ok(brief.repo_env_recommendations.recommended_commands.some((command) => command.role === "fuzz"));
+  const fuzzCommand = brief.repo_env_recommendations.recommended_commands.find((command) => command.role === "fuzz");
+  assert.ok(fuzzCommand, "brief must expose a fuzz recommendation when seed corpus exists");
+  assert.equal(fuzzCommand.seed_path, "fuzz/corpus");
   assert.ok(brief.technique_packs.selected.some((pack) => pack.id === "oss_native_code"));
   assert.ok(!String(JSON.stringify(brief)).includes("Unsupported brief profile"));
 }));

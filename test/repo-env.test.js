@@ -231,6 +231,7 @@ test("recommendedCommandsFor c emits one fuzz seed command when seed corpus is p
   const fuzzCommands = commands.filter((command) => command.role === "fuzz");
   assert.equal(fuzzCommands.length, 1);
   assert.equal(fuzzCommands[0].id, "fuzz_seed_probe");
+  assert.equal(fuzzCommands[0].seed_path, "fuzz/corpus");
   assert.match(fuzzCommands[0].description, /fuzz\/corpus/);
   assert.match(fuzzCommands[0].command[2], /find 'fuzz\/corpus'/);
 });
