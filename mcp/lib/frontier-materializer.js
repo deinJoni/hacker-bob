@@ -85,10 +85,14 @@ const SURFACE_SCALAR_TEXT_FIELDS = [
   "attack_vector",
   "severity_ceiling",
   "chain_family",
+  "file_path",
+  "language",
 ];
 
 const SURFACE_BOOLEAN_FIELDS = [
   "network_reachable",
+  "native_source",
+  "native_build",
 ];
 
 // Array text fields carried by surface.observed payloads. Mirrors the legacy

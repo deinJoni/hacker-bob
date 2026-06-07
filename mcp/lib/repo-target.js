@@ -890,6 +890,7 @@ function buildInventoryProjection(domain, repoRoot, files) {
   const nfsShape = detectNfsXdrShape(repoRoot, files);
   const residualHuntTargets = detectResidualHuntTargets(repoRoot, files, modules);
   const seedCorpus = buildSeedCorpusSummary(seedCorpusEntries);
+  const seedCorpusCount = seedCorpusEntries.size;
   const seedCorpusHash = hashCanonicalJson({ seed_corpus: seedCorpus });
   return {
     modules,
@@ -904,6 +905,7 @@ function buildInventoryProjection(domain, repoRoot, files) {
     nfsShape,
     residualHuntTargets,
     seedCorpus,
+    seedCorpusCount,
     seedCorpusHash,
   };
 }
@@ -1082,7 +1084,7 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
         native_source_files: projection.nativeSourceCount,
         native_build_files: projection.nativeBuildCount,
         residual_hunt_targets: projection.residualHuntTargets.length,
-        seed_corpus: projection.seedCorpus.length,
+        seed_corpus: projection.seedCorpusCount,
         surface_events_emitted: emittedCount.value,
       },
       languages: projection.languageCounts,

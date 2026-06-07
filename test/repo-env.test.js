@@ -27,6 +27,7 @@ const path = require("path");
 const {
   initRepoSession,
   buildRepoInventory,
+  SEED_CORPUS_SUMMARY_LIMIT,
 } = require("../mcp/lib/repo-target.js");
 const {
   prepareRepoEnv,
@@ -635,6 +636,28 @@ test("prepareRepoEnv threads seed_corpus from repo-inventory into C/C++ fuzz com
     assert.equal(repoEnv.detection.seed_corpus_count, 1);
     assert.equal(repoEnv.seed_corpus[0].rel_path, "fuzz/corpus");
     assert.ok(repoEnv.recommended_commands.some((command) => command.id === "fuzz_seed_probe"));
+  });
+});
+
+test("prepareRepoEnv uses inventory counts for capped seed corpus summaries", async () => {
+  await withTempHome(async () => {
+    const repoRoot = makeTempRepoDir();
+    write(repoRoot, "CMakeLists.txt", "cmake_minimum_required(VERSION 3.22)\nproject(seed_count C)\n");
+    write(repoRoot, "src/main.c", "int main(){return 0;}\n");
+    const corpusCount = SEED_CORPUS_SUMMARY_LIMIT + 2;
+    for (let index = 0; index < corpusCount; index += 1) {
+      write(repoRoot, `sample_${String(index).padStart(2, "0")}_seed_corpus/input.bin`, `seed-${index}`);
+    }
+    const init = initRepoSession({ repo_path: repoRoot });
+    buildRepoInventory({ target_domain: init.target_domain });
+
+    const result = await prepareRepoEnv({ target_domain: init.target_domain });
+    assert.equal(result.seed_corpus.length, SEED_CORPUS_SUMMARY_LIMIT);
+    assert.equal(result.seed_corpus_count, corpusCount);
+
+    const repoEnv = JSON.parse(fs.readFileSync(repoEnvJsonPath(init.target_domain), "utf8"));
+    assert.equal(repoEnv.seed_corpus.length, SEED_CORPUS_SUMMARY_LIMIT);
+    assert.equal(repoEnv.detection.seed_corpus_count, corpusCount);
   });
 });
 

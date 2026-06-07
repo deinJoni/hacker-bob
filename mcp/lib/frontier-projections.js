@@ -319,10 +319,14 @@ const SURFACE_INDEX_SCALAR_FIELDS = [
   "attack_vector",
   "severity_ceiling",
   "chain_family",
+  "file_path",
+  "language",
 ];
 
 const SURFACE_INDEX_BOOLEAN_FIELDS = [
   "network_reachable",
+  "native_source",
+  "native_build",
 ];
 
 const SURFACE_INDEX_ARRAY_FIELDS = [

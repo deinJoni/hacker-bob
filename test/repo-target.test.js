@@ -16,6 +16,7 @@ const {
   buildRepoInventory,
   initRepoSession,
   repoCheck,
+  SEED_CORPUS_SUMMARY_LIMIT,
 } = require("../mcp/lib/repo-target.js");
 const {
   prepareRepoEnv,
@@ -432,6 +433,22 @@ test("repo inventory aggregates fuzz seed corpora without reading file contents"
   assert.ok(zipCorpus, "expected OSS-Fuzz *_seed_corpus.zip aggregate");
   assert.equal(zipCorpus.file_count, 1);
   assert.equal(zipCorpus.has_zip, true);
+}));
+
+test("repo inventory seed corpus count is not capped by the summary list", () => withTempHome((home) => {
+  const repo = path.join(home, "many-seeds");
+  fs.mkdirSync(repo, { recursive: true });
+  writeFile(repo, "CMakeLists.txt", "cmake_minimum_required(VERSION 3.22)\nproject(many_seeds C)\n");
+  writeFile(repo, "src/decode.c", "int decode(const unsigned char *b, int n){ return n > 0 ? b[0] : 0; }\n");
+  const corpusCount = SEED_CORPUS_SUMMARY_LIMIT + 3;
+  for (let index = 0; index < corpusCount; index += 1) {
+    writeFile(repo, `case_${String(index).padStart(2, "0")}_seed_corpus/input.bin`, `seed-${index}`);
+  }
+
+  const init = parseResult(initRepoSession({ repo_path: repo, target_domain: "repo-many-seeds" }));
+  const inventory = parseResult(buildRepoInventory({ target_domain: init.target_domain }));
+  assert.equal(inventory.counts.seed_corpus, corpusCount);
+  assert.equal(inventory.seed_corpus.length, SEED_CORPUS_SUMMARY_LIMIT);
 }));
 
 test("seed corpus aggregation ignores symlinked files outside the repo root", () => withTempHome((home) => {

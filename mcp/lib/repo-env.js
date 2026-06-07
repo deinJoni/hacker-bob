@@ -46,6 +46,7 @@ const {
 const {
   assertSafeDomain,
   repoCommandRunsJsonlPath,
+  repoInventoryPath,
   repoRunsDir,
   repoWorkDir,
   sessionDir,
@@ -515,7 +516,11 @@ function buildRepoEnvDocument({
   generatedAt,
   nfsXdrShape,
   seedCorpus,
+  seedCorpusCount,
 }) {
+  const normalizedSeedCorpusCount = Number.isInteger(seedCorpusCount) && seedCorpusCount >= 0
+    ? seedCorpusCount
+    : Array.isArray(seedCorpus) ? seedCorpus.length : 0;
   const doc = {
     version: REPO_ENV_VERSION,
     target_domain: targetDomain,
@@ -526,7 +531,7 @@ function buildRepoEnvDocument({
       language: detection.language,
       marker: detection.marker,
       nfs_xdr_shape: nfsXdrShape,
-      seed_corpus_count: Array.isArray(seedCorpus) ? seedCorpus.length : 0,
+      seed_corpus_count: normalizedSeedCorpusCount,
     },
     base_image: baseImage,
     image_tag: imageTag,
@@ -546,7 +551,6 @@ function buildRepoEnvDocument({
 // O.2 detection rather than re-scanning. When the inventory isn't present
 // yet (operator skipped `bob_repo_inventory`), fall back to `false`.
 function loadNfsXdrShape(targetDomain) {
-  const { repoInventoryPath } = require("./paths.js");
   const invPath = repoInventoryPath(targetDomain);
   if (!fs.existsSync(invPath)) return false;
   try {
@@ -559,7 +563,6 @@ function loadNfsXdrShape(targetDomain) {
 }
 
 function loadSeedCorpus(targetDomain) {
-  const { repoInventoryPath } = require("./paths.js");
   const invPath = repoInventoryPath(targetDomain);
   if (!fs.existsSync(invPath)) return [];
   try {
@@ -568,6 +571,26 @@ function loadSeedCorpus(targetDomain) {
     return Array.isArray(doc && doc.seed_corpus) ? doc.seed_corpus : [];
   } catch {
     return [];
+  }
+}
+
+function loadSeedCorpusCount(targetDomain) {
+  const invPath = repoInventoryPath(targetDomain);
+  if (!fs.existsSync(invPath)) return 0;
+  try {
+    const raw = fs.readFileSync(invPath, "utf8");
+    const doc = JSON.parse(raw);
+    if (
+      doc
+      && doc.counts
+      && Number.isInteger(doc.counts.seed_corpus)
+      && doc.counts.seed_corpus >= 0
+    ) {
+      return doc.counts.seed_corpus;
+    }
+    return Array.isArray(doc && doc.seed_corpus) ? doc.seed_corpus.length : 0;
+  } catch {
+    return 0;
   }
 }
 
@@ -612,6 +635,7 @@ async function prepareRepoEnv({
     : detection.base_image;
   const nfsXdrShape = loadNfsXdrShape(domain);
   const seedCorpus = loadSeedCorpus(domain);
+  const seedCorpusCount = loadSeedCorpusCount(domain);
   const recommendedCommands = recommendedCommandsFor(detection.language, { nfsXdrShape, seedCorpus });
   for (const command of recommendedCommands) {
     assertEnumValue(command.role, RECOMMENDED_COMMAND_ROLES, `recommended_commands[${command.id}].role`);
@@ -679,6 +703,7 @@ async function prepareRepoEnv({
     generatedAt,
     nfsXdrShape,
     seedCorpus,
+    seedCorpusCount,
   });
   // O-P7: scrub-validate before persistence. The recommended_commands carry
   // shell strings; the validator already catches inline tokens like
@@ -745,6 +770,7 @@ async function prepareRepoEnv({
     language: detection.language,
     nfs_xdr_shape: nfsXdrShape,
     seed_corpus: seedCorpus,
+    seed_corpus_count: seedCorpusCount,
     dry_run: normalizedDryRun,
     build_image: normalizedBuildImage,
     allow_network: normalizedAllowNetwork,
@@ -1438,6 +1464,7 @@ module.exports = {
   detectLanguageProfile,
   recommendedCommandsFor,
   loadSeedCorpus,
+  loadSeedCorpusCount,
   assertNoEnvSecretLeak,
   dockerfileBobPath,
   readFirstLine,

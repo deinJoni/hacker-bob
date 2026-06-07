@@ -102,6 +102,9 @@ const {
   checkCliToolInstallation,
   presenceCachePath,
 } = require("./cli-tool-presence.js");
+const {
+  repoEnvPath,
+} = require("./paths.js");
 const fs = require("fs");
 
 // Bypass table tech-to-file map used by evaluator brief generation.
@@ -148,6 +151,10 @@ const ASSIGNMENT_BRIEF_SURFACE_SCALAR_LIMITS = Object.freeze({
   network_reachable: 8,
   chain_family: 40,
   chain_id: 20,
+  file_path: 240,
+  language: 40,
+  native_source: 8,
+  native_build: 8,
   // Per-chain harness paths. Each smart-contract evaluator prompt expects a
   // chain-specific scalar — whitelisting them all keeps slim surfaces lossy
   // only on cap, not on field name. Adding a new chain pack is one entry.
@@ -456,6 +463,7 @@ const OSS_BRIEF_SLICE_REGISTRY = Object.freeze([
   briefSliceEntry("governance", 1024, (context) => context.governance),
   briefSliceEntry("goal_orientation", 1024, (context) => context.goalOrientation),
   briefSliceEntry("code_surface_pack", 4096, (context) => context.codeSurfacePack),
+  briefSliceEntry("repo_env_recommendations", 4096, (context) => context.repoEnvRecommendations),
   briefSliceEntry("technique_packs", 8192, (context) => context.ossTechniquePacks),
   briefSliceEntry("cli_tools", 2048, (context) => renderAvailableCliToolsSectionSync({
     surface_fingerprint: context.cliToolSurfaceFingerprint,
@@ -637,6 +645,107 @@ function capStringValue(value, maxChars) {
   };
 }
 
+const REPO_ENV_RECOMMENDED_COMMAND_LIMIT = 8;
+const REPO_ENV_COMMAND_ARG_LIMIT = 12;
+const REPO_ENV_COMMAND_ARG_MAX_CHARS = 400;
+const REPO_ENV_STRING_MAX_CHARS = 240;
+const REPO_ENV_SEED_CORPUS_LIMIT = 8;
+const REPO_ENV_SEED_SAMPLE_LIMIT = 8;
+
+function cappedBriefString(value, maxChars = REPO_ENV_STRING_MAX_CHARS) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return capStringValue(trimmed, maxChars).value;
+}
+
+function slimRepoEnvCommand(command) {
+  if (command == null || typeof command !== "object" || Array.isArray(command)) return null;
+  const slim = {};
+  for (const field of ["id", "role", "description"]) {
+    const value = cappedBriefString(command[field]);
+    if (value) slim[field] = value;
+  }
+  if (Array.isArray(command.command)) {
+    const argv = command.command
+      .slice(0, REPO_ENV_COMMAND_ARG_LIMIT)
+      .map((arg) => cappedBriefString(String(arg), REPO_ENV_COMMAND_ARG_MAX_CHARS))
+      .filter(Boolean);
+    if (argv.length > 0) slim.command = argv;
+  }
+  return Object.keys(slim).length > 0 ? slim : null;
+}
+
+function slimSeedCorpusEntry(entry) {
+  if (entry == null || typeof entry !== "object" || Array.isArray(entry)) return null;
+  const relPath = cappedBriefString(entry.rel_path);
+  if (!relPath) return null;
+  const slim = { rel_path: relPath };
+  for (const field of ["file_count", "total_bytes"]) {
+    if (Number.isInteger(entry[field]) && entry[field] >= 0) slim[field] = entry[field];
+  }
+  if (typeof entry.has_zip === "boolean") slim.has_zip = entry.has_zip;
+  if (typeof entry.truncated === "boolean") slim.truncated = entry.truncated;
+  if (Array.isArray(entry.sample_rels)) {
+    const samples = entry.sample_rels
+      .slice(0, REPO_ENV_SEED_SAMPLE_LIMIT)
+      .map((sample) => cappedBriefString(String(sample), REPO_ENV_STRING_MAX_CHARS))
+      .filter(Boolean);
+    if (samples.length > 0) slim.sample_rels = samples;
+  }
+  const hash = cappedBriefString(entry.manifest_hash, 80);
+  if (hash) slim.manifest_hash = hash;
+  return slim;
+}
+
+function buildRepoEnvRecommendationsForBrief(domain) {
+  const filePath = repoEnvPath(domain);
+  if (!fs.existsSync(filePath)) return null;
+  let document;
+  try {
+    document = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+  if (document == null || typeof document !== "object" || Array.isArray(document)) return null;
+
+  const recommendedCommands = Array.isArray(document.recommended_commands)
+    ? document.recommended_commands
+      .slice(0, REPO_ENV_RECOMMENDED_COMMAND_LIMIT)
+      .map(slimRepoEnvCommand)
+      .filter(Boolean)
+    : [];
+  const seedCorpus = Array.isArray(document.seed_corpus)
+    ? document.seed_corpus
+      .slice(0, REPO_ENV_SEED_CORPUS_LIMIT)
+      .map(slimSeedCorpusEntry)
+      .filter(Boolean)
+    : [];
+
+  const detection = document.detection && typeof document.detection === "object" && !Array.isArray(document.detection)
+    ? document.detection
+    : {};
+  const seedCorpusCount = Number.isInteger(detection.seed_corpus_count) && detection.seed_corpus_count >= 0
+    ? detection.seed_corpus_count
+    : seedCorpus.length;
+
+  if (recommendedCommands.length === 0 && seedCorpus.length === 0) return null;
+  const result = {
+    source: "repo-env.json",
+    language: cappedBriefString(detection.language, 80),
+    dry_run: typeof document.dry_run === "boolean" ? document.dry_run : null,
+    build_image: typeof document.build_image === "boolean" ? document.build_image : null,
+    seed_corpus_count: seedCorpusCount,
+    recommended_commands: recommendedCommands,
+    seed_corpus: seedCorpus,
+    usage: "Readable bounded subset for OSS evaluators; run command arrays through bob_repo_docker_run, not shell reads of repo-env.json.",
+  };
+  for (const key of Object.keys(result)) {
+    if (result[key] == null) delete result[key];
+  }
+  return result;
+}
+
 function cappedSurfaceArray(value, limit) {
   const values = Array.isArray(value)
     ? value
@@ -730,7 +839,7 @@ function readSurfaceInfoForBrief(domain, routeMetadata) {
   if (routeMetadata.brief_profile === "oss") {
     const projected = currentSurfaces(domain);
     if (projected.source === "missing") {
-      throw new Error(`Missing attack surface JSON: ${projected.path}`);
+      throw new Error(`Missing surface projection: ${projected.path}`);
     }
     return projected;
   }
@@ -1165,6 +1274,7 @@ function buildOssBriefExtras(domain, surfaceObj, routeMetadata, assignment) {
         brief_profile: routeMetadata.brief_profile,
       },
     },
+    repoEnvRecommendations: buildRepoEnvRecommendationsForBrief(domain),
     ossTechniquePacks: buildOssTechniquePacksSlice(taskLens),
     cliToolSurfaceFingerprint,
     cliToolTaskLens: taskLens,
@@ -1186,6 +1296,9 @@ function buildOssBriefExtras(domain, surfaceObj, routeMetadata, assignment) {
   }
   if (!extras.cli_tools) {
     delete extras.cli_tools;
+  }
+  if (!extras.repo_env_recommendations) {
+    delete extras.repo_env_recommendations;
   }
   return extras;
 }
@@ -1442,6 +1555,7 @@ module.exports = {
   partitionTechniquePacksByLensAffinity,
   partitionOssTechniquePacksByLens,
   buildOssBriefExtras,
+  buildRepoEnvRecommendationsForBrief,
   buildBriefExtrasForProfile,
   ASSIGNMENT_BRIEF_SLICE_REGISTRY,
   readAssignmentBrief,

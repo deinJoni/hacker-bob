@@ -438,15 +438,27 @@ test("reporter OSS branch carries CWE, suggested CVSS-4.0, and references guidan
   assert.match(ossBranch, /CVE\/GHSA|CVE|GHSA/);
 });
 
-test("evaluator OSS stanza tells fuzz_run to consume repo-env seed corpus commands", () => {
+test("evaluator OSS stanza tells fuzz_run to consume readable repo-env recommendations", () => {
   const evaluatorPrompt = readFile("prompts/roles/evaluator.md");
   const ossBranchStart = evaluatorPrompt.indexOf("Repo-bound (OSS) surfaces");
   assert.ok(ossBranchStart >= 0, "OSS evaluator stanza must exist");
   const ossBranch = evaluatorPrompt.slice(ossBranchStart, ossBranchStart + 5000);
   assert.match(ossBranch, /fuzz_run/);
+  assert.match(ossBranch, /repo_env_recommendations/);
   assert.match(ossBranch, /recommended_commands\[\]/);
   assert.match(ossBranch, /role: "fuzz"/);
   assert.match(ossBranch, /seed-corpus|seed corpus/i);
+  assert.doesNotMatch(ossBranch, /read `repo-env\.json`/i);
+});
+
+test("Kimi hunter catalogue routes OSS brief profiles through the generic worker path", () => {
+  const kimiSkill = readFile("adapters/kimi/skills/bob-evaluate-runner/SKILL.md");
+  const catalogueStart = kimiSkill.indexOf("Smart-contract spawn dispatch:");
+  assert.ok(catalogueStart >= 0, "Kimi skill must render the hunter pack catalogue");
+  const catalogue = kimiSkill.slice(catalogueStart, catalogueStart + 1200);
+  assert.match(catalogue, /assignment\.brief_profile === "web"/);
+  assert.match(catalogue, /assignment\.brief_profile === "oss"/);
+  assert.match(catalogue, /generic evaluator spawn template/);
 });
 
 // =============================================================================

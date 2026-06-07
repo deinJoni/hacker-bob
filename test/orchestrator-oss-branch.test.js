@@ -53,6 +53,9 @@ const {
   buildRepoInventory,
 } = require("../mcp/lib/repo-target.js");
 const {
+  prepareRepoEnv,
+} = require("../mcp/lib/repo-env.js");
+const {
   routeSurfaces,
 } = require("../mcp/lib/surface-router.js");
 const {
@@ -98,15 +101,24 @@ function withTempHome(fn) {
   const previousHome = process.env.HOME;
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bob-orch-oss-home-"));
   process.env.HOME = tempHome;
-  try {
-    return fn(tempHome);
-  } finally {
+  const cleanup = () => {
     if (previousHome === undefined) {
       delete process.env.HOME;
     } else {
       process.env.HOME = previousHome;
     }
     fs.rmSync(tempHome, { recursive: true, force: true });
+  };
+  try {
+    const result = fn(tempHome);
+    if (result && typeof result.then === "function") {
+      return result.finally(cleanup);
+    }
+    cleanup();
+    return result;
+  } catch (error) {
+    cleanup();
+    throw error;
   }
 }
 
@@ -437,20 +449,26 @@ test("OSS brief extras partition technique packs by task lens and keep CLI packs
   assert.match(extras.cli_tools, /semgrep|trivy/);
 });
 
-test("readAssignmentBrief accepts routed OSS brief_profile and emits OSS technique packs", () => withTempHome((home) => {
+test("readAssignmentBrief accepts routed OSS brief_profile and emits OSS technique packs", () => withTempHome(async (home) => {
   const repo = path.join(home, "brief-oss-native");
   fs.mkdirSync(repo, { recursive: true });
   fs.writeFileSync(path.join(repo, "CMakeLists.txt"), "cmake_minimum_required(VERSION 3.22)\nproject(brief_oss C)\n");
   fs.mkdirSync(path.join(repo, "src"), { recursive: true });
   fs.writeFileSync(path.join(repo, "src", "parser.c"), "int parse(const char *b, int n){ return n > 0 ? b[0] : 0; }\n");
+  fs.mkdirSync(path.join(repo, "fuzz", "corpus"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "fuzz", "corpus", "minimal.bin"), "AAAA");
 
   const init = parseResult(initRepoSession({ repo_path: repo, target_domain: "repo-brief-oss-native" }));
   parseResult(buildRepoInventory({ target_domain: init.target_domain }));
+  await prepareRepoEnv({ target_domain: init.target_domain });
   materializeFrontier(init.target_domain, { write: true });
   parseResult(routeSurfaces({ target_domain: init.target_domain }));
   const surfaces = currentSurfaces(init.target_domain).surfaces;
   const nativeSurface = surfaces.find((surface) => surface.title === "src/parser.c");
   assert.ok(nativeSurface, "expected native parser surface");
+  assert.equal(nativeSurface.file_path, "src/parser.c");
+  assert.equal(nativeSurface.language, "c");
+  assert.equal(nativeSurface.native_source, true);
   parseResult(advanceSession({ target_domain: init.target_domain, to_state: "OPEN_FRONTIER" }));
   const wave = parseResult(startWave({
     target_domain: init.target_domain,
@@ -458,7 +476,7 @@ test("readAssignmentBrief accepts routed OSS brief_profile and emits OSS techniq
     assignments: [{
       agent: "a1",
       surface_id: nativeSurface.id,
-      task_lens: "taint_trace",
+      task_lens: "fuzz_run",
     }],
   }));
   const assignment = wave.assignments[0];
@@ -473,6 +491,12 @@ test("readAssignmentBrief accepts routed OSS brief_profile and emits OSS techniq
   assert.equal(brief.run_context.brief_profile, "oss");
   assert.equal(brief.run_context.capability_pack, "oss_native_code");
   assert.ok(brief.repo_workflow);
+  assert.equal(brief.code_surface_pack.assigned_surface.file_path, "src/parser.c");
+  assert.equal(brief.code_surface_pack.assigned_surface.language, "c");
+  assert.equal(brief.code_surface_pack.assigned_surface.native_source, "true");
+  assert.equal(brief.repo_env_recommendations.seed_corpus_count, 1);
+  assert.equal(brief.repo_env_recommendations.seed_corpus[0].rel_path, "fuzz/corpus");
+  assert.ok(brief.repo_env_recommendations.recommended_commands.some((command) => command.role === "fuzz"));
   assert.ok(brief.technique_packs.selected.some((pack) => pack.id === "oss_native_code"));
   assert.ok(!String(JSON.stringify(brief)).includes("Unsupported brief profile"));
 }));
