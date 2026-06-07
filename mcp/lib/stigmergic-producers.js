@@ -86,6 +86,14 @@ const STIGMERGIC_PRODUCERS = Object.freeze([
       "grade_verdict_reachability_ceiling_reconciler",
     ]),
   }),
+  Object.freeze({
+    producer_id: "oss_technique_pack_registry",
+    mcp_tool_or_artifact: "OSS_TECHNIQUE_PACKS",
+    trace_shape_ref: "mcp/lib/technique-packs.js#OSS_TECHNIQUE_PACKS",
+    registered_consumers: Object.freeze([
+      "assignment_brief_oss_technique_pack_renderer",
+    ]),
+  }),
 ]);
 
 const PRODUCER_IDS = Object.freeze(

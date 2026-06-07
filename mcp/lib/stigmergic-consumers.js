@@ -122,6 +122,17 @@ const STIGMERGIC_CONSUMERS = Object.freeze([
     rationale:
       "grade verdicts consume I9 surface ceilings to cap local AV:L severity and certify AV:N findings",
   }),
+  Object.freeze({
+    consumer_id: "assignment_brief_oss_technique_pack_renderer",
+    source_location: Object.freeze({
+      file: "mcp/lib/assignment-brief.js",
+      token_or_regex: "buildOssTechniquePacksSlice",
+    }),
+    producer_id: "oss_technique_pack_registry",
+    decision_boundary: "brief_composition",
+    rationale:
+      "OSS brief composition consumes OSS_TECHNIQUE_PACKS and partitions them by task-lens affinity",
+  }),
 ]);
 
 const CONSUMER_IDS = Object.freeze(

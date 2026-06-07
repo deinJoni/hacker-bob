@@ -292,6 +292,8 @@ function readRepoSession(targetDomain) {
 const REPO_INVENTORY_VERSION = 1;
 const REPO_WALK_MAX_FILES = 50000;
 const REPO_WALK_PROBE_MAX_BYTES = 64 * 1024; // cap text probes (NFS detection)
+const SEED_CORPUS_SUMMARY_LIMIT = 16;
+const SEED_CORPUS_SAMPLE_RELS_LIMIT = 10;
 
 // Default-excluded directory names (per O.2 spec). These are layered ON TOP
 // of .gitignore patterns; .gitignore is the authoritative source for a
@@ -308,6 +310,17 @@ const DEFAULT_EXCLUDED_DIRS = Object.freeze(new Set([
   "__pycache__",
   "coverage",
 ]));
+
+const SEED_CORPUS_DIR_NAMES = Object.freeze(new Set([
+  "testdata",
+  "corpus",
+  "seeds",
+]));
+const SEED_CORPUS_NESTED_DIRS = Object.freeze([
+  "fuzz/corpus",
+]);
+const OSS_FUZZ_SEED_CORPUS_DIR_RE = /(?:^|\/)[^/]+_seed_corpus$/i;
+const OSS_FUZZ_SEED_CORPUS_ZIP_RE = /(?:^|\/)[^/]+_seed_corpus\.zip$/i;
 
 // Manifest filenames that flag a package/module surface.
 const MANIFEST_NAMES = Object.freeze(new Set([
@@ -605,6 +618,19 @@ function safeReadProbe(rootPath, relPath, maxBytes = REPO_WALK_PROBE_MAX_BYTES) 
   }
 }
 
+function safeFileStatWithinRoot(rootPath, relPath) {
+  try {
+    const rootReal = fs.realpathSync(rootPath);
+    const absPath = path.resolve(rootReal, relPath);
+    const realPath = fs.realpathSync(absPath);
+    if (!pathWithinRoot(rootReal, realPath)) return null;
+    const stat = fs.statSync(realPath);
+    return stat.isFile() ? stat : null;
+  } catch {
+    return null;
+  }
+}
+
 function detectNfsXdrShape(rootPath, files) {
   // Scan a bounded number of native-build files for NFS/XDR signals. The
   // probe stays under 64KiB per file so a pathological CMakeLists does not
@@ -678,6 +704,59 @@ function findLockfileForManifest(manifestRel, files) {
   return null;
 }
 
+function matchingNestedSeedCorpusDir(segments) {
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    for (const nested of SEED_CORPUS_NESTED_DIRS) {
+      const nestedSegments = nested.split("/");
+      const slice = segments.slice(index, index + nestedSegments.length);
+      if (slice.length === nestedSegments.length && slice.join("/") === nested) {
+        return segments.slice(0, index + nestedSegments.length).join("/");
+      }
+    }
+  }
+  return null;
+}
+
+function seedCorpusForRel(rel) {
+  const normalized = String(rel || "").split(path.sep).join("/");
+  if (!normalized) return null;
+  if (OSS_FUZZ_SEED_CORPUS_ZIP_RE.test(normalized)) {
+    return { dir: normalized, isZip: true };
+  }
+  const segments = normalized.split("/").filter(Boolean);
+  const nested = matchingNestedSeedCorpusDir(segments);
+  if (nested) return { dir: nested, isZip: false };
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    const base = segments[index];
+    const dir = segments.slice(0, index + 1).join("/");
+    if (SEED_CORPUS_DIR_NAMES.has(base)) {
+      return { dir, isZip: false };
+    }
+    if (OSS_FUZZ_SEED_CORPUS_DIR_RE.test(dir)) {
+      return { dir, isZip: false };
+    }
+  }
+  return null;
+}
+
+function buildSeedCorpusSummary(entries) {
+  const summaries = [];
+  const sortedEntries = Array.from(entries.entries()).sort(([a], [b]) => a.localeCompare(b));
+  for (const [relPath, entry] of sortedEntries.slice(0, SEED_CORPUS_SUMMARY_LIMIT)) {
+    const summary = {
+      rel_path: relPath,
+      file_count: entry.fileCount,
+      total_bytes: entry.totalBytes,
+      has_zip: entry.hasZip,
+      sample_rels: entry.sampleRels.slice(),
+      truncated: entry.fileCount > entry.sampleRels.length,
+    };
+    summary.manifest_hash = hashDocumentExcluding(summary, ["manifest_hash"]);
+    summaries.push(summary);
+  }
+  return summaries;
+}
+
 function classifyFile(rel) {
   const base = path.basename(rel);
   const ext = path.extname(rel).toLowerCase();
@@ -688,6 +767,7 @@ function classifyFile(rel) {
   const language = LANGUAGE_BY_EXT[ext] || null;
   const nativeSource = NATIVE_SOURCE_EXTENSIONS.has(ext);
   const nativeBuild = NATIVE_BUILD_NAMES.has(base);
+  const seedCorpus = seedCorpusForRel(rel);
   return {
     base,
     ext,
@@ -698,6 +778,7 @@ function classifyFile(rel) {
     language,
     nativeSource,
     nativeBuild,
+    seedCorpus,
   };
 }
 
@@ -739,6 +820,7 @@ function buildInventoryProjection(domain, repoRoot, files) {
   const entryPoints = [];
   const ciPipelines = [];
   const configs = [];
+  const seedCorpusEntries = new Map();
   const manifests = [];
   const languageCounts = {};
   let nativeSourceCount = 0;
@@ -781,10 +863,35 @@ function buildInventoryProjection(domain, repoRoot, files) {
     if (info.ci) ciPipelines.push(rel);
     if (info.entry) entryPoints.push(rel);
     if (info.config) configs.push(rel);
+    if (info.seedCorpus) {
+      const stat = safeFileStatWithinRoot(repoRoot, rel);
+      if (stat) {
+        const relPath = info.seedCorpus.dir;
+        let entry = seedCorpusEntries.get(relPath);
+        if (!entry) {
+          entry = {
+            fileCount: 0,
+            totalBytes: 0,
+            hasZip: false,
+            sampleRels: [],
+          };
+          seedCorpusEntries.set(relPath, entry);
+        }
+        entry.fileCount += 1;
+        entry.totalBytes += stat.size;
+        entry.hasZip = entry.hasZip || info.seedCorpus.isZip || /\.zip$/i.test(rel);
+        if (entry.sampleRels.length < SEED_CORPUS_SAMPLE_RELS_LIMIT) {
+          entry.sampleRels.push(rel);
+        }
+      }
+    }
   }
 
   const nfsShape = detectNfsXdrShape(repoRoot, files);
   const residualHuntTargets = detectResidualHuntTargets(repoRoot, files, modules);
+  const seedCorpus = buildSeedCorpusSummary(seedCorpusEntries);
+  const seedCorpusCount = seedCorpusEntries.size;
+  const seedCorpusHash = hashCanonicalJson({ seed_corpus: seedCorpus });
   return {
     modules,
     dependencies,
@@ -797,6 +904,9 @@ function buildInventoryProjection(domain, repoRoot, files) {
     nativeBuildCount,
     nfsShape,
     residualHuntTargets,
+    seedCorpus,
+    seedCorpusCount,
+    seedCorpusHash,
   };
 }
 
@@ -974,11 +1084,14 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
         native_source_files: projection.nativeSourceCount,
         native_build_files: projection.nativeBuildCount,
         residual_hunt_targets: projection.residualHuntTargets.length,
+        seed_corpus: projection.seedCorpusCount,
         surface_events_emitted: emittedCount.value,
       },
       languages: projection.languageCounts,
       nfs_xdr_shape: projection.nfsShape,
       residual_hunt_targets: projection.residualHuntTargets,
+      seed_corpus: projection.seedCorpus,
+      seed_corpus_hash: projection.seedCorpusHash,
       reachability: reachability.reachability,
       manifests: projection.manifests,
       ci_pipelines: projection.ciPipelines,
@@ -1004,6 +1117,8 @@ function buildRepoInventory({ target_domain: targetDomain, repo_path: repoPathOv
       inventory_hash: inventory.inventory_hash,
       nfs_xdr_shape: projection.nfsShape,
       residual_hunt_targets: projection.residualHuntTargets,
+      seed_corpus: inventory.seed_corpus,
+      seed_corpus_hash: inventory.seed_corpus_hash,
       reachability: inventory.reachability,
     };
   });
@@ -1726,6 +1841,8 @@ module.exports = {
   REPO_CHECK_SUMMARY_TOP_N,
   REPO_CHECK_TYPES,
   REPO_WALK_MAX_FILES,
+  SEED_CORPUS_SUMMARY_LIMIT,
+  SEED_CORPUS_SAMPLE_RELS_LIMIT,
   RepoTooLargeError,
   safeBasename,
   sha8,

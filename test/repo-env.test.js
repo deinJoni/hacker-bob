@@ -27,6 +27,7 @@ const path = require("path");
 const {
   initRepoSession,
   buildRepoInventory,
+  SEED_CORPUS_SUMMARY_LIMIT,
 } = require("../mcp/lib/repo-target.js");
 const {
   prepareRepoEnv,
@@ -221,6 +222,18 @@ test("recommendedCommandsFor c uses compose role with sh -lc staging recipe", ()
 test("recommendedCommandsFor c surfaces NFS/XDR note when shape detected", () => {
   const commands = recommendedCommandsFor("c", { nfsXdrShape: true });
   assert.match(commands[0].description, /NFS\/XDR/);
+});
+
+test("recommendedCommandsFor c emits one fuzz seed command when seed corpus is present", () => {
+  const commands = recommendedCommandsFor("c", {
+    seedCorpus: [{ rel_path: "fuzz/corpus", file_count: 2 }],
+  });
+  const fuzzCommands = commands.filter((command) => command.role === "fuzz");
+  assert.equal(fuzzCommands.length, 1);
+  assert.equal(fuzzCommands[0].id, "fuzz_seed_probe");
+  assert.equal(fuzzCommands[0].seed_path, "fuzz/corpus");
+  assert.match(fuzzCommands[0].description, /fuzz\/corpus/);
+  assert.match(fuzzCommands[0].command[2], /find 'fuzz\/corpus'/);
 });
 
 test("every recommended_commands[].role is in RECOMMENDED_COMMAND_ROLES", () => {
@@ -603,6 +616,49 @@ test("prepareRepoEnv reads nfs_xdr_shape from repo-inventory.json when present",
     assert.equal(repoEnv.detection.nfs_xdr_shape, true);
     // The C compose recipe surfaces the NFS note in its description.
     assert.match(repoEnv.recommended_commands[0].description, /NFS\/XDR/);
+  });
+});
+
+test("prepareRepoEnv threads seed_corpus from repo-inventory into C/C++ fuzz command", async () => {
+  await withTempHome(async () => {
+    const repoRoot = makeTempRepoDir();
+    write(repoRoot, "CMakeLists.txt", "cmake_minimum_required(VERSION 3.22)\nproject(seed C)\n");
+    write(repoRoot, "src/main.c", "int main(){return 0;}\n");
+    write(repoRoot, "fuzz/corpus/minimal.bin", "AAAA");
+    const init = initRepoSession({ repo_path: repoRoot });
+    buildRepoInventory({ target_domain: init.target_domain });
+
+    const result = await prepareRepoEnv({ target_domain: init.target_domain });
+    assert.equal(result.language, "c");
+    assert.equal(result.seed_corpus.length, 1);
+    assert.ok(result.recommended_commands.some((command) => command.role === "fuzz"));
+
+    const repoEnv = JSON.parse(fs.readFileSync(repoEnvJsonPath(init.target_domain), "utf8"));
+    assert.equal(repoEnv.detection.seed_corpus_count, 1);
+    assert.equal(repoEnv.seed_corpus[0].rel_path, "fuzz/corpus");
+    assert.ok(repoEnv.recommended_commands.some((command) => command.id === "fuzz_seed_probe"));
+  });
+});
+
+test("prepareRepoEnv uses inventory counts for capped seed corpus summaries", async () => {
+  await withTempHome(async () => {
+    const repoRoot = makeTempRepoDir();
+    write(repoRoot, "CMakeLists.txt", "cmake_minimum_required(VERSION 3.22)\nproject(seed_count C)\n");
+    write(repoRoot, "src/main.c", "int main(){return 0;}\n");
+    const corpusCount = SEED_CORPUS_SUMMARY_LIMIT + 2;
+    for (let index = 0; index < corpusCount; index += 1) {
+      write(repoRoot, `sample_${String(index).padStart(2, "0")}_seed_corpus/input.bin`, `seed-${index}`);
+    }
+    const init = initRepoSession({ repo_path: repoRoot });
+    buildRepoInventory({ target_domain: init.target_domain });
+
+    const result = await prepareRepoEnv({ target_domain: init.target_domain });
+    assert.equal(result.seed_corpus.length, SEED_CORPUS_SUMMARY_LIMIT);
+    assert.equal(result.seed_corpus_count, corpusCount);
+
+    const repoEnv = JSON.parse(fs.readFileSync(repoEnvJsonPath(init.target_domain), "utf8"));
+    assert.equal(repoEnv.seed_corpus.length, SEED_CORPUS_SUMMARY_LIMIT);
+    assert.equal(repoEnv.detection.seed_corpus_count, corpusCount);
   });
 });
 
