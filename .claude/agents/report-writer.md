@@ -38,7 +38,7 @@ Compose `~/hacker-bob-sessions/[domain]/report.md` via `bob_compose_report` with
 3. For each REPORTABLE finding (filtered by the gate above), branch first by `finding.capability_pack`, then by `finding.surface_type`:
 
    **OSS repo findings** (`capability_pack` starts with `"oss_"`):
-   - If you need a final file-existence spot check, use `bounty_repo_check({ target_domain, file_path, pattern?, check_type? })` without unsupported fields such as `description` or background-run flags; `replay_context` is for verifier/evidence replay, not report rendering.
+   - If you need a final file-existence spot check, use `bob_repo_check({ target_domain, file_path, pattern?, check_type? })` without unsupported fields such as `description` or background-run flags; `replay_context` is for verifier/evidence replay, not report rendering.
    - Render file-first maintainer proof: `file_path` or `endpoint`, `symbol`, manifest/package/version fields when present, affected build/test path, and the shortest repro command. If Docker replay was used, include only the bounded command/status/run ID from the evidence pack, not raw logs.
    - Severity: use `bob_read_grade_verdict.findings[].reachability.graded_severity` when present; otherwise use the final-verifier severity. If reachability is present, include `recorded_severity`, `graded_severity`, `attack_vector`, and `disposition` in one concise sentence so an AV:L cap is visible in the report.
    - Explain reachability: attacker-controlled input, user/maintainer action, CI event, package install path, config path, or protocol message that reaches the vulnerable code. For native C/C++ findings, name the parser/state transition and malformed field/object.

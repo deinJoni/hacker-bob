@@ -23,13 +23,13 @@ Latest-session detection must pick the newest target directory by `pipeline-even
 
 ## Read Order
 First, read the passive update cache if the helper is installed:
-```
+```bash
 node -e "const update=require('./mcp/lib/update-check.js'); console.log(JSON.stringify(update.readUpdateCache(process.cwd()) || null, null, 2));"
 ```
 This command must only read the local update cache. Do not run network update checks from `/skill:bob-status`.
 
 After resolving `target_domain`, call:
-```
+```text
 bob_read_pipeline_analytics({ target_domain, include_events: false, limit: 20 })
 bob_read_session_summary({ target_domain })
 bob_read_state_summary({ target_domain })
@@ -61,8 +61,8 @@ Surface evidence status from `bob_read_pipeline_analytics.data.sessions[0].evide
 - `skipped` when there are no final reportable findings and evidence packs are not required.
 - `unknown` when analytics and optional read-only confirmation cannot determine evidence readiness.
 
-If evidence is `missing/invalid` for final reportable findings, list it as a blocking issue. Use `/bob-evaluate resume <target_domain>` as the next command when analytics gives a clear `missing_evidence` blocker or missing finding IDs; otherwise use `/skill:bob-debug <target_domain>` to inspect the unclear state.
-If analytics includes `egress` or `geofence_warnings`, include recent egress profile names and any `network_unreachable_target` warning in the blocking issue line. Recommend `/bob-evaluate --egress <profile> resume <target_domain>` only when the operator has chosen the profile.
+If evidence is `missing/invalid` for final reportable findings, list it as a blocking issue. Use `/skill:bob-evaluate resume <target_domain>` as the next command when analytics gives a clear `missing_evidence` blocker or missing finding IDs; otherwise use `/skill:bob-debug <target_domain>` to inspect the unclear state.
+If analytics includes `egress` or `geofence_warnings`, include recent egress profile names and any `network_unreachable_target` warning in the blocking issue line. Recommend `/skill:bob-evaluate --egress <profile> resume <target_domain>` only when the operator has chosen the profile.
 
 ## V2 Verification Panel
 When `bob_read_verification_context` reports `schema_version: 2`, surface a compact panel built from `archived_attempts`, `current_attempt_id`, and the freshness fields. The panel is part of the verification line, not a separate command. Render:
@@ -83,6 +83,6 @@ Always include:
 - Egress profile summary and geofence warning when visible from analytics.
 - If the update cache says a Bob update is available, include `Update: Hacker Bob <version> available. Run /skill:bob-update.`
 - Any blocking issue visible from status reads.
-- Next command: usually `/bob-evaluate resume <target_domain>`, `/skill:bob-debug <target_domain>`, `/skill:bob-debug --deep <target_domain>`, or no action needed.
+- Next command: usually `/skill:bob-evaluate resume <target_domain>`, `/skill:bob-debug <target_domain>`, `/skill:bob-debug --deep <target_domain>`, or no action needed.
 
 Do not include detailed root-cause analysis. If the operator needs that, point them to `/skill:bob-debug`.
