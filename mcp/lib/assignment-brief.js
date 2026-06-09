@@ -105,6 +105,13 @@ const {
 const {
   repoEnvPath,
 } = require("./paths.js");
+const {
+  wrapUntrusted,
+  UNTRUSTED_DATA_SYSTEM_NOTE,
+  OPEN_SENTINEL,
+  CLOSE_SENTINEL,
+  FENCE_OVERHEAD_BUDGET,
+} = require("./untrusted-envelope.js");
 const fs = require("fs");
 
 // Bypass table tech-to-file map used by evaluator brief generation.
@@ -209,12 +216,16 @@ const ASSIGNMENT_BRIEF_RANKING_REASON_MAX_CHARS = 160;
 // Default brief message returned when bob-spec.json is absent. The loader is
 // real (mcp/lib/bob-spec.js); this message is the empty-state fallback.
 const BOB_SPEC_ABSENT_MESSAGE = "bob-spec.json not present in the session directory; the smart_contract anti-stop rule still applies (record at least one bypass_attempts[] entry citing the trust assumption you actually attempted to break, or record a finding).";
+const UNTRUSTED_FENCE_OVERHEAD_CHARS = FENCE_OVERHEAD_BUDGET;
+const UNTRUSTED_CONTENT_POLICY =
+  `${UNTRUSTED_DATA_SYSTEM_NOTE} Markers: ${OPEN_SENTINEL} / ${CLOSE_SENTINEL}.`;
 
-function briefSliceEntry(key, budget_chars, read) {
+function briefSliceEntry(key, budget_chars, read, untrusted = false) {
   return Object.freeze({
     key,
     budget_chars,
     read,
+    untrusted: untrusted === true,
   });
 }
 
@@ -283,13 +294,13 @@ const WEB_BRIEF_SLICE_REGISTRY = Object.freeze([
     observations: context.cliToolObservations,
     target_domain: context.cliToolTargetDomain,
   })),
-  briefSliceEntry("traffic_summary", 4096, (context) => context.trafficSummary),
-  briefSliceEntry("audit_summary", 4096, (context) => context.auditSummary),
+  briefSliceEntry("traffic_summary", 4096 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.trafficSummary, true),
+  briefSliceEntry("audit_summary", 4096 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.auditSummary, true),
   briefSliceEntry("circuit_breaker_summary", 1024, (context) => context.circuitBreakerSummary),
-  briefSliceEntry("intel_hints", 4096, (context) => context.intelHints),
-  briefSliceEntry("static_scan_hints", 4096, (context) => context.staticScanHints),
-  briefSliceEntry("schema_slice", 8192, (context) => context.schemaSlice),
-  briefSliceEntry("surface_graph_slice", 8192, (context) => context.surfaceGraphSlice),
+  briefSliceEntry("intel_hints", 4096 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.intelHints, true),
+  briefSliceEntry("static_scan_hints", 4096 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.staticScanHints, true),
+  briefSliceEntry("schema_slice", 8192 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.schemaSlice, true),
+  briefSliceEntry("surface_graph_slice", 8192 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.surfaceGraphSlice, true),
   briefSliceEntry("auth_profiles_hint", 512, () => "Call `bob_list_auth_profiles`; pass the chosen profile name as `auth_profile` to `bob_http_scan`."),
 ]);
 
@@ -403,7 +414,7 @@ function buildOssTechniquePacksSlice(taskLens) {
 const SMART_CONTRACT_BRIEF_SLICE_REGISTRY = Object.freeze([
   briefSliceEntry("bob_spec_status", 4096, (context) => context.bobSpecStatus),
   briefSliceEntry("rpc_pool", 4096, (context) => context.rpcPool),
-  briefSliceEntry("surface_graph_slice", 8192, (context) => context.surfaceGraphSlice),
+  briefSliceEntry("surface_graph_slice", 8192 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.surfaceGraphSlice, true),
 ]);
 
 // ── Plane O Cycle O.6 — OSS brief slice registry ─────────────────────────────
@@ -515,12 +526,12 @@ const NODE_BRIEF_SLICE_REGISTRY = Object.freeze([
   briefSliceEntry("governance", 1024, (context) => context.governance),
   briefSliceEntry("node_context", 1024, (context) => context.nodeContext),
   briefSliceEntry("contract", 4096, (context) => context.contract),
-  briefSliceEntry("cross_stack_composition", 8192, (context) => context.crossStackComposition || ""),
+  briefSliceEntry("cross_stack_composition", 8192 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.crossStackComposition || "", true),
   briefSliceEntry("allowed_tools_for_node", 2048, (context) => context.allowedToolsForNode),
-  briefSliceEntry("recommended_reads", 4096, (context) => context.recommendedReads),
-  briefSliceEntry("adjacent_observations", 4096, (context) => context.adjacentObservations),
-  briefSliceEntry("prior_attempt", 4096, (context) => context.priorAttempt || ""),
-  briefSliceEntry("adjacent_hypotheses", 2048, (context) => context.adjacentHypotheses || ""),
+  briefSliceEntry("recommended_reads", 4096 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.recommendedReads, true),
+  briefSliceEntry("adjacent_observations", 4096 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.adjacentObservations, true),
+  briefSliceEntry("prior_attempt", 4096 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.priorAttempt || "", true),
+  briefSliceEntry("adjacent_hypotheses", 2048 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.adjacentHypotheses || "", true),
   briefSliceEntry("recap_and_handoff", 2048, (context) => context.recapAndHandoff),
 ]);
 
@@ -560,7 +571,10 @@ function briefSliceRegistryForProfile(profile) {
 // context sets it to "" when neither applies; we drop the empty key so the
 // brief stays absent rather than carrying an empty header (T-R1 guard).
 function renderNodeBriefExtras(context) {
-  const extras = buildBriefExtrasFromRegistry(NODE_BRIEF_SLICE_REGISTRY, context);
+  const extras = {
+    untrusted_content_policy: UNTRUSTED_CONTENT_POLICY,
+    ...buildBriefExtrasFromRegistry(NODE_BRIEF_SLICE_REGISTRY, context),
+  };
   if (extras.prior_attempt === "" || extras.prior_attempt == null) {
     delete extras.prior_attempt;
   }
@@ -576,9 +590,32 @@ function renderNodeBriefExtras(context) {
 function buildBriefExtrasFromRegistry(registry, context) {
   const extras = {};
   for (const slice of registry) {
-    extras[slice.key] = slice.read(context);
+    const value = slice.read(context);
+    if (slice.untrusted === true) {
+      const rendered = renderUntrustedBriefSlice(slice.key, value);
+      if (rendered === "") continue;
+      extras[slice.key] = rendered;
+      continue;
+    }
+    extras[slice.key] = value;
   }
   return extras;
+}
+
+function renderUntrustedBriefSlice(label, value) {
+  if (value === "" || value == null) return "";
+  let body;
+  if (Buffer.isBuffer(value) || typeof value === "string") {
+    body = value;
+  } else {
+    try {
+      body = JSON.stringify(value, null, 2);
+    } catch {
+      body = String(value);
+    }
+  }
+  if (body == null || body === "") return "";
+  return wrapUntrusted(body, { label }).fenced;
 }
 
 function resolveBypassTable(techStack) {
@@ -970,6 +1007,7 @@ function readAssignmentBrief(args) {
   );
 
   return JSON.stringify({
+    untrusted_content_policy: UNTRUSTED_CONTENT_POLICY,
     run_context: {
       target_domain: domain,
       lifecycle_state: state.lifecycle_state,
@@ -1556,8 +1594,11 @@ module.exports = {
   partitionOssTechniquePacksByLens,
   buildOssBriefExtras,
   buildRepoEnvRecommendationsForBrief,
+  buildBriefExtrasFromRegistry,
   buildBriefExtrasForProfile,
   ASSIGNMENT_BRIEF_SLICE_REGISTRY,
+  UNTRUSTED_CONTENT_POLICY,
+  UNTRUSTED_FENCE_OVERHEAD_CHARS,
   readAssignmentBrief,
   renderAvailableCliToolsSection,
   renderAvailableCliToolsSectionSync,

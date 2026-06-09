@@ -78,6 +78,12 @@ const {
   renderNodeBriefExtras,
 } = require("../assignment-brief.js");
 const {
+  OPEN_SENTINEL,
+  CLOSE_SENTINEL,
+  ENVELOPE_NONCE_HEX_CHARS,
+  escapeRegExp,
+} = require("../untrusted-envelope.js");
+const {
   TRANSITION_KIND_HUNTING_VOCAB,
   transitionKindBriefContent,
 } = require("../technique-packs.js");
@@ -203,6 +209,13 @@ function structuredError(code, message, details) {
 
 function sha256Hex(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function normalizeUntrustedEnvelopeNoncesForHash(value) {
+  const noncePattern = `[0-9a-f]{${ENVELOPE_NONCE_HEX_CHARS}}`;
+  return String(value)
+    .replace(new RegExp(`${escapeRegExp(OPEN_SENTINEL)} nonce=${noncePattern}`, "g"), `${OPEN_SENTINEL} nonce=<nonce>`)
+    .replace(new RegExp(`${escapeRegExp(CLOSE_SENTINEL)} nonce=${noncePattern}`, "g"), `${CLOSE_SENTINEL} nonce=<nonce>`);
 }
 
 function safeSurfaceRouteMap(targetDomain) {
@@ -961,7 +974,9 @@ function handler(args) {
     ...briefExtras,
   };
   const briefJson = JSON.stringify(brief);
-  const briefHash = sha256Hex(briefJson);
+  // Node briefs may render nonce-fenced untrusted summaries; the prep token
+  // binds the summary content and graph state, not the per-render nonce.
+  const briefHash = sha256Hex(normalizeUntrustedEnvelopeNoncesForHash(briefJson));
 
   // Mint the prep_token. The token binds node_id + contract_hash + brief_hash
   // + materialized_at + graph_context_hash so any drift in the underlying

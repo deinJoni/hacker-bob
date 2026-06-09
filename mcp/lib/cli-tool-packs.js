@@ -358,8 +358,17 @@ function fillInvocationPlaceholders(template, context) {
     const key = colonIdx >= 0 ? slot.slice(0, colonIdx) : slot;
     const value = context[key];
     if (value == null || value === "") return match;
-    return String(value);
+    return sanitizeInvocationPlaceholderValue(value);
   });
+}
+
+function sanitizeInvocationPlaceholderValue(value) {
+  return String(value)
+    .replace(/[\u0000-\u001f\u007f]+/g, "_")
+    .replace(/[\s`"'$;|&()\\<>!{}\[\]*?#]+/g, "_")
+    .replace(/_{2,}/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .trim();
 }
 
 module.exports = {

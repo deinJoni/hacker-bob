@@ -22,6 +22,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const crypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -47,6 +48,28 @@ const {
 const {
   appendContract,
 } = require("../mcp/lib/contracts.js");
+const {
+  OPEN_SENTINEL,
+  CLOSE_SENTINEL,
+  escapeRegExp,
+} = require("../mcp/lib/untrusted-envelope.js");
+
+function parseFencedBriefJson(value, label) {
+  const match = String(value).match(/^<<UNTRUSTED_DATA nonce=([0-9a-f]{32}) label=([^>\n]+)>>\n([\s\S]*)\n<<END_UNTRUSTED_DATA nonce=\1>>$/);
+  assert.ok(match, `expected fenced ${label} slice`);
+  assert.equal(match[2], label);
+  return JSON.parse(match[3]);
+}
+
+function sha256Hex(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function normalizeEnvelopeNonces(value) {
+  return String(value)
+    .replace(new RegExp(`${escapeRegExp(OPEN_SENTINEL)} nonce=[0-9a-f]{32}`, "g"), `${OPEN_SENTINEL} nonce=<nonce>`)
+    .replace(new RegExp(`${escapeRegExp(CLOSE_SENTINEL)} nonce=[0-9a-f]{32}`, "g"), `${CLOSE_SENTINEL} nonce=<nonce>`);
+}
 
 function withTempHome(fn) {
   const previousHome = process.env.HOME;
@@ -57,6 +80,47 @@ function withTempHome(fn) {
   } finally {
     process.env.HOME = previousHome;
     fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+function withFixedDate(isoString, fn) {
+  const RealDate = Date;
+  const fixedTime = new RealDate(isoString).getTime();
+  function FixedDate(...args) {
+    if (!(this instanceof FixedDate)) {
+      return args.length === 0
+        ? new RealDate(fixedTime).toString()
+        : new RealDate(...args).toString();
+    }
+    return args.length === 0
+      ? new RealDate(fixedTime)
+      : new RealDate(...args);
+  }
+  Object.setPrototypeOf(FixedDate, RealDate);
+  FixedDate.prototype = RealDate.prototype;
+  FixedDate.now = () => fixedTime;
+  FixedDate.parse = RealDate.parse;
+  FixedDate.UTC = RealDate.UTC;
+  global.Date = FixedDate;
+  try {
+    return fn();
+  } finally {
+    global.Date = RealDate;
+  }
+}
+
+function withSequentialRandomBytes(fn) {
+  const originalRandomBytes = crypto.randomBytes;
+  let fillByte = 1;
+  crypto.randomBytes = (size) => {
+    const out = Buffer.alloc(size, fillByte);
+    fillByte = (fillByte % 255) + 1;
+    return out;
+  };
+  try {
+    return fn();
+  } finally {
+    crypto.randomBytes = originalRandomBytes;
   }
 }
 
@@ -282,12 +346,15 @@ test("prepare → finalize succeeds with a relational_value_match Contract; down
     assert.ok(prep.brief.contract, "brief.contract must be inlined");
     assert.equal(prep.brief.contract.contract_id, "C-x8-rel");
     assert.equal(prep.brief.contract.witnesses.length, 1);
+    const renderedBriefJson = JSON.stringify(prep.brief);
+    assert.match(renderedBriefJson, /nonce=[0-9a-f]{32}/, "node brief should carry untrusted fences");
+    assert.equal(prep.brief_hash, sha256Hex(normalizeEnvelopeNonces(renderedBriefJson)));
 
     // The recommended_reads slice must inline distilled summaries / typed
     // pointers per X-P9. For frontier_event refs there is no paired
     // observation summary, so the slice surfaces a typed pointer naming
     // the resolver to call — NOT the body.
-    const refs = prep.brief.recommended_reads.refs;
+    const refs = parseFencedBriefJson(prep.brief.recommended_reads, "recommended_reads").refs;
     assert.ok(refs.length >= 2, "expected both frontier_event refs in recommended_reads");
     const leftRef = refs.find((r) => r.artifact_ref === `frontier_event:${leftEvent.event_id}`);
     assert.ok(leftRef);
@@ -314,6 +381,50 @@ test("prepare → finalize succeeds with a relational_value_match Contract; down
     const doc = materializeTaskGraph(domain, { write: false }).document;
     const node = doc.nodes.find((n) => n.node_id === nodeId);
     assert.equal(node.state, "finalized");
+  });
+});
+
+test("prepare_node keeps prep_token stable across equivalent briefs with fresh envelope nonces", () => {
+  const fixedMaterializedAt = "2026-05-31T00:03:00.000Z";
+  const domain = "x8-prep-token-nonce-stability.example.com";
+
+  function prepareFixture() {
+    seedSession(domain);
+    const nodeId = seedContractedNode(domain, "HP-nonce-stable");
+    const prep = JSON.parse(TOOL_HANDLERS.bob_prepare_node({
+      target_domain: domain,
+      node_id: nodeId,
+      ts: "2026-05-31T00:04:00.000Z",
+    }));
+    return {
+      nodeId,
+      prep,
+      briefJson: JSON.stringify(prep.brief),
+    };
+  }
+
+  withSequentialRandomBytes(() => {
+    const first = withTempHome(() => withFixedDate(fixedMaterializedAt, prepareFixture));
+    withTempHome(() => withFixedDate(fixedMaterializedAt, () => {
+      const second = prepareFixture();
+      assert.match(first.briefJson, /nonce=[0-9a-f]{32}/, "first brief should carry envelope nonces");
+      assert.match(second.briefJson, /nonce=[0-9a-f]{32}/, "second brief should carry envelope nonces");
+      assert.notEqual(first.briefJson, second.briefJson, "raw briefs should differ by fresh envelope nonces");
+      assert.equal(normalizeEnvelopeNonces(first.briefJson), normalizeEnvelopeNonces(second.briefJson));
+      assert.equal(first.prep.brief_hash, second.prep.brief_hash);
+      assert.equal(first.prep.prep_token, second.prep.prep_token);
+
+      const finalized = JSON.parse(TOOL_HANDLERS.bob_finalize_node({
+        target_domain: domain,
+        node_id: second.nodeId,
+        prep_token: second.prep.prep_token,
+        ts: "2026-05-31T00:05:00.000Z",
+        agent_output: {
+          tool_invocations: [{ tool: KNOWN_TOOL, output: { status: 200 } }],
+        },
+      }));
+      assert.equal(finalized.to_state, "finalized");
+    }));
   });
 });
 
@@ -446,9 +557,10 @@ test("retry-with-recall: re-prepare after re-contracting a failed node inlines t
       node_id: nodeId,
     }));
     assert.ok(prep2.brief.prior_attempt, "prior_attempt slice MUST be present on re-prepare after a prior failed attempt");
-    assert.ok(Array.isArray(prep2.brief.prior_attempt.attempts), "prior_attempt.attempts must be an array");
-    assert.ok(prep2.brief.prior_attempt.attempts.length >= 1, "at least one prior attempt must be surfaced");
-    const surfacedFailure = prep2.brief.prior_attempt.attempts[0];
+    const priorAttempt = parseFencedBriefJson(prep2.brief.prior_attempt, "prior_attempt");
+    assert.ok(Array.isArray(priorAttempt.attempts), "prior_attempt.attempts must be an array");
+    assert.ok(priorAttempt.attempts.length >= 1, "at least one prior attempt must be surfaced");
+    const surfacedFailure = priorAttempt.attempts[0];
     assert.equal(surfacedFailure.failure_reason.reason, "mechanical_verifier_failed",
       "prior_attempt slice surfaces the structured failure_reason from the prior finalize");
     assert.ok(Array.isArray(surfacedFailure.failure_reason.failures),
@@ -599,9 +711,9 @@ test("a Surface node with an adjacent open Hypothesis inlines the adjacent_hypot
       node_id: surfaceNodeId,
     }));
     assert.ok(prep.brief.adjacent_hypotheses, "adjacent_hypotheses slice must be present for Surface node");
-    assert.ok(Array.isArray(prep.brief.adjacent_hypotheses.hypotheses));
-    assert.ok(prep.brief.adjacent_hypotheses.hypotheses.length >= 1);
-    const hyp = prep.brief.adjacent_hypotheses.hypotheses[0];
+    assert.ok(Array.isArray(parseFencedBriefJson(prep.brief.adjacent_hypotheses, "adjacent_hypotheses").hypotheses));
+    assert.ok(parseFencedBriefJson(prep.brief.adjacent_hypotheses, "adjacent_hypotheses").hypotheses.length >= 1);
+    const hyp = parseFencedBriefJson(prep.brief.adjacent_hypotheses, "adjacent_hypotheses").hypotheses[0];
     assert.equal(hyp.hypothesis_statement, "Billing endpoint leaks user_id on 404.");
   });
 });
@@ -662,7 +774,7 @@ test("recommended_reads inlines the distilled http_record summary; the http body
     assert.equal(briefJson.includes(distinctiveBody), false,
       "the distinctive http body marker must NOT appear in the brief — X-P9 says distilled summaries only");
     // The distilled summary IS inlined (request_id, method, url, status).
-    const httpRef = prep.brief.recommended_reads.refs.find((r) => r.kind === "http_record_observed");
+    const httpRef = parseFencedBriefJson(prep.brief.recommended_reads, "recommended_reads").refs.find((r) => r.kind === "http_record_observed");
     assert.ok(httpRef);
     assert.equal(httpRef.summary.request_id, requestId);
     assert.equal(httpRef.summary.method, "POST");
