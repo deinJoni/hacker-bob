@@ -79,11 +79,39 @@ function sortLeadsByScore(leads) {
     || String(a.id).localeCompare(String(b.id)));
 }
 
-function selectPromotableSurfaceLeads(document, options = {}) {
+function partitionLeadPromotion(document, options = {}) {
   const { limit, minScore, includeMedium } = normalizePromotionOptions(options);
-  return sortLeadsByScore(document.leads.filter(
+  const leads = Array.isArray(document && document.leads) ? document.leads : [];
+  const assignableLeads = leads.filter((lead) => (
+    lead.status !== "promoted" &&
+    !lead.promoted_surface_id &&
+    isAssignableSurfaceLead(lead)
+  ));
+  const promotableLeads = sortLeadsByScore(assignableLeads.filter(
     (lead) => shouldPromoteLead(lead, { minScore, includeMedium }),
-  )).slice(0, limit);
+  ));
+  const promotableSet = new Set(promotableLeads);
+  return {
+    limit,
+    assignableLeads,
+    promotableLeads,
+    filteredLeads: assignableLeads.filter((lead) => !promotableSet.has(lead)),
+    selectedLeads: promotableLeads.slice(0, limit),
+  };
+}
+
+function selectPromotableSurfaceLeads(document, options = {}) {
+  return partitionLeadPromotion(document, options).selectedLeads;
+}
+
+function summarizeLeadPromotion(document, options = {}) {
+  const promotion = partitionLeadPromotion(document, options);
+  return {
+    assignable: promotion.assignableLeads.length,
+    promoted: promotion.selectedLeads.length,
+    filtered: promotion.filteredLeads.length,
+    deferred_by_limit: Math.max(0, promotion.promotableLeads.length - promotion.limit),
+  };
 }
 
 function leadPathsEnvelope(domain) {
@@ -120,7 +148,9 @@ module.exports = {
   normalizePriority,
   normalizePromotionOptions,
   normalizeScore,
+  partitionLeadPromotion,
   selectPromotableSurfaceLeads,
   shouldPromoteLead,
   sortLeadsByScore,
+  summarizeLeadPromotion,
 };
