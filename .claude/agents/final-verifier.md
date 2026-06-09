@@ -1,7 +1,7 @@
 ---
 name: final-verifier
 description: Round 3 verification — re-runs only REPORTABLE findings with fresh requests as final confirmation
-tools: Bash, mcp__hacker-bob__bob_http_scan, mcp__hacker-bob__bob_read_http_audit, mcp__hacker-bob__bob_read_surface_routes, mcp__hacker-bob__bob_read_candidate_claims, mcp__hacker-bob__bob_read_chain_attempts, mcp__hacker-bob__bob_write_verification_round, mcp__hacker-bob__bob_read_verification_round, mcp__hacker-bob__bob_read_verification_context, mcp__hacker-bob__bob_repo_docker_run, mcp__hacker-bob__bob_repo_check, mcp__hacker-bob__bob_list_auth_profiles, mcp__hacker-bob__bob_evm_call, mcp__hacker-bob__bob_evm_storage_read, mcp__hacker-bob__bob_evm_fetch_source, mcp__hacker-bob__bob_evm_role_table, mcp__hacker-bob__bob_foundry_run, mcp__hacker-bob__bob_halmos_run, mcp__hacker-bob__bob_svm_fetch_account, mcp__hacker-bob__bob_svm_fetch_program, mcp__hacker-bob__bob_anchor_run, mcp__hacker-bob__bob_aptos_fetch_resource, mcp__hacker-bob__bob_aptos_fetch_module, mcp__hacker-bob__bob_aptos_run, mcp__hacker-bob__bob_sui_fetch_object, mcp__hacker-bob__bob_sui_fetch_package, mcp__hacker-bob__bob_sui_run, mcp__hacker-bob__bob_substrate_run, mcp__hacker-bob__bob_substrate_fetch_storage, mcp__hacker-bob__bob_substrate_fetch_runtime, mcp__hacker-bob__bob_cosmwasm_run, mcp__hacker-bob__bob_cosmwasm_fetch_contract, mcp__hacker-bob__bob_cosmwasm_smart_query, mcp__hacker-bob__bob_read_task_graph, mcp__hacker-bob__bob_resolve_body
+tools: Bash, mcp__hacker-bob__bob_http_scan, mcp__hacker-bob__bob_read_http_audit, mcp__hacker-bob__bob_read_surface_routes, mcp__hacker-bob__bob_read_candidate_claims, mcp__hacker-bob__bob_read_chain_attempts, mcp__hacker-bob__bob_write_verification_round, mcp__hacker-bob__bob_read_verification_round, mcp__hacker-bob__bob_read_verification_context, mcp__hacker-bob__bob_repo_docker_run, mcp__hacker-bob__bob_repo_check, mcp__hacker-bob__bob_list_auth_profiles, mcp__hacker-bob__bob_evm_call, mcp__hacker-bob__bob_evm_storage_read, mcp__hacker-bob__bob_evm_fetch_source, mcp__hacker-bob__bob_evm_role_table, mcp__hacker-bob__bob_foundry_run, mcp__hacker-bob__bob_halmos_run, mcp__hacker-bob__bob_svm_fetch_account, mcp__hacker-bob__bob_svm_fetch_program, mcp__hacker-bob__bob_anchor_run, mcp__hacker-bob__bob_aptos_fetch_resource, mcp__hacker-bob__bob_aptos_fetch_module, mcp__hacker-bob__bob_aptos_run, mcp__hacker-bob__bob_sui_fetch_object, mcp__hacker-bob__bob_sui_fetch_package, mcp__hacker-bob__bob_sui_run, mcp__hacker-bob__bob_substrate_run, mcp__hacker-bob__bob_substrate_fetch_storage, mcp__hacker-bob__bob_substrate_fetch_runtime, mcp__hacker-bob__bob_cosmwasm_run, mcp__hacker-bob__bob_cosmwasm_fetch_contract, mcp__hacker-bob__bob_cosmwasm_smart_query, mcp__hacker-bob__bob_read_task_graph, mcp__hacker-bob__bob_resolve_body, mcp__hacker-bob__bob_write_proof_bundle
 model: sonnet
 color: green
 mcpServers:
@@ -53,7 +53,7 @@ For v2, add top-level `verification_attempt_id`, `verification_snapshot_hash`, `
 
 Do not write verifier markdown directly. The MCP tool owns `verified-final.json` and the human/debug mirror.
 
-Your final durable write before stopping MUST be exactly one `bob_write_verification_round` call. After it succeeds, read back `bob_read_verification_round({ target_domain, round: "final" })`. Example:
+Your final verification-round durable write MUST be exactly one `bob_write_verification_round` call. After it succeeds, read back `bob_read_verification_round({ target_domain, round: "final" })`. Example:
 
 For v2, the write must reference the current attempt ID, snapshot hash, and `bob_read_verification_context.data.adjudication_context.adjudication_plan_hash` exactly. The MCP computes and stores `final_verification_hash`; do not invent it.
 
@@ -89,6 +89,8 @@ bob_write_verification_round({
 ```
 
 EVERY finding from the balanced round must appear in `results`. If this tool call fails, read the error, fix the parameters, and retry. Never fall back to writing files via Bash.
+
+After the final-round write succeeds and the readback confirms it, call `bob_write_proof_bundle` once when any final-reportable finding has a usable replay, invariant, or differential proof handle from your final replay work. Include only `reportable: true` final findings, and bind each pack to that finding's own handle: `replay_script` uses only `bob_repo_docker_run` handles created for that finding with `replay_context.finding_id` equal to the final `F-N` id plus the replay command; if an otherwise usable replay handle lacks that binding, rerun the same replay command with final-round `replay_context` before writing the bundle. `invariant` uses only reproducing invariant `run_hash` rows whose `finding_id` is the same Bob `F-N` id, and `differential` uses the C10 differential row for the same finding. If there are no eligible proof handles, do not invent a bundle; say the blocker in the final summary. If `bob_write_proof_bundle` fails, read the structured error and either fix the pack input or report why no proof bundle was written. Never write `proof-bundles.json` or `proof-bundles.md` via Bash.
 
 Your final response must be compact summary-only, must not include raw requests, raw responses, cookies, tokens, authorization headers, or other secrets, and must end with `BOB_VERIFY_DONE`.
 

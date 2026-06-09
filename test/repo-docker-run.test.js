@@ -937,7 +937,7 @@ test("repoDockerRun live mode constructs argv with every O-P3 sandbox flag (per-
   });
 });
 
-test("repoDockerRun records exit code, duration, network mode, mount mode, image tag in JSONL", async () => {
+test("repoDockerRun records exit code, duration, network mode, mount modes, image tag in JSONL", async () => {
   await withTempHome(async () => {
     const repoRoot = makeTempRepoDir();
     write(repoRoot, "package.json", JSON.stringify({ name: "x" }));
@@ -972,8 +972,10 @@ test("repoDockerRun records exit code, duration, network mode, mount mode, image
     assert.equal(rows[0].duration_ms, 123);
     assert.equal(rows[0].network_mode, "none");
     assert.equal(rows[0].mount_mode, "read_only");
+    assert.equal(rows[0].work_mount_mode, "read_write");
     assert.equal(rows[0].image_tag, result.image_tag);
     assert.equal(rows[0].run_id, result.run_id);
+    assert.equal(result.work_mount_mode, "read_write");
     // JSONL row must include the hash of stdout/stderr; NOT raw bytes.
     assert.match(rows[0].stdout_hash, /^[0-9a-f]{64}$/);
     assert.match(rows[0].stderr_hash, /^[0-9a-f]{64}$/);
@@ -1211,18 +1213,20 @@ test("repoDockerRun records replay_context when provided", async () => {
     const result = await repoDockerRun({
       target_domain: init.target_domain,
       command: ["echo"],
-      replay_context: { wave: "w1", agent: "a1", surface_id: "repo:module:src-x" },
+      replay_context: { wave: "w1", agent: "a1", surface_id: "repo:module:src-x", finding_id: "F-1" },
     });
     assert.deepEqual(result.replay_context, {
       wave: "w1",
       agent: "a1",
       surface_id: "repo:module:src-x",
+      finding_id: "F-1",
     });
     const rows = readJsonl(repoCommandRunsJsonlPath(init.target_domain));
     assert.deepEqual(rows[0].replay_context, {
       wave: "w1",
       agent: "a1",
       surface_id: "repo:module:src-x",
+      finding_id: "F-1",
     });
   });
 });
