@@ -29,6 +29,9 @@ const {
 const {
   capabilityPackForLegacyFinding,
 } = require("./capability-packs.js");
+const {
+  normalizeCvssInputs,
+} = require("./cvss31.js");
 
 function normalizeEndpointForDedupe(endpoint) {
   const raw = String(endpoint || "").trim();
@@ -515,6 +518,26 @@ function normalizeFindingRecord(record, { expectedDomain = null, lineNumber = nu
     if (reachabilityAssertion) {
       assertReachabilityAssertionScope(finding);
       finding.reachability_assertion = reachabilityAssertion;
+    }
+    // Structured CVSS v3.1 base inputs. Persisted as canonical
+    // long-name enums on the finding so they round-trip on read-back; the
+    // vector itself is NEVER persisted — it is re-derived server-side at report
+    // time. cvss_inputs is intentionally excluded from computeFindingDedupeKey,
+    // so adding/refining it never reshuffles existing finding ids.
+    const cvssInputs = normalizeCvssInputs(record.cvss_inputs);
+    if (cvssInputs) {
+      finding.cvss_inputs = cvssInputs;
+    }
+    // OSS native-code fallback: when no explicit attack_vector is supplied but a
+    // reachability assertion is present, carry its network/local classification
+    // into the CVSS attack_vector so the derived base score reflects the
+    // evaluator-asserted reachability. (network -> AV:N, local -> AV:L.)
+    if (finding.reachability_assertion
+      && (!finding.cvss_inputs || finding.cvss_inputs.attack_vector == null)) {
+      const derivedAv = finding.reachability_assertion.attack_vector === "network"
+        ? "network"
+        : "local";
+      finding.cvss_inputs = { ...(finding.cvss_inputs || {}), attack_vector: derivedAv };
     }
     if (finding.surface_type === "smart_contract" && !finding.sc_evidence) {
       throw new Error("smart-contract findings must include sc_evidence");

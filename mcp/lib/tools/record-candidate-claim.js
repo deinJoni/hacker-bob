@@ -37,6 +37,23 @@ const { appendFrontierEvent } = require("../frontier-events.js");
 const { scheduleMaterialization } = require("../frontier-materialize-debounce.js");
 const { hashCanonicalJson } = require("../verification-contracts.js");
 const { isKnownCwe } = require("../cwe-catalog.js");
+const { CVSS_INPUT_KEYS, CVSS_INPUT_ENUMS } = require("../cvss31.js");
+
+// Registry-driven schema for the optional structured CVSS v3.1 base inputs. The
+// enum values are sourced from cvss31.js so the schema and the server-side
+// normalizer cannot drift; only the keys the caller asserts are persisted, and
+// the vector is derived server-side at report time (never stored on the
+// hashed finding).
+const CVSS_INPUTS_SCHEMA = Object.freeze({
+  type: "object",
+  additionalProperties: false,
+  description:
+    "Optional structured CVSS v3.1 base-metric inputs. The MCP derives the CVSS v3.1 vector and base score server-side at report time and renders them as an INFORMATIONAL annotation; the grade verdict severity stays authoritative. Supply these for reportable findings instead of hand-authoring a vector. Unknown keys or values are rejected. attack_vector and privileges_required plus at least one of confidentiality/integrity/availability are needed for a derivable vector; otherwise the report shows an explicit insufficient-verified-facts marker.",
+  properties: CVSS_INPUT_KEYS.reduce((acc, key) => {
+    acc[key] = { type: "string", enum: [...CVSS_INPUT_ENUMS[key]] };
+    return acc;
+  }, {}),
+});
 
 // Example catalog CWEs surfaced in the missing-CWE remediation, keyed by the
 // finding class so the operator sees relevant ids. The validator is the source
@@ -233,6 +250,7 @@ function buildFindingPayloadRecord(args, context, findingId, { requireCwe = fals
     brief_profile: context.briefProfile,
     sc_evidence: args.sc_evidence,
     reachability_assertion: args.reachability_assertion,
+    cvss_inputs: args.cvss_inputs,
     dedupe_key: args.dedupe_key,
     auth_profile: args.auth_profile,
     force_record: args.force_record === true,
@@ -316,6 +334,7 @@ function buildClaimPayloadFromFinding(finding, findingContentHash, args) {
     "brief_profile",
     "sc_evidence",
     "reachability_assertion",
+    "cvss_inputs",
     "auth_profile",
     "dedupe_key",
     "force_record",
@@ -641,6 +660,7 @@ module.exports = Object.freeze({
         "required": ["attack_vector", "network_reachable", "call_path"],
         "additionalProperties": false
       },
+      "cvss_inputs": CVSS_INPUTS_SCHEMA,
       "sc_evidence": {
         "type": "object",
         "description": "Structured re-run handle for smart-contract candidate claims. Required when the assigned surface is a smart contract; rejected otherwise so the verifier can re-run via bob_foundry_run (EVM) or bob_anchor_run (SVM) with no string-parsing of the prose PoC.",

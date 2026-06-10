@@ -45,6 +45,8 @@ const {
 const {
   withSessionLock,
 } = require("../storage.js");
+const { deriveCvss31 } = require("../cvss31.js");
+const { findingPayloadsFromClaims } = require("./record-candidate-claim.js");
 
 const SECTION_KINDS = Object.freeze([
   "impact",
@@ -301,7 +303,117 @@ function normalizeReproSteps(reproStepsByFinding) {
   });
 }
 
-function renderMarkdown(domain, sections, severitySummary, reproSteps, amendments) {
+// Read-only projection of the final verification round: which finding ids are
+// reportable and what their final severity is. Returns a Map(finding_id ->
+// { reportable, severity }). Missing/malformed round => empty map (the CVSS
+// block degrades gracefully — it is an informational annotation, never a gate).
+function readFinalVerificationByFinding(domain) {
+  const byFinding = new Map();
+  let paths;
+  try {
+    paths = verificationRoundPaths(domain, "final");
+  } catch {
+    return byFinding;
+  }
+  if (!fs.existsSync(paths.json)) return byFinding;
+  let doc;
+  try {
+    doc = JSON.parse(fs.readFileSync(paths.json, "utf8"));
+  } catch {
+    return byFinding;
+  }
+  const results = Array.isArray(doc && doc.results) ? doc.results : [];
+  for (const result of results) {
+    if (!result || typeof result !== "object") continue;
+    const id = typeof result.finding_id === "string" ? result.finding_id : null;
+    if (!id) continue;
+    byFinding.set(id, {
+      reportable: result.reportable === true,
+      severity: typeof result.severity === "string" ? result.severity : null,
+    });
+  }
+  return byFinding;
+}
+
+// Build the per-finding INFORMATIONAL CVSS v3.1 + CWE annotation rows. The CVSS
+// vector and base score are DERIVED server-side here from the structured
+// cvss_inputs persisted on the finding (never persisted as a vector on the
+// hashed finding). When a final verification round exists, only reportable
+// findings are annotated; absent a final round, all findings carrying inputs are
+// annotated (composing a report before final-verification is still useful as an
+// informational view). Findings with absent/incomplete inputs or an insufficient
+// derivation render the explicit insufficient-verified-facts marker — no
+// fabricated vector. This is purely additive to the report; the grade verdict
+// severity stays authoritative and divergence is shown, not editorialized.
+function buildCvssAnnotations(domain) {
+  let findings;
+  try {
+    findings = findingPayloadsFromClaims(domain);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(findings) || findings.length === 0) return [];
+  const finalByFinding = readFinalVerificationByFinding(domain);
+  const haveFinalRound = finalByFinding.size > 0;
+  const annotations = [];
+  for (const finding of findings) {
+    if (!finding || typeof finding !== "object") continue;
+    const id = typeof finding.id === "string" ? finding.id : null;
+    const finalEntry = id ? finalByFinding.get(id) : null;
+    if (haveFinalRound && (!finalEntry || finalEntry.reportable !== true)) {
+      // A final round exists but this finding is not reportable: omit it from
+      // the report, consistent with the reportability gate.
+      continue;
+    }
+    const finalSeverity = finalEntry && finalEntry.severity
+      ? finalEntry.severity
+      : (typeof finding.severity === "string" ? finding.severity : null);
+    const derived = deriveCvss31(finding.cvss_inputs);
+    annotations.push({
+      finding_id: id || "(unknown)",
+      title: typeof finding.title === "string" ? finding.title : "",
+      cwe: typeof finding.cwe === "string" && finding.cwe ? finding.cwe : null,
+      final_severity: finalSeverity,
+      derived,
+    });
+  }
+  return annotations;
+}
+
+function renderCvssAnnotations(parts, annotations) {
+  if (!annotations.length) return;
+  parts.push("## CVSS / CWE (informational)");
+  parts.push("");
+  parts.push(
+    "Server-derived CVSS v3.1 base annotations. INFORMATIONAL only — the grade verdict severity is authoritative.",
+  );
+  parts.push("");
+  for (const ann of annotations) {
+    const titleSuffix = ann.title ? `: ${ann.title}` : "";
+    parts.push(`### ${ann.finding_id}${titleSuffix}`);
+    parts.push("");
+    parts.push(`- **CWE:** ${ann.cwe || "N/A"}`);
+    if (ann.final_severity) {
+      // Label the final-verification-round severity without claiming it is the
+      // public/authoritative severity: when a finding carries a reachability
+      // disposition, the grade verdict's graded_severity is the public severity
+      // and can downgrade this value. This block is informational only, so it
+      // names the source (final verification round) rather than asserting it
+      // overrides the graded public severity rendered in the finding body.
+      parts.push(`- **Final verification round severity:** ${ann.final_severity}`);
+    }
+    if (ann.derived && ann.derived.insufficient !== true && ann.derived.vector) {
+      parts.push(`- **CVSS v3.1 (informational):** ${ann.derived.vector}`);
+      parts.push(`- **CVSS base score (informational):** ${ann.derived.base_score} (${ann.derived.severity_band})`);
+    } else {
+      const reason = ann.derived && typeof ann.derived.reason === "string" ? ann.derived.reason : "no cvss_inputs supplied";
+      parts.push(`- **CVSS v3.1 (informational):** insufficient verified facts (${reason})`);
+    }
+    parts.push("");
+  }
+}
+
+function renderMarkdown(domain, sections, severitySummary, reproSteps, amendments, cvssAnnotations = []) {
   const parts = [OPERATOR_EDIT_BANNER];
   parts.push(`# Hacker Bob Report — ${domain}`);
   parts.push("");
@@ -338,6 +450,7 @@ function renderMarkdown(domain, sections, severitySummary, reproSteps, amendment
       parts.push("");
     }
   }
+  renderCvssAnnotations(parts, cvssAnnotations);
   if (amendments.length > 0) {
     parts.push("## Operator Amendments");
     parts.push("");
@@ -396,7 +509,12 @@ function handler(args) {
     const dir = sessionDir(domain);
     fs.mkdirSync(dir, { recursive: true });
     const amendments = readAmendments(domain);
-    const markdown = renderMarkdown(domain, sections, severitySummary, reproSteps, amendments);
+    // Server-side CVSS v3.1 + CWE annotation rows. Read-only projection of the
+    // already-persisted finding payloads + final verification round; the derived
+    // vector is rendered into the markdown so the content hash and 5-hash
+    // ReportSnapshot bind it, but it is never written back onto the finding.
+    const cvssAnnotations = buildCvssAnnotations(domain);
+    const markdown = renderMarkdown(domain, sections, severitySummary, reproSteps, amendments, cvssAnnotations);
     const reportPath = reportMarkdownPath(domain);
     fs.writeFileSync(reportPath, markdown, "utf8");
     const contentHash = crypto.createHash("sha256").update(markdown, "utf8").digest("hex");
@@ -408,6 +526,7 @@ function handler(args) {
       report_size_bytes: Buffer.byteLength(markdown, "utf8"),
       sections_rendered: sections.length,
       amendments_rendered: amendments.length,
+      cvss_annotations_rendered: cvssAnnotations.length,
     });
   });
 }

@@ -430,7 +430,7 @@ test("reporter prompt renders reachability graded severity when C9 stamps it", (
   assert.match(reporterPrompt, /reachability disposition/);
 });
 
-test("reporter OSS branch carries CWE, suggested CVSS-4.0, and references guidance", () => {
+test("reporter OSS branch carries CWE, server-derived CVSS v3.1, and references guidance", () => {
   const reporterPrompt = readFile("prompts/roles/reporter.md");
   const ossBranchStart = reporterPrompt.indexOf("**OSS repo findings**");
   const httpBranchStart = reporterPrompt.indexOf("**HTTP findings**");
@@ -440,7 +440,13 @@ test("reporter OSS branch carries CWE, suggested CVSS-4.0, and references guidan
   assert.match(ossBranch, /CWE/);
   assert.match(ossBranch, /required and catalog-validated/);
   assert.match(ossBranch, /cwe-catalog\.js/);
-  assert.match(ossBranch, /Suggested CVSS-4\.0/);
+  // CVSS is now derived server-side from cvss_inputs; the reporter supplies the
+  // structured inputs and never hand-authors a vector.
+  assert.match(ossBranch, /CVSS v3\.1/);
+  assert.match(ossBranch, /derives the CVSS v3\.1 base vector and score server-side/);
+  assert.match(ossBranch, /cvss_inputs/);
+  assert.match(ossBranch, /do NOT hand-author a vector/);
+  assert.doesNotMatch(ossBranch, /Suggested CVSS-4\.0/);
   assert.match(ossBranch, /derive AV from the reachability prose|reachability prose/);
   assert.match(ossBranch, /References/);
   assert.match(ossBranch, /stable remote\/commit URL/);
