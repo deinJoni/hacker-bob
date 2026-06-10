@@ -986,6 +986,120 @@ test("repoDockerRun records exit code, duration, network mode, mount modes, imag
   });
 });
 
+test("repoDockerRun records fuzz_stats as observational scalars outside command_hash", async () => {
+  await withTempHome(async () => {
+    const repoRoot = makeTempRepoDir();
+    write(repoRoot, "package.json", JSON.stringify({ name: "x" }));
+    const init = initRepoSession({ repo_path: repoRoot });
+    let runCount = 0;
+
+    const runtime = {
+      execFile: async () => ({ stdout: "Docker version 25.0", stderr: "" }),
+      run: async ({ stdoutPath, stderrPath }) => {
+        runCount += 1;
+        const cov = runCount === 1 ? 11 : 29;
+        fs.writeFileSync(stdoutPath, "build stdout\n");
+        fs.writeFileSync(stderrPath, `#${runCount} NEW cov: ${cov} ft: ${cov + 1} corp: ${runCount}/16b exec/s: 77\n`);
+        return {
+          exit_code: 0,
+          signal: null,
+          duration_ms: 10,
+          timed_out: false,
+          stdout_bytes: 64,
+          stderr_bytes: 0,
+        };
+      },
+    };
+
+    const command = ["sh", "-lc", "fuzz"];
+    const first = await repoDockerRun({
+      target_domain: init.target_domain,
+      command,
+      dry_run: false,
+      runtime,
+    });
+    const second = await repoDockerRun({
+      target_domain: init.target_domain,
+      command,
+      dry_run: false,
+      runtime,
+    });
+
+    assert.equal(first.command_hash, second.command_hash);
+    assert.deepEqual(first.fuzz_stats, {
+      cov: 11,
+      ft: 12,
+      exec_per_s: 77,
+      corpus_size: 1,
+      crashes: 0,
+    });
+    assert.deepEqual(second.fuzz_stats, {
+      cov: 29,
+      ft: 30,
+      exec_per_s: 77,
+      corpus_size: 2,
+      crashes: 0,
+    });
+    const rows = readJsonl(repoCommandRunsJsonlPath(init.target_domain));
+    assert.equal(rows[0].command_hash, rows[1].command_hash);
+    assert.notDeepEqual(rows[0].fuzz_stats, rows[1].fuzz_stats);
+    validateNoSensitiveMaterial(rows[0], "repo_command_runs");
+    validateNoSensitiveMaterial(rows[1], "repo_command_runs");
+  });
+});
+
+test("repoDockerRun prefers live tail text for fuzz_stats when capture is truncated", async () => {
+  await withTempHome(async () => {
+    const repoRoot = makeTempRepoDir();
+    write(repoRoot, "package.json", JSON.stringify({ name: "x" }));
+    const init = initRepoSession({ repo_path: repoRoot });
+
+    const runtime = {
+      execFile: async () => ({ stdout: "Docker version 25.0", stderr: "" }),
+      run: async ({ stdoutPath, stderrPath }) => {
+        fs.writeFileSync(
+          stdoutPath,
+          "#1 INITED cov: 1 ft: 2 corp: 1/8b exec/s: 3\n",
+          "utf8",
+        );
+        fs.writeFileSync(stderrPath, "", "utf8");
+        return {
+          exit_code: 0,
+          signal: null,
+          duration_ms: 10,
+          timed_out: false,
+          stdout_bytes: REPO_DOCKER_RUN_MAX_OUTPUT_BYTES + 1024,
+          stderr_bytes: 0,
+          stdout_truncated: true,
+          stderr_truncated: false,
+          stdout_tail_text: "#900 NEW cov: 90 ft: 91 corp: 7/512b exec/s: 123\n",
+          stderr_tail_text: "ERROR: libFuzzer: deadly signal\n",
+        };
+      },
+    };
+
+    const result = await repoDockerRun({
+      target_domain: init.target_domain,
+      command: ["sh", "-lc", "fuzz"],
+      dry_run: false,
+      runtime,
+    });
+
+    assert.deepEqual(result.fuzz_stats, {
+      cov: 90,
+      ft: 91,
+      exec_per_s: 123,
+      corpus_size: 7,
+      crashes: 1,
+    });
+    const rows = readJsonl(repoCommandRunsJsonlPath(init.target_domain));
+    assert.equal(rows[0].stdout_truncated, true);
+    assert.deepEqual(rows[0].fuzz_stats, result.fuzz_stats);
+    assert.equal(Object.prototype.hasOwnProperty.call(rows[0], "stdout_tail_text"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(rows[0], "stderr_tail_text"), false);
+  });
+});
+
 test("repoDockerRun image_tag mismatch is rejected with O-D6 structured error", async () => {
   await withTempHome(async () => {
     const repoRoot = makeTempRepoDir();
