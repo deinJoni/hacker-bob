@@ -128,6 +128,7 @@ const C_DEFAULT_APT_PACKAGES = Object.freeze([
   "cmake",
   "ninja-build",
   "clang",
+  "clang-18",
   "gdb",
   "valgrind",
 ]);
@@ -139,6 +140,28 @@ const NFS_EXTRA_APT_PACKAGES = Object.freeze([
   "libkrb5-dev",
   "libtirpc-dev",
 ]);
+const NATIVE_FUZZ_EXTRA_APT_PACKAGES = Object.freeze([
+  "libclang-rt-18-dev",
+  "pkg-config",
+  "autoconf",
+  "automake",
+  "libtool",
+  "unzip",
+  "zlib1g-dev",
+]);
+
+const NATIVE_FUZZ_MAX_TOTAL_TIME_SECONDS = 240;
+const NATIVE_LIBFUZZER_DEFINITION_PERL = shellQuote(
+  "s{/\\*.*?\\*/}{}gs; s{//[^\\n]*}{}g; s/\"(?:\\\\.|[^\"\\\\])*\"/\"\"/gs; s/'(?:\\\\.|[^'\\\\])*'/''/gs; exit(/\\b(?:extern\\s+(?:\"C\"|\"\"|'C'|'')\\s+)?(?:int|auto)\\s+LLVMFuzzerTestOneInput\\s*\\([^;{}]*\\)\\s*(?:\\{|try\\b)/s ? 0 : 1)",
+);
+const FUZZ_STATS_NULL = Object.freeze({
+  cov: null,
+  ft: null,
+  exec_per_s: null,
+  corpus_size: null,
+  crashes: null,
+});
+const FUZZ_STATS_PROBE_BYTES = 512 * 1024;
 
 const RECOMMENDED_COMMAND_ROLES = Object.freeze([
   "build",
@@ -213,17 +236,79 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
 
-function firstSeedCorpusRel(seedCorpus) {
+function normalizeRepoRelativePath(raw) {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed || /^[A-Za-z]:[\\/]/.test(trimmed)) return null;
+  const normalized = path.posix.normalize(trimmed.replace(/\\/g, "/"));
+  if (!normalized || normalized === "." || path.posix.isAbsolute(normalized)) return null;
+  if (normalized === ".." || normalized.startsWith("../")) return null;
+  return normalized;
+}
+
+function firstSeedCorpus(seedCorpus) {
   if (!Array.isArray(seedCorpus)) return null;
   for (const entry of seedCorpus) {
-    if (entry && typeof entry.rel_path === "string" && entry.rel_path.trim()) {
-      return entry.rel_path.trim();
+    const safeRel = normalizeRepoRelativePath(entry && entry.rel_path);
+    if (safeRel) {
+      return {
+        rel_path: safeRel,
+        has_zip: (entry && entry.has_zip === true) || /\.zip$/i.test(safeRel),
+      };
     }
   }
   return null;
 }
 
-function recommendedCommandsFor(language, { nfsXdrShape = false, seedCorpus = [] } = {}) {
+function cNativeFuzzRecipe(seedCorpusEntry) {
+  const seedRel = seedCorpusEntry && seedCorpusEntry.rel_path;
+  const seedIsZip = seedCorpusEntry && seedCorpusEntry.has_zip === true;
+  const seedShellPath = seedRel ? `./${seedRel}` : null;
+  const seedSetup = seedRel
+    ? [
+        `SEED=${shellQuote(seedShellPath)}`,
+        "SEED_REAL=$(realpath -m -- \"$SEED\")",
+        "case \"$SEED_REAL\" in /work/repo/*) ;; *) echo \"seed corpus path escapes staged repo\" >&2; exit 2 ;; esac",
+        `SEED_IS_ZIP=${seedIsZip ? "1" : "0"}`,
+        "ZIP_MAX_BYTES=16777216",
+        "ZIP_MAX_FILES=4096",
+        "if [ \"$SEED_IS_ZIP\" = 1 ] && [ -f \"$SEED_REAL\" ]; then ZIP_LIST=/work/out/zip-entries.txt; unzip -Z -1 \"$SEED_REAL\" > \"$ZIP_LIST\"; ZIP_COUNT=$(wc -l < \"$ZIP_LIST\" | tr -d ' '); test \"$ZIP_COUNT\" -le \"$ZIP_MAX_FILES\"; awk '($0 ~ /(^|\\/)\\.\\.($|\\/)/ || $0 ~ /^\\//) { bad=1 } END { exit bad ? 1 : 0 }' \"$ZIP_LIST\"; ZIP_TOTAL=$(unzip -l -- \"$SEED_REAL\" | awk 'BEGIN{dash=0} /^---------/{dash += 1; next} dash == 2 && $1 ~ /^[0-9]+$/ { print $1; exit }'); test -n \"$ZIP_TOTAL\"; test \"$ZIP_TOTAL\" -le \"$ZIP_MAX_BYTES\"; unzip -qq -o -j -- \"$SEED_REAL\" -d /work/out/corpus; elif [ -d \"$SEED_REAL\" ]; then cp -a -- \"$SEED_REAL\"/. /work/out/corpus/; elif [ -f \"$SEED_REAL\" ]; then cp -- \"$SEED_REAL\" /work/out/corpus/seed; fi",
+      ]
+    : [":"];
+  return [
+    "set -eu",
+    "rm -rf /work/repo /work/out",
+    "mkdir -p /work/repo /work/out/corpus",
+    "cp -a /src/. /work/repo/",
+    "cd /work/repo",
+    "if [ -x ./configure ]; then ./configure; fi",
+    `HARNESS=$({ find . -type f \\( -name '*_fuzzer.c' -o -name '*_fuzzer.cc' -o -name '*_fuzzer.cpp' -o -name '*_fuzzer.cxx' \\) -print 2>/dev/null | sort; find . -type f \\( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.cxx' \\) -print 2>/dev/null | sort; } | awk '!seen[$0]++' | while IFS= read -r f; do perl -0ne ${NATIVE_LIBFUZZER_DEFINITION_PERL} -- "$f" && { printf '%s\\n' "$f"; break; }; done)`,
+    "test -n \"$HARNESS\"",
+    "CC=clang-18",
+    "case \"$HARNESS\" in *.cc|*.cpp|*.cxx) CC=clang++-18 ;; esac",
+    ...seedSetup,
+    "\"$CC\" -fsanitize=address,undefined,fuzzer -g -O1 -I. -Iinclude -Isrc -Ilib -o /work/out/h -- \"$HARNESS\"",
+    `/work/out/h -max_total_time=${NATIVE_FUZZ_MAX_TOTAL_TIME_SECONDS} /work/out/corpus`,
+  ].join(" && ");
+}
+
+function boundedNativeFuzzRecipe(seedEntry) {
+  let effectiveSeedEntry = seedEntry;
+  let recipe = cNativeFuzzRecipe(effectiveSeedEntry);
+  if (effectiveSeedEntry && recipe.length > REPO_DOCKER_RUN_MAX_TOKEN_LENGTH) {
+    effectiveSeedEntry = null;
+    recipe = cNativeFuzzRecipe(null);
+  }
+  if (recipe.length > REPO_DOCKER_RUN_MAX_TOKEN_LENGTH) {
+    throw new Error(`native fuzz base recipe (no-seed) exceeds token limit: ${recipe.length}`);
+  }
+  return { seedEntry: effectiveSeedEntry, recipe };
+}
+
+function recommendedCommandsFor(
+  language,
+  { nfsXdrShape = false, seedCorpus = [], nativeFuzzShape = false, nativeFuzzOnly = false } = {},
+) {
   if (language === "node") {
     return [
       {
@@ -337,16 +422,29 @@ function recommendedCommandsFor(language, { nfsXdrShape = false, seedCorpus = []
     const staging =
       "cp -a /src/. /work/repo/ && cd /work/repo && cmake -S . -B build && cmake --build build && ctest --test-dir build --output-on-failure";
     const sanitizerNote = nfsXdrShape ? " (NFS/XDR shape detected — preload libtirpc/libssl/libkrb5)" : "";
-    const commands = [
-      {
+    const commands = [];
+    if (!nativeFuzzOnly) {
+      commands.push({
         id: "build_and_test",
         description: `Stage /src into /work/repo, build with cmake, run ctest.${sanitizerNote}`,
         command: ["sh", "-lc", staging],
         role: "compose",
-      },
-    ];
-    const seedRel = firstSeedCorpusRel(seedCorpus);
-    if (seedRel) {
+      });
+    }
+    const seedEntry = firstSeedCorpus(seedCorpus);
+    if (nativeFuzzShape) {
+      const { seedEntry: effectiveSeedEntry, recipe } = boundedNativeFuzzRecipe(seedEntry);
+      const seedRel = effectiveSeedEntry && effectiveSeedEntry.rel_path;
+      const fuzzCommand = {
+        id: "fuzz_asan_ubsan",
+        description: "Stage /src into /work/repo, verify a native libFuzzer harness, build it with ASAN+UBSAN+libFuzzer, and run the seeded corpus.",
+        command: ["sh", "-lc", recipe],
+        role: "fuzz",
+      };
+      if (seedRel) fuzzCommand.seed_path = seedRel;
+      commands.push(fuzzCommand);
+    } else if (seedEntry) {
+      const seedRel = seedEntry.rel_path;
       const quotedSeedRel = shellQuote(seedRel);
       commands.push({
         id: "fuzz_seed_probe",
@@ -355,7 +453,7 @@ function recommendedCommandsFor(language, { nfsXdrShape = false, seedCorpus = []
         command: [
           "sh",
           "-lc",
-          `cp -a /src/. /work/repo/ && cd /work/repo && find ${quotedSeedRel} -maxdepth 2 -type f | head -20`,
+          `cp -a /src/. /work/repo/ && cd /work/repo && find -- ${quotedSeedRel} -maxdepth 2 -type f | head -20`,
         ],
         role: "fuzz",
       });
@@ -363,6 +461,15 @@ function recommendedCommandsFor(language, { nfsXdrShape = false, seedCorpus = []
     return commands;
   }
   return [];
+}
+
+function detectionProfileForRepoEnv(detection, nativeFuzzShape) {
+  if (!nativeFuzzShape || !detection || detection.language === "c") return detection;
+  return {
+    language: "c",
+    base_image: C_BASE_IMAGE,
+    marker: "native_fuzz_shape",
+  };
 }
 
 // Compose the generated Dockerfile.bob. Plane O reasons:
@@ -383,6 +490,7 @@ function buildDockerfileBob({
   baseImage,
   targetDomain,
   nfsXdrShape,
+  nativeFuzzShape,
   allowNetwork,
 }) {
   const lines = [];
@@ -404,9 +512,11 @@ function buildDockerfileBob({
     lines.push("ARG NO_PROXY=");
   }
   if (language === "c") {
-    const packages = nfsXdrShape
-      ? [...C_DEFAULT_APT_PACKAGES, ...NFS_EXTRA_APT_PACKAGES]
-      : [...C_DEFAULT_APT_PACKAGES];
+    const packages = [
+      ...C_DEFAULT_APT_PACKAGES,
+      ...(nfsXdrShape ? NFS_EXTRA_APT_PACKAGES : []),
+      ...(nativeFuzzShape ? NATIVE_FUZZ_EXTRA_APT_PACKAGES : []),
+    ];
     if (allowNetwork) {
       lines.push("RUN apt-get update \\");
       lines.push(`    && apt-get install -y --no-install-recommends ${packages.join(" ")} \\`);
@@ -522,6 +632,7 @@ function buildRepoEnvDocument({
   nfsXdrShape,
   seedCorpus,
   seedCorpusCount,
+  nativeFuzzShape,
 }) {
   const normalizedSeedCorpusCount = Number.isInteger(seedCorpusCount) && seedCorpusCount >= 0
     ? seedCorpusCount
@@ -536,6 +647,7 @@ function buildRepoEnvDocument({
       language: detection.language,
       marker: detection.marker,
       nfs_xdr_shape: nfsXdrShape,
+      native_fuzz_shape: nativeFuzzShape,
       seed_corpus_count: normalizedSeedCorpusCount,
     },
     base_image: baseImage,
@@ -599,6 +711,18 @@ function loadSeedCorpusCount(targetDomain) {
   }
 }
 
+function loadNativeFuzzShape(targetDomain) {
+  const invPath = repoInventoryPath(targetDomain);
+  if (!fs.existsSync(invPath)) return false;
+  try {
+    const raw = fs.readFileSync(invPath, "utf8");
+    const doc = JSON.parse(raw);
+    return Boolean(doc && doc.native_fuzz_shape);
+  } catch {
+    return false;
+  }
+}
+
 async function prepareRepoEnv({
   target_domain: targetDomain,
   base_image: baseImageOverride = null,
@@ -635,13 +759,21 @@ async function prepareRepoEnv({
     : assertInteger(timeoutMsOverride, "timeout_ms", { min: 1000, max: MAX_DOCKER_BUILD_TIMEOUT_MS });
 
   const detection = detectLanguageProfile(repoRoot);
-  const baseImage = baseImageOverride
-    ? assertNonEmptyString(baseImageOverride, "base_image")
-    : detection.base_image;
   const nfsXdrShape = loadNfsXdrShape(domain);
   const seedCorpus = loadSeedCorpus(domain);
   const seedCorpusCount = loadSeedCorpusCount(domain);
-  const recommendedCommands = recommendedCommandsFor(detection.language, { nfsXdrShape, seedCorpus });
+  const nativeFuzzShape = loadNativeFuzzShape(domain);
+  const nativeFuzzOnly = Boolean(nativeFuzzShape && detection && detection.language !== "c");
+  const envDetection = detectionProfileForRepoEnv(detection, nativeFuzzShape);
+  const baseImage = baseImageOverride
+    ? assertNonEmptyString(baseImageOverride, "base_image")
+    : envDetection.base_image;
+  const recommendedCommands = recommendedCommandsFor(envDetection.language, {
+    nfsXdrShape,
+    seedCorpus,
+    nativeFuzzShape,
+    nativeFuzzOnly,
+  });
   for (const command of recommendedCommands) {
     assertEnumValue(command.role, RECOMMENDED_COMMAND_ROLES, `recommended_commands[${command.id}].role`);
   }
@@ -684,10 +816,11 @@ async function prepareRepoEnv({
     : null;
 
   const dockerfileContent = buildDockerfileBob({
-    language: detection.language,
+    language: envDetection.language,
     baseImage,
     targetDomain: domain,
     nfsXdrShape,
+    nativeFuzzShape,
     allowNetwork: normalizedAllowNetwork,
   });
   assertNoEnvSecretLeak(dockerfileContent);
@@ -697,7 +830,7 @@ async function prepareRepoEnv({
     targetDomain: domain,
     repoSession,
     repoRoot,
-    detection,
+    detection: envDetection,
     recommendedCommands,
     imageTag,
     baseImage,
@@ -709,6 +842,7 @@ async function prepareRepoEnv({
     nfsXdrShape,
     seedCorpus,
     seedCorpusCount,
+    nativeFuzzShape,
   });
   // O-P7: scrub-validate before persistence. The recommended_commands carry
   // shell strings; the validator already catches inline tokens like
@@ -772,8 +906,9 @@ async function prepareRepoEnv({
     repo_env_path: repoEnvPath,
     image_tag: imageTag,
     base_image: baseImage,
-    language: detection.language,
+    language: envDetection.language,
     nfs_xdr_shape: nfsXdrShape,
+    native_fuzz_shape: nativeFuzzShape,
     seed_corpus: seedCorpus,
     seed_corpus_count: seedCorpusCount,
     dry_run: normalizedDryRun,
@@ -1266,10 +1401,25 @@ function buildDockerRunArgv({
 // returns {exit_code, signal, duration_ms, timed_out, stdout_bytes,
 //          stderr_bytes, stdout_truncated, stderr_truncated}.
 //
-// Stdout/stderr are streamed to disk (capped at 16 MB each) — never
-// held in process memory. Tests inject a stub so they can assert the
-// constructed argv and synthesize an exit code without actually
-// invoking docker.
+// Stdout/stderr are streamed to disk (capped at 16 MB each). A separate
+// bounded tail is retained only for scalar parsers such as fuzz_stats so
+// completion-state telemetry is not stale when the capture file truncates.
+// Tests inject a stub so they can assert the constructed argv and synthesize
+// an exit code without actually invoking docker.
+function appendTailBuffer(current, chunk, maxBytes) {
+  const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk || "");
+  if (maxBytes <= 0 || data.length === 0) return current;
+  if (data.length >= maxBytes) {
+    return Buffer.from(data.subarray(data.length - maxBytes));
+  }
+  if (!current || current.length === 0) {
+    return Buffer.from(data);
+  }
+  const combined = Buffer.concat([current, data]);
+  if (combined.length <= maxBytes) return combined;
+  return Buffer.from(combined.subarray(combined.length - maxBytes));
+}
+
 function defaultDockerRuntime() {
   return {
     async run({ command, args, timeoutMs, stdoutPath, stderrPath }) {
@@ -1288,6 +1438,8 @@ function defaultDockerRuntime() {
         let stderrBytes = 0;
         let stdoutTruncated = false;
         let stderrTruncated = false;
+        let stdoutTail = Buffer.alloc(0);
+        let stderrTail = Buffer.alloc(0);
         let timedOut = false;
         const startedAt = Date.now();
         const timer = setTimeout(() => {
@@ -1298,6 +1450,7 @@ function defaultDockerRuntime() {
           }, 5000);
         }, timeoutMs);
         child.stdout.on("data", (chunk) => {
+          stdoutTail = appendTailBuffer(stdoutTail, chunk, FUZZ_STATS_PROBE_BYTES);
           const remaining = REPO_DOCKER_RUN_MAX_OUTPUT_BYTES - stdoutBytes;
           if (remaining > 0) {
             const slice = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
@@ -1309,6 +1462,7 @@ function defaultDockerRuntime() {
           if (stdoutBytes > REPO_DOCKER_RUN_MAX_OUTPUT_BYTES) stdoutTruncated = true;
         });
         child.stderr.on("data", (chunk) => {
+          stderrTail = appendTailBuffer(stderrTail, chunk, FUZZ_STATS_PROBE_BYTES);
           const remaining = REPO_DOCKER_RUN_MAX_OUTPUT_BYTES - stderrBytes;
           if (remaining > 0) {
             const slice = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
@@ -1338,6 +1492,8 @@ function defaultDockerRuntime() {
             stderr_bytes: stderrBytes,
             stdout_truncated: stdoutTruncated,
             stderr_truncated: stderrTruncated,
+            stdout_tail_text: stdoutTail.toString("utf8"),
+            stderr_tail_text: stderrTail.toString("utf8"),
           });
         });
       });
@@ -1440,6 +1596,89 @@ function readFirstLine(filePath, maxChars) {
   } catch {
     return null;
   }
+}
+
+function readTailText(filePath, maxBytes) {
+  try {
+    if (!fs.existsSync(filePath)) return "";
+    const stat = fs.statSync(filePath);
+    if (stat.size === 0) return "";
+    const readLen = Math.min(stat.size, maxBytes);
+    const offset = Math.max(0, stat.size - readLen);
+    const fd = fs.openSync(filePath, "r");
+    try {
+      const buf = Buffer.alloc(readLen);
+      const bytesRead = fs.readSync(fd, buf, 0, readLen, offset);
+      if (bytesRead <= 0) return "";
+      return buf.subarray(0, bytesRead).toString("utf8");
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return "";
+  }
+}
+
+function integerToken(line, re) {
+  const match = re.exec(line);
+  if (!match) return null;
+  const value = Number.parseInt(match[1], 10);
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function parseFuzzStatsText(text) {
+  const stats = { ...FUZZ_STATS_NULL };
+  try {
+    if (!text) return stats;
+    const lines = text.split(/\r?\n/);
+    let sawLibFuzzerProgress = false;
+    for (const line of lines) {
+      if (!/^#\d+\b/.test(line)) continue;
+      const cov = integerToken(line, /\bcov:\s*(\d+)\b/);
+      const ft = integerToken(line, /\bft:\s*(\d+)\b/);
+      const execPerS = integerToken(line, /\bexec\/s:\s*(\d+)\b/);
+      const corpusSize = integerToken(line, /\bcorp:\s*(\d+)\b/);
+      if (cov == null && ft == null && execPerS == null && corpusSize == null) continue;
+      sawLibFuzzerProgress = true;
+      if (cov != null) stats.cov = cov;
+      if (ft != null) stats.ft = ft;
+      if (execPerS != null) stats.exec_per_s = execPerS;
+      if (corpusSize != null) stats.corpus_size = corpusSize;
+    }
+    const crashSeen = /(?:==\d+==ERROR:\s*(?:AddressSanitizer|UndefinedBehaviorSanitizer|MemorySanitizer)|ERROR:\s*libFuzzer:|Test unit written to|crash-[0-9a-f]{8,}|DEDUP_TOKEN:)/i.test(text);
+    if (sawLibFuzzerProgress || crashSeen) {
+      stats.crashes = crashSeen ? 1 : 0;
+    }
+    return stats;
+  } catch {
+    return { ...FUZZ_STATS_NULL };
+  }
+}
+
+function parseFuzzStats(stdoutPath, stderrPath = null) {
+  try {
+    return parseFuzzStatsText([
+      readTailText(stdoutPath, FUZZ_STATS_PROBE_BYTES),
+      stderrPath ? readTailText(stderrPath, FUZZ_STATS_PROBE_BYTES) : "",
+    ].filter(Boolean).join("\n"));
+  } catch {
+    return { ...FUZZ_STATS_NULL };
+  }
+}
+
+function boundedTailText(value) {
+  if (typeof value !== "string") return null;
+  if (value.length <= FUZZ_STATS_PROBE_BYTES) return value;
+  return value.slice(value.length - FUZZ_STATS_PROBE_BYTES);
+}
+
+function parseFuzzStatsFromRun(runResult, stdoutPath, stderrPath) {
+  const stdoutTail = boundedTailText(runResult && runResult.stdout_tail_text);
+  const stderrTail = boundedTailText(runResult && runResult.stderr_tail_text);
+  if (stdoutTail != null || stderrTail != null) {
+    return parseFuzzStatsText([stdoutTail || "", stderrTail || ""].filter(Boolean).join("\n"));
+  }
+  return parseFuzzStats(stdoutPath, stderrPath);
 }
 
 // Normalize replay_context. Operators pass {wave, agent, surface_id?, ...}
@@ -1794,6 +2033,7 @@ async function repoDockerRun({
   const stderrHash = hashFile(stderrPath);
   const stdoutFirstLine = readFirstLine(stdoutPath, REPO_DOCKER_RUN_FIRST_LINE_MAX_CHARS);
   const stderrFirstLine = readFirstLine(stderrPath, REPO_DOCKER_RUN_FIRST_LINE_MAX_CHARS);
+  const fuzzStats = parseFuzzStatsFromRun(runResult, stdoutPath, stderrPath);
   const completedAt = new Date().toISOString();
 
   const liveRow = {
@@ -1832,6 +2072,7 @@ async function repoDockerRun({
     stderr_first_line: stderrFirstLine,
     stdout_size_bytes: stdoutBytes,
     stderr_size_bytes: stderrBytes,
+    fuzz_stats: fuzzStats,
     egress_profile: egressProfileSummary,
   };
   if (replayCommandHash) liveRow.replay_command_hash = replayCommandHash;
@@ -1881,6 +2122,7 @@ async function repoDockerRun({
     stderr_size_bytes: stderrBytes,
     stdout_first_line: stdoutFirstLine,
     stderr_first_line: stderrFirstLine,
+    fuzz_stats: fuzzStats,
     stdout_truncated: stdoutTruncated,
     stderr_truncated: stderrTruncated,
     exit_code: exitCode,
@@ -1917,9 +2159,11 @@ module.exports = {
   recommendedCommandsFor,
   loadSeedCorpus,
   loadSeedCorpusCount,
+  loadNativeFuzzShape,
   assertNoEnvSecretLeak,
   dockerfileBobPath,
   readFirstLine,
+  parseFuzzStats,
   repoEnvJsonPath,
   loadNfsXdrShape,
   // Constants
@@ -1937,6 +2181,7 @@ module.exports = {
   REPO_MOUNT_MODE_VALUES,
   C_DEFAULT_APT_PACKAGES,
   NFS_EXTRA_APT_PACKAGES,
+  NATIVE_FUZZ_EXTRA_APT_PACKAGES,
   ENV_SECRET_LEAK_RE,
 };
 

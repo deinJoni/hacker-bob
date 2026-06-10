@@ -526,6 +526,16 @@ const REPO_WORKFLOW_TEXT = [
   "   cargo-audit, npm-audit, pip-audit. Each pack lists the install_check",
   "   + invocation template.",
   "",
+  "Structure-aware fuzzing: under `fuzz_run`, prefer the bounded",
+  "`repo-env.json` `role:\"fuzz\"` command when present. Shape seeds to the",
+  "target parser's framing (length-prefixed records, magic bytes, checksums,",
+  "chunk order) and start from discovered testdata/seed corpora rather than",
+  "blind empty inputs.",
+  "",
+  "Plateau read: compare only the `fuzz_stats` scalars on recent",
+  "`repo-command-runs.jsonl` rows. Flat `cov`/`ft` means switch seed or",
+  "harness strategy; it never completes or blocks a surface by itself.",
+  "",
   "The curl-shaped HTTP playbook (`bob_http_scan`, ffuf-style content",
   "discovery, param fuzzing) is de-emphasized under OSS lenses — repo-bound",
   "sessions do not own the deployed instance unless an operator explicitly",
@@ -762,7 +772,9 @@ function capStringValue(value, maxChars) {
 
 const REPO_ENV_RECOMMENDED_COMMAND_LIMIT = 8;
 const REPO_ENV_COMMAND_ARG_LIMIT = 12;
-const REPO_ENV_COMMAND_ARG_MAX_CHARS = 400;
+// Match bob_repo_docker_run's per-token limit so briefed command arrays stay
+// executable instead of silently clipping long `sh -lc` recipes.
+const REPO_ENV_COMMAND_ARG_MAX_CHARS = 2048;
 const REPO_ENV_STRING_MAX_CHARS = 240;
 const REPO_ENV_SEED_CORPUS_LIMIT = 8;
 const REPO_ENV_SEED_SAMPLE_LIMIT = 8;
