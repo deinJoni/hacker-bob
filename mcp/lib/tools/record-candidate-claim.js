@@ -37,7 +37,7 @@ const { appendFrontierEvent } = require("../frontier-events.js");
 const { scheduleMaterialization } = require("../frontier-materialize-debounce.js");
 const { hashCanonicalJson } = require("../verification-contracts.js");
 const { isKnownCwe } = require("../cwe-catalog.js");
-const { CVSS_INPUT_KEYS, CVSS_INPUT_ENUMS } = require("../cvss31.js");
+const { CVSS_INPUT_KEYS, CVSS_INPUT_ENUMS, deriveCvss31 } = require("../cvss31.js");
 
 // Registry-driven schema for the optional structured CVSS v3.1 base inputs. The
 // enum values are sourced from cvss31.js so the schema and the server-side
@@ -217,6 +217,44 @@ function assertReportableCweOnWrite(args, surfaceType) {
       `cwe ${JSON.stringify(args.cwe)} is not in the curated CWE catalog (mcp/lib/cwe-catalog.js); use a catalog id (examples: ${examples})`,
     );
   }
+}
+
+// Names the CVSS v3.1 base metrics still missing from a finding's cvss_inputs so
+// the remediation tells the operator exactly what to supply. attack_complexity,
+// user_interaction, and scope have spec defaults and are never listed; only
+// attack_vector, privileges_required, and the impact triad gate derivability.
+function missingCvssBaseMetrics(inputs) {
+  const facts = inputs && typeof inputs === "object" && !Array.isArray(inputs) ? inputs : {};
+  const missing = [];
+  if (facts.attack_vector == null) missing.push("attack_vector");
+  if (facts.privileges_required == null) missing.push("privileges_required");
+  if (facts.confidentiality == null && facts.integrity == null && facts.availability == null) {
+    missing.push("at least one of confidentiality/integrity/availability");
+  }
+  return missing;
+}
+
+// Reportable findings (critical/high/medium) must carry cvss_inputs sufficient
+// for a DERIVABLE CVSS v3.1 vector, mirroring how the CWE gate requires a
+// catalog id. This is evaluated on the BUILT/normalized finding so the OSS
+// reachability attack_vector fallback (network/local -> AV) has already run; an
+// OSS finding that asserts reachability + PR + impact but no explicit
+// attack_vector still passes. The insufficient-verified-facts marker still
+// renders for legacy read-back rows and low/info findings, which never reach
+// this assert.
+function assertReportableCvssInputsOnWrite(finding, surfaceType) {
+  const severity = finding && finding.severity;
+  if (severity !== "critical" && severity !== "high" && severity !== "medium") return;
+  const derived = deriveCvss31(finding.cvss_inputs);
+  if (!derived.insufficient) return;
+  const missing = missingCvssBaseMetrics(finding.cvss_inputs);
+  const missingList = missing.length ? missing.join(", ") : "attack_vector, privileges_required, at least one of confidentiality/integrity/availability";
+  const ossHint = surfaceType === "smart_contract"
+    ? ""
+    : " For routed oss_native_code findings, attack_vector is auto-derived from reachability_assertion (network -> AV:N, local -> AV:L), so supply reachability_assertion instead of attack_vector.";
+  throw new Error(
+    `cvss_inputs is required for ${severity} findings and must be sufficient to derive a CVSS v3.1 base vector; supply the missing base metrics (${missingList}) as enums on cvss_inputs.${ossHint}`,
+  );
 }
 
 function buildFindingPayloadRecord(args, context, findingId, { requireCwe = false } = {}) {
@@ -439,6 +477,7 @@ function recordCandidateClaimHandler(args) {
     const counter = scan.maxNumber + 1;
     assertReportableCweOnWrite(args, surfaceType);
     const finding = buildFindingPayloadRecord(args, context, `F-${counter}`, { requireCwe: true });
+    assertReportableCvssInputsOnWrite(finding, surfaceType);
     validateClaimForPersistence(finding, secretBypass);
 
     const findingContentHash = hashCanonicalJson(finding);

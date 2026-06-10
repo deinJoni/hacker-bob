@@ -217,6 +217,9 @@ function driveRealizationFlow(domain) {
     validated: true,
     auth_profile: "attacker",
     surface_id: promotedSurfaceId,
+    // Cross-tenant billing IDOR: network-reachable, low-privilege attacker
+    // tenant, confidentiality impact.
+    cvss_inputs: { attack_vector: "network", privileges_required: "low", confidentiality: "high" },
   });
   assert.equal(claimAResponse.recorded, true);
   const claimBResponse = callTool(recordCandidateClaimTool, {
@@ -232,6 +235,9 @@ function driveRealizationFlow(domain) {
     validated: true,
     auth_profile: "attacker",
     surface_id: promotedSurfaceId,
+    // Mass-assignment privilege escalation: network-reachable, low-privilege
+    // attacker tenant, integrity impact (unauthorized privileged field write).
+    cvss_inputs: { attack_vector: "network", privileges_required: "low", integrity: "high" },
   });
   assert.equal(claimBResponse.recorded, true);
   const findingIds = [claimAResponse.finding_id, claimBResponse.finding_id];

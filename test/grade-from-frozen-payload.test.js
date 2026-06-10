@@ -92,6 +92,19 @@ function recordFindingViaTool(domain, overrides = {}) {
   if (overrides.reachability_assertion) {
     args.reachability_assertion = overrides.reachability_assertion;
   }
+  // Cross-tenant IDOR disclosure: network-reachable, low-privilege attacker
+  // tenant, confidentiality impact. Callers asserting a reachability_assertion
+  // (OSS) instead get attack_vector auto-derived, so leave cvss_inputs unset
+  // there unless the override supplies it.
+  if (overrides.cvss_inputs !== undefined) {
+    if (overrides.cvss_inputs !== null) args.cvss_inputs = overrides.cvss_inputs;
+  } else if (!overrides.reachability_assertion) {
+    args.cvss_inputs = {
+      attack_vector: "network",
+      privileges_required: "low",
+      confidentiality: "high",
+    };
+  }
   return JSON.parse(recordFindingTool.handler(args));
 }
 

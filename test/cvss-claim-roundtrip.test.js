@@ -113,16 +113,22 @@ test("cvss_inputs does NOT enter the finding dedupe_key", () => {
   });
   assert.equal(withInputs, withoutInputs);
 
-  // And end-to-end: a second record carrying cvss_inputs is detected as the same
-  // finding (dedupe hit), proving the key did not shift.
+  // And end-to-end: a second record whose cvss_inputs are REFINED relative to the
+  // first is still detected as the same finding (dedupe hit), proving the key did
+  // not shift when the CVSS inputs changed. Both records carry derivable inputs
+  // because the write path requires them for a reportable (high) finding.
   withTempHome(() => {
     const domain = "audit.example.com";
-    const first = JSON.parse(recordClaimTool.handler({ target_domain: domain, ...BASE_CLAIM }));
+    const first = JSON.parse(recordClaimTool.handler({
+      target_domain: domain,
+      ...BASE_CLAIM,
+      cvss_inputs: { attack_vector: "network", privileges_required: "low", confidentiality: "high" },
+    }));
     assert.equal(first.recorded, true);
     const second = JSON.parse(recordClaimTool.handler({
       target_domain: domain,
       ...BASE_CLAIM,
-      cvss_inputs: { attack_vector: "network", privileges_required: "low", confidentiality: "high" },
+      cvss_inputs: { attack_vector: "network", privileges_required: "low", confidentiality: "high", integrity: "low" },
     }));
     assert.equal(second.duplicate, true);
     assert.equal(second.dedupe_key, first.dedupe_key);

@@ -211,7 +211,34 @@ const recordCandidateClaimTool = require("../mcp/lib/tools/record-candidate-clai
 const listCandidateClaimsTool = require("../mcp/lib/tools/list-candidate-claims.js");
 const readCandidateClaimsTool = require("../mcp/lib/tools/read-candidate-claims.js");
 const { appendCandidateClaim } = require("../mcp/lib/claims.js");
-const recordFinding = recordCandidateClaimTool.handler;
+const REPORTABLE_SEVERITIES = new Set(["critical", "high", "medium"]);
+// The write path requires derivable cvss_inputs for reportable findings. These
+// fixtures record two finding shapes: web IDOR/PII disclosure (network,
+// low-privilege attacker, confidentiality) and smart-contract reentrancy/fund
+// drain (network, no privileges, integrity + availability). Supply honest base
+// metrics for each shape when a caller records a reportable finding without
+// explicit cvss_inputs; explicit cvss_inputs and low/info findings pass through
+// untouched, and rejection-path fixtures still throw in normalization first.
+// Future reportable fixtures with a different impact shape should pass explicit
+// cvss_inputs rather than rely on these defaults.
+function defaultCvssInputsForFixture(args) {
+  if (args && args.sc_evidence != null) {
+    return { attack_vector: "network", privileges_required: "none", integrity: "high", availability: "high" };
+  }
+  return { attack_vector: "network", privileges_required: "low", confidentiality: "high" };
+}
+function recordFinding(args) {
+  if (
+    args
+    && typeof args === "object"
+    && REPORTABLE_SEVERITIES.has(args.severity)
+    && args.cvss_inputs === undefined
+    && args.reachability_assertion == null
+  ) {
+    return recordCandidateClaimTool.handler({ ...args, cvss_inputs: defaultCvssInputsForFixture(args) });
+  }
+  return recordCandidateClaimTool.handler(args);
+}
 const listFindings = listCandidateClaimsTool.handler;
 const readFindings = readCandidateClaimsTool.handler;
 const {
@@ -9014,6 +9041,9 @@ test("bob_record_finding appends findings.jsonl and bob_read_findings preserves 
       impact: "Admin session compromise.",
       wave: "w2",
       agent: "a2",
+      // Stored XSS firing in the admin view: network-reachable, low-privilege
+      // commenter, compromises an admin session (confidentiality + integrity).
+      cvss_inputs: { attack_vector: "network", privileges_required: "low", confidentiality: "high", integrity: "high" },
     });
 
     assert.equal(first.finding_id, "F-1");
@@ -9063,6 +9093,7 @@ test("bob_record_finding appends findings.jsonl and bob_read_findings preserves 
           brief_profile: "web",
           sc_evidence: null,
           auth_profile: null,
+          cvss_inputs: { attack_vector: "network", privileges_required: "low", confidentiality: "high" },
         },
         {
           id: "F-2",
@@ -9091,6 +9122,7 @@ test("bob_record_finding appends findings.jsonl and bob_read_findings preserves 
           brief_profile: "web",
           sc_evidence: null,
           auth_profile: null,
+          cvss_inputs: { attack_vector: "network", privileges_required: "low", confidentiality: "high", integrity: "high" },
         },
       ],
     });

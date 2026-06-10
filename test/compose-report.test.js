@@ -24,6 +24,7 @@ const recordClaimTool = require("../mcp/lib/tools/record-candidate-claim.js");
 const { deriveCvss31 } = require("../mcp/lib/cvss31.js");
 const { ERROR_CODES } = require("../mcp/lib/envelope.js");
 const {
+  claimsJsonlPath,
   reportMarkdownPath,
   sessionDir,
   verificationRoundPaths,
@@ -243,7 +244,7 @@ test("bob_compose_report tool spec carries Y_self_reporting capability_id and is
   assert.ok(composeReportTool.role_bundles.includes("orchestrator"));
 });
 
-// --- Cycle 2: server-derived CVSS v3.1 + validated CWE annotations ---
+// --- server-derived CVSS v3.1 + validated CWE annotations ---
 
 function recordWebClaim(domain, overrides = {}) {
   return JSON.parse(recordClaimTool.handler({
@@ -312,10 +313,26 @@ test("bob_compose_report renders a server-derived CVSS v3.1 + CWE block whose ve
   });
 });
 
-test("bob_compose_report renders the insufficient-verified-facts marker when cvss_inputs is absent", () => {
+test("bob_compose_report renders the insufficient-verified-facts marker for a legacy finding that lacks cvss_inputs", () => {
   withTempHome(() => {
     const domain = "audit.example.com";
-    recordWebClaim(domain, { cwe: "CWE-200", title: "Info exposure", endpoint: "https://audit.example.com/api/info" });
+    // The write path requires derivable cvss_inputs for a reportable (medium)
+    // finding, so record it WITH inputs to clear the gate, then strip them from
+    // the persisted claim row to simulate a legacy finding lacking cvss_inputs.
+    // Read-back stays tolerant, so the marker still renders for that legacy row.
+    recordWebClaim(domain, {
+      cwe: "CWE-200",
+      title: "Info exposure",
+      endpoint: "https://audit.example.com/api/info",
+      severity: "medium",
+      cvss_inputs: { attack_vector: "network", privileges_required: "low", confidentiality: "high" },
+    });
+    const claimsFile = claimsJsonlPath(domain);
+    const claimLines = fs.readFileSync(claimsFile, "utf8").split("\n").filter((l) => l.trim());
+    assert.equal(claimLines.length, 1);
+    const claim = JSON.parse(claimLines[0]);
+    delete claim.payload.finding.cvss_inputs;
+    fs.writeFileSync(claimsFile, `${JSON.stringify(claim)}\n`);
     seedFinalRound(domain, [{
       finding_id: "F-1",
       disposition: "confirmed",

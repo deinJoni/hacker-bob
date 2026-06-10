@@ -60,6 +60,13 @@ function findingInput(domain, index) {
     validated: true,
     auth_profile: `attacker-${index}`,
     surface_id: `surface:record-${index}`,
+    // Cross-tenant IDOR disclosure: network-reachable, low-privilege attacker
+    // tenant, confidentiality impact.
+    cvss_inputs: {
+      attack_vector: "network",
+      privileges_required: "low",
+      confidentiality: "high",
+    },
   };
 }
 

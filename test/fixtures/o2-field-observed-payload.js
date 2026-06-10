@@ -29,6 +29,13 @@ function fieldObservedPayload(domain) {
     response_evidence: "200 OK; body included other tenant's email + plan tier (~6KB sample retained out-of-band)",
     impact: "Any authenticated tenant can read any other tenant's account record.",
     validated: true,
+    // Cross-tenant IDOR: network-reachable, low-privilege authenticated tenant,
+    // confidentiality impact (reads any other tenant's account record).
+    cvss_inputs: {
+      attack_vector: "network",
+      privileges_required: "low",
+      confidentiality: "high",
+    },
   };
 }
 

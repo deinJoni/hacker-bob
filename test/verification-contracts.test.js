@@ -108,6 +108,13 @@ function findingInput(domain, overrides = {}) {
     impact: "Cross-tenant billing metadata disclosure.",
     validated: true,
     auth_profile: "attacker",
+    // Cross-tenant billing IDOR: network-reachable, low-privilege attacker
+    // tenant, confidentiality impact.
+    cvss_inputs: {
+      attack_vector: "network",
+      privileges_required: "low",
+      confidentiality: "high",
+    },
     ...overrides,
   };
 }

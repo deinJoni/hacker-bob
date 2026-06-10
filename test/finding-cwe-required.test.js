@@ -1,9 +1,9 @@
 "use strict";
 
-// Cycle-1 invariant: CWE is required and catalog-validated on the fresh write
-// path for reportable findings (severity critical/high/medium), optional for
-// low/info, idempotently canonicalized so the dedupe key does not fork, and
-// tolerant on legacy read-back projection (a row missing a CWE still projects).
+// CWE is required and catalog-validated on the fresh write path for reportable
+// findings (severity critical/high/medium), optional for low/info, idempotently
+// canonicalized so the dedupe key does not fork, and tolerant on legacy
+// read-back projection (a row missing a CWE still projects).
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -52,6 +52,15 @@ function baseFinding(domain, overrides = {}) {
     validated: true,
     auth_profile: "attacker",
     surface_id: "surface:record-1",
+    // Cross-tenant IDOR: network-reachable, requires a low-privilege
+    // authenticated tenant, discloses another tenant's record (confidentiality).
+    cvss_inputs: {
+      attack_vector: "network",
+      privileges_required: "low",
+      confidentiality: "high",
+      integrity: "none",
+      availability: "none",
+    },
     ...overrides,
   };
 }
@@ -148,10 +157,9 @@ test("a present CWE is canonicalized on write without forking the dedupe_key", (
 });
 
 test("legacy read-back projects a claim row whose CWE is present but non-catalog", () => {
-  // The pre-cycle normalizer accepted any free-form CWE string. A persisted
-  // claim that recorded an out-of-catalog or free-text CWE must still project on
-  // read-back (degraded to null), not be silently dropped by the projection's
-  // catch. Strict catalog validation stays on the write path only.
+  // A persisted claim whose recorded CWE is out-of-catalog or free-text must
+  // still project on read-back (degraded to null), not be silently dropped by
+  // the projection's catch. Strict catalog validation stays on the write path only.
   for (const legacyCwe of ["IDOR", "CWE-602", "CWE-79 (XSS)"]) {
     withTempHome(() => {
       const domain = "cwe-legacy-present.example.com";

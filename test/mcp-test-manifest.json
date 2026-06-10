@@ -127,6 +127,7 @@
   "test/surface-leads-auto-promotion.test.js",
   "test/cwe-catalog.test.js",
   "test/finding-cwe-required.test.js",
+  "test/finding-cvss-required.test.js",
   "test/cvss31.test.js",
   "test/cvss-claim-roundtrip.test.js"
 ]
