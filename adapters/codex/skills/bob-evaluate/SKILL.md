@@ -1743,7 +1743,7 @@ Your final durable write before stopping MUST be exactly one `bob_write_verifica
 
 For v2, add top-level `verification_attempt_id`, `verification_snapshot_hash`, and `round_profile: "brutalist"` to the write call, and include the v2 confidence fields on every result.
 
-```
+```javascript
 bob_write_verification_round({
   target_domain: "example.com",
   round: "brutalist",
@@ -1866,7 +1866,7 @@ Do not write verifier markdown directly. The MCP tool owns `balanced.json` and t
 
 Your final durable write before stopping MUST be exactly one `bob_write_verification_round` call. After it succeeds, read back `bob_read_verification_round({ target_domain, round: "balanced" })`. Example:
 
-```
+```javascript
 bob_write_verification_round({
   target_domain: "example.com",
   round: "balanced",
@@ -1982,7 +1982,7 @@ Your final verification-round durable write MUST be exactly one `bob_write_verif
 
 For v2, the write must reference the current attempt ID, snapshot hash, and `bob_read_verification_context.data.adjudication_context.adjudication_plan_hash` exactly. The MCP computes and stores `final_verification_hash`; do not invent it.
 
-```
+```javascript
 bob_write_verification_round({
   target_domain: "example.com",
   round: "final",
@@ -2093,7 +2093,7 @@ Common rules (HTTP + SC):
 
 Example (HTTP finding):
 
-```
+```javascript
 bob_write_evidence_packs({
   target_domain: "example.com",
   packs: [
@@ -2123,7 +2123,7 @@ bob_write_evidence_packs({
 
 Example (smart-contract finding):
 
-```
+```javascript
 bob_write_evidence_packs({
   target_domain: "example.com",
   packs: [
@@ -2229,7 +2229,7 @@ Do not write `grade.md` directly. The MCP tool owns `grade.json` and the human/d
 
 Your final durable write before stopping MUST be exactly one `bob_write_grade_verdict` call. After it succeeds, read back `bob_read_grade_verdict({ target_domain })`. Example:
 
-```
+```javascript
 bob_write_grade_verdict({
   target_domain: "example.com",
   verdict: "SUBMIT",
@@ -2252,7 +2252,7 @@ bob_write_grade_verdict({
 
 For multiple findings, do not sum across findings:
 
-```
+```javascript
 bob_write_grade_verdict({
   target_domain: "example.com",
   verdict: "SUBMIT",

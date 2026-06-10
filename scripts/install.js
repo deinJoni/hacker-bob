@@ -461,7 +461,6 @@ function installProject(projectDir, options = {}) {
         installerSource,
         manifest,
         packageName,
-        readJsonIfExists,
       });
     } else {
       adapterResults[adapterId] = adapter.install({
