@@ -454,6 +454,36 @@ test("reporter OSS branch carries CWE, server-derived CVSS v3.1, and references 
   assert.match(ossBranch, /Do not fabricate advisory, commit, or GitHub links/);
 });
 
+test("grader severity_accuracy axis cites the CVSS band as an explicitly non-gating sanity signal", () => {
+  const graderPrompt = readFile("prompts/roles/grader.md");
+  const axisStart = graderPrompt.indexOf("**Severity accuracy**");
+  const axisEnd = graderPrompt.indexOf("**Chain potential**", axisStart);
+  assert.ok(axisStart >= 0 && axisEnd > axisStart, "severity_accuracy axis block must exist");
+  const axis = graderPrompt.slice(axisStart, axisEnd);
+
+  // The axis keeps its original intent.
+  assert.match(axis, /Does the claimed severity match the real impact\?/);
+  // Advisory CVSS-band sentence referencing the read tool's per-finding band.
+  assert.match(axis, /bob_read_candidate_claims/);
+  assert.match(axis, /server-derived CVSS v3\.1 band/);
+  assert.match(axis, /badly out of line/);
+  // Explicitly non-gating / not a score source.
+  assert.match(axis, /NOT a score source/);
+  assert.match(axis, /does NOT map to points/i);
+  assert.match(axis, /your judgment of demonstrated impact governs/i);
+  // No numeric band->points mapping may be introduced anywhere in the prompt:
+  // "badly out of line" must remain a qualitative judgment.
+  assert.doesNotMatch(graderPrompt, /\d+\s*(?:points?|pts)/i);
+  assert.doesNotMatch(graderPrompt, /band\s*(?:=|->|→|maps to)\s*\d/i);
+  // The band must never drive the integer through a mechanical verb either:
+  // no "band ... deduct/subtract/add to this axis" phrasing in the axis slice.
+  assert.doesNotMatch(axis, /band[^.]*\b(?:deduct|subtract|add(?:s|ed)?)\b/i);
+
+  // The integer example block and the compact final marker must stay intact.
+  assert.match(graderPrompt, /finding_id:\s*"F-\d+"/, "grader.md must keep the F-N example block");
+  assert.match(graderPrompt, /BOB_GRADE_DONE/, "grader.md must keep the BOB_GRADE_DONE marker");
+});
+
 test("reporter smart-contract family table mirrors SMART_CONTRACT_FAMILY_CWE", () => {
   const { SMART_CONTRACT_FAMILY_CWE } = require("../mcp/lib/cwe-catalog.js");
   const reporterPrompt = readFile("prompts/roles/reporter.md");

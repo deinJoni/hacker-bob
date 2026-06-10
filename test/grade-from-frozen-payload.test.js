@@ -1592,6 +1592,56 @@ test("strict gate: grade total_score must equal max per-finding score (verdict c
   });
 });
 
+test("grade verdict is byte-identical with vs without a CVSS band on the input findings", () => {
+  withTempHome(() => {
+    const domain = "grade-cvss-nongating.example.com";
+    seedFinalVerificationFromFrozen(domain);
+
+    // The grader's read tool attaches a server-derived CVSS band to each
+    // finding as an informational sanity signal. The grade store must never
+    // read it: the verdict is computed purely from the five integer axes.
+    // Writing the verdict with an extra cvss band on every grade-finding input
+    // must yield the exact same persisted document and response as writing it
+    // without one.
+    const cvssBand = {
+      version: "3.1",
+      vector: "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N",
+      base_score: 6.5,
+      severity_band: "medium",
+    };
+
+    const withoutBand = JSON.parse(writeGradeVerdict({
+      target_domain: domain,
+      verdict: "SUBMIT",
+      total_score: 75,
+      findings: [gradeFinding("F-1")],
+    }));
+    const docWithoutBand = fs.readFileSync(gradeArtifactPaths(domain).json, "utf8");
+
+    const withBand = JSON.parse(writeGradeVerdict({
+      target_domain: domain,
+      verdict: "SUBMIT",
+      total_score: 75,
+      findings: [gradeFinding("F-1", { cvss: cvssBand, severity_band: "medium" })],
+    }));
+    const docWithBand = fs.readFileSync(gradeArtifactPaths(domain).json, "utf8");
+
+    assert.equal(
+      docWithBand,
+      docWithoutBand,
+      "persisted grade.json must be byte-identical whether or not a cvss band is attached to input findings",
+    );
+    assert.equal(withBand.verdict, withoutBand.verdict);
+    assert.equal(withBand.findings_count, withoutBand.findings_count);
+    assert.equal(withBand.claim_freeze_id, withoutBand.claim_freeze_id);
+    assert.deepEqual(
+      Object.prototype.hasOwnProperty.call(JSON.parse(docWithBand).findings[0], "cvss"),
+      false,
+      "the cvss band must never leak onto the persisted graded finding",
+    );
+  });
+});
+
 test("legacy adapter: callers passing finding_ids[] are routed through claimIdSetFromFindingIds", () => {
   withTempHome(() => {
     const domain = "grade-legacy-adapter.example.com";

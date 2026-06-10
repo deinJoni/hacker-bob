@@ -211,6 +211,7 @@ const recordCandidateClaimTool = require("../mcp/lib/tools/record-candidate-clai
 const listCandidateClaimsTool = require("../mcp/lib/tools/list-candidate-claims.js");
 const readCandidateClaimsTool = require("../mcp/lib/tools/read-candidate-claims.js");
 const { appendCandidateClaim } = require("../mcp/lib/claims.js");
+const { deriveCvss31 } = require("../mcp/lib/cvss31.js");
 const REPORTABLE_SEVERITIES = new Set(["critical", "high", "medium"]);
 // The write path requires derivable cvss_inputs for reportable findings. These
 // fixtures record two finding shapes: web IDOR/PII disclosure (network,
@@ -9058,9 +9059,16 @@ test("bob_record_finding appends findings.jsonl and bob_read_findings preserves 
     const readResult = JSON.parse(readFindings({ target_domain: domain }));
     assert.match(readResult.findings[0].dedupe_key, /^[a-f0-9]{24}$/);
     assert.match(readResult.findings[1].dedupe_key, /^[a-f0-9]{24}$/);
+    // The read tool attaches a server-derived CVSS band per finding as an
+    // informational sanity signal; it equals deriveCvss31(cvss_inputs) and is
+    // not part of the persisted finding shape, so strip it before the strict
+    // shape comparison and assert its derivation separately.
+    for (const finding of readResult.findings) {
+      assert.deepEqual(finding.cvss, deriveCvss31(finding.cvss_inputs));
+    }
     const readResultWithoutDedupeKeys = {
       ...readResult,
-      findings: readResult.findings.map(({ dedupe_key, ...finding }) => finding),
+      findings: readResult.findings.map(({ dedupe_key, cvss, ...finding }) => finding),
     };
     assert.deepEqual(readResultWithoutDedupeKeys, {
       version: 1,
