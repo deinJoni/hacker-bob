@@ -81,10 +81,14 @@ const {
 const {
   EVALUATOR_KNOWLEDGE_MAX_CHARS,
   OSS_TECHNIQUE_PACKS,
+  TECHNIQUE_SUMMARY_ITEM_MAX_CHARS,
   evaluatorKnowledgeCandidatePaths,
   resolveEvaluatorKnowledge,
   selectTechniquePacksForSurface,
 } = require("./technique-packs.js");
+const {
+  suggestFamiliesForSurface,
+} = require("./oss-rootcause-family-corpus.js");
 const {
   CLI_TOOL_PACKS,
   fillInvocationPlaceholders,
@@ -374,6 +378,42 @@ function ossTechniquePackForBrief(pack, { summary = true } = {}) {
   return brief;
 }
 
+const OSS_ROOTCAUSE_FAMILY_BRIEF_LIMIT = 10;
+
+function emptyRootCauseFamilyResult(lens, { unmatchedLens = false } = {}) {
+  return {
+    lens: typeof lens === "string" && lens.length > 0 ? lens : "unknown",
+    family_count: 0,
+    suggestions: [],
+    unmatched_lens: unmatchedLens,
+    summary_limits: {
+      item_max_chars: TECHNIQUE_SUMMARY_ITEM_MAX_CHARS,
+      limit: 0,
+      returned: 0,
+    },
+  };
+}
+
+function normalizedBriefSignal(value) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function isTrueSignal(value) {
+  return value === true || normalizedBriefSignal(value) === "true";
+}
+
+function isNativeCodeFamilySurface(surface, routeMetadata) {
+  const surfaceObj = surface && typeof surface === "object" && !Array.isArray(surface) ? surface : {};
+  const routePack = normalizedBriefSignal(routeMetadata && routeMetadata.capability_pack);
+  const surfacePack = normalizedBriefSignal(surfaceObj.capability_pack);
+  const surfaceType = normalizedBriefSignal(surfaceObj.surface_type);
+  return routePack === "oss_native_code"
+    || surfacePack === "oss_native_code"
+    || surfaceType === "oss_native_code"
+    || isTrueSignal(surfaceObj.native_source)
+    || isTrueSignal(surfaceObj.nativeSource);
+}
+
 function partitionOssTechniquePacksByLens(packs, taskLens) {
   const packList = Array.isArray(packs) ? packs : [];
   if (!isOssLens(taskLens)) {
@@ -398,14 +438,38 @@ function partitionOssTechniquePacksByLens(packs, taskLens) {
   };
 }
 
-function buildOssTechniquePacksSlice(taskLens) {
+function buildOssTechniquePacksSlice(taskLens, surface, routeMetadata) {
   const partitioned = partitionOssTechniquePacksByLens(OSS_TECHNIQUE_PACKS, taskLens);
+  const routeCapabilityPack = routeMetadata && typeof routeMetadata.capability_pack === "string"
+    ? routeMetadata.capability_pack
+    : null;
+  const familySurface = surface && typeof surface === "object" && !Array.isArray(surface)
+    ? { ...surface, ...(routeCapabilityPack ? { capability_pack: routeCapabilityPack } : {}), task_lens: taskLens }
+    : { ...(routeCapabilityPack ? { capability_pack: routeCapabilityPack } : {}), task_lens: taskLens };
+  const rootCauseFamilies = isNativeCodeFamilySurface(surface, routeMetadata)
+    ? suggestFamiliesForSurface(familySurface, {
+      lens: taskLens,
+      limit: OSS_ROOTCAUSE_FAMILY_BRIEF_LIMIT,
+    })
+    : emptyRootCauseFamilyResult(taskLens, { unmatchedLens: !isOssLens(taskLens) });
+  const renderedFamilies = rootCauseFamilies.suggestions;
   return {
     selected: partitioned.selected,
     other_applicable: partitioned.other_applicable,
+    root_cause_families: renderedFamilies,
+    root_cause_family_limits: {
+      lens: rootCauseFamilies.lens,
+      family_count: rootCauseFamilies.family_count,
+      unmatched_lens: rootCauseFamilies.unmatched_lens,
+      item_max_chars: rootCauseFamilies.summary_limits?.item_max_chars,
+      limit: rootCauseFamilies.summary_limits?.limit,
+      returned: rootCauseFamilies.summary_limits?.returned,
+    },
     selection_limits: {
       selected_chars: JSON.stringify(partitioned.selected).length,
       selected_count: partitioned.selected.length,
+      root_cause_family_chars: JSON.stringify(renderedFamilies).length,
+      root_cause_family_count: renderedFamilies.length,
     },
     lens_partitioned: isOssLens(taskLens),
   };
@@ -1318,7 +1382,7 @@ function buildOssBriefExtras(domain, surfaceObj, routeMetadata, assignment) {
       },
     },
     repoEnvRecommendations: buildRepoEnvRecommendationsForBrief(domain),
-    ossTechniquePacks: buildOssTechniquePacksSlice(taskLens),
+    ossTechniquePacks: buildOssTechniquePacksSlice(taskLens, slimSurface.surface, routeMetadata),
     cliToolSurfaceFingerprint,
     cliToolTaskLens: taskLens,
     cliToolObservations,
