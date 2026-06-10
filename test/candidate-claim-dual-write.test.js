@@ -51,7 +51,7 @@ function findingInput(domain, index) {
     target_domain: domain,
     title: `IDOR exposes record ${index}`,
     severity: index % 2 === 0 ? "high" : "medium",
-    cwe: `CWE-${600 + index}`,
+    cwe: "CWE-639",
     endpoint: `https://victim.example/api/records/${index}`,
     description: `Changing record ${index} identifier returns another tenant payload.`,
     proof_of_concept: `GET /api/records/${index} as the attacker tenant returns private fields.`,

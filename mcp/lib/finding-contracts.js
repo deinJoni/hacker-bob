@@ -17,6 +17,7 @@ const {
 } = require("./constants.js");
 const {
   assertBoolean,
+  assertCwe,
   assertEnumValue,
   assertNonEmptyString,
   assertRequiredText,
@@ -449,7 +450,9 @@ function summarizeFindings(findings) {
   };
 }
 
-function normalizeFindingRecord(record, { expectedDomain = null, lineNumber = null } = {}) {
+const CWE_REQUIRED_SEVERITIES = Object.freeze(["critical", "high", "medium"]);
+
+function normalizeFindingRecord(record, { expectedDomain = null, lineNumber = null, requireCwe = false } = {}) {
   if (record == null || typeof record !== "object" || Array.isArray(record)) {
     throw new Error(lineNumber == null
       ? "finding record must be an object"
@@ -457,12 +460,22 @@ function normalizeFindingRecord(record, { expectedDomain = null, lineNumber = nu
   }
 
   try {
+    const severity = assertEnumValue(record.severity, SEVERITY_VALUES, "severity");
+    // CWE is canonicalized + catalog-validated whenever present on the strict
+    // write path. Canonicalization is idempotent so an already-canonical CWE
+    // leaves computeFindingDedupeKey stable. Presence is enforced only on the
+    // strict write path (requireCwe) for reportable severities. Read-back
+    // projection passes requireCwe=false, which also relaxes present-CWE
+    // validation (strictPresent=false): a legacy row whose CWE is missing,
+    // unparseable, or outside the curated catalog degrades to null rather than
+    // throwing, so it still projects into summaries/handoffs/reports.
+    const cweRequired = requireCwe && CWE_REQUIRED_SEVERITIES.includes(severity);
     const finding = {
       id: parseFindingId(record.id, "id"),
       target_domain: assertNonEmptyString(record.target_domain, "target_domain"),
       title: assertRequiredText(record.title, "title"),
-      severity: assertEnumValue(record.severity, SEVERITY_VALUES, "severity"),
-      cwe: normalizeOptionalText(record.cwe, "cwe"),
+      severity,
+      cwe: assertCwe(record.cwe, "cwe", { required: cweRequired, strictPresent: requireCwe }),
       endpoint: assertRequiredText(record.endpoint, "endpoint"),
       file_path: normalizeOptionalText(record.file_path, "file_path"),
       symbol: normalizeOptionalText(record.symbol, "symbol"),

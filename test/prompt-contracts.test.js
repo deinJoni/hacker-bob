@@ -438,12 +438,49 @@ test("reporter OSS branch carries CWE, suggested CVSS-4.0, and references guidan
   assert.ok(httpBranchStart > ossBranchStart, "HTTP branch must follow OSS branch");
   const ossBranch = reporterPrompt.slice(ossBranchStart, httpBranchStart);
   assert.match(ossBranch, /CWE/);
+  assert.match(ossBranch, /required and catalog-validated/);
+  assert.match(ossBranch, /cwe-catalog\.js/);
   assert.match(ossBranch, /Suggested CVSS-4\.0/);
   assert.match(ossBranch, /derive AV from the reachability prose|reachability prose/);
   assert.match(ossBranch, /References/);
   assert.match(ossBranch, /stable remote\/commit URL/);
   assert.match(ossBranch, /CVE\/GHSA|CVE|GHSA/);
   assert.match(ossBranch, /Do not fabricate advisory, commit, or GitHub links/);
+});
+
+test("reporter smart-contract family table mirrors SMART_CONTRACT_FAMILY_CWE", () => {
+  const { SMART_CONTRACT_FAMILY_CWE } = require("../mcp/lib/cwe-catalog.js");
+  const reporterPrompt = readFile("prompts/roles/reporter.md");
+  const tableStart = reporterPrompt.indexOf("SMART_CONTRACT_FAMILY_CWE");
+  const tableEnd = reporterPrompt.indexOf("Chain + Address", tableStart);
+  assert.ok(tableStart >= 0 && tableEnd > tableStart, "smart-contract family table must exist");
+  const block = reporterPrompt.slice(tableStart, tableEnd);
+  const rows = block.split("\n").filter((line) => /→\s*CWE-\d+/.test(line));
+  assert.ok(rows.length > 0, "family table must contain mapping rows");
+
+  const catalogKeys = new Set(Object.keys(SMART_CONTRACT_FAMILY_CWE));
+  let checked = 0;
+  for (const row of rows) {
+    const [lhs] = row.split("→");
+    const rowCweIds = row.match(/CWE-\d+/g) || [];
+    // Identifier-shaped family tokens are the catalog vocabulary (snake_case).
+    // Prose aliases (e.g. "signature replay") are intentionally not validated.
+    const familyTokens = lhs.match(/[a-z][a-z0-9]*(?:_[a-z0-9]+)+/g) || [];
+    for (const token of familyTokens) {
+      assert.ok(
+        catalogKeys.has(token),
+        `reporter.md family token ${token} is not a key in SMART_CONTRACT_FAMILY_CWE`,
+      );
+      for (const cwe of SMART_CONTRACT_FAMILY_CWE[token]) {
+        assert.ok(
+          rowCweIds.includes(cwe),
+          `reporter.md row for ${token} must list ${cwe} (catalog: ${SMART_CONTRACT_FAMILY_CWE[token].join(", ")})`,
+        );
+      }
+      checked += 1;
+    }
+  }
+  assert.ok(checked > 0, "at least one family token must be validated against the catalog");
 });
 
 test("evaluator OSS stanza tells fuzz_run to consume readable repo-env recommendations", () => {

@@ -36,6 +36,15 @@ const {
 const { appendFrontierEvent } = require("../frontier-events.js");
 const { scheduleMaterialization } = require("../frontier-materialize-debounce.js");
 const { hashCanonicalJson } = require("../verification-contracts.js");
+const { isKnownCwe } = require("../cwe-catalog.js");
+
+// Example catalog CWEs surfaced in the missing-CWE remediation, keyed by the
+// finding class so the operator sees relevant ids. The validator is the source
+// of truth; these are illustrative hints only.
+const EXAMPLE_CWES_BY_CLASS = Object.freeze({
+  smart_contract: "CWE-841 (reentrancy), CWE-284 (access-control bypass), CWE-682 (incorrect calculation), CWE-294 (signature replay)",
+  web: "CWE-79 (XSS), CWE-639 (IDOR), CWE-352 (CSRF), CWE-918 (SSRF), CWE-200 (info exposure)",
+});
 
 // CandidateClaim recording. Every candidate claim lands in claims.jsonl with
 // an embedded finding-shaped payload referenced via evidence_refs[kind="finding"].
@@ -175,7 +184,25 @@ function validateClaimForPersistence(finding, secretBypass = new Map()) {
   }
 }
 
-function buildFindingPayloadRecord(args, context, findingId) {
+function assertReportableCweOnWrite(args, surfaceType) {
+  const severity = args && args.severity;
+  if (severity !== "critical" && severity !== "high" && severity !== "medium") return;
+  const cweEmpty = args.cwe == null || (typeof args.cwe === "string" && !args.cwe.trim());
+  if (cweEmpty) {
+    const examples = EXAMPLE_CWES_BY_CLASS[surfaceType] || EXAMPLE_CWES_BY_CLASS.web;
+    throw new Error(
+      `cwe is required for ${severity} findings and must be a catalog id from mcp/lib/cwe-catalog.js (examples: ${examples})`,
+    );
+  }
+  if (!isKnownCwe(args.cwe)) {
+    const examples = EXAMPLE_CWES_BY_CLASS[surfaceType] || EXAMPLE_CWES_BY_CLASS.web;
+    throw new Error(
+      `cwe ${JSON.stringify(args.cwe)} is not in the curated CWE catalog (mcp/lib/cwe-catalog.js); use a catalog id (examples: ${examples})`,
+    );
+  }
+}
+
+function buildFindingPayloadRecord(args, context, findingId, { requireCwe = false } = {}) {
   return normalizeFindingRecord({
     id: findingId,
     target_domain: context.domain,
@@ -209,7 +236,7 @@ function buildFindingPayloadRecord(args, context, findingId) {
     dedupe_key: args.dedupe_key,
     auth_profile: args.auth_profile,
     force_record: args.force_record === true,
-  }, { expectedDomain: context.domain });
+  }, { expectedDomain: context.domain, requireCwe });
 }
 
 function deriveSubjectId(finding) {
@@ -391,7 +418,8 @@ function recordCandidateClaimHandler(args) {
     }
 
     const counter = scan.maxNumber + 1;
-    const finding = buildFindingPayloadRecord(args, context, `F-${counter}`);
+    assertReportableCweOnWrite(args, surfaceType);
+    const finding = buildFindingPayloadRecord(args, context, `F-${counter}`, { requireCwe: true });
     validateClaimForPersistence(finding, secretBypass);
 
     const findingContentHash = hashCanonicalJson(finding);

@@ -43,7 +43,7 @@ Compose `~/hacker-bob-sessions/[domain]/report.md` via `bob_compose_report` with
    - Severity: use `bob_read_grade_verdict.findings[].reachability.graded_severity` when present; otherwise use the final-verifier severity. If reachability is present, include `recorded_severity`, `graded_severity`, `attack_vector`, and `disposition` in one concise sentence so an AV:L cap is visible in the report.
    - Explain reachability: attacker-controlled input, user/maintainer action, CI event, package install path, config path, or protocol message that reaches the vulnerable code. For native C/C++ findings, name the parser/state transition and malformed field/object.
    - Impact must be concrete: memory corruption, denial of service, arbitrary file/path effect, secret exposure, authz bypass, supply-chain compromise, or documented unsafe behavior. Do not report style issues or speculative hardening.
-   - CWE: choose a fixed CWE from the OSS impact class (examples: memory out-of-bounds -> CWE-125/CWE-787, use-after-free -> CWE-416, integer overflow -> CWE-190, improper access control/authz -> CWE-284/CWE-862/CWE-863, config secret exposure -> CWE-200/CWE-798, command/path injection -> CWE-77/CWE-22). Do not invent a custom category.
+   - CWE: required and catalog-validated for medium+ findings (optional for low/info). Choose a fixed catalog CWE from the OSS impact class (examples: memory out-of-bounds -> CWE-125/CWE-787, use-after-free -> CWE-416, integer overflow -> CWE-190, improper access control/authz -> CWE-284/CWE-862/CWE-863, config secret exposure -> CWE-200/CWE-798, command/path injection -> CWE-77/CWE-22). The accepted set is the curated catalog in `mcp/lib/cwe-catalog.js` (single source of truth) — do not invent a custom category or an id outside that catalog.
    - Suggested CVSS-4.0: label it as suggested for triager re-score. Anchor the severity band to the final-verifier or graded severity, derive AV from the reachability prose (`network` -> AV:N, `local` -> AV:L), and set PR/UI from maintainer/user-action prerequisites. Do not imply a severity divergence from the grade verdict.
    - References: include the CWE URL, a repo file:line permalink only when the finding or evidence already provides a stable remote/commit URL, otherwise a stable repository path plus line/function, and any upstream CVE/GHSA already present in the finding or evidence. Do not fabricate advisory, commit, or GitHub links.
    - Include false-positive notes and remediation tied to the exact code path, dependency pin, CI permission, config default, or docs mismatch.
@@ -51,7 +51,7 @@ Compose `~/hacker-bob-sessions/[domain]/report.md` via `bob_compose_report` with
    **HTTP findings** (`surface_type: "web"` or null):
    - Title (using formula: `[Bug Class] in [Exact Endpoint/Feature] allows [attacker role] to [impact] [scope]`)
    - Severity (final-verifier value, not evaluator's claim; use `reachability.graded_severity` from the grade verdict when present)
-   - CWE
+   - CWE (required and catalog-validated for medium+; pick a catalog id from `mcp/lib/cwe-catalog.js`, e.g. CWE-79 XSS, CWE-639 IDOR, CWE-352 CSRF, CWE-918 SSRF, CWE-200 info exposure)
    - Endpoint
    - PoC (exact curl or request)
    - Evidence (response proving the bug)
@@ -62,7 +62,7 @@ Compose `~/hacker-bob-sessions/[domain]/report.md` via `bob_compose_report` with
    - Branch by `finding.sc_evidence.chain_family` (default `"evm"` when omitted on a legacy row).
    - Title formula: `[Bug Class] in [ContractName].[function] allows [attacker role] to [impact]` (EVM), `[Bug Class] in [ProgramName].[instruction] allows [attacker role] to [impact]` (SVM), `[Bug Class] in [PackageName]::[module]::[function] allows [attacker role] to [impact]` (Aptos / Sui), `[Bug Class] in [ContractName]::[selector] allows [attacker role] to [impact]` (Substrate / ink!), or `[Bug Class] in [ContractName]::[ExecuteMsg variant] allows [attacker role] to [impact]` (CosmWasm).
    - Severity (final-verifier value — authoritative unless `reachability.graded_severity` is present in the grade verdict; the grader's verdict is SUBMIT/HOLD/SKIP, not otherwise a severity override).
-   - CWE (canonical mappings — families share these unless noted):
+   - CWE (required and catalog-validated for medium+; canonical mappings below are the source-of-truth mirror of `mcp/lib/cwe-catalog.js` SMART_CONTRACT_FAMILY_CWE — families share these unless noted):
      - reentrancy / reentrancy_via_cpi / discriminator_collision → CWE-841 (improper enforcement of behavioral workflow)
      - access-control bypass / owner_check_missing / pda_collision / upgrade_authority_compromise / package_upgrade_authority / resource_account_takeover → CWE-284 (improper access control)
      - missing_signer (SVM) / signer_capability_leak (Aptos) → CWE-862 (missing authorization)
