@@ -149,13 +149,15 @@ test("npm package contains runtime surfaces and excludes test/cache artifacts", 
       assert.equal(isExcludedCanonicalPackageFile(excluded), true, `${excluded} should be denied by policy`);
     }
 
-    // Pack-size budget raised to 3.1 MB to accommodate the kimi adapter family
-    // (adapters/kimi/*, scripts/lib/kimi-role-renderer.js, scripts/lib/install-fs.js,
-    // packages/hacker-bob-kimi/*) absorbed from PR #58 alongside the existing
-    // Y.3 Stage c substrate growth (evidence_refs[] validator + LARGE_BODY_THRESHOLD_BYTES
-    // export + EVIDENCE_REF_HANDLE_PREFIXES constant on bob_write_chain_rollup
-    // per Y-P14b / O4), plus the packable Plane-Delta graph JSON docs.
-    assert.ok(pack.size < 3100000, `npm pack size ${pack.size} exceeds 3.1 MB threshold`);
+    // Pack-size budget raised to 3.2 MB to accommodate the opencode adapter
+    // family (adapters/opencode/* per-role subagents) on top of the 3.1 MB kimi
+    // ceiling (adapters/kimi/*, scripts/lib/kimi-role-renderer.js,
+    // scripts/lib/install-fs.js, packages/hacker-bob-kimi/* from PR #58) and the
+    // Y.3 Stage c substrate growth (evidence_refs[] validator +
+    // LARGE_BODY_THRESHOLD_BYTES export + EVIDENCE_REF_HANDLE_PREFIXES constant on
+    // bob_write_chain_rollup per Y-P14b / O4), plus the packable Plane-Delta graph
+    // JSON docs. Mirrors the scripts/release-check.js ceiling.
+    assert.ok(pack.size < 3200000, `npm pack size ${pack.size} exceeds 3.2 MB threshold`);
 
     for (const file of files) {
       assert.ok(!file.startsWith("node_modules/"), `${file} should not vendor runtime dependencies`);
