@@ -14,18 +14,33 @@ const {
   queryStaticAnalysisIndex,
   readStaticAnalysisIndex,
   readStaticAnalysisIndexTool,
+  registerStaticAnalysisLeadRecorder,
 } = require("../mcp/lib/static-analysis-index.js");
 const {
   isAuditGradedPath,
+  repoInventoryPath,
   repoRunsDir,
   staticAnalysisIndexPath,
 } = require("../mcp/lib/paths.js");
 const {
+  readFrontierEvents,
+} = require("../mcp/lib/frontier-events.js");
+const {
   normalizeSurfaceLead,
+  readSurfaceLeadsDocument,
 } = require("../mcp/lib/lead-intake.js");
 const {
   initSession,
 } = require("../mcp/lib/session-state.js");
+const {
+  initRepoSession,
+} = require("../mcp/lib/repo-target.js");
+
+require("../mcp/lib/lead-promotion.js");
+
+test.after(() => {
+  registerStaticAnalysisLeadRecorder(null);
+});
 
 function fixture(name) {
   return fs.readFileSync(path.join(__dirname, "fixtures", "sarif", name), "utf8");
@@ -46,6 +61,12 @@ function withTempHome(fn) {
 
 function initDomain(domain) {
   JSON.parse(initSession({ target_domain: domain, target_url: `https://${domain}` }));
+}
+
+function initRepoDomain(domain, home) {
+  const repoRoot = fs.mkdtempSync(path.join(home, "repo-"));
+  initRepoSession({ repo_path: repoRoot, target_domain: domain });
+  return repoRoot;
 }
 
 function writeRunStdout(domain, runId, content) {
@@ -86,10 +107,10 @@ test("parseTrivyJson adapts native Trivy secret JSON and scrubs planted secrets 
   assert.match(JSON.stringify(record), /REDACTED_AWS_ACCESS_KEY/);
 });
 
-test("indexStaticResults dedupes by stable finding_hash and preserves CodeQL metadata", () => withTempHome(() => {
+test("indexStaticResults dedupes by stable finding_hash and preserves CodeQL metadata", () => withTempHome((home) => {
   const domain = "static-index-codeql.example.com";
   const runId = "run-codeql";
-  initDomain(domain);
+  initRepoDomain(domain, home);
   const stdoutPath = writeRunStdout(domain, runId, fixture("codeql-codeflows.sarif"));
 
   const first = indexStaticResults(domain, {
@@ -97,9 +118,18 @@ test("indexStaticResults dedupes by stable finding_hash and preserves CodeQL met
     stdout_path: stdoutPath,
     tool: "codeql",
     surface_id: "RS-1",
+    reachability_index: {
+      "RS-1": {
+        attack_vector: "network",
+        network_reachable: true,
+        severity_ceiling: "critical",
+      },
+    },
   });
   assert.equal(first.indexed_results, 1);
   assert.equal(first.duplicate_results, 0);
+  assert.equal(first.static_analysis_leads.mapped_leads, 1);
+  assert.equal(first.static_analysis_leads.recorded, 1);
 
   const rowsAfterFirst = readStaticAnalysisIndex(domain);
   assert.equal(rowsAfterFirst.length, 1);
@@ -112,6 +142,11 @@ test("indexStaticResults dedupes by stable finding_hash and preserves CodeQL met
   assert.ok(hasCwe22(rowsAfterFirst[0]));
   assert.equal(rowsAfterFirst[0].surface_id, "RS-1");
   assert.equal(isAuditGradedPath(staticAnalysisIndexPath(domain), domain), false);
+  const leadsAfterFirst = readSurfaceLeadsDocument(domain).leads;
+  assert.equal(leadsAfterFirst.length, 1);
+  assert.equal(leadsAfterFirst[0].source, "bob_static_scan");
+  assert.equal(leadsAfterFirst[0].surface_type, "oss_static_sink");
+  assert.deepEqual(leadsAfterFirst[0].endpoints, ["routes/download.js:88"]);
 
   const second = indexStaticResults(domain, {
     run_id: runId,
@@ -121,6 +156,13 @@ test("indexStaticResults dedupes by stable finding_hash and preserves CodeQL met
   });
   assert.equal(second.indexed_results, 0);
   assert.equal(second.duplicate_results, 1);
+  assert.equal(second.static_analysis_leads.mapped_leads, 0);
+  assert.equal(second.static_analysis_leads.recorded, 0);
+  assert.equal(
+    readFrontierEvents(domain).filter((event) => event.kind === "frontier.enqueued").length,
+    1,
+    "duplicate static rows must not append another frontier.enqueued event",
+  );
 
   const rowsAfterSecond = readStaticAnalysisIndex(domain);
   assert.equal(rowsAfterSecond.length, 1);
@@ -134,6 +176,234 @@ test("indexStaticResults dedupes by stable finding_hash and preserves CodeQL met
   });
   assert.equal(queried.length, 1);
   assert.equal(queried[0].finding_hash, firstHash);
+}));
+
+test("indexStaticResults re-scores duplicate static leads when reachability appears later", () => withTempHome((home) => {
+  const domain = "static-index-late-reachability.example.com";
+  const runId = "run-codeql";
+  initRepoDomain(domain, home);
+  const stdoutPath = writeRunStdout(domain, runId, fixture("codeql-codeflows.sarif"));
+
+  const first = indexStaticResults(domain, {
+    run_id: runId,
+    stdout_path: stdoutPath,
+    tool: "codeql",
+    surface_id: "RS-1",
+  });
+  assert.equal(first.indexed_results, 1);
+  assert.equal(first.static_analysis_leads.mapped_leads, 1);
+  assert.equal(first.static_analysis_leads.recorded, 1);
+  assert.equal(readSurfaceLeadsDocument(domain).leads[0].confidence, "medium");
+
+  fs.writeFileSync(repoInventoryPath(domain), `${JSON.stringify({
+    version: 1,
+    target_domain: domain,
+    reachability: {
+      surface_ceilings: [
+        {
+          id: "RS-1",
+          file_path: "routes/download.js",
+          attack_vector: "network",
+          network_reachable: true,
+          severity_ceiling: "critical",
+        },
+      ],
+    },
+  })}\n`);
+
+  const second = indexStaticResults(domain, {
+    run_id: runId,
+    stdout_path: stdoutPath,
+    tool: "codeql",
+    surface_id: "RS-1",
+  });
+  assert.equal(second.indexed_results, 0);
+  assert.equal(second.duplicate_results, 1);
+  assert.equal(second.static_analysis_leads.mapped_leads, 1);
+  assert.equal(second.static_analysis_leads.recorded, 0);
+
+  const leadsAfterRescore = readSurfaceLeadsDocument(domain).leads;
+  assert.equal(leadsAfterRescore.length, 1);
+  assert.equal(leadsAfterRescore[0].confidence, "high");
+  assert.ok(leadsAfterRescore[0].high_value_flows.includes("attack_vector=network"));
+  assert.ok(leadsAfterRescore[0].high_value_flows.includes("network_reachable=true"));
+  assert.ok(leadsAfterRescore[0].high_value_flows.includes("severity_ceiling=critical"));
+  assert.equal(
+    readFrontierEvents(domain).filter((event) => event.kind === "frontier.enqueued").length,
+    2,
+    "late reachability re-score should emit a single merge event",
+  );
+
+  const third = indexStaticResults(domain, {
+    run_id: runId,
+    stdout_path: stdoutPath,
+    tool: "codeql",
+    surface_id: "RS-1",
+  });
+  assert.equal(third.static_analysis_leads.mapped_leads, 0);
+  assert.equal(third.indexed_results, 0);
+  assert.equal(third.duplicate_results, 1);
+  assert.equal(
+    readFrontierEvents(domain).filter((event) => event.kind === "frontier.enqueued").length,
+    2,
+    "unchanged duplicate rows must not append another frontier.enqueued event",
+  );
+}));
+
+test("indexStaticResults scores static leads from persisted repo-inventory reachability", () => withTempHome((home) => {
+  const domain = "static-index-inventory-reachability.example.com";
+  const runId = "run-codeql";
+  initRepoDomain(domain, home);
+  fs.writeFileSync(repoInventoryPath(domain), `${JSON.stringify({
+    version: 1,
+    target_domain: domain,
+    reachability: {
+      network_reachable: true,
+      max_credible_severity_ceiling: "critical",
+      surface_ceilings: [
+        {
+          id: "RS-1",
+          file_path: "routes/download.js",
+          attack_vector: "network",
+          network_reachable: true,
+          severity_ceiling: "critical",
+        },
+      ],
+    },
+  })}\n`);
+  const stdoutPath = writeRunStdout(domain, runId, fixture("codeql-codeflows.sarif"));
+
+  const response = indexStaticResults(domain, {
+    run_id: runId,
+    stdout_path: stdoutPath,
+    tool: "codeql",
+    surface_id: "RS-1",
+  });
+  assert.equal(response.indexed_results, 1);
+  assert.equal(response.static_analysis_leads.mapped_leads, 1);
+
+  const leads = readSurfaceLeadsDocument(domain).leads;
+  assert.equal(leads.length, 1);
+  assert.equal(leads[0].confidence, "high");
+  assert.deepEqual(leads[0].reachability_meta, {
+    attack_vector: "network",
+    network_reachable: true,
+    severity_ceiling: "critical",
+  });
+  assert.ok(leads[0].high_value_flows.includes("attack_vector=network"));
+  assert.ok(leads[0].high_value_flows.includes("network_reachable=true"));
+  assert.ok(leads[0].high_value_flows.includes("severity_ceiling=critical"));
+}));
+
+test("indexStaticResults matches persisted reachability by file_path without surface_id", () => withTempHome((home) => {
+  const domain = "static-index-inventory-filepath.example.com";
+  const runId = "run-codeql";
+  initRepoDomain(domain, home);
+  fs.writeFileSync(repoInventoryPath(domain), `${JSON.stringify({
+    version: 1,
+    target_domain: domain,
+    reachability: {
+      network_reachable: true,
+      max_credible_severity_ceiling: "critical",
+      surface_ceilings: [
+        {
+          id: "RS-inventory",
+          file_path: "routes/download.js",
+          attack_vector: "network",
+          network_reachable: true,
+          severity_ceiling: "critical",
+        },
+      ],
+    },
+  })}\n`);
+  const stdoutPath = writeRunStdout(domain, runId, fixture("codeql-codeflows.sarif"));
+
+  const response = indexStaticResults(domain, {
+    run_id: runId,
+    stdout_path: stdoutPath,
+    tool: "codeql",
+  });
+  assert.equal(response.indexed_results, 1);
+  assert.equal(response.static_analysis_leads.mapped_leads, 1);
+
+  const leads = readSurfaceLeadsDocument(domain).leads;
+  assert.equal(leads.length, 1);
+  assert.equal(leads[0].confidence, "high");
+  assert.ok(leads[0].high_value_flows.includes("attack_vector=network"));
+  assert.ok(leads[0].high_value_flows.includes("network_reachable=true"));
+  assert.ok(leads[0].high_value_flows.includes("severity_ceiling=critical"));
+}));
+
+test("indexStaticResults backfills duplicate rows that have no recorded static lead", () => withTempHome((home) => {
+  const domain = "static-index-backfill.example.com";
+  const runId = "run-codeql";
+  initRepoDomain(domain, home);
+  const stdoutPath = writeRunStdout(domain, runId, fixture("codeql-codeflows.sarif"));
+
+  const first = indexStaticResults(domain, {
+    run_id: runId,
+    stdout_path: stdoutPath,
+    tool: "codeql",
+    surface_id: "RS-1",
+    record_static_leads: false,
+  });
+  assert.equal(first.indexed_results, 1);
+  assert.equal(readSurfaceLeadsDocument(domain).leads.length, 0);
+
+  const second = indexStaticResults(domain, {
+    run_id: runId,
+    stdout_path: stdoutPath,
+    tool: "codeql",
+    surface_id: "RS-1",
+  });
+  assert.equal(second.indexed_results, 0);
+  assert.equal(second.duplicate_results, 1);
+  assert.equal(second.static_analysis_leads.mapped_leads, 1);
+  assert.equal(second.static_analysis_leads.recorded, 1);
+  assert.equal(readSurfaceLeadsDocument(domain).leads.length, 1);
+}));
+
+test("indexStaticResults does not retry unchanged duplicate rows for unrelated reachability", () => withTempHome((home) => {
+  const domain = "static-index-unmatched-reachability.example.com";
+  const runId = "run-codeql";
+  initRepoDomain(domain, home);
+  const stdoutPath = writeRunStdout(domain, runId, fixture("codeql-codeflows.sarif"));
+
+  const first = indexStaticResults(domain, {
+    run_id: runId,
+    stdout_path: stdoutPath,
+    tool: "codeql",
+    surface_id: "RS-1",
+  });
+  assert.equal(first.static_analysis_leads.mapped_leads, 1);
+  assert.equal(readFrontierEvents(domain).filter((event) => event.kind === "frontier.enqueued").length, 1);
+
+  fs.writeFileSync(repoInventoryPath(domain), `${JSON.stringify({
+    version: 1,
+    target_domain: domain,
+    reachability: {
+      surface_ceilings: [
+        {
+          id: "RS-other",
+          file_path: "routes/other.js",
+          attack_vector: "network",
+          network_reachable: true,
+          severity_ceiling: "critical",
+        },
+      ],
+    },
+  })}\n`);
+
+  const second = indexStaticResults(domain, {
+    run_id: runId,
+    stdout_path: stdoutPath,
+    tool: "codeql",
+    surface_id: "RS-1",
+  });
+  assert.equal(second.indexed_results, 0);
+  assert.equal(second.duplicate_results, 1);
+  assert.equal(second.static_analysis_leads.mapped_leads, 0);
+  assert.equal(readFrontierEvents(domain).filter((event) => event.kind === "frontier.enqueued").length, 1);
 }));
 
 test("indexStaticResults persists only scrubbed Trivy secret rows", () => withTempHome(() => {
@@ -189,6 +459,11 @@ test("indexStaticResults treats dry-run rows without stdout_path as no-op", () =
   });
   assert.equal(response.normalized_results, 0);
   assert.equal(response.indexed_results, 0);
+  assert.deepEqual(response.static_analysis_leads, {
+    mapped_leads: 0,
+    recorded: 0,
+    skipped_findings: 0,
+  });
   assert.equal(readStaticAnalysisIndex(domain).length, 0);
 }));
 

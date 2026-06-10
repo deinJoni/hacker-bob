@@ -14,16 +14,19 @@ const {
 } = require("./validation.js");
 const {
   sessionDir,
+  repoInventoryPath,
   staticAnalysisIndexPath,
 } = require("./paths.js");
 const {
   parseSarif,
   normalizeSarifResult,
   readStaticAnalysisResultsFromJsonl,
+  registerStaticAnalysisIndexer,
   MAX_SARIF_BYTES,
 } = require("./sarif-ingest.js");
 const {
   normalizeSurfaceLead,
+  readSurfaceLeadsDocument,
   SURFACE_LEAD_ITEM_MAX_CHARS,
 } = require("./lead-intake.js");
 const {
@@ -57,6 +60,12 @@ const TAG_MAX_CHARS = 120;
 const CWE_MAX_CHARS = 40;
 const SEVERITY_RANK = Object.freeze({ error: 0, warning: 1, note: 2 });
 
+let staticAnalysisLeadRecorder = null;
+
+function registerStaticAnalysisLeadRecorder(recorder) {
+  staticAnalysisLeadRecorder = typeof recorder === "function" ? recorder : null;
+}
+
 function isObject(value) {
   return value != null && typeof value === "object" && !Array.isArray(value);
 }
@@ -70,10 +79,17 @@ function truncateText(value, maxChars = STATIC_ANALYSIS_INDEX_MESSAGE_MAX_CHARS)
   return text.length > maxChars ? text.slice(0, maxChars) : text;
 }
 
+function neutralizeRedactedSensitiveAssignments(value) {
+  return String(value).replace(
+    /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|token|secret|password|passwd|credential|session|sid|jwt|auth|authorization)(\s*[:=]\s*)REDACTED\b/gi,
+    "$1$2<redacted>",
+  );
+}
+
 function scrubText(value, fieldName) {
   if (value == null) return null;
   const staticRedacted = redactStaticArtifactContent(String(value)).content;
-  const redacted = redactTextSensitiveValues(staticRedacted);
+  const redacted = neutralizeRedactedSensitiveAssignments(redactTextSensitiveValues(staticRedacted));
   const truncated = truncateText(redacted);
   validateNoSensitiveMaterial(truncated, fieldName, {
     maxTextChars: STATIC_ANALYSIS_INDEX_MESSAGE_MAX_CHARS,
@@ -109,6 +125,7 @@ function normalizeRepoPath(value) {
   uri = uri.replace(/^file:\/\/+/, "/");
   uri = uri.replace(/^\/src\/+/, "");
   uri = uri.replace(/^\.\/+/, "");
+  if (/^[A-Za-z]:\//.test(uri)) return null;
   if (uri.startsWith("/")) return null;
   const normalized = path.posix.normalize(uri);
   if (!normalized || normalized === "." || normalized === ".." || normalized.startsWith("../")) return null;
@@ -497,10 +514,12 @@ function normalizeStaticAnalysisIndexRecord(record, lineNumber = null) {
     const tool = normalizeTool(assertNonEmptyString(record.tool, "tool"));
     const ruleId = normalizeRuleId(assertNonEmptyString(record.rule_id, "rule_id"));
     const location = isObject(record.location) ? record.location : {};
-    const artifactUri = truncateText(assertNonEmptyString(
+    const rawArtifactUri = assertNonEmptyString(
       location.path || record.file || record.artifact_uri,
       "location.path",
-    ), PATH_MAX_CHARS);
+    );
+    const artifactUri = normalizeRepoPath(rawArtifactUri);
+    if (!artifactUri) throw new Error("location.path must be repo-relative");
     const startLine = assertInteger(location.line || record.start_line, "location.line", { min: 1 });
     const message = scrubText(record.message || "", "static_analysis_index.message") || "";
     const metadata = normalizeMetadata(record);
@@ -553,7 +572,8 @@ function indexRecordFromNormalizedResult(domain, result, ctx = {}) {
   );
   const tool = normalizeTool(ctx.tool || result.tool_name);
   const ruleId = normalizeRuleId(result.rule_id);
-  const artifactUri = truncateText(assertNonEmptyString(result.artifact_uri, "artifact_uri"), PATH_MAX_CHARS);
+  const artifactUri = normalizeRepoPath(assertNonEmptyString(result.artifact_uri, "artifact_uri"));
+  if (!artifactUri) throw new Error("artifact_uri must be repo-relative");
   const startLine = assertInteger(result.start_line, "start_line", { min: 1 });
   const message = scrubText(result.message || "", "static_analysis_index.message") || "";
   const row = {
@@ -681,9 +701,232 @@ function compactRecordForResponse(record) {
   };
 }
 
+function readRepoInventoryReachability(domain) {
+  try {
+    const filePath = repoInventoryPath(domain);
+    if (!fs.existsSync(filePath)) return {};
+    const inventory = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return isObject(inventory.reachability) ? inventory.reachability : {};
+  } catch {
+    return {};
+  }
+}
+
+function reachabilityIndexForStaticLeadRecording(domain, args) {
+  if (args && args.reachability_index != null) return args.reachability_index;
+  return readRepoInventoryReachability(domain);
+}
+
+function reachabilityIndexHasEntries(index) {
+  if (index instanceof Map) return index.size > 0;
+  if (!isObject(index)) return false;
+  if (
+    Object.prototype.hasOwnProperty.call(index, "attack_vector")
+    || Object.prototype.hasOwnProperty.call(index, "network_reachable")
+    || Object.prototype.hasOwnProperty.call(index, "severity_ceiling")
+  ) {
+    return true;
+  }
+  if (Array.isArray(index.surface_ceilings) && index.surface_ceilings.length > 0) return true;
+  if (isObject(index.perSurface) && Object.keys(index.perSurface).length > 0) return true;
+  if (index.perSurface instanceof Map && index.perSurface.size > 0) return true;
+  return isObject(index.reachability) && reachabilityIndexHasEntries(index.reachability);
+}
+
+function staticLeadKeyForIndexRecord(row) {
+  if (!isObject(row)) return null;
+  const location = isObject(row.location) ? row.location : {};
+  const file = normalizeRepoPath(location.path || row.file || row.artifact_uri);
+  const line = Number.isInteger(location.line)
+    ? location.line
+    : (Number.isInteger(row.start_line) ? row.start_line : null);
+  if (!file || !Number.isInteger(line) || line < 1) return null;
+  try {
+    return normalizeSurfaceLead({
+      title: row.rule_id || "static-analysis",
+      source: "bob_static_scan",
+      status: "new",
+      promote: false,
+      surface_type: "oss_static_sink",
+      endpoints: [`${file}:${line}`],
+      rationale:
+        "Static analysis lead is an unverified source-audit hypothesis; evaluator must trace source to sink and replay before any finding.",
+    }).key;
+  } catch {
+    return null;
+  }
+}
+
+function staticLeadHasReachabilityHints(lead) {
+  if (!isObject(lead)) return false;
+  if (isObject(lead.reachability_meta) && Object.keys(lead.reachability_meta).length > 0) return true;
+  if (!Array.isArray(lead.high_value_flows)) return false;
+  return lead.high_value_flows.some((flow) => (
+    typeof flow === "string"
+    && (
+      flow.startsWith("attack_vector=")
+      || flow.startsWith("network_reachable=")
+      || flow.startsWith("severity_ceiling=")
+    )
+  ));
+}
+
+const STATIC_INDEX_REACHABILITY_ATTACK_VECTORS = new Set(["local", "network"]);
+const STATIC_INDEX_REACHABILITY_SEVERITY_CEILINGS = new Set(["none", "low", "medium", "high", "critical"]);
+
+function normalizedReachabilityString(value, allowed) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return allowed.has(normalized) ? normalized : null;
+}
+
+function directReachability(value) {
+  if (!isObject(value)) return null;
+  const reachability = {};
+  if (Object.prototype.hasOwnProperty.call(value, "attack_vector")) {
+    const attackVector = normalizedReachabilityString(value.attack_vector, STATIC_INDEX_REACHABILITY_ATTACK_VECTORS);
+    if (!attackVector) return null;
+    reachability.attack_vector = attackVector;
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "network_reachable")) {
+    if (typeof value.network_reachable !== "boolean") return null;
+    reachability.network_reachable = value.network_reachable;
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "severity_ceiling")) {
+    const severityCeiling = normalizedReachabilityString(value.severity_ceiling, STATIC_INDEX_REACHABILITY_SEVERITY_CEILINGS);
+    if (!severityCeiling) return null;
+    reachability.severity_ceiling = severityCeiling;
+  }
+  return Object.keys(reachability).length > 0 ? reachability : null;
+}
+
+function indexRecordFile(row) {
+  const location = isObject(row && row.location) ? row.location : {};
+  return typeof location.path === "string"
+    ? location.path
+    : (typeof (row && row.file) === "string" ? row.file : null);
+}
+
+function indexRecordLine(row) {
+  const location = isObject(row && row.location) ? row.location : {};
+  return Number.isInteger(location.line)
+    ? location.line
+    : (Number.isInteger(row && row.start_line) ? row.start_line : null);
+}
+
+function candidateReachabilityKeysForIndexRecord(row) {
+  const file = indexRecordFile(row);
+  const line = indexRecordLine(row);
+  return [
+    row && row.finding_hash,
+    row && row.source_result_sha256,
+    row && row.surface_id,
+    file,
+    file && Number.isInteger(line) ? `${file}:${line}` : null,
+  ].filter((key) => typeof key === "string" && key.length > 0);
+}
+
+function reachabilityValueAt(index, keys) {
+  if (!index) return null;
+  if (index instanceof Map) {
+    for (const key of keys) {
+      const value = directReachability(index.get(key));
+      if (value) return value;
+    }
+  }
+  if (isObject(index)) {
+    for (const key of keys) {
+      const value = directReachability(index[key]);
+      if (value) return value;
+    }
+    if (index.perSurface instanceof Map) {
+      for (const key of keys) {
+        const value = directReachability(index.perSurface.get(key));
+        if (value) return value;
+      }
+    } else if (isObject(index.perSurface)) {
+      for (const key of keys) {
+        const value = directReachability(index.perSurface[key]);
+        if (value) return value;
+      }
+    }
+  }
+  return null;
+}
+
+function reachabilityEntriesFromIndex(index) {
+  const entries = [];
+  const pushEntry = (key, value) => {
+    const reachability = directReachability(value);
+    if (reachability) entries.push({ key, reachability });
+  };
+  const scanRecord = (record) => {
+    if (!isObject(record)) return;
+    [
+      record.id,
+      record.surface_id,
+      record.file_path,
+      record.file,
+    ].forEach((key) => pushEntry(key, record));
+  };
+  if (index instanceof Map) {
+    index.forEach((value, key) => pushEntry(key, value));
+  }
+  if (isObject(index)) {
+    if (index.perSurface instanceof Map) {
+      index.perSurface.forEach((value, key) => pushEntry(key, value));
+    } else if (isObject(index.perSurface)) {
+      for (const [key, value] of Object.entries(index.perSurface)) pushEntry(key, value);
+    }
+    const reachability = isObject(index.reachability) ? index.reachability : index;
+    if (Array.isArray(reachability.surface_ceilings)) {
+      reachability.surface_ceilings.forEach(scanRecord);
+    }
+  }
+  return entries;
+}
+
+function fileMatchesReachabilityKey(file, key) {
+  if (typeof file !== "string" || typeof key !== "string" || !file || !key) return false;
+  return file === key || file.startsWith(`${key}/`) || key.startsWith(`${file}/`);
+}
+
+function reachabilityForIndexRecord(row, reachabilityIndex) {
+  const keys = candidateReachabilityKeysForIndexRecord(row);
+  const keyed = reachabilityValueAt(reachabilityIndex, keys);
+  if (keyed) return keyed;
+  const file = indexRecordFile(row);
+  for (const entry of reachabilityEntriesFromIndex(reachabilityIndex)) {
+    if (keys.includes(entry.key) || fileMatchesReachabilityKey(file, entry.key)) {
+      return entry.reachability;
+    }
+  }
+  return null;
+}
+
+function duplicateRowsNeedingStaticLeadRecording(domain, candidateRows, newCandidateRows, reachabilityIndex) {
+  const newHashes = new Set(newCandidateRows.map((row) => row.finding_hash));
+  let document;
+  try {
+    document = readSurfaceLeadsDocument(domain);
+  } catch {
+    return [];
+  }
+  const leadsByKey = new Map((Array.isArray(document.leads) ? document.leads : []).map((lead) => [lead.key, lead]));
+  return candidateRows.filter((row) => {
+    if (newHashes.has(row.finding_hash)) return false;
+    const key = staticLeadKeyForIndexRecord(row);
+    const existing = key ? leadsByKey.get(key) : null;
+    if (!existing) return key != null;
+    return !staticLeadHasReachabilityHints(existing)
+      && reachabilityForIndexRecord(row, reachabilityIndex) != null;
+  });
+}
+
 function indexStaticResults(domainRaw, args = {}) {
   const domain = assertNonEmptyString(domainRaw, "target_domain");
-  readSessionStateStrict(domain);
+  const session = readSessionStateStrict(domain).state;
+  const shouldRecordStaticLeads = session.target_repo != null && args.record_static_leads !== false;
   const runId = normalizeOptionalText(args.run_id, "run_id");
   const tool = normalizeOptionalText(args.tool, "tool");
   const surfaceId = normalizeOptionalText(args.surface_id, "surface_id");
@@ -709,6 +952,11 @@ function indexStaticResults(domainRaw, args = {}) {
         warning_count: 0,
         warnings: [],
         index_path: "static-analysis-index.jsonl",
+        static_analysis_leads: {
+          mapped_leads: 0,
+          recorded: 0,
+          skipped_findings: 0,
+        },
         doctrine: "lead_seed_only_no_findings_or_skips",
       };
     }
@@ -749,6 +997,8 @@ function indexStaticResults(domainRaw, args = {}) {
   let duplicateResults = 0;
   let totalRecords = 0;
   let responseRecords = [];
+  let staticAnalysisLeads = null;
+  let newCandidateRows = [];
 
   withSessionLock(domain, () => {
     const existing = readStaticAnalysisIndex(domain);
@@ -756,8 +1006,12 @@ function indexStaticResults(domainRaw, args = {}) {
     const seenInput = new Set();
     for (const row of candidateRows) {
       const old = byHash.get(row.finding_hash);
-      if (seenInput.has(row.finding_hash) || old) duplicateResults += 1;
-      if (!seenInput.has(row.finding_hash) && !old) indexedResults += 1;
+      const isDuplicate = seenInput.has(row.finding_hash) || old;
+      if (isDuplicate) duplicateResults += 1;
+      if (!isDuplicate) {
+        indexedResults += 1;
+        newCandidateRows.push(row);
+      }
       seenInput.add(row.finding_hash);
       byHash.set(row.finding_hash, {
         ...(old || {}),
@@ -772,6 +1026,28 @@ function indexStaticResults(domainRaw, args = {}) {
     responseRecords = candidateRows.sort(compareIndexRecords)
       .slice(0, STATIC_ANALYSIS_INDEX_SUMMARY_RECORD_LIMIT)
       .map(compactRecordForResponse);
+    const reachabilityIndex = reachabilityIndexForStaticLeadRecording(domain, args);
+    const leadRowsForRecording = [
+      ...newCandidateRows,
+      ...duplicateRowsNeedingStaticLeadRecording(domain, candidateRows, newCandidateRows, reachabilityIndex),
+    ];
+    if (
+      leadRowsForRecording.length > 0
+      && shouldRecordStaticLeads
+      && staticAnalysisLeadRecorder
+    ) {
+      staticAnalysisLeads = staticAnalysisLeadRecorder(
+        domain,
+        leadRowsForRecording,
+        reachabilityIndex,
+        args.family_index || {},
+        {
+          source: "bob_static_scan",
+          task_lens: args.task_lens,
+          surface_id: surfaceId,
+        },
+      );
+    }
   });
 
   return {
@@ -790,6 +1066,16 @@ function indexStaticResults(domainRaw, args = {}) {
     warning_count: parsed ? parsed.warnings.length : 0,
     warnings: parsed ? parsed.warnings.slice(0, STATIC_ANALYSIS_INDEX_WARNING_LIMIT) : [],
     index_path: "static-analysis-index.jsonl",
+    static_analysis_leads: staticAnalysisLeads == null ? {
+      mapped_leads: 0,
+      recorded: 0,
+      skipped_findings: 0,
+    } : {
+      mapped_leads: staticAnalysisLeads.mapped_leads,
+      recorded: staticAnalysisLeads.recorded,
+      skipped_findings: staticAnalysisLeads.skipped_findings,
+      warnings: staticAnalysisLeads.warnings,
+    },
     records: responseRecords,
     records_omitted: Math.max(0, candidateRows.length - responseRecords.length),
     doctrine: "lead_seed_only_no_findings_or_skips",
@@ -866,16 +1152,20 @@ function mapSarifResultToSurfaceLead(rowRaw) {
   });
 }
 
+registerStaticAnalysisIndexer(indexStaticResults);
+
 module.exports = {
   STATIC_ANALYSIS_INDEX_DEFAULT_TOP_K,
   STATIC_ANALYSIS_INDEX_MAX_RECORDS,
   STATIC_ANALYSIS_INDEX_MAX_TOP_K,
   indexStaticResults,
   mapSarifResultToSurfaceLead,
+  normalizeRepoPath,
   normalizeStaticAnalysisIndexRecord,
   parseStaticAnalysisCapture,
   parseTrivyJson,
   queryStaticAnalysisIndex,
   readStaticAnalysisIndex,
   readStaticAnalysisIndexTool,
+  registerStaticAnalysisLeadRecorder,
 };
