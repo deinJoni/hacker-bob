@@ -45,6 +45,9 @@ const {
   summarizeStaticScanHints,
 } = require("./static-artifacts.js");
 const {
+  readSurfaceLeadsDocument,
+} = require("./lead-intake.js");
+const {
   summarizeSchemaSliceForSurface,
 } = require("./schema-contracts-store.js");
 const {
@@ -539,6 +542,12 @@ const OSS_BRIEF_SLICE_REGISTRY = Object.freeze([
   briefSliceEntry("governance", 1024, (context) => context.governance),
   briefSliceEntry("goal_orientation", 1024, (context) => context.goalOrientation),
   briefSliceEntry("code_surface_pack", 4096, (context) => context.codeSurfacePack),
+  briefSliceEntry(
+    "static_analysis_leads",
+    4096 + UNTRUSTED_FENCE_OVERHEAD_CHARS,
+    (context) => context.staticAnalysisLeads,
+    true,
+  ),
   briefSliceEntry("repo_env_recommendations", 4096, (context) => context.repoEnvRecommendations),
   briefSliceEntry("technique_packs", 8192, (context) => context.ossTechniquePacks),
   briefSliceEntry("cli_tools", 2048, (context) => renderAvailableCliToolsSectionSync({
@@ -1356,6 +1365,135 @@ function buildWebBriefExtras(domain, surfaceObj, routeMetadata, assignment) {
   return extras;
 }
 
+const STATIC_ANALYSIS_LEAD_MAX_ITEMS = 10;
+const STATIC_ANALYSIS_LEAD_SLICE_MAX_CHARS = 4096;
+const STATIC_ANALYSIS_LEAD_LINE_MAX_CHARS = 300;
+
+function staticLeadField(lead, fieldName) {
+  const meta = lead && typeof lead.reachability_meta === "object" && !Array.isArray(lead.reachability_meta)
+    ? lead.reachability_meta
+    : null;
+  if (meta && Object.prototype.hasOwnProperty.call(meta, fieldName)) {
+    return String(meta[fieldName]) || null;
+  }
+  const prefix = `${fieldName}=`;
+  for (const flow of (Array.isArray(lead.high_value_flows) ? lead.high_value_flows : [])) {
+    if (typeof flow === "string" && flow.startsWith(prefix)) return flow.slice(prefix.length) || null;
+  }
+  return null;
+}
+
+function staticLeadEndpoint(lead) {
+  const endpoints = Array.isArray(lead.endpoints) ? lead.endpoints : [];
+  return endpoints.find((endpoint) => typeof endpoint === "string" && endpoint.includes(":"))
+    || endpoints.find((endpoint) => typeof endpoint === "string")
+    || "unknown:0";
+}
+
+function staticLeadEndpointFile(endpoint) {
+  const match = String(endpoint).match(/^(.+):[1-9][0-9]*$/);
+  return match ? match[1] : String(endpoint);
+}
+
+function surfaceReferenceValues(surfaceObj) {
+  if (!surfaceObj || typeof surfaceObj !== "object" || Array.isArray(surfaceObj)) return [];
+  return [
+    surfaceObj.file_path,
+    surfaceObj.file,
+    surfaceObj.path,
+    ...(Array.isArray(surfaceObj.endpoints) ? surfaceObj.endpoints : []),
+  ].filter((value) => typeof value === "string" && value.length > 0);
+}
+
+function endpointMatchesSurface(endpoint, surfaceObj) {
+  const file = staticLeadEndpointFile(endpoint);
+  return surfaceReferenceValues(surfaceObj).some((value) => (
+    value === endpoint
+    || value === file
+    || file.startsWith(`${value}/`)
+  ));
+}
+
+function staticLeadAppliesToSurface(lead, surfaceObj) {
+  if (!lead || lead.source !== "bob_static_scan" || lead.surface_type !== "oss_static_sink") return false;
+  if (lead.source_surface_id && surfaceObj && lead.source_surface_id === surfaceObj.id) return true;
+  if (lead.promoted_surface_id && surfaceObj && lead.promoted_surface_id === surfaceObj.id) return true;
+  if (lead.source_surface_id && surfaceObj && lead.source_surface_id !== surfaceObj.id) return false;
+  const endpoints = Array.isArray(lead.endpoints) ? lead.endpoints : [];
+  if (endpoints.some((endpoint) => endpointMatchesSurface(endpoint, surfaceObj))) return true;
+  return !lead.source_surface_id && (!surfaceObj || !surfaceObj.id);
+}
+
+function staticLeadTimestamp(lead) {
+  const value = lead.scanned_at || lead.indexed_at || lead.created_at || "";
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sortStaticAnalysisLeads(leads) {
+  return [...leads].sort((a, b) => (
+    (b.score || 0) - (a.score || 0)
+      || staticLeadTimestamp(b) - staticLeadTimestamp(a)
+      || String(a.key || a.id || "").localeCompare(String(b.key || b.id || ""))
+  ));
+}
+
+function capStaticLeadLine(line) {
+  if (line.length <= STATIC_ANALYSIS_LEAD_LINE_MAX_CHARS) return line;
+  return line.slice(0, STATIC_ANALYSIS_LEAD_LINE_MAX_CHARS);
+}
+
+function capStaticAnalysisLeadSlice(lines) {
+  const kept = [];
+  for (const line of lines) {
+    const next = [...kept, line].join("\n");
+    if (next.length > STATIC_ANALYSIS_LEAD_SLICE_MAX_CHARS) break;
+    kept.push(line);
+  }
+  return kept.join("\n");
+}
+
+function staticLeadBriefValue(value) {
+  return String(value == null ? "" : value)
+    .replace(/[|\r\n]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function renderStaticAnalysisLead(lead) {
+  const endpoint = staticLeadBriefValue(staticLeadEndpoint(lead)) || "unknown:0";
+  const family = Array.isArray(lead.bug_class_hints) && lead.bug_class_hints.length > 0
+    ? staticLeadBriefValue(lead.bug_class_hints[0]) || "static_analysis"
+    : "static_analysis";
+  const attackVector = staticLeadBriefValue(staticLeadField(lead, "attack_vector")) || "unknown";
+  const networkReachable = staticLeadBriefValue(staticLeadField(lead, "network_reachable")) || "unknown";
+  const severityCeiling = staticLeadBriefValue(staticLeadField(lead, "severity_ceiling")) || "unknown";
+  const recommendation = attackVector === "network" && networkReachable === "true"
+    ? "trace source->sink, prioritize write/UAF/RCE, prove with non-dry-run bob_repo_docker_run"
+    : "trace source->sink, keep capped until replay proves impact";
+  return capStaticLeadLine(
+    `- ${endpoint} | family=${family} | AV=${attackVector} | network_reachable=${networkReachable} | severity_ceiling=${severityCeiling} | score=${lead.score || 0} | ${recommendation}`,
+  );
+}
+
+function summarizeStaticAnalysisLeadsForBrief(domain, surfaceObj) {
+  let document;
+  try {
+    document = readSurfaceLeadsDocument(domain);
+  } catch {
+    return "";
+  }
+  const leads = Array.isArray(document.leads) ? document.leads : [];
+  const ranked = sortStaticAnalysisLeads(
+    leads.filter((lead) => staticLeadAppliesToSurface(lead, surfaceObj)),
+  ).slice(0, STATIC_ANALYSIS_LEAD_MAX_ITEMS);
+  if (ranked.length === 0) return "";
+  return capStaticAnalysisLeadSlice([
+    "### Static analysis leads",
+    ...ranked.map(renderStaticAnalysisLead),
+  ]);
+}
+
 function buildOssBriefExtras(domain, surfaceObj, routeMetadata, assignment) {
   const taskLens = assignment && typeof assignment.task_lens === "string" ? assignment.task_lens : null;
   const slimSurface = slimSurfaceForBrief(surfaceObj);
@@ -1381,6 +1519,7 @@ function buildOssBriefExtras(domain, surfaceObj, routeMetadata, assignment) {
         brief_profile: routeMetadata.brief_profile,
       },
     },
+    staticAnalysisLeads: summarizeStaticAnalysisLeadsForBrief(domain, slimSurface.surface),
     repoEnvRecommendations: buildRepoEnvRecommendationsForBrief(domain),
     ossTechniquePacks: buildOssTechniquePacksSlice(taskLens, slimSurface.surface, routeMetadata),
     cliToolSurfaceFingerprint,
@@ -1403,6 +1542,9 @@ function buildOssBriefExtras(domain, surfaceObj, routeMetadata, assignment) {
   }
   if (!extras.cli_tools) {
     delete extras.cli_tools;
+  }
+  if (!extras.static_analysis_leads) {
+    delete extras.static_analysis_leads;
   }
   if (!extras.repo_env_recommendations) {
     delete extras.repo_env_recommendations;
