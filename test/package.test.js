@@ -146,7 +146,11 @@ test("npm package contains runtime surfaces and excludes test/cache artifacts", 
     // Y.3 Stage c substrate growth (evidence_refs[] validator + LARGE_BODY_THRESHOLD_BYTES
     // export + EVIDENCE_REF_HANDLE_PREFIXES constant on bob_write_chain_rollup
     // per Y-P14b / O4), plus the packable Plane-Delta graph JSON docs.
-    assert.ok(pack.size < 3100000, `npm pack size ${pack.size} exceeds 3.1 MB threshold`);
+    // Raised again to 3.2 MB for the CVSS v3.1 + CWE report-layer annotations
+    // (mcp/lib/cvss31.js, mcp/lib/cwe-catalog.js, cwe/cvss prompt + doc surfaces),
+    // now measured against the lean tarball — mcp/node_modules is excluded from
+    // the pack, so this budget tracks shipped source/docs only.
+    assert.ok(pack.size < 3200000, `npm pack size ${pack.size} exceeds 3.2 MB threshold`);
 
     for (const file of files) {
       assert.ok(!file.startsWith("node_modules/"), `${file} should not vendor runtime dependencies`);

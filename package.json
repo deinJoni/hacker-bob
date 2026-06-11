@@ -44,6 +44,7 @@
     "docs/**/*.html",
     "docs/**/*.png",
     "mcp/**/*",
+    "!mcp/node_modules/**",
     "prompts/**/*",
     "scripts/**/*.js",
     "scripts/**/*.mjs",
