@@ -138,5 +138,11 @@
   "test/adversarial-scan.test.js",
   "test/adversarial-scan-w2-extensions.test.js",
   "test/plane-x-hypergraph-adoption.test.js",
-  "test/surface-leads-auto-promotion.test.js"
+  "test/surface-leads-auto-promotion.test.js",
+  "test/cwe-catalog.test.js",
+  "test/finding-cwe-required.test.js",
+  "test/finding-cvss-required.test.js",
+  "test/cvss31.test.js",
+  "test/cvss-claim-roundtrip.test.js",
+  "test/read-candidate-claims-cvss.test.js"
 ]

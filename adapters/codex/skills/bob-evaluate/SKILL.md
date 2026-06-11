@@ -1030,7 +1030,8 @@ Repo-bound (OSS) surfaces (when the brief carries `profile: "oss"` and an OSS le
 
 Never record these as standalone findings: missing security headers, SPF/DKIM/DMARC, GraphQL introspection, banner/version disclosure without working proof, clickjacking without PoC, tabnabbing, CSV injection, CORS wildcard without credentialed exfil, logout CSRF, self-XSS, open redirect, mobile app client_secret, SSRF DNS-only, host header injection, rate limit on non-critical forms, logout session issues, concurrent sessions, internal IP disclosure, missing cookie flags, password autocomplete. Only keep one if you prove the chain.
 
-Record proven findings immediately using `bob_record_candidate_claim` with all fields: target_domain, wave ("w[N]"), agent ("a[N]"), surface_id, auth_profile when applicable, title, severity (`critical|high|medium|low|info`), cwe, endpoint, description, proof_of_concept (FULL — do not truncate), response_evidence, impact, validated (true), and `reachability_assertion` only for routed `oss_native_code` findings when a cited entrypoint-to-sink path is known.
+Record proven findings immediately using `bob_record_candidate_claim` with all fields: target_domain, wave ("w[N]"), agent ("a[N]"), surface_id, auth_profile when applicable, title, severity (`critical|high|medium|low|info`), cwe (required and catalog-validated for medium+ findings — use a catalog id from `mcp/lib/cwe-catalog.js`; optional for low/info), endpoint, description, proof_of_concept (FULL — do not truncate), response_evidence, impact, validated (true), `cvss_inputs` (required for reportable medium+ findings; optional for low/info), and `reachability_assertion` only for routed `oss_native_code` findings when a cited entrypoint-to-sink path is known.
+`cvss_inputs` are structured CVSS v3.1 base-metric enums the MCP derives the vector from at report time. For a medium+ finding the write is rejected unless these are sufficient to derive a vector: supply at least `attack_vector` (`network`/`adjacent`/`local`/`physical`), `privileges_required` (`none`/`low`/`high`), and at least one impact dimension of `confidentiality`/`integrity`/`availability` (`none`/`low`/`high`); `attack_complexity`, `user_interaction`, and `scope` default and are optional. For routed `oss_native_code` findings, `attack_vector` is auto-derived from your `reachability_assertion` (`network` -> AV:N, `local` -> AV:L), so you can omit `attack_vector` and still supply `privileges_required` plus an impact dimension. Match the enums to the demonstrated impact; do not inflate beyond what you proved.
 Severity guidance: `critical` = RCE/admin takeover/mass prod data compromise; `high` = strong auth bypass/IDOR with sensitive data/stored XSS/injection/privesc; `medium` = real but narrower auth/CSRF/XSS; `low` = informative but still reportable.
 
 Before stopping, first ensure this assigned surface has at least one completion-status `bob_log_technique_attempt` entry (`status: "validated"`, `"attempted"`, `"failed"`, `"skipped"`, or `"not_applicable"`) with non-empty evidence. Then make exactly one final `bob_write_wave_handoff` call for your assigned surface, then call `bob_finalize_agent_run` with the same `target_domain`, `wave`, `agent`, and `surface_id`. Do not manually create orchestrator-consumed handoff files.
@@ -1097,7 +1098,7 @@ Adversarial workflow per surface:
 
 Recording findings:
 - A finding requires demonstrated impact reachable by an attacker with the assumptions allowed by the program's `severity_system.admin_rule.exceptions`. Read those before you decide a role-gated outcome is in scope.
-- Record proven findings via `bob_record_candidate_claim` with all fields. `proof_of_concept` should reference the Foundry test (path + name + pinned fork block); `response_evidence` should excerpt the failing assertion or state delta.
+- Record proven findings via `bob_record_candidate_claim` with all fields. For a medium+ (reportable) finding the write also requires a catalog `cwe` (an id from `mcp/lib/cwe-catalog.js`) and derivable `cvss_inputs` — supply `attack_vector`, `privileges_required`, and at least one of `confidentiality`/`integrity`/`availability` (smart-contract findings have no `reachability_assertion` fallback, so set `attack_vector` explicitly), or the recording is rejected. `proof_of_concept` should reference the Foundry test (path + name + pinned fork block); `response_evidence` should excerpt the failing assertion or state delta.
 - Severity follows verified impact, not bug-class label. Cross-check with `bob_spec_status.program.severity_system_id` so the verifier can map to the platform tier.
 
 Surface completion contract (server-enforced):
@@ -1165,7 +1166,7 @@ Adversarial workflow per surface:
 
 Recording findings:
 - A finding requires demonstrated impact reachable by an attacker with the assumptions allowed by the program's `severity_system.admin_rule.exceptions`. Read those before you decide a role-gated outcome is in scope.
-- Record proven findings via `bob_record_candidate_claim` with all fields plus structured `sc_evidence`:
+- Record proven findings via `bob_record_candidate_claim` with all fields plus structured `sc_evidence`. For a medium+ (reportable) finding the write also requires a catalog `cwe` (an id from `mcp/lib/cwe-catalog.js`) and derivable `cvss_inputs` — supply `attack_vector`, `privileges_required`, and at least one of `confidentiality`/`integrity`/`availability` (smart-contract findings have no `reachability_assertion` fallback, so set `attack_vector` explicitly), or the recording is rejected. The `sc_evidence` fields are:
   - `chain_family: "svm"` (mandatory — without this the verifier dispatches to forge and the re-run fails)
   - `chain_id: "<cluster>"` (the SVM cluster string, e.g., `"mainnet-beta"`)
   - `contract_address: "<base58 program_id>"` (the primary program under attack — base58 case-sensitive, do NOT lowercase)
@@ -1249,7 +1250,7 @@ Adversarial workflow per surface:
 
 Recording findings:
 - A finding requires demonstrated impact reachable by an attacker with the assumptions allowed by the program's `severity_system.admin_rule.exceptions`. Read those before you decide a role-gated outcome is in scope.
-- Record proven findings via `bob_record_candidate_claim` with all fields plus structured `sc_evidence`:
+- Record proven findings via `bob_record_candidate_claim` with all fields plus structured `sc_evidence`. For a medium+ (reportable) finding the write also requires a catalog `cwe` (an id from `mcp/lib/cwe-catalog.js`) and derivable `cvss_inputs` — supply `attack_vector`, `privileges_required`, and at least one of `confidentiality`/`integrity`/`availability` (smart-contract findings have no `reachability_assertion` fallback, so set `attack_vector` explicitly), or the recording is rejected. The `sc_evidence` fields are:
   - `chain_family: "aptos"` or `"sui"` (mandatory — without this the verifier dispatches to the wrong runner and the re-run fails)
   - `chain_id`: the network name (Aptos: `"mainnet"|"testnet"|"devnet"`; Sui: `"mainnet"|"testnet"|"devnet"|"localnet"`)
   - `contract_address`: 0x-prefixed hex address (1-64 hex chars, normalized server-side to canonical 64-char form). Aptos: module address. Sui: package id.
@@ -1340,7 +1341,7 @@ Adversarial workflow per surface:
 
 Recording findings:
 - A finding requires demonstrated impact reachable by an attacker with the assumptions allowed by the program's `severity_system.admin_rule.exceptions`. Read those before you decide an admin-gated outcome is in scope.
-- Record proven findings via `bob_record_candidate_claim` with all fields plus structured `sc_evidence`:
+- Record proven findings via `bob_record_candidate_claim` with all fields plus structured `sc_evidence`. For a medium+ (reportable) finding the write also requires a catalog `cwe` (an id from `mcp/lib/cwe-catalog.js`) and derivable `cvss_inputs` — supply `attack_vector`, `privileges_required`, and at least one of `confidentiality`/`integrity`/`availability` (smart-contract findings have no `reachability_assertion` fallback, so set `attack_vector` explicitly), or the recording is rejected. The `sc_evidence` fields are:
   - `chain_family: "substrate"` (mandatory — without this the verifier dispatches to the wrong runner and the re-run fails)
   - `chain_id`: the network name (e.g., `"polkadot"`, `"kusama"`, `"astar"`, `"shiden"`, `"rococo"`, `"westend"`, `"localnet"`)
   - `contract_address`: SS58-encoded substrate address (45-52 chars, base58 alphabet, decodes to ~35 bytes)
@@ -1433,7 +1434,7 @@ Adversarial workflow per surface:
 
 Recording findings:
 - A finding requires demonstrated impact reachable by an attacker with the assumptions allowed by the program's `severity_system.admin_rule.exceptions`. Read those before you decide an admin-gated outcome is in scope.
-- Record proven findings via `bob_record_candidate_claim` with all fields plus structured `sc_evidence`:
+- Record proven findings via `bob_record_candidate_claim` with all fields plus structured `sc_evidence`. For a medium+ (reportable) finding the write also requires a catalog `cwe` (an id from `mcp/lib/cwe-catalog.js`) and derivable `cvss_inputs` — supply `attack_vector`, `privileges_required`, and at least one of `confidentiality`/`integrity`/`availability` (smart-contract findings have no `reachability_assertion` fallback, so set `attack_vector` explicitly), or the recording is rejected. The `sc_evidence` fields are:
   - `chain_family: "cosmwasm"` (mandatory — without this the verifier dispatches to the wrong runner and the re-run fails)
   - `chain_id`: the network name (e.g., `"osmosis"`, `"juno"`, `"neutron"`, `"archway"`, `"sei"`, `"stargaze"`, `"terra"`, `"kava"`, `"localnet"`)
   - `contract_address`: bech32 contract address (e.g., `osmo1...`, `juno1...`); checksum-validated server-side
@@ -2202,7 +2203,7 @@ The orchestrator provides the domain in the spawn prompt.
 Score each finding on 5 axes:
 - **Impact** (0-30): What damage can the attacker actually cause?
 - **Proof quality** (0-25): Is the PoC complete, reproducible, and backed by bounded evidence packs with representative samples?
-- **Severity accuracy** (0-15): Does the claimed severity match the real impact?
+- **Severity accuracy** (0-15): Does the claimed severity match the real impact? `bob_read_candidate_claims` returns a server-derived CVSS v3.1 band per finding (`finding.cvss.severity_band`, or an insufficient marker) as an informational sanity check. If your severity_accuracy assessment is badly out of line with that band, reconsider — but the band is NOT a score source, does NOT map to points, and your judgment of demonstrated impact governs this integer.
 - **Chain potential** (0-15): Does this finding enable or amplify other attacks? Award meaningful chain points only for confirmed chain attempts. Denied attempts should reduce speculative chain credit; blocked or inconclusive attempts are not proof.
 - **Report quality** (0-15): Are evidence pack snippets and samples clear enough for a triager to verify quickly?
 
@@ -2307,15 +2308,15 @@ Compose `~/hacker-bob-sessions/[domain]/report.md` via `bob_compose_report` with
    - Severity: use `bob_read_grade_verdict.findings[].reachability.graded_severity` when present; otherwise use the final-verifier severity. If reachability is present, include `recorded_severity`, `graded_severity`, `attack_vector`, and `disposition` in one concise sentence so an AV:L cap is visible in the report.
    - Explain reachability: attacker-controlled input, user/maintainer action, CI event, package install path, config path, or protocol message that reaches the vulnerable code. For native C/C++ findings, name the parser/state transition and malformed field/object.
    - Impact must be concrete: memory corruption, denial of service, arbitrary file/path effect, secret exposure, authz bypass, supply-chain compromise, or documented unsafe behavior. Do not report style issues or speculative hardening.
-   - CWE: choose a fixed CWE from the OSS impact class (examples: memory out-of-bounds -> CWE-125/CWE-787, use-after-free -> CWE-416, integer overflow -> CWE-190, improper access control/authz -> CWE-284/CWE-862/CWE-863, config secret exposure -> CWE-200/CWE-798, command/path injection -> CWE-77/CWE-22). Do not invent a custom category.
-   - Suggested CVSS-4.0: label it as suggested for triager re-score. Anchor the severity band to the final-verifier or graded severity, derive AV from the reachability prose (`network` -> AV:N, `local` -> AV:L), and set PR/UI from maintainer/user-action prerequisites. Do not imply a severity divergence from the grade verdict.
+   - CWE: render the finding's persisted `cwe` value verbatim. It is required and catalog-validated for medium+ findings (validated against `mcp/lib/cwe-catalog.js`, the single source of truth, at write time), so do NOT re-classify, pick, or substitute a different id at report time — the recording already froze it. For a legacy row whose `cwe` is absent or invalid, render an explicit "CWE unavailable (legacy record)" marker rather than inventing one.
+   - CVSS v3.1 (informational): the MCP derives the CVSS v3.1 base vector and score server-side from the finding's structured `cvss_inputs` and renders them in report.md as an INFORMATIONAL annotation. `cvss_inputs` is REQUIRED on the candidate claim for reportable medium+ findings — the recording write is rejected unless the inputs are sufficient to derive a vector — and optional for low/info. To be derivable, supply at least `attack_vector`, `privileges_required`, and at least one impact dimension of `confidentiality`/`integrity`/`availability` (the full base enums are `attack_vector`, `attack_complexity`, `privileges_required`, `user_interaction`, `scope`, `confidentiality`, `integrity`, `availability`; `attack_complexity`/`user_interaction`/`scope` default); do NOT hand-author a vector string. For OSS findings, derive AV from the reachability prose (`network` -> attack_vector network, `local` -> attack_vector local) and set PR/UI from maintainer/user-action prerequisites; when `attack_vector` is omitted but a reachability assertion is present, the MCP carries that classification into `attack_vector` automatically, so an OSS finding can satisfy the gate with `privileges_required` plus an impact dimension. The grade verdict severity stays authoritative — the rendered CVSS is informational only and never implies a severity divergence from the grade verdict. A legacy finding persisted without `cvss_inputs` still renders, showing the explicit insufficient-verified-facts marker instead of a vector.
    - References: include the CWE URL, a repo file:line permalink only when the finding or evidence already provides a stable remote/commit URL, otherwise a stable repository path plus line/function, and any upstream CVE/GHSA already present in the finding or evidence. Do not fabricate advisory, commit, or GitHub links.
    - Include false-positive notes and remediation tied to the exact code path, dependency pin, CI permission, config default, or docs mismatch.
 
    **HTTP findings** (`surface_type: "web"` or null):
    - Title (using formula: `[Bug Class] in [Exact Endpoint/Feature] allows [attacker role] to [impact] [scope]`)
    - Severity (final-verifier value, not evaluator's claim; use `reachability.graded_severity` from the grade verdict when present)
-   - CWE
+   - CWE: render the finding's persisted `cwe` value verbatim. It is required and catalog-validated for medium+ findings (validated against `mcp/lib/cwe-catalog.js` at write time — common web ids: CWE-79 XSS, CWE-639 IDOR, CWE-352 CSRF, CWE-918 SSRF, CWE-200 info exposure), so do NOT re-classify, pick, or substitute a different id at report time — the recording already froze it. For a legacy row whose `cwe` is absent or invalid, render an explicit "CWE unavailable (legacy record)" marker rather than inventing one.
    - Endpoint
    - PoC (exact curl or request)
    - Evidence (response proving the bug)
@@ -2326,7 +2327,7 @@ Compose `~/hacker-bob-sessions/[domain]/report.md` via `bob_compose_report` with
    - Branch by `finding.sc_evidence.chain_family` (default `"evm"` when omitted on a legacy row).
    - Title formula: `[Bug Class] in [ContractName].[function] allows [attacker role] to [impact]` (EVM), `[Bug Class] in [ProgramName].[instruction] allows [attacker role] to [impact]` (SVM), `[Bug Class] in [PackageName]::[module]::[function] allows [attacker role] to [impact]` (Aptos / Sui), `[Bug Class] in [ContractName]::[selector] allows [attacker role] to [impact]` (Substrate / ink!), or `[Bug Class] in [ContractName]::[ExecuteMsg variant] allows [attacker role] to [impact]` (CosmWasm).
    - Severity (final-verifier value — authoritative unless `reachability.graded_severity` is present in the grade verdict; the grader's verdict is SUBMIT/HOLD/SKIP, not otherwise a severity override).
-   - CWE (canonical mappings — families share these unless noted):
+   - CWE: render the finding's persisted `cwe` value verbatim. It is required and catalog-validated for medium+ findings (validated against `mcp/lib/cwe-catalog.js` at write time), so do NOT re-classify, pick, or substitute a different id at report time — the recording already froze it. For a legacy row whose `cwe` is absent or invalid, render an explicit "CWE unavailable (legacy record)" marker rather than inventing one. The canonical mappings below mirror `mcp/lib/cwe-catalog.js` SMART_CONTRACT_FAMILY_CWE for REFERENCE only — to recognize the expected id, not to re-derive it; families share these unless noted:
      - reentrancy / reentrancy_via_cpi / discriminator_collision → CWE-841 (improper enforcement of behavioral workflow)
      - access-control bypass / owner_check_missing / pda_collision / upgrade_authority_compromise / package_upgrade_authority / resource_account_takeover → CWE-284 (improper access control)
      - missing_signer (SVM) / signer_capability_leak (Aptos) → CWE-862 (missing authorization)

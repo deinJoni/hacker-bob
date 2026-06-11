@@ -51,7 +51,7 @@ function findingInput(domain, index) {
     target_domain: domain,
     title: `IDOR exposes record ${index}`,
     severity: index % 2 === 0 ? "high" : "medium",
-    cwe: `CWE-${600 + index}`,
+    cwe: "CWE-639",
     endpoint: `https://victim.example/api/records/${index}`,
     description: `Changing record ${index} identifier returns another tenant payload.`,
     proof_of_concept: `GET /api/records/${index} as the attacker tenant returns private fields.`,
@@ -60,6 +60,13 @@ function findingInput(domain, index) {
     validated: true,
     auth_profile: `attacker-${index}`,
     surface_id: `surface:record-${index}`,
+    // Cross-tenant IDOR disclosure: network-reachable, low-privilege attacker
+    // tenant, confidentiality impact.
+    cvss_inputs: {
+      attack_vector: "network",
+      privileges_required: "low",
+      confidentiality: "high",
+    },
   };
 }
 
@@ -104,6 +111,17 @@ test("recording 5 candidate claims writes 5 claims plus 5 claim.candidate.linked
     for (const finding of findings) {
       const claim = claimsByFindingId.get(finding.id);
       assert.ok(claim, `every projected finding must have a CandidateClaim (missing for ${finding.id})`);
+      // CVSS round-trip: the cvss_inputs written on the fixture must survive the
+      // write -> findingPayloadsFromClaims read-back projection intact, so a
+      // regression that strips or mis-normalizes CVSS in either path is caught
+      // here rather than passing silently.
+      assert.ok(
+        finding.cvss_inputs && typeof finding.cvss_inputs === "object",
+        `projected finding ${finding.id} must carry cvss_inputs`,
+      );
+      assert.equal(finding.cvss_inputs.attack_vector, "network");
+      assert.equal(finding.cvss_inputs.privileges_required, "low");
+      assert.equal(finding.cvss_inputs.confidentiality, "high");
       assert.equal(
         claim.evidence_refs[0].content_hash,
         hashCanonicalJson(finding),

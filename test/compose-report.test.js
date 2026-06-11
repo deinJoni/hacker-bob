@@ -20,8 +20,11 @@ const os = require("os");
 const path = require("path");
 
 const composeReportTool = require("../mcp/lib/tools/compose-report.js");
+const recordClaimTool = require("../mcp/lib/tools/record-candidate-claim.js");
+const { deriveCvss31 } = require("../mcp/lib/cvss31.js");
 const { ERROR_CODES } = require("../mcp/lib/envelope.js");
 const {
+  claimsJsonlPath,
   reportMarkdownPath,
   sessionDir,
   verificationRoundPaths,
@@ -239,4 +242,222 @@ test("bob_compose_report tool spec carries Y_self_reporting capability_id and is
   assert.equal(composeReportTool.name, "bob_compose_report");
   assert.equal(composeReportTool.capability_id, "Y_self_reporting");
   assert.ok(composeReportTool.role_bundles.includes("orchestrator"));
+});
+
+// --- server-derived CVSS v3.1 + validated CWE annotations ---
+
+function recordWebClaim(domain, overrides = {}) {
+  return JSON.parse(recordClaimTool.handler({
+    target_domain: domain,
+    title: overrides.title || "IDOR in /api/orders",
+    severity: overrides.severity || "high",
+    cwe: overrides.cwe || "CWE-639",
+    endpoint: overrides.endpoint || "https://audit.example.com/api/orders/1",
+    description: overrides.description || "An attacker can read other users' orders.",
+    proof_of_concept: overrides.proof_of_concept || "curl https://audit.example.com/api/orders/2",
+    validated: true,
+    ...(overrides.cvss_inputs !== undefined ? { cvss_inputs: overrides.cvss_inputs } : {}),
+  }));
+}
+
+test("bob_compose_report renders a server-derived CVSS v3.1 + CWE block whose vector matches cvss31", () => {
+  withTempHome(() => {
+    const domain = "audit.example.com";
+    const cvssInputs = {
+      attack_vector: "network",
+      privileges_required: "low",
+      confidentiality: "high",
+      integrity: "none",
+      availability: "none",
+    };
+    recordWebClaim(domain, { cvss_inputs: cvssInputs });
+    seedFinalRound(domain, [{
+      finding_id: "F-1",
+      disposition: "confirmed",
+      severity: "high",
+      reportable: true,
+      reasoning: "Confirmed",
+      repro_steps: ["step 1"],
+      evidence_refs: ["frontier_event:e1"],
+    }]);
+
+    const result = callTool(composeReportTool, {
+      target_domain: domain,
+      sections: [{
+        kind: "impact",
+        heading: "Impact",
+        prose: "An attacker can read other users' orders.",
+        provenance: "operator_osint",
+        evidence_refs: [],
+      }],
+    });
+
+    assert.equal(result.cvss_annotations_rendered, 1);
+    const expected = deriveCvss31(cvssInputs);
+    const rendered = fs.readFileSync(reportMarkdownPath(domain), "utf8");
+    assert.match(rendered, /## CVSS \/ CWE \(informational\)/);
+    assert.match(rendered, /INFORMATIONAL only/);
+    // The derived vector and base score must match cvss31 exactly.
+    assert.ok(rendered.includes(expected.vector), `report must include derived vector ${expected.vector}`);
+    assert.ok(
+      rendered.includes(`${expected.base_score} (${expected.severity_band})`),
+      `report must include base score ${expected.base_score} (${expected.severity_band})`,
+    );
+    // Validated CWE is surfaced; the final-round severity is labeled by its
+    // source (not as the public/authoritative severity, which graded_severity
+    // can downgrade).
+    assert.match(rendered, /\*\*CWE:\*\* CWE-639/);
+    assert.match(rendered, /Final verification round severity:\*\* high/);
+    // No fabricated vector for a derivable finding: exactly the cvss31 vector.
+    assert.equal((rendered.match(/CVSS:3\.1\//g) || []).length, 1);
+  });
+});
+
+test("CVSS annotations exclude non-reportable findings and never appear before a final round", () => {
+  withTempHome(() => {
+    const domain = "audit.example.com";
+    recordWebClaim(domain, {
+      cvss_inputs: { attack_vector: "network", privileges_required: "low", confidentiality: "high" },
+    });
+    const sections = [{
+      kind: "impact", heading: "Impact", prose: "x", provenance: "operator_osint", evidence_refs: [],
+    }];
+
+    // No final round yet: nothing is reportable, so the candidate finding must
+    // NOT be enumerated in the informational CVSS/CWE block (no pre-verification
+    // disclosure of candidate titles/CWEs).
+    let result = callTool(composeReportTool, { target_domain: domain, sections });
+    assert.equal(result.cvss_annotations_rendered, 0);
+    assert.doesNotMatch(fs.readFileSync(reportMarkdownPath(domain), "utf8"), /## CVSS \/ CWE/);
+
+    // A final round that marks the finding NOT reportable keeps it excluded too.
+    seedFinalRound(domain, [{
+      finding_id: "F-1", disposition: "rejected", severity: "high", reportable: false,
+      reasoning: "Held / not reportable", repro_steps: [], evidence_refs: [],
+    }]);
+    result = callTool(composeReportTool, { target_domain: domain, sections });
+    assert.equal(result.cvss_annotations_rendered, 0);
+    assert.doesNotMatch(fs.readFileSync(reportMarkdownPath(domain), "utf8"), /## CVSS \/ CWE/);
+  });
+});
+
+test("a non-enum verification-round severity is not interpolated into the report Markdown", () => {
+  withTempHome(() => {
+    const domain = "audit.example.com";
+    recordWebClaim(domain, {
+      cvss_inputs: { attack_vector: "network", privileges_required: "low", confidentiality: "high" },
+    });
+    // A corrupted/hand-edited verification round carrying a non-enum severity
+    // that embeds Markdown must not inject into the report.
+    const injected = "high\n\n## Injected Heading\n- arbitrary attacker text";
+    seedFinalRound(domain, [{
+      finding_id: "F-1", disposition: "confirmed", severity: injected, reportable: true,
+      reasoning: "Confirmed", repro_steps: ["s"], evidence_refs: ["frontier_event:e1"],
+    }]);
+
+    const result = callTool(composeReportTool, {
+      target_domain: domain,
+      sections: [{ kind: "impact", heading: "Impact", prose: "x", provenance: "operator_osint", evidence_refs: [] }],
+    });
+    // Finding is reportable, so it is still annotated...
+    assert.equal(result.cvss_annotations_rendered, 1);
+    const rendered = fs.readFileSync(reportMarkdownPath(domain), "utf8");
+    // ...but the injected heading/text must NOT appear. The invalid severity
+    // degrades to null and the line falls back to the finding's own (enum-valid)
+    // severity instead of interpolating attacker-controlled text.
+    assert.doesNotMatch(rendered, /## Injected Heading/);
+    assert.doesNotMatch(rendered, /arbitrary attacker text/);
+    assert.match(rendered, /Final verification round severity:\*\* high/);
+  });
+});
+
+test("bob_compose_report renders the insufficient-verified-facts marker for a legacy finding that lacks cvss_inputs", () => {
+  withTempHome(() => {
+    const domain = "audit.example.com";
+    // The write path requires derivable cvss_inputs for a reportable (medium)
+    // finding, so record it WITH inputs to clear the gate, then strip them from
+    // the persisted claim row to simulate a legacy finding lacking cvss_inputs.
+    // Read-back stays tolerant, so the marker still renders for that legacy row.
+    recordWebClaim(domain, {
+      cwe: "CWE-200",
+      title: "Info exposure",
+      endpoint: "https://audit.example.com/api/info",
+      severity: "medium",
+      cvss_inputs: { attack_vector: "network", privileges_required: "low", confidentiality: "high" },
+    });
+    const claimsFile = claimsJsonlPath(domain);
+    const claimLines = fs.readFileSync(claimsFile, "utf8").split("\n").filter((l) => l.trim());
+    assert.equal(claimLines.length, 1);
+    const claim = JSON.parse(claimLines[0]);
+    delete claim.payload.finding.cvss_inputs;
+    fs.writeFileSync(claimsFile, `${JSON.stringify(claim)}\n`);
+    seedFinalRound(domain, [{
+      finding_id: "F-1",
+      disposition: "confirmed",
+      severity: "medium",
+      reportable: true,
+      reasoning: "Confirmed",
+      repro_steps: ["step 1"],
+      evidence_refs: ["frontier_event:e1"],
+    }]);
+
+    const result = callTool(composeReportTool, {
+      target_domain: domain,
+      sections: [{
+        kind: "impact",
+        heading: "Impact",
+        prose: "Sensitive data is exposed.",
+        provenance: "operator_osint",
+        evidence_refs: [],
+      }],
+    });
+
+    assert.equal(result.cvss_annotations_rendered, 1);
+    const rendered = fs.readFileSync(reportMarkdownPath(domain), "utf8");
+    assert.match(rendered, /insufficient verified facts/);
+    // No fabricated vector when inputs are absent.
+    assert.equal((rendered.match(/CVSS:3\.1\//g) || []).length, 0);
+  });
+});
+
+test("bob_compose_report content hash binds the CVSS block; non-reportable findings are omitted", () => {
+  withTempHome(() => {
+    const domain = "audit.example.com";
+    // F-1 reportable with inputs; F-2 not reportable.
+    recordWebClaim(domain, {
+      cvss_inputs: { attack_vector: "network", privileges_required: "low", confidentiality: "high" },
+    });
+    recordWebClaim(domain, {
+      title: "Denied finding",
+      cwe: "CWE-200",
+      endpoint: "https://audit.example.com/api/other",
+      cvss_inputs: { attack_vector: "network", privileges_required: "none", confidentiality: "high" },
+    });
+    seedFinalRound(domain, [
+      { finding_id: "F-1", disposition: "confirmed", severity: "high", reportable: true, reasoning: "ok", repro_steps: ["s"], evidence_refs: ["frontier_event:e1"] },
+      { finding_id: "F-2", disposition: "denied", severity: "low", reportable: false, reasoning: "no", repro_steps: ["s"], evidence_refs: ["frontier_event:e1"] },
+    ]);
+
+    const args = {
+      target_domain: domain,
+      sections: [{
+        kind: "impact",
+        heading: "Impact",
+        prose: "An attacker can read other users' orders.",
+        provenance: "operator_osint",
+        evidence_refs: [],
+      }],
+    };
+    const result = callTool(composeReportTool, args);
+    // Only the reportable finding is annotated.
+    assert.equal(result.cvss_annotations_rendered, 1);
+    const rendered = fs.readFileSync(reportMarkdownPath(domain), "utf8");
+    assert.match(rendered, /### F-1/);
+    assert.doesNotMatch(rendered, /### F-2/);
+    // The content hash is the sha256 of the rendered markdown — it binds the
+    // CVSS lines. Recomputing over the file content reproduces the reported hash.
+    const recomputed = require("crypto").createHash("sha256").update(rendered, "utf8").digest("hex");
+    assert.equal(result.report_content_hash, recomputed);
+    assert.ok(rendered.includes("CVSS:3.1/"), "the bound markdown must contain the derived vector");
+  });
 });

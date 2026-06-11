@@ -72,6 +72,13 @@ function recordFindingViaTool(domain, overrides = {}) {
     validated: true,
     auth_profile: overrides.auth_profile || "attacker",
     surface_id: overrides.surface_id || "surface:billing-profile",
+    // Cross-tenant billing IDOR: network-reachable, low-privilege attacker
+    // tenant, confidentiality impact.
+    cvss_inputs: overrides.cvss_inputs || {
+      attack_vector: "network",
+      privileges_required: "low",
+      confidentiality: "high",
+    },
   };
   return JSON.parse(recordFindingTool.handler(args));
 }

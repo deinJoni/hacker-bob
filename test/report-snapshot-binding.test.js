@@ -150,6 +150,13 @@ function recordFinding(domain, overrides = {}) {
     validated: true,
     auth_profile: overrides.auth_profile || "attacker",
     surface_id: overrides.surface_id || "surface:billing-profile",
+    // Cross-tenant IDOR disclosure: network-reachable, low-privilege attacker
+    // tenant, confidentiality impact.
+    cvss_inputs: overrides.cvss_inputs || {
+      attack_vector: "network",
+      privileges_required: "low",
+      confidentiality: "high",
+    },
   }));
 }
 

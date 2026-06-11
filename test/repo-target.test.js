@@ -241,6 +241,14 @@ function nativeFindingInput(context, overrides = {}) {
     response_evidence: "AddressSanitizer: heap-buffer-overflow in parse_packet",
     impact: "Remote input can crash the process and may disclose adjacent memory.",
     validated: true,
+    // Remote-input OOB read: network-reachable, no privileges, can crash the
+    // process (availability) and disclose adjacent memory (confidentiality).
+    cvss_inputs: {
+      attack_vector: "network",
+      privileges_required: "none",
+      confidentiality: "low",
+      availability: "high",
+    },
     ...overrides,
   };
 }

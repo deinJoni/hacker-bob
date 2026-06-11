@@ -398,6 +398,14 @@ function driveReportSnapshotChain(domain, {
     validated: true,
     auth_profile: "attacker",
     surface_id: promotedSurfaceId,
+    // Cross-stack identity spoofing: network-reachable, no privileges, lets the
+    // attacker impersonate a victim wallet (confidentiality + integrity).
+    cvss_inputs: {
+      attack_vector: "network",
+      privileges_required: "none",
+      confidentiality: "high",
+      integrity: "high",
+    },
   });
   const findingIds = [claimResponse.finding_id];
 

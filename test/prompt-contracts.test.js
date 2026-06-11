@@ -430,7 +430,7 @@ test("reporter prompt renders reachability graded severity when C9 stamps it", (
   assert.match(reporterPrompt, /reachability disposition/);
 });
 
-test("reporter OSS branch carries CWE, suggested CVSS-4.0, and references guidance", () => {
+test("reporter OSS branch carries CWE, server-derived CVSS v3.1, and references guidance", () => {
   const reporterPrompt = readFile("prompts/roles/reporter.md");
   const ossBranchStart = reporterPrompt.indexOf("**OSS repo findings**");
   const httpBranchStart = reporterPrompt.indexOf("**HTTP findings**");
@@ -438,12 +438,126 @@ test("reporter OSS branch carries CWE, suggested CVSS-4.0, and references guidan
   assert.ok(httpBranchStart > ossBranchStart, "HTTP branch must follow OSS branch");
   const ossBranch = reporterPrompt.slice(ossBranchStart, httpBranchStart);
   assert.match(ossBranch, /CWE/);
-  assert.match(ossBranch, /Suggested CVSS-4\.0/);
+  assert.match(ossBranch, /required and catalog-validated/);
+  assert.match(ossBranch, /cwe-catalog\.js/);
+  // CVSS is now derived server-side from cvss_inputs; the reporter supplies the
+  // structured inputs and never hand-authors a vector.
+  assert.match(ossBranch, /CVSS v3\.1/);
+  assert.match(ossBranch, /derives the CVSS v3\.1 base vector and score server-side/);
+  assert.match(ossBranch, /cvss_inputs/);
+  assert.match(ossBranch, /do NOT hand-author a vector/);
+  assert.doesNotMatch(ossBranch, /Suggested CVSS-4\.0/);
   assert.match(ossBranch, /derive AV from the reachability prose|reachability prose/);
   assert.match(ossBranch, /References/);
   assert.match(ossBranch, /stable remote\/commit URL/);
   assert.match(ossBranch, /CVE\/GHSA|CVE|GHSA/);
   assert.match(ossBranch, /Do not fabricate advisory, commit, or GitHub links/);
+});
+
+test("every reporter per-surface CWE directive renders the persisted cwe verbatim, not a re-pick", () => {
+  // Regression: the CWE write-time freeze (catalog-validated `cwe` persisted on
+  // the finding) is only honored end-to-end if the reporter RENDERS that value
+  // rather than re-deriving one at report time. The reporter prompt has three
+  // per-surface CWE directives (OSS / HTTP / smart-contract); a prior fix updated
+  // only the OSS branch, leaving HTTP ("pick a catalog id") and SC ("canonical
+  // mappings ... pick") telling the LLM to re-classify. Pin the render-verbatim
+  // contract on ALL THREE so a revert of any branch fails here — the older
+  // /required and catalog-validated/ + /cwe-catalog.js/ assertions did not catch a
+  // revert because the "pick" wording satisfied them too.
+  const reporterPrompt = readFile("prompts/roles/reporter.md");
+  const ossStart = reporterPrompt.indexOf("**OSS repo findings**");
+  const httpStart = reporterPrompt.indexOf("**HTTP findings**");
+  const scStart = reporterPrompt.indexOf("**Smart-contract findings**");
+  const mixedStart = reporterPrompt.indexOf("Mixed-surface reports preserve");
+  assert.ok(ossStart >= 0 && httpStart > ossStart && scStart > httpStart && mixedStart > scStart,
+    "OSS < HTTP < smart-contract < mixed-surface section order must hold");
+  const branches = {
+    OSS: reporterPrompt.slice(ossStart, httpStart),
+    HTTP: reporterPrompt.slice(httpStart, scStart),
+    "smart-contract": reporterPrompt.slice(scStart, mixedStart),
+  };
+  for (const [name, branch] of Object.entries(branches)) {
+    assert.match(branch, /render the finding's persisted `cwe` value verbatim/,
+      `${name} CWE directive must render the persisted cwe verbatim`);
+    assert.match(branch, /do NOT re-classify, pick, or substitute/,
+      `${name} CWE directive must forbid re-classifying at report time`);
+    assert.match(branch, /CWE unavailable \(legacy record\)/,
+      `${name} CWE directive must define the legacy-row fallback marker`);
+    assert.match(branch, /required and catalog-validated/, `${name} keeps the catalog-validated phrase`);
+    assert.match(branch, /cwe-catalog\.js/, `${name} cites the cwe-catalog source of truth`);
+    // The pre-fix framings that told the LLM to re-derive a CWE must be gone.
+    assert.doesNotMatch(branch, /pick a catalog id/, `${name} must not instruct picking a catalog id`);
+    assert.doesNotMatch(branch, /Choose a fixed catalog CWE/, `${name} must not instruct choosing a CWE`);
+  }
+  // The SC mapping table survives, but only as a REFERENCE mirror — never a
+  // pick-list ("source-of-truth mirror ... pick" framing must be gone).
+  assert.match(branches["smart-contract"], /for REFERENCE only/,
+    "SC mapping table must be reframed as reference, not a pick-list");
+});
+
+test("grader severity_accuracy axis cites the CVSS band as an explicitly non-gating sanity signal", () => {
+  const graderPrompt = readFile("prompts/roles/grader.md");
+  const axisStart = graderPrompt.indexOf("**Severity accuracy**");
+  const axisEnd = graderPrompt.indexOf("**Chain potential**", axisStart);
+  assert.ok(axisStart >= 0 && axisEnd > axisStart, "severity_accuracy axis block must exist");
+  const axis = graderPrompt.slice(axisStart, axisEnd);
+
+  // The axis keeps its original intent.
+  assert.match(axis, /Does the claimed severity match the real impact\?/);
+  // Advisory CVSS-band sentence referencing the read tool's per-finding band.
+  assert.match(axis, /bob_read_candidate_claims/);
+  assert.match(axis, /server-derived CVSS v3\.1 band/);
+  assert.match(axis, /badly out of line/);
+  // Explicitly non-gating / not a score source.
+  assert.match(axis, /NOT a score source/);
+  assert.match(axis, /does NOT map to points/i);
+  assert.match(axis, /your judgment of demonstrated impact governs/i);
+  // No numeric band->points mapping may be introduced anywhere in the prompt:
+  // "badly out of line" must remain a qualitative judgment.
+  assert.doesNotMatch(graderPrompt, /\d+\s*(?:points?|pts)/i);
+  assert.doesNotMatch(graderPrompt, /band\s*(?:=|->|→|maps to)\s*\d/i);
+  // The band must never drive the integer through a mechanical verb either:
+  // no "band ... deduct/subtract/add to this axis" phrasing in the axis slice.
+  assert.doesNotMatch(axis, /band[^.]*\b(?:deduct|subtract|add(?:s|ed)?)\b/i);
+
+  // The integer example block and the compact final marker must stay intact.
+  assert.match(graderPrompt, /finding_id:\s*"F-\d+"/, "grader.md must keep the F-N example block");
+  assert.match(graderPrompt, /BOB_GRADE_DONE/, "grader.md must keep the BOB_GRADE_DONE marker");
+});
+
+test("reporter smart-contract family table mirrors SMART_CONTRACT_FAMILY_CWE", () => {
+  const { SMART_CONTRACT_FAMILY_CWE } = require("../mcp/lib/cwe-catalog.js");
+  const reporterPrompt = readFile("prompts/roles/reporter.md");
+  const tableStart = reporterPrompt.indexOf("SMART_CONTRACT_FAMILY_CWE");
+  const tableEnd = reporterPrompt.indexOf("Chain + Address", tableStart);
+  assert.ok(tableStart >= 0 && tableEnd > tableStart, "smart-contract family table must exist");
+  const block = reporterPrompt.slice(tableStart, tableEnd);
+  const rows = block.split("\n").filter((line) => /→\s*CWE-\d+/.test(line));
+  assert.ok(rows.length > 0, "family table must contain mapping rows");
+
+  const catalogKeys = new Set(Object.keys(SMART_CONTRACT_FAMILY_CWE));
+  let checked = 0;
+  for (const row of rows) {
+    const [lhs] = row.split("→");
+    const rowCweIds = row.match(/CWE-\d+/g) || [];
+    // Identifier-shaped family tokens are the catalog vocabulary (snake_case).
+    // Prose aliases (e.g. "signature replay") are intentionally not validated.
+    const familyTokens = lhs.match(/[a-z][a-z0-9]*(?:_[a-z0-9]+)+/g) || [];
+    for (const token of familyTokens) {
+      assert.ok(
+        catalogKeys.has(token),
+        `reporter.md family token ${token} is not a key in SMART_CONTRACT_FAMILY_CWE`,
+      );
+      for (const cwe of SMART_CONTRACT_FAMILY_CWE[token]) {
+        assert.ok(
+          rowCweIds.includes(cwe),
+          `reporter.md row for ${token} must list ${cwe} (catalog: ${SMART_CONTRACT_FAMILY_CWE[token].join(", ")})`,
+        );
+      }
+      checked += 1;
+    }
+  }
+  assert.ok(checked > 0, "at least one family token must be validated against the catalog");
 });
 
 test("evaluator OSS stanza tells fuzz_run to consume readable repo-env recommendations", () => {

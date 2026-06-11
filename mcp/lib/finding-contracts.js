@@ -17,6 +17,7 @@ const {
 } = require("./constants.js");
 const {
   assertBoolean,
+  assertCwe,
   assertEnumValue,
   assertNonEmptyString,
   assertRequiredText,
@@ -28,6 +29,9 @@ const {
 const {
   capabilityPackForLegacyFinding,
 } = require("./capability-packs.js");
+const {
+  normalizeCvssInputs,
+} = require("./cvss31.js");
 
 function normalizeEndpointForDedupe(endpoint) {
   const raw = String(endpoint || "").trim();
@@ -449,7 +453,9 @@ function summarizeFindings(findings) {
   };
 }
 
-function normalizeFindingRecord(record, { expectedDomain = null, lineNumber = null } = {}) {
+const CWE_REQUIRED_SEVERITIES = Object.freeze(["critical", "high", "medium"]);
+
+function normalizeFindingRecord(record, { expectedDomain = null, lineNumber = null, requireCwe = false } = {}) {
   if (record == null || typeof record !== "object" || Array.isArray(record)) {
     throw new Error(lineNumber == null
       ? "finding record must be an object"
@@ -457,12 +463,22 @@ function normalizeFindingRecord(record, { expectedDomain = null, lineNumber = nu
   }
 
   try {
+    const severity = assertEnumValue(record.severity, SEVERITY_VALUES, "severity");
+    // CWE is canonicalized + catalog-validated whenever present on the strict
+    // write path. Canonicalization is idempotent so an already-canonical CWE
+    // leaves computeFindingDedupeKey stable. Presence is enforced only on the
+    // strict write path (requireCwe) for reportable severities. Read-back
+    // projection passes requireCwe=false, which also relaxes present-CWE
+    // validation (strictPresent=false): a legacy row whose CWE is missing,
+    // unparseable, or outside the curated catalog degrades to null rather than
+    // throwing, so it still projects into summaries/handoffs/reports.
+    const cweRequired = requireCwe && CWE_REQUIRED_SEVERITIES.includes(severity);
     const finding = {
       id: parseFindingId(record.id, "id"),
       target_domain: assertNonEmptyString(record.target_domain, "target_domain"),
       title: assertRequiredText(record.title, "title"),
-      severity: assertEnumValue(record.severity, SEVERITY_VALUES, "severity"),
-      cwe: normalizeOptionalText(record.cwe, "cwe"),
+      severity,
+      cwe: assertCwe(record.cwe, "cwe", { required: cweRequired, strictPresent: requireCwe }),
       endpoint: assertRequiredText(record.endpoint, "endpoint"),
       file_path: normalizeOptionalText(record.file_path, "file_path"),
       symbol: normalizeOptionalText(record.symbol, "symbol"),
@@ -502,6 +518,37 @@ function normalizeFindingRecord(record, { expectedDomain = null, lineNumber = nu
     if (reachabilityAssertion) {
       assertReachabilityAssertionScope(finding);
       finding.reachability_assertion = reachabilityAssertion;
+    }
+    // Structured CVSS v3.1 base inputs. Persisted as canonical
+    // long-name enums on the finding so they round-trip on read-back; the
+    // vector itself is NEVER persisted — it is re-derived server-side at report
+    // time. cvss_inputs is intentionally excluded from computeFindingDedupeKey,
+    // so adding/refining it never reshuffles existing finding ids.
+    // strict on the write path (requireCwe), tolerant on read-back projection so
+    // a persisted finding whose cvss_inputs predates/postdates the current spec
+    // still projects instead of being dropped by findingPayloadsFromClaims' catch.
+    const cvssInputs = normalizeCvssInputs(record.cvss_inputs, "cvss_inputs", { strict: requireCwe });
+    if (cvssInputs) {
+      finding.cvss_inputs = cvssInputs;
+    }
+    // OSS native-code contract: reachability_assertion is AUTHORITATIVE for the
+    // CVSS attack_vector (network -> AV:N, local -> AV:L). On the write path,
+    // reject a conflicting explicit cvss_inputs.attack_vector rather than letting
+    // the later derivation silently use the contradictory value (which would
+    // persist a self-contradictory finding). Then derive AV from reachability.
+    if (finding.reachability_assertion) {
+      const derivedAv = finding.reachability_assertion.attack_vector === "network"
+        ? "network"
+        : "local";
+      const explicitAv = finding.cvss_inputs && finding.cvss_inputs.attack_vector != null
+        ? finding.cvss_inputs.attack_vector
+        : null;
+      if (requireCwe && explicitAv != null && explicitAv !== derivedAv) {
+        throw new Error(
+          `cvss_inputs.attack_vector ${JSON.stringify(explicitAv)} conflicts with reachability_assertion.attack_vector ${JSON.stringify(finding.reachability_assertion.attack_vector)} (derives ${JSON.stringify(derivedAv)}); omit cvss_inputs.attack_vector so it is derived from reachability, or make them agree.`,
+        );
+      }
+      finding.cvss_inputs = { ...(finding.cvss_inputs || {}), attack_vector: derivedAv };
     }
     if (finding.surface_type === "smart_contract" && !finding.sc_evidence) {
       throw new Error("smart-contract findings must include sc_evidence");

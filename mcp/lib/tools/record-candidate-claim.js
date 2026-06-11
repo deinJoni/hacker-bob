@@ -36,6 +36,32 @@ const {
 const { appendFrontierEvent } = require("../frontier-events.js");
 const { scheduleMaterialization } = require("../frontier-materialize-debounce.js");
 const { hashCanonicalJson } = require("../verification-contracts.js");
+const { isKnownCwe } = require("../cwe-catalog.js");
+const { CVSS_INPUT_KEYS, CVSS_INPUT_ENUMS, deriveCvss31 } = require("../cvss31.js");
+
+// Registry-driven schema for the optional structured CVSS v3.1 base inputs. The
+// enum values are sourced from cvss31.js so the schema and the server-side
+// normalizer cannot drift; only the keys the caller asserts are persisted, and
+// the vector is derived server-side at report time (never stored on the
+// hashed finding).
+const CVSS_INPUTS_SCHEMA = Object.freeze({
+  type: "object",
+  additionalProperties: false,
+  description:
+    "Optional structured CVSS v3.1 base-metric inputs. The MCP derives the CVSS v3.1 vector and base score server-side at report time and renders them as an INFORMATIONAL annotation; the grade verdict severity stays authoritative. Supply these for reportable findings instead of hand-authoring a vector. Unknown keys or values are rejected. attack_vector and privileges_required plus at least one of confidentiality/integrity/availability are needed for a derivable vector; otherwise the report shows an explicit insufficient-verified-facts marker.",
+  properties: CVSS_INPUT_KEYS.reduce((acc, key) => {
+    acc[key] = { type: "string", enum: [...CVSS_INPUT_ENUMS[key]] };
+    return acc;
+  }, {}),
+});
+
+// Example catalog CWEs surfaced in the missing-CWE remediation, keyed by the
+// finding class so the operator sees relevant ids. The validator is the source
+// of truth; these are illustrative hints only.
+const EXAMPLE_CWES_BY_CLASS = Object.freeze({
+  smart_contract: "CWE-841 (reentrancy), CWE-284 (access-control bypass), CWE-682 (incorrect calculation), CWE-294 (signature replay)",
+  web: "CWE-79 (XSS), CWE-639 (IDOR), CWE-352 (CSRF), CWE-918 (SSRF), CWE-200 (info exposure)",
+});
 
 // CandidateClaim recording. Every candidate claim lands in claims.jsonl with
 // an embedded finding-shaped payload referenced via evidence_refs[kind="finding"].
@@ -175,7 +201,76 @@ function validateClaimForPersistence(finding, secretBypass = new Map()) {
   }
 }
 
-function buildFindingPayloadRecord(args, context, findingId) {
+function assertReportableCweOnWrite(args, surfaceType) {
+  const severity = args && args.severity;
+  if (severity !== "critical" && severity !== "high" && severity !== "medium") return;
+  const cweEmpty = args.cwe == null || (typeof args.cwe === "string" && !args.cwe.trim());
+  if (cweEmpty) {
+    const examples = EXAMPLE_CWES_BY_CLASS[surfaceType] || EXAMPLE_CWES_BY_CLASS.web;
+    throw new Error(
+      `cwe is required for ${severity} findings and must be a catalog id from mcp/lib/cwe-catalog.js (examples: ${examples})`,
+    );
+  }
+  if (!isKnownCwe(args.cwe)) {
+    const examples = EXAMPLE_CWES_BY_CLASS[surfaceType] || EXAMPLE_CWES_BY_CLASS.web;
+    throw new Error(
+      `cwe ${JSON.stringify(args.cwe)} is not in the curated CWE catalog (mcp/lib/cwe-catalog.js); use a catalog id (examples: ${examples})`,
+    );
+  }
+}
+
+// Names the CVSS v3.1 base metrics still missing from a finding's cvss_inputs so
+// the remediation tells the operator exactly what to supply. attack_complexity,
+// user_interaction, and scope have spec defaults and are never listed; only
+// attack_vector, privileges_required, and the impact triad gate derivability.
+function missingCvssBaseMetrics(inputs) {
+  const facts = inputs && typeof inputs === "object" && !Array.isArray(inputs) ? inputs : {};
+  const missing = [];
+  if (facts.attack_vector == null) missing.push("attack_vector");
+  if (facts.privileges_required == null) missing.push("privileges_required");
+  if (facts.confidentiality == null && facts.integrity == null && facts.availability == null) {
+    missing.push("at least one of confidentiality/integrity/availability");
+  }
+  return missing;
+}
+
+// Reportable findings (critical/high/medium) must carry cvss_inputs sufficient
+// for a DERIVABLE CVSS v3.1 vector, mirroring how the CWE gate requires a
+// catalog id. This is evaluated on the BUILT/normalized finding so the OSS
+// reachability attack_vector fallback (network/local -> AV) has already run; an
+// OSS finding that asserts reachability + PR + impact but no explicit
+// attack_vector still passes. The insufficient-verified-facts marker still
+// renders for legacy read-back rows and low/info findings, which never reach
+// this assert.
+function assertReportableCvssInputsOnWrite(finding) {
+  const severity = finding && finding.severity;
+  if (severity !== "critical" && severity !== "high" && severity !== "medium") return;
+  const derived = deriveCvss31(finding.cvss_inputs);
+  // A derivable AND non-zero vector satisfies the gate. A "none"-banded vector
+  // (base_score 0.0) is derivable but means all of confidentiality/integrity/
+  // availability are "none" — it cannot back a medium+ severity claim, so it is
+  // rejected below alongside the insufficient case.
+  if (!derived.insufficient && derived.base_score > 0) return;
+  // The reachability_assertion fallback exists ONLY for the oss_native_code pack
+  // (assertReachabilityAssertionScope rejects it on web/SC), so only surface that
+  // guidance for OSS findings — pointing a web evaluator at reachability_assertion
+  // would direct them to a field their write will reject.
+  const ossHint = finding && finding.capability_pack === "oss_native_code"
+    ? " For routed oss_native_code findings, attack_vector is auto-derived from reachability_assertion (network -> AV:N, local -> AV:L), so supply reachability_assertion instead of attack_vector."
+    : "";
+  if (!derived.insufficient && derived.base_score === 0) {
+    throw new Error(
+      `cvss_inputs for ${severity} findings must describe real impact: confidentiality, integrity, and availability are all "none", which derives a CVSS v3.1 base score of 0.0 (band "none") and contradicts the claimed severity. Set at least one impact metric to low or high.`,
+    );
+  }
+  const missing = missingCvssBaseMetrics(finding.cvss_inputs);
+  const missingList = missing.length ? missing.join(", ") : "attack_vector, privileges_required, at least one of confidentiality/integrity/availability";
+  throw new Error(
+    `cvss_inputs is required for ${severity} findings and must be sufficient to derive a CVSS v3.1 base vector; supply the missing base metrics (${missingList}) as enums on cvss_inputs.${ossHint}`,
+  );
+}
+
+function buildFindingPayloadRecord(args, context, findingId, { requireCwe = false } = {}) {
   return normalizeFindingRecord({
     id: findingId,
     target_domain: context.domain,
@@ -206,10 +301,11 @@ function buildFindingPayloadRecord(args, context, findingId) {
     brief_profile: context.briefProfile,
     sc_evidence: args.sc_evidence,
     reachability_assertion: args.reachability_assertion,
+    cvss_inputs: args.cvss_inputs,
     dedupe_key: args.dedupe_key,
     auth_profile: args.auth_profile,
     force_record: args.force_record === true,
-  }, { expectedDomain: context.domain });
+  }, { expectedDomain: context.domain, requireCwe });
 }
 
 function deriveSubjectId(finding) {
@@ -289,6 +385,7 @@ function buildClaimPayloadFromFinding(finding, findingContentHash, args) {
     "brief_profile",
     "sc_evidence",
     "reachability_assertion",
+    "cvss_inputs",
     "auth_profile",
     "dedupe_key",
     "force_record",
@@ -391,7 +488,9 @@ function recordCandidateClaimHandler(args) {
     }
 
     const counter = scan.maxNumber + 1;
-    const finding = buildFindingPayloadRecord(args, context, `F-${counter}`);
+    assertReportableCweOnWrite(args, surfaceType);
+    const finding = buildFindingPayloadRecord(args, context, `F-${counter}`, { requireCwe: true });
+    assertReportableCvssInputsOnWrite(finding);
     validateClaimForPersistence(finding, secretBypass);
 
     const findingContentHash = hashCanonicalJson(finding);
@@ -613,6 +712,7 @@ module.exports = Object.freeze({
         "required": ["attack_vector", "network_reachable", "call_path"],
         "additionalProperties": false
       },
+      "cvss_inputs": CVSS_INPUTS_SCHEMA,
       "sc_evidence": {
         "type": "object",
         "description": "Structured re-run handle for smart-contract candidate claims. Required when the assigned surface is a smart contract; rejected otherwise so the verifier can re-run via bob_foundry_run (EVM) or bob_anchor_run (SVM) with no string-parsing of the prose PoC.",

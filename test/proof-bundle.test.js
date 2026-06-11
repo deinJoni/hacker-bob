@@ -68,6 +68,17 @@ function seedFinding(domain, overrides = {}) {
     impact: "Maintainer-controlled parser crash with memory corruption signal.",
     validated: true,
     surface_id: "surface-a",
+    // The CVSS/CWE annotation layer requires cvss_inputs on high findings;
+    // supply a valid base vector so these proof-bundle fixtures record. The
+    // derived score is irrelevant here — these tests exercise proof-bundle /
+    // invariant logic, not scoring. Overridable via `overrides`.
+    cvss_inputs: {
+      attack_vector: "local",
+      privileges_required: "none",
+      confidentiality: "high",
+      integrity: "high",
+      availability: "high",
+    },
     ...overrides,
   }));
 }

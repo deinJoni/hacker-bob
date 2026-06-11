@@ -182,7 +182,7 @@ function expectedCanonicalFiles(root = DEFAULT_ROOT) {
     ...sourceTreeFiles(root, "adapters"),
     ...sourceTreeFiles(root, "bin").filter(isPackableBin),
     ...sourceTreeFiles(root, "docs").filter((file) => !isInternalRefactorDoc(file) && !isInternalPlaneDeltaDetailDoc(file)),
-    ...sourceTreeFiles(root, "mcp"),
+    ...sourceTreeFiles(root, "mcp").filter((file) => !file.startsWith("mcp/node_modules/")),
     ...sourceTreeFiles(root, "prompts"),
     ...sourceTreeFiles(root, "scripts").filter(isPackableScript),
     ...sourceTreeFiles(root, "testing/policy-replay"),
