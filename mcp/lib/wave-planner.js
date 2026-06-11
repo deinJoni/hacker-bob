@@ -246,8 +246,33 @@ function planNextWave({
   const normalizedState = state || {};
   const policy = normalizeQueuePolicy(queuePolicy || DEFAULT_QUEUE_POLICY);
   const deepMode = normalizedState.deep_mode === true;
-  const target = deepMode ? policy.deep_wave_target : policy.standard_wave_target;
-  const max = deepMode ? policy.deep_wave_max : policy.standard_wave_max;
+  const rawTarget = deepMode ? policy.deep_wave_target : policy.standard_wave_target;
+  const rawMax = deepMode ? policy.deep_wave_max : policy.standard_wave_max;
+  // First-class bounded-concurrency cap. When set, clamp BOTH the effective
+  // target and the effective max so the cap is enforced regardless of bucket
+  // overflow rules. selectFromBuckets uses limit=remainingTarget for
+  // non-overflow buckets (including the wave-1 first bucket), so clamping only
+  // `max` would leak up to `target` evaluators past a low cap — both must be
+  // clamped. null leaves fan-out unchanged (backward compatible).
+  //
+  // Why clamping the WAVE SIZE is the correct in-flight bound here (not a
+  // coverage cut): waves are dispatched SEQUENTIALLY. The orchestrator must
+  // RECONCILE (settle) a pending wave before it may dispatch the next one
+  // ("Never paper over a pending result with a fresh dispatch"), so at most one
+  // wave's assignments are ever in flight at a time. A wave clamped to
+  // max_concurrent_evaluators therefore runs at most that many evaluators
+  // concurrently — exactly the in-flight cap — and the surfaces left out of
+  // this wave are not dropped; they are picked up by the next wave once this one
+  // settles. Preserving the full target instead would require intra-wave
+  // dispatch throttling, which the orchestrator does not implement (nothing
+  // consumes next_action.max_in_flight as a throttle), so it would let `target`
+  // evaluators run at once and break the cap. The cap is still emitted on the
+  // plan (max_concurrent_evaluators below) as the in-flight signal.
+  const cap = Number.isInteger(policy.max_concurrent_evaluators)
+    ? policy.max_concurrent_evaluators
+    : null;
+  const target = cap == null ? rawTarget : Math.min(rawTarget, cap);
+  const max = cap == null ? rawMax : Math.min(rawMax, cap);
   const nextWave = (Number.isInteger(normalizedState.evaluation_wave) ? normalizedState.evaluation_wave : 0) + 1;
 
   const basePlan = {
@@ -256,6 +281,7 @@ function planNextWave({
     wave_number: nextWave,
     target_assignments: target,
     max_assignments: max,
+    max_concurrent_evaluators: cap,
     buckets: [],
     candidate_surface_ids: [],
     assignments: [],

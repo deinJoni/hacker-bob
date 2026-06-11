@@ -140,6 +140,66 @@ test("isOpenForAssignment excludes invalid, explored, and terminally blocked sur
   assert.equal(isOpenForAssignment("", state, options), false);
 });
 
+test("planNextWave Test J: max_concurrent_evaluators caps within-wave fan-out (both target and max clamped)", () => {
+  // 10 open surfaces, all HIGH so they flow through the overflow-capable
+  // critical_high bucket. Standard mode: target=4, max=6.
+  const state = { evaluation_wave: 0, pending_wave: null };
+  const tenSurfaces = Array.from({ length: 10 }, (_, i) => surface(`h${i}`, "HIGH", 100 - i));
+  const baseArgs = {
+    state,
+    surfaces: tenSurfaces,
+    exploredSurfaceIds: [],
+    terminallyBlockedSurfaceIds: [],
+    leadSurfaceIds: [],
+  };
+
+  // cap:3 with standard_wave_max:6 -> exactly 3 assignments.
+  const capped3 = planNextWave({
+    ...baseArgs,
+    queuePolicy: { ...DEFAULT_QUEUE_POLICY, max_concurrent_evaluators: 3 },
+  });
+  assert.equal(capped3.assignments.length, 3);
+  assert.equal(capped3.max_concurrent_evaluators, 3);
+  assert.equal(capped3.target_assignments, 3);
+  assert.equal(capped3.max_assignments, 3);
+
+  // Deep mode cap:5 -> exactly 5 assignments (deep target=6, max=8).
+  const capped5 = planNextWave({
+    ...baseArgs,
+    state: { ...state, deep_mode: true },
+    queuePolicy: { ...DEFAULT_QUEUE_POLICY, max_concurrent_evaluators: 5 },
+  });
+  assert.equal(capped5.assignments.length, 5);
+  assert.equal(capped5.max_concurrent_evaluators, 5);
+
+  // Cap UNSET -> backward compatible: standard fan-out fills to max=6.
+  const uncapped = planNextWave({ ...baseArgs });
+  assert.equal(uncapped.assignments.length, 6);
+  assert.equal(uncapped.max_concurrent_evaluators, null);
+
+  // PROVE clamping target too: a low cap that bites a NON-overflow bucket.
+  // 1 HIGH (overflow critical_high bucket) + 5 MEDIUM (non-overflow medium
+  // bucket, whose limit is remainingTarget). With the naive "clamp max only"
+  // bug, target stays at 4 and selection leaks to 4 evaluators despite cap:2.
+  // Clamping BOTH target and max caps it at 2.
+  const leakProof = planNextWave({
+    state,
+    surfaces: [
+      surface("hi", "HIGH", 100),
+      surface("m1", "MEDIUM", 90),
+      surface("m2", "MEDIUM", 80),
+      surface("m3", "MEDIUM", 70),
+      surface("m4", "MEDIUM", 60),
+      surface("m5", "MEDIUM", 50),
+    ],
+    exploredSurfaceIds: [],
+    terminallyBlockedSurfaceIds: [],
+    leadSurfaceIds: [],
+    queuePolicy: { ...DEFAULT_QUEUE_POLICY, max_concurrent_evaluators: 2 },
+  });
+  assert.equal(leakProof.assignments.length, 2);
+});
+
 test("planNextWave returns pending-wave settle before selecting candidates", () => {
   const plan = planNextWave({
     state: {

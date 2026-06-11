@@ -77,13 +77,86 @@ function agentRunGateForAssignment(domain, wave, assignment) {
     run = null;
   }
   const status = run ? run.status : null;
+  // Surface the terminal row's block_code so the relaxation below can tell a
+  // recoverable runaway-loop artifact (missing/invalid handoff, promoted-lead
+  // technique-log gap) from a genuinely non-recoverable blocker
+  // (e.g. missing_oss_coverage) that must keep the surface gated closed even
+  // when a handoff file happens to be on disk.
+  const blockCode = run && typeof run.block_code === "string" ? run.block_code : null;
   if (status === "settled") {
-    return { status, gate: "settled" };
+    return { status, gate: "settled", blockCode };
   }
   if (status === "failed" || status === "abandoned" || status === "running") {
-    return { status, gate: "closed_terminal_non_settled" };
+    return { status, gate: "closed_terminal_non_settled", blockCode };
   }
-  return { status, gate: "fallback" };
+  return { status, gate: "fallback", blockCode };
+}
+
+// Step 2b: only a stop-hook-written terminal status (`failed`/`abandoned`) is
+// eligible for the verified-handoff relaxation below. A stuck `running` row
+// means the agent died mid-flight without ever cleanly settling — that stays
+// gated closed even if a handoff file is on disk (Cycle S.5 semantics), so we
+// do NOT relax it. The relaxation exists solely to undo the runaway loop's
+// `failed`-row poisoning of a settleable run.
+function gateStatusIsHookTerminal(status) {
+  return status === "failed" || status === "abandoned";
+}
+
+// Step 2b: which terminal block_codes the verified-handoff relaxation may
+// override. This MUST mirror agent-run-stop.js isRecoverableBlock so the merge
+// gate and the stop hook agree on what "recoverable" means:
+//   * missing_technique_attempt_log — recoverable ONLY for promoted-lead
+//     surfaces (surface_id "lead-*"); for ordinary "surface-*" assignments the
+//     registry's attempt_log_required control is terminal, so a valid handoff
+//     must NOT let it merge (that would re-open the bypass the stop-hook scoping
+//     closes).
+//   * missing_handoff / invalid_handoff — the runaway loop poisoned a row whose
+//     handoff is nonetheless provenance-valid on disk (the on-disk re-validation
+//     is enforced separately at each call site).
+// Any other block_code (missing_oss_coverage, handoff_mismatch, evidence_*,
+// malformed_marker, unreadable_wave_assignments, …) is NON-recoverable and stays
+// gated closed even with a handoff file on disk.
+function isRecoverableBlockCode(blockCode, surfaceId) {
+  if (!blockCode) return false;
+  if (blockCode === "missing_technique_attempt_log") {
+    return typeof surfaceId === "string" && surfaceId.startsWith("lead-");
+  }
+  return blockCode === "missing_handoff" || blockCode === "invalid_handoff";
+}
+
+// Step 2b: a `failed`/`abandoned` AgentRun row drives the gate to
+// "closed_terminal_non_settled". But the stop-hook's runaway loop (RCA [3])
+// could append a `failed` row for an agent that DID write a cryptographically
+// valid handoff (e.g. a tooling gap on a promoted-lead surface that the agent
+// could not log a technique attempt for). Before treating such an agent as
+// missing, re-read the on-disk handoff and verify FULL HMAC provenance
+// (validateWaveHandoffPayload + validateHandoffProvenance, timingSafeEqual).
+// Only a handoff that passes both is honored — a forged/unsigned/absent
+// handoff is never accepted, so a genuinely-dead agent stays gated closed.
+function verifiedHandoffOnDiskForAssignment(domain, artifacts, assignment, {
+  signingKey = null,
+  signingKeyError = null,
+} = {}) {
+  const filePath = artifacts.handoffPathByAgent.get(assignment.agent);
+  if (!filePath) return false;
+  try {
+    if (assignmentRequiresToken(assignment) && signingKeyError) {
+      throw signingKeyError;
+    }
+    const handoffJson = readJsonFile(filePath);
+    validateWaveHandoffPayload(handoffJson, {
+      targetDomain: domain,
+      wave: artifacts.wave,
+      agent: assignment.agent,
+      surfaceId: assignment.surface_id,
+      effectiveSurfaceType: assignment.surface_type || null,
+      findingsForRun: [],
+    });
+    validateHandoffProvenance(handoffJson, assignment, { signingKey });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const WAVE_ARTIFACT_KEYS = Object.freeze([
@@ -176,6 +249,21 @@ function buildWaveReadiness(artifacts, { domain = null } = {}) {
       ? agentRunGateForAssignment(domain, artifacts.wave, assignment)
       : { status: null, gate: "fallback" };
     if (gate.gate === "closed_terminal_non_settled") {
+      // Step 2b: a stop-hook `failed`/`abandoned` row from the runaway loop
+      // must NOT mask a cryptographically verified handoff. Only fall through
+      // to "received" when the row is hook-terminal AND the block_code is a
+      // recoverable one (runaway-loop handoff poisoning, or a promoted-lead
+      // technique-log gap) AND full HMAC provenance validates on disk. A
+      // non-recoverable blocker (e.g. missing_oss_coverage), a stuck `running`
+      // row (agent died mid-flight), and a forged/absent handoff all stay gated
+      // closed.
+      if (domain
+        && gateStatusIsHookTerminal(gate.status)
+        && isRecoverableBlockCode(gate.blockCode, assignment.surface_id)
+        && verifiedHandoffOnDiskForAssignment(domain, artifacts, assignment, { signingKey, signingKeyError })) {
+        receivedAgents.push(assignment.agent);
+        continue;
+      }
       missingAgents.push(assignment.agent);
       continue;
     }
@@ -295,7 +383,17 @@ function mergeWaveHandoffsInternal(domain, waveNumber) {
     // check stays as a fallback when no AgentRun row exists yet (legacy
     // session, pre-S.5 wave, or hook write failure) per Pact P2.
     const gate = agentRunGateForAssignment(domain, artifacts.wave, assignment);
-    if (gate.gate === "closed_terminal_non_settled") {
+    if (gate.gate === "closed_terminal_non_settled"
+      && !(gateStatusIsHookTerminal(gate.status)
+        && isRecoverableBlockCode(gate.blockCode, assignment.surface_id)
+        && verifiedHandoffOnDiskForAssignment(domain, artifacts, assignment, { signingKey }))) {
+      // Step 2b: a stop-hook `failed`/`abandoned` row gates the surface closed
+      // UNLESS the block_code is recoverable (runaway-loop handoff poisoning, or
+      // a promoted-lead technique-log gap) AND a cryptographically verified
+      // handoff is present on disk — only then is it the runaway loop poisoning
+      // a settleable run, so re-validate and let it fall through to the normal
+      // merge bucketing below. A non-recoverable blocker (e.g.
+      // missing_oss_coverage) and a stuck `running` row stay closed regardless.
       missingSurfaceIds.push(assignment.surface_id);
       continue;
     }
@@ -572,7 +670,17 @@ function buildWaveHandoffsDocument(domain, waveNumbers) {
       // Cycle S.5: drive the readout from AgentRun.state with file-presence as
       // the deprecation-window fallback (Pact P2).
       const gate = agentRunGateForAssignment(domain, artifacts.wave, assignment);
-      if (gate.gate === "closed_terminal_non_settled") {
+      if (gate.gate === "closed_terminal_non_settled"
+        && !(gateStatusIsHookTerminal(gate.status)
+          && isRecoverableBlockCode(gate.blockCode, assignment.surface_id)
+          && verifiedHandoffOnDiskForAssignment(domain, artifacts, assignment, { signingKey, signingKeyError }))) {
+        // Step 2b: don't let a stop-hook `failed`/`abandoned` row force this
+        // agent into missing_handoffs (RCA gate self-poison flip) when the
+        // block_code is recoverable (runaway-loop handoff poisoning, or a
+        // promoted-lead technique-log gap) and a cryptographically verified
+        // handoff sits on disk. Only fall through when full HMAC provenance
+        // passes; a non-recoverable blocker (e.g. missing_oss_coverage), a
+        // forged/absent handoff, or a stuck `running` row stays missing.
         missingHandoffs.push({
           wave: artifacts.wave,
           agent: assignment.agent,
@@ -685,6 +793,7 @@ module.exports = {
   mergeWaveHandoffsInternal,
   readSigningKeyForArtifacts,
   readWaveHandoffs,
+  verifiedHandoffOnDiskForAssignment,
   waveHandoffStatus,
   waveMergeSnapshotPath,
   waveHandoffsSnapshotDir,

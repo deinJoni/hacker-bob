@@ -41,6 +41,9 @@ const {
 const {
   writeVerificationRound,
 } = require("../mcp/lib/verification-round-store.js");
+const {
+  evaluateEvidenceCompletion,
+} = require("../mcp/lib/agent-run-completion.js");
 
 function withTempHome(fn) {
   const previousHome = process.env.HOME;
@@ -288,6 +291,37 @@ test("bob_advance_session drives SETUP -> OPEN_FRONTIER -> CLAIM_FREEZE -> VERIF
       assert.notEqual(event.payload.nucleus_hash, event.payload.prior_nucleus_hash);
       assert.equal(event.nucleus_hash, event.payload.nucleus_hash);
     }
+  });
+});
+
+test("REPORT -> OPEN_FRONTIER re-entry stamps legacy phase EXPLORE so the post-report evidence gate admits it", () => {
+  withTempHome(() => {
+    const domain = "evidence-reentry.example.com";
+    bootstrapDomain(domain);
+
+    // Walk to REPORT, then re-enter OPEN_FRONTIER — the post-report
+    // evidence-amplification / re-mine window (the legacy EXPLORE re-entry the
+    // evidence-completion gate is designed to admit).
+    for (const target of ["OPEN_FRONTIER", "CLAIM_FREEZE", "VERIFY", "GRADE", "REPORT"]) {
+      advanceTopology(domain, target);
+    }
+    const reentry = advanceTopology(domain, "OPEN_FRONTIER");
+    assert.equal(reentry.from_state, "REPORT");
+    assert.equal(reentry.to_state, "OPEN_FRONTIER");
+
+    // The re-entry stamps the legacy phase EXPLORE rather than the canonical
+    // EVALUATE. OPEN_FRONTIER's canonical pre-image is EVALUATE (active
+    // evaluation), so without this the post-report evidence window would be
+    // indistinguishable from active evaluation and the gate would reject it.
+    const state = JSON.parse(fs.readFileSync(statePath(domain), "utf8"));
+    assert.equal(state.phase, "EXPLORE", "REPORT -> OPEN_FRONTIER must stamp legacy phase EXPLORE");
+    assert.equal(readSessionNucleus(domain).lifecycle_state, "OPEN_FRONTIER");
+
+    // Therefore the post-report evidence-completion gate ADMITS the run (it
+    // would block OPEN_FRONTIER + EVALUATE — active evaluation — as a mismatch).
+    const gate = evaluateEvidenceCompletion({ target_domain: domain });
+    assert.equal(gate.ok, true, "post-report OPEN_FRONTIER re-entry must admit an evidence run");
+    assert.equal(gate.handoff.provenance, "post_report_evidence");
   });
 });
 

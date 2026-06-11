@@ -18,8 +18,8 @@ const {
   parseWaveId,
 } = require("./validation.js");
 const {
-  readAttackSurfaceStrict,
-} = require("./attack-surface.js");
+  currentSurfaces,
+} = require("./frontier-projections.js");
 const {
   validateAssignedWaveAgentSurface,
 } = require("./assignments.js");
@@ -1156,7 +1156,7 @@ function selectTechniquePacks(args) {
     throw new Error("include_attempted must be a boolean");
   }
 
-  const attackSurface = readAttackSurfaceStrict(domain);
+  const attackSurface = currentSurfaces(domain);
   const surface = attackSurface.document.surfaces.find((entry) => entry && entry.id === surfaceId);
   if (!surface) {
     throw new Error(`Unknown surface_id: ${surfaceId}`);
@@ -1378,7 +1378,7 @@ function logTechniqueAttempt(args) {
   const parsedAgent = agent ? parseAgentId(agent) : null;
 
   const packResult = readTechniquePack(packId, { mode: "summary" });
-  const attackSurface = readAttackSurfaceStrict(domain);
+  const attackSurface = currentSurfaces(domain);
   const surface = attackSurface.document.surfaces.find((entry) => entry && entry.id === surfaceId);
   if (!surface) {
     throw new Error(`Unknown surface_id: ${surfaceId}`);

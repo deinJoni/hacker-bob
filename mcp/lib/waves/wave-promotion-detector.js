@@ -134,7 +134,7 @@ function readQueueTasksForPlanning(domain) {
   }
 }
 
-function buildNextActionForPlan(domain, decision, waveNumber) {
+function buildNextActionForPlan(domain, decision, waveNumber, plan = null) {
   if (decision === "pending_wave_settle") {
     return {
       kind: "call_tool",
@@ -143,11 +143,23 @@ function buildNextActionForPlan(domain, decision, waveNumber) {
     };
   }
   if (decision === "start_wave") {
-    return {
+    const action = {
       kind: "spawn_evaluators",
       wave_number: waveNumber,
       assignments_source: "top_level_assignments",
     };
+    // Echo the bounded-concurrency cap so the orchestrator spawns at most this
+    // many background evaluators in flight at once. Falls back to the planned
+    // max when no cap is set so the field is always actionable.
+    const cap = plan && Number.isInteger(plan.max_concurrent_evaluators)
+      ? plan.max_concurrent_evaluators
+      : null;
+    if (cap != null) {
+      action.max_in_flight = cap;
+    } else if (plan && Number.isInteger(plan.max_assignments)) {
+      action.max_in_flight = plan.max_assignments;
+    }
+    return action;
   }
   return {
     kind: "stop",
@@ -162,7 +174,7 @@ function buildStartNextWaveResponse({ domain, dryRun, state, plan, promotion, st
         kind: "stop",
         reason: "dry_run is true; call bob_start_next_wave with dry_run false to start this planned wave.",
       }
-    : buildNextActionForPlan(domain, decision, decision === "pending_wave_settle" ? plan.pending_wave : plan.wave_number);
+    : buildNextActionForPlan(domain, decision, decision === "pending_wave_settle" ? plan.pending_wave : plan.wave_number, plan);
   const response = {
     version: 1,
     target_domain: domain,

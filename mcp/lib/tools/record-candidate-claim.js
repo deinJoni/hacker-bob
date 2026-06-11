@@ -15,6 +15,7 @@ const {
 } = require("../storage.js");
 const {
   validateNoSensitiveMaterial,
+  redactTextSensitiveValues,
 } = require("../sensitive-material.js");
 const {
   validateAssignedWaveAgentSurface,
@@ -123,10 +124,22 @@ function normalizeSecretDetectionBypass(raw) {
         `secret_detection_bypass.rationale must be at most ${SECRET_DETECTION_BYPASS_RATIONALE_MAX} chars`,
       );
     }
+    // The rationale is audit free-text that explains WHY the secret-shaped
+    // evidence is benign (e.g. "the reflected Authorization header is the CORS
+    // proof"). It is persisted into claims.jsonl under
+    // payload.secret_evidence_bypass and is NOT covered by the finding-field
+    // value scan, so an evaluator could smuggle the raw secret VALUE into it.
+    // Scrub any token-shaped material out of the rationale before it is stored
+    // (the same free-text redactor Plane O JSONL writers use): a real
+    // `Authorization: Bearer <token>` / JWT / key value is replaced with
+    // REDACTED, while descriptive prose ("a bearer token surfaced in the
+    // narrative") is left intact — so the bypass metadata can never become a
+    // covert channel for secrets, without rejecting legitimate rationales.
+    const safeRationale = redactTextSensitiveValues(rationale);
     if (bypass.has(field)) {
       throw new Error(`secret_detection_bypass.field ${field} listed twice`);
     }
-    bypass.set(field, rationale);
+    bypass.set(field, safeRationale);
   }
   return bypass;
 }
@@ -334,7 +347,31 @@ function severityForClaim(severity) {
   return severity;
 }
 
-function buildClaimPayloadFromFinding(finding, findingContentHash, args) {
+// Expands a single secret_detection_bypass field into the deep value-path(s)
+// the claims-layer validator will see for that field. The embedded finding
+// lives at payload.finding.<field>; the top-level summary is sourced from
+// description, so a description-level bypass also covers the top-level summary;
+// impact is mirrored to claim.impact. Shared by the write path (persist the
+// rows + build the transient bypass Set) and reconstructed on read in claims.js
+// from the persisted `path` field, so the two stay in lock-step.
+function secretEvidenceBypassValuePaths(field) {
+  const paths = [`payload.finding.${field}`];
+  if (field === "description") paths.push("summary");
+  if (field === "impact") paths.push("impact");
+  return paths;
+}
+
+function buildSecretEvidenceBypassRows(secretBypass) {
+  const rows = [];
+  for (const [field, rationale] of secretBypass.entries()) {
+    for (const path of secretEvidenceBypassValuePaths(field)) {
+      rows.push({ field, rationale, path });
+    }
+  }
+  return rows;
+}
+
+function buildClaimPayloadFromFinding(finding, findingContentHash, args, secretBypass = new Map()) {
   const payload = {};
   const subjectId = deriveSubjectId(finding);
   if (subjectId) payload.subject_id = subjectId;
@@ -393,6 +430,19 @@ function buildClaimPayloadFromFinding(finding, findingContentHash, args) {
     if (finding[key] != null) findingPayload[key] = finding[key];
   }
   payload.finding = findingPayload;
+
+  // Persist the operator-approved secret-evidence bypass onto the claim so the
+  // read-time re-scan (readCandidateClaims -> normalizeCandidateClaim) can
+  // re-honor exactly the paths approved at write. Each row carries the field,
+  // the auditable rationale (already required at write), and the resolved deep
+  // value-path. Without this, the value-scan re-fires on the persisted PoC and
+  // throws on every read of a legitimately secret-shaped finding (the stuck-
+  // session jam). Structural SENSITIVE_KEY_RE and the maxTextChars cap still
+  // fire everywhere; only these listed value-paths skip the regex value scan.
+  const secretBypassRows = buildSecretEvidenceBypassRows(secretBypass);
+  if (secretBypassRows.length > 0) {
+    payload.secret_evidence_bypass = secretBypassRows;
+  }
 
   const claim = {
     target_domain: finding.target_domain,
@@ -494,20 +544,17 @@ function recordCandidateClaimHandler(args) {
     validateClaimForPersistence(finding, secretBypass);
 
     const findingContentHash = hashCanonicalJson(finding);
-    const claimInput = buildClaimPayloadFromFinding(finding, findingContentHash, args || {});
-    // Y.0 hotfix 1 (O2): expand the per-field bypass into the exact deep
-    // paths the claims-layer validator will see. The embedded finding lives
-    // at payload.finding.<field>; the top-level summary is sourced from
-    // description, so a description-level bypass also covers the top-level
-    // summary; impact is mirrored to claim.impact.
+    const claimInput = buildClaimPayloadFromFinding(finding, findingContentHash, args || {}, secretBypass);
+    // Y.0 hotfix 1 (O2): expand the per-field bypass into the exact deep paths
+    // the claims-layer validator will see, via the same helper that builds the
+    // persisted secret_evidence_bypass rows so write-time and read-time honor
+    // identical paths. The embedded finding lives at payload.finding.<field>;
+    // the top-level summary is sourced from description; impact is mirrored to
+    // claim.impact.
     const payloadBypassValuePaths = new Set();
     for (const field of secretBypass.keys()) {
-      payloadBypassValuePaths.add(`payload.finding.${field}`);
-      if (field === "description") {
-        payloadBypassValuePaths.add("summary");
-      }
-      if (field === "impact") {
-        payloadBypassValuePaths.add("impact");
+      for (const path of secretEvidenceBypassValuePaths(field)) {
+        payloadBypassValuePaths.add(path);
       }
     }
     const claim = appendCandidateClaim(claimInput, {
