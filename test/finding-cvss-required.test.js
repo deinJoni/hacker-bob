@@ -133,6 +133,53 @@ test("write path rejects partial cvss_inputs that cannot derive a vector and nam
   });
 });
 
+test("write path rejects all-none impact cvss_inputs for medium+ (derives base score 0.0)", () => {
+  // Regression: confidentiality/integrity/availability all "none" derives a
+  // CVSS v3.1 base score of 0.0 / band "none" — which is derivable (not
+  // insufficient) but cannot back a medium+ severity claim. The gate must reject
+  // it rather than letting a "none"-banded score satisfy a high finding.
+  withTempHome(() => {
+    const domain = "cvss-all-none.example.com";
+    assert.throws(
+      () => recordCandidateClaimTool.handler(baseFinding(domain, {
+        severity: "high",
+        cvss_inputs: {
+          attack_vector: "network",
+          privileges_required: "none",
+          confidentiality: "none",
+          integrity: "none",
+          availability: "none",
+        },
+      })),
+      (err) => {
+        assert.match(err.message, /must describe real impact/i);
+        assert.match(err.message, /base score of 0\.0/);
+        return true;
+      },
+      "all-none impact must be rejected for a high finding",
+    );
+  });
+});
+
+test("gate guidance does NOT point web findings at reachability_assertion", () => {
+  // Regression: reachability_assertion is rejected outside the oss_native_code
+  // pack, so the gate must not tell a web evaluator to supply it. baseFinding is
+  // a web IDOR (no oss_native_code pack), so its insufficiency message must omit
+  // the reachability hint.
+  withTempHome(() => {
+    const domain = "cvss-web-hint.example.com";
+    assert.throws(
+      () => recordCandidateClaimTool.handler(baseFinding(domain, { cvss_inputs: undefined })),
+      (err) => {
+        assert.match(err.message, /cvss_inputs is required/i);
+        assert.doesNotMatch(err.message, /reachability_assertion/);
+        return true;
+      },
+      "web findings must not be told to use reachability_assertion",
+    );
+  });
+});
+
 test("write path allows absent cvss_inputs for low and info findings", () => {
   for (const severity of ["low", "info"]) {
     withTempHome(() => {

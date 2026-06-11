@@ -104,8 +104,11 @@ function collectReferencedCwes(dir) {
       }
       if (!entry.isFile()) continue;
       const text = fs.readFileSync(full, "utf8");
-      for (const match of text.match(/CWE-[0-9]+/g) || []) {
-        ids.add(match);
+      // Case-insensitive so lowercase/mixed-case references (e.g. "cwe-79") are
+      // also caught and can't slip an unseeded id past this completeness gate;
+      // canonicalize to upper-case for the catalog membership check.
+      for (const match of text.match(/CWE-[0-9]+/gi) || []) {
+        ids.add(match.toUpperCase());
       }
     }
   };

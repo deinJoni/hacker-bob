@@ -47,6 +47,7 @@ const {
   withSessionLock,
 } = require("../storage.js");
 const { deriveCvss31 } = require("../cvss31.js");
+const { SEVERITY_VALUES } = require("../constants.js");
 const { findingPayloadsFromClaims } = require("./record-candidate-claim.js");
 
 const SECTION_KINDS = Object.freeze([
@@ -382,7 +383,11 @@ function readFinalVerificationByFinding(domain) {
     if (!id) continue;
     byFinding.set(id, {
       reportable: result.reportable === true,
-      severity: typeof result.severity === "string" ? result.severity : null,
+      // Validate against the severity enum before storing: this value is
+      // interpolated verbatim into the report Markdown, so a corrupted or
+      // hand-edited verification-round file must not be able to inject arbitrary
+      // text. An unrecognized severity degrades to null (rendered as omitted).
+      severity: SEVERITY_VALUES.includes(result.severity) ? result.severity : null,
     });
   }
   return byFinding;
@@ -391,13 +396,14 @@ function readFinalVerificationByFinding(domain) {
 // Build the per-finding INFORMATIONAL CVSS v3.1 + CWE annotation rows. The CVSS
 // vector and base score are DERIVED server-side here from the structured
 // cvss_inputs persisted on the finding (never persisted as a vector on the
-// hashed finding). When a final verification round exists, only reportable
-// findings are annotated; absent a final round, all findings carrying inputs are
-// annotated (composing a report before final-verification is still useful as an
-// informational view). Findings with absent/incomplete inputs or an insufficient
-// derivation render the explicit insufficient-verified-facts marker — no
-// fabricated vector. This is purely additive to the report; the grade verdict
-// severity stays authoritative and divergence is shown, not editorialized.
+// hashed finding). A finding is annotated ONLY when it has a final-verification
+// entry marked reportable — there is no "annotate everything when no final round
+// exists" fallback, so an annotation can never appear ahead of (or outside) the
+// reportability gate and unsubmitted titles/CWEs cannot leak into a report shared
+// before final verification. Reportable findings with absent/incomplete inputs or
+// an insufficient derivation render the explicit insufficient-verified-facts
+// marker — no fabricated vector. This is purely additive to the report; the grade
+// verdict severity stays authoritative and divergence is shown, not editorialized.
 function buildCvssAnnotations(domain) {
   let findings;
   try {
@@ -407,15 +413,20 @@ function buildCvssAnnotations(domain) {
   }
   if (!Array.isArray(findings) || findings.length === 0) return [];
   const finalByFinding = readFinalVerificationByFinding(domain);
-  const haveFinalRound = finalByFinding.size > 0;
   const annotations = [];
   for (const finding of findings) {
     if (!finding || typeof finding !== "object") continue;
     const id = typeof finding.id === "string" ? finding.id : null;
     const finalEntry = id ? finalByFinding.get(id) : null;
-    if (haveFinalRound && (!finalEntry || finalEntry.reportable !== true)) {
-      // A final round exists but this finding is not reportable: omit it from
-      // the report, consistent with the reportability gate.
+    if (!finalEntry || finalEntry.reportable !== true) {
+      // Only annotate findings the final verification round marked reportable.
+      // Previously this skip was gated on a final round EXISTING, so when no
+      // final round existed every candidate claim — incl. low/info, superseded,
+      // or held findings — was enumerated in the informational CVSS/CWE block,
+      // leaking unsubmitted titles/CWEs if the report was shared. Now a finding
+      // is annotated only when it has a reportable final-verification entry, so
+      // an annotation can never appear ahead of (or outside) the reportability
+      // gate.
       continue;
     }
     const finalSeverity = finalEntry && finalEntry.severity

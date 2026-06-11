@@ -454,6 +454,47 @@ test("reporter OSS branch carries CWE, server-derived CVSS v3.1, and references 
   assert.match(ossBranch, /Do not fabricate advisory, commit, or GitHub links/);
 });
 
+test("every reporter per-surface CWE directive renders the persisted cwe verbatim, not a re-pick", () => {
+  // Regression: the CWE write-time freeze (catalog-validated `cwe` persisted on
+  // the finding) is only honored end-to-end if the reporter RENDERS that value
+  // rather than re-deriving one at report time. The reporter prompt has three
+  // per-surface CWE directives (OSS / HTTP / smart-contract); a prior fix updated
+  // only the OSS branch, leaving HTTP ("pick a catalog id") and SC ("canonical
+  // mappings ... pick") telling the LLM to re-classify. Pin the render-verbatim
+  // contract on ALL THREE so a revert of any branch fails here — the older
+  // /required and catalog-validated/ + /cwe-catalog.js/ assertions did not catch a
+  // revert because the "pick" wording satisfied them too.
+  const reporterPrompt = readFile("prompts/roles/reporter.md");
+  const ossStart = reporterPrompt.indexOf("**OSS repo findings**");
+  const httpStart = reporterPrompt.indexOf("**HTTP findings**");
+  const scStart = reporterPrompt.indexOf("**Smart-contract findings**");
+  const mixedStart = reporterPrompt.indexOf("Mixed-surface reports preserve");
+  assert.ok(ossStart >= 0 && httpStart > ossStart && scStart > httpStart && mixedStart > scStart,
+    "OSS < HTTP < smart-contract < mixed-surface section order must hold");
+  const branches = {
+    OSS: reporterPrompt.slice(ossStart, httpStart),
+    HTTP: reporterPrompt.slice(httpStart, scStart),
+    "smart-contract": reporterPrompt.slice(scStart, mixedStart),
+  };
+  for (const [name, branch] of Object.entries(branches)) {
+    assert.match(branch, /render the finding's persisted `cwe` value verbatim/,
+      `${name} CWE directive must render the persisted cwe verbatim`);
+    assert.match(branch, /do NOT re-classify, pick, or substitute/,
+      `${name} CWE directive must forbid re-classifying at report time`);
+    assert.match(branch, /CWE unavailable \(legacy record\)/,
+      `${name} CWE directive must define the legacy-row fallback marker`);
+    assert.match(branch, /required and catalog-validated/, `${name} keeps the catalog-validated phrase`);
+    assert.match(branch, /cwe-catalog\.js/, `${name} cites the cwe-catalog source of truth`);
+    // The pre-fix framings that told the LLM to re-derive a CWE must be gone.
+    assert.doesNotMatch(branch, /pick a catalog id/, `${name} must not instruct picking a catalog id`);
+    assert.doesNotMatch(branch, /Choose a fixed catalog CWE/, `${name} must not instruct choosing a CWE`);
+  }
+  // The SC mapping table survives, but only as a REFERENCE mirror — never a
+  // pick-list ("source-of-truth mirror ... pick" framing must be gone).
+  assert.match(branches["smart-contract"], /for REFERENCE only/,
+    "SC mapping table must be reframed as reference, not a pick-list");
+});
+
 test("grader severity_accuracy axis cites the CVSS band as an explicitly non-gating sanity signal", () => {
   const graderPrompt = readFile("prompts/roles/grader.md");
   const axisStart = graderPrompt.indexOf("**Severity accuracy**");
