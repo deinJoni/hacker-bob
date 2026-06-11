@@ -86,6 +86,51 @@ function agentRunGateForAssignment(domain, wave, assignment) {
   return { status, gate: "fallback" };
 }
 
+// Step 2b: only a stop-hook-written terminal status (`failed`/`abandoned`) is
+// eligible for the verified-handoff relaxation below. A stuck `running` row
+// means the agent died mid-flight without ever cleanly settling — that stays
+// gated closed even if a handoff file is on disk (Cycle S.5 semantics), so we
+// do NOT relax it. The relaxation exists solely to undo the runaway loop's
+// `failed`-row poisoning of a settleable run.
+function gateStatusIsHookTerminal(status) {
+  return status === "failed" || status === "abandoned";
+}
+
+// Step 2b: a `failed`/`abandoned` AgentRun row drives the gate to
+// "closed_terminal_non_settled". But the stop-hook's runaway loop (RCA [3])
+// could append a `failed` row for an agent that DID write a cryptographically
+// valid handoff (e.g. a tooling gap on a promoted-lead surface that the agent
+// could not log a technique attempt for). Before treating such an agent as
+// missing, re-read the on-disk handoff and verify FULL HMAC provenance
+// (validateWaveHandoffPayload + validateHandoffProvenance, timingSafeEqual).
+// Only a handoff that passes both is honored — a forged/unsigned/absent
+// handoff is never accepted, so a genuinely-dead agent stays gated closed.
+function verifiedHandoffOnDiskForAssignment(domain, artifacts, assignment, {
+  signingKey = null,
+  signingKeyError = null,
+} = {}) {
+  const filePath = artifacts.handoffPathByAgent.get(assignment.agent);
+  if (!filePath) return false;
+  try {
+    if (assignmentRequiresToken(assignment) && signingKeyError) {
+      throw signingKeyError;
+    }
+    const handoffJson = readJsonFile(filePath);
+    validateWaveHandoffPayload(handoffJson, {
+      targetDomain: domain,
+      wave: artifacts.wave,
+      agent: assignment.agent,
+      surfaceId: assignment.surface_id,
+      effectiveSurfaceType: assignment.surface_type || null,
+      findingsForRun: [],
+    });
+    validateHandoffProvenance(handoffJson, assignment, { signingKey });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const WAVE_ARTIFACT_KEYS = Object.freeze([
   "dir",
   "wave",
@@ -176,6 +221,17 @@ function buildWaveReadiness(artifacts, { domain = null } = {}) {
       ? agentRunGateForAssignment(domain, artifacts.wave, assignment)
       : { status: null, gate: "fallback" };
     if (gate.gate === "closed_terminal_non_settled") {
+      // Step 2b: a stop-hook `failed`/`abandoned` row from the runaway loop
+      // must NOT mask a cryptographically verified handoff. Only fall through
+      // to "received" when the row is hook-terminal AND full HMAC provenance
+      // validates on disk; a stuck `running` row (agent died mid-flight) and a
+      // forged/absent handoff both stay gated closed.
+      if (domain
+        && gateStatusIsHookTerminal(gate.status)
+        && verifiedHandoffOnDiskForAssignment(domain, artifacts, assignment, { signingKey, signingKeyError })) {
+        receivedAgents.push(assignment.agent);
+        continue;
+      }
       missingAgents.push(assignment.agent);
       continue;
     }
@@ -295,7 +351,14 @@ function mergeWaveHandoffsInternal(domain, waveNumber) {
     // check stays as a fallback when no AgentRun row exists yet (legacy
     // session, pre-S.5 wave, or hook write failure) per Pact P2.
     const gate = agentRunGateForAssignment(domain, artifacts.wave, assignment);
-    if (gate.gate === "closed_terminal_non_settled") {
+    if (gate.gate === "closed_terminal_non_settled"
+      && !(gateStatusIsHookTerminal(gate.status)
+        && verifiedHandoffOnDiskForAssignment(domain, artifacts, assignment, { signingKey }))) {
+      // Step 2b: a stop-hook `failed`/`abandoned` row gates the surface closed
+      // UNLESS a cryptographically verified handoff is present on disk — that
+      // would be the runaway-loop poisoning a settleable run, so re-validate
+      // and let it fall through to the normal merge bucketing below. A stuck
+      // `running` row stays closed regardless.
       missingSurfaceIds.push(assignment.surface_id);
       continue;
     }
@@ -572,7 +635,14 @@ function buildWaveHandoffsDocument(domain, waveNumbers) {
       // Cycle S.5: drive the readout from AgentRun.state with file-presence as
       // the deprecation-window fallback (Pact P2).
       const gate = agentRunGateForAssignment(domain, artifacts.wave, assignment);
-      if (gate.gate === "closed_terminal_non_settled") {
+      if (gate.gate === "closed_terminal_non_settled"
+        && !(gateStatusIsHookTerminal(gate.status)
+          && verifiedHandoffOnDiskForAssignment(domain, artifacts, assignment, { signingKey, signingKeyError }))) {
+        // Step 2b: don't let a stop-hook `failed`/`abandoned` row force this
+        // agent into missing_handoffs (RCA gate self-poison flip) when a
+        // cryptographically verified handoff sits on disk. Only fall through
+        // when full HMAC provenance passes; a forged/absent handoff or a stuck
+        // `running` row stays missing.
         missingHandoffs.push({
           wave: artifacts.wave,
           agent: assignment.agent,
@@ -685,6 +755,7 @@ module.exports = {
   mergeWaveHandoffsInternal,
   readSigningKeyForArtifacts,
   readWaveHandoffs,
+  verifiedHandoffOnDiskForAssignment,
   waveHandoffStatus,
   waveMergeSnapshotPath,
   waveHandoffsSnapshotDir,
