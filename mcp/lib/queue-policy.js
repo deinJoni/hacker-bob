@@ -35,6 +35,13 @@ const DEFAULT_QUEUE_POLICY = Object.freeze({
   standard_wave_max: 6,
   deep_wave_target: 6,
   deep_wave_max: 8,
+  // First-class bounded-concurrency cap on the number of evaluators in flight
+  // at once, independent of per-wave target/max. When set, planNextWave clamps
+  // BOTH the effective target and the effective max to this value before
+  // selecting assignments, so the cap is enforced regardless of bucket overflow
+  // rules. null leaves wave fan-out governed solely by the *_wave_target/max
+  // fields (backward compatible — behavior is unchanged when unset).
+  max_concurrent_evaluators: null,
   default_wave_task_lens: "surface_scout",
   default_wave_task_budget: { ...DEFAULT_WAVE_TASK_BUDGET },
   // Y.3 (D16) — operator-extensible friction scanners. Default empty;
@@ -244,6 +251,14 @@ function normalizeQueuePolicy(input = {}) {
           input.subdomain_enum_circuit_breaker_threshold,
           "subdomain_enum_circuit_breaker_threshold",
           { max: 65536 },
+        ),
+    max_concurrent_evaluators:
+      input.max_concurrent_evaluators == null
+        ? DEFAULT_QUEUE_POLICY.max_concurrent_evaluators
+        : normalizePositiveInteger(
+          input.max_concurrent_evaluators,
+          "max_concurrent_evaluators",
+          { max: 128 },
         ),
     lead_rationale_required_when_below_threshold:
       input.lead_rationale_required_when_below_threshold == null
