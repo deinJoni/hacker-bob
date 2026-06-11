@@ -228,6 +228,89 @@ function evidenceReferenceLookupKey(ref) {
   return `${kind}:${ref.artifact_path || ""}:${ref.content_hash || ""}`;
 }
 
+// The deep value-paths a persisted secret_evidence_bypass row is allowed to
+// re-honor. Mirrors record-candidate-claim.js secretEvidenceBypassValuePaths:
+// the embedded finding lives at payload.finding.<field>; a description bypass
+// also covers the top-level summary; an impact bypass also covers claim.impact.
+// Any persisted `path` outside this whitelist (e.g. a hand-edited row pointing
+// at an arbitrary node) is ignored, so a fabricated row can only suppress the
+// value-scan on the same operator-approvable fields the writer could.
+const SECRET_EVIDENCE_BYPASS_FIELDS = Object.freeze(new Set([
+  "description",
+  "proof_of_concept",
+  "response_evidence",
+  "impact",
+]));
+
+// The metadata key that carries the operator-approved secret-evidence bypass
+// rows. Its segment `secret` trips the structural SENSITIVE_KEY_RE, but it is a
+// fixed, code-emitted metadata key (not attacker/evaluator-controlled secret
+// material), so it is lifted out of the payload before the sensitive-material
+// scan and validated separately. The scan still fires on every OTHER key and
+// value in the payload; only this one code-owned key is exempt, and the rows'
+// rationale is length-capped (matching the write-side normalizer).
+const SECRET_EVIDENCE_BYPASS_KEY = "secret_evidence_bypass";
+const SECRET_EVIDENCE_BYPASS_MAX_ROWS = SECRET_EVIDENCE_BYPASS_FIELDS.size * 2;
+const SECRET_EVIDENCE_BYPASS_RATIONALE_MAX = 512;
+
+function isPlainObjectValue(value) {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+// Honorable value-paths for a single bypass field. A row may only suppress the
+// value-scan on a path this field is allowed to cover, so a hand-edited row
+// pointing at an arbitrary node is ignored.
+function allowedSecretEvidenceBypassPaths(field) {
+  const paths = new Set([`payload.finding.${field}`]);
+  if (field === "description") paths.add("summary");
+  if (field === "impact") paths.add("impact");
+  return paths;
+}
+
+// Normalize + bound-check the persisted secret_evidence_bypass rows. Only rows
+// that name a known field, carry a non-empty length-capped rationale, and point
+// at an allowed value-path for that field are kept. Returns null when none
+// survive so the metadata key is simply dropped. The rationale is operator audit
+// free-text that DESCRIBES the secret-shaped evidence (it routinely mentions
+// "bearer"/"cookie"); like the write-side normalizeSecretDetectionBypass it is
+// length-capped, NOT value-scanned, so read stays symmetric with write. The
+// anti-smuggling property here is audit-visible, not prevented (per the RCA:
+// claim_hash is recomputed-not-verified and a local-FS attacker already bypasses
+// the scanner).
+function normalizeSecretEvidenceBypassRows(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  if (rows.length > SECRET_EVIDENCE_BYPASS_MAX_ROWS) {
+    throw new Error(`payload.${SECRET_EVIDENCE_BYPASS_KEY} carries too many rows`);
+  }
+  const normalized = [];
+  for (const row of rows) {
+    if (row == null || typeof row !== "object" || Array.isArray(row)) continue;
+    const field = typeof row.field === "string" ? row.field : null;
+    const rationale = typeof row.rationale === "string" ? row.rationale : "";
+    const path = typeof row.path === "string" ? row.path : null;
+    if (!field || !SECRET_EVIDENCE_BYPASS_FIELDS.has(field)) continue;
+    // Emptiness is checked on the trimmed value but the stored rationale is kept
+    // verbatim so the read-normalized row is byte-identical to the write-persisted
+    // row (stable claim_hash recompute).
+    if (!rationale.trim() || rationale.length > SECRET_EVIDENCE_BYPASS_RATIONALE_MAX) continue;
+    if (!path || !allowedSecretEvidenceBypassPaths(field).has(path)) continue;
+    normalized.push({ field, rationale, path });
+  }
+  return normalized.length > 0 ? normalized : null;
+}
+
+// Reconstruct the Set<string> of value-paths whose secret value-scan is skipped,
+// from already-normalized secret_evidence_bypass rows. Returns null when nothing
+// is honorable so callers fall through to the default full scan.
+function reconstructSecretEvidenceBypassPaths(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const paths = new Set();
+  for (const row of rows) {
+    if (row && typeof row.path === "string") paths.add(row.path);
+  }
+  return paths.size > 0 ? paths : null;
+}
+
 function normalizeConfidence(value) {
   if (value == null) return null;
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
@@ -284,10 +367,43 @@ function normalizeCandidateClaim(input, { targetDomain = null, now = new Date(),
   // accepted. payloadBypassValuePaths is the deep-path Set the caller built
   // from secret_detection_bypass; structural sensitive-key detection still
   // fires, only the listed value-paths skip the regex scan.
-  const payload = normalizeOptionalObject(input.payload, "payload", {
+  //
+  // On read (readCandidateClaims passes no payloadBypassValuePaths) we
+  // reconstruct the honored paths from the persisted payload.secret_evidence_bypass
+  // rows so a legitimately secret-shaped PoC, approved at write, no longer
+  // re-throws on every read. The explicit caller-supplied set and the
+  // reconstructed set are unioned so the write path stays a strict superset.
+  //
+  // The metadata key itself (secret_evidence_bypass) is lifted out of the
+  // payload before the scan: its `secret` segment would otherwise trip the
+  // structural SENSITIVE_KEY_RE, yet it is a fixed, code-emitted key, not secret
+  // material. Every other key and value in the payload is still scanned; the
+  // lifted rows are independently normalized, field-whitelisted, and capped.
+  const normalizedBypassRows = normalizeSecretEvidenceBypassRows(
+    isPlainObjectValue(input.payload) ? input.payload[SECRET_EVIDENCE_BYPASS_KEY] : null,
+  );
+  const reconstructedBypassPaths = reconstructSecretEvidenceBypassPaths(normalizedBypassRows);
+  let effectiveBypassPaths = payloadBypassValuePaths instanceof Set
+    ? new Set(payloadBypassValuePaths)
+    : null;
+  if (reconstructedBypassPaths) {
+    if (!effectiveBypassPaths) effectiveBypassPaths = new Set();
+    for (const path of reconstructedBypassPaths) effectiveBypassPaths.add(path);
+  }
+  let payloadForScan = input.payload;
+  if (isPlainObjectValue(input.payload) && SECRET_EVIDENCE_BYPASS_KEY in input.payload) {
+    payloadForScan = { ...input.payload };
+    delete payloadForScan[SECRET_EVIDENCE_BYPASS_KEY];
+  }
+  const payload = normalizeOptionalObject(payloadForScan, "payload", {
     maxTextChars: 16000,
-    bypassValuePaths: payloadBypassValuePaths,
+    bypassValuePaths: effectiveBypassPaths,
   });
+  // Re-attach the normalized bypass rows after the scan so the claim persists
+  // them verbatim for the next read's path reconstruction.
+  if (payload && normalizedBypassRows) {
+    payload[SECRET_EVIDENCE_BYPASS_KEY] = normalizedBypassRows;
+  }
 
   const base = {
     version: CLAIM_VERSION,

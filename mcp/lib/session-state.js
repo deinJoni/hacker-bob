@@ -456,6 +456,20 @@ function clearOperatorNote(args) {
   });
 }
 
+// The VERIFY snapshot bootstrap (prepareVerificationEntry -> buildClaimFreeze ->
+// readCandidateClaims) re-runs the sensitive-material validator over every
+// persisted claim. When a claim carries legitimately secret-shaped evidence
+// (a CORS Authorization:/cookie reflection that IS the finding) WITHOUT a
+// persisted secret_evidence_bypass, that re-scan throws a plain Error. Left
+// unclassified it falls through envelope.classifyException to INTERNAL_ERROR,
+// which operator_force cannot bypass and which lands mid-transition. These two
+// messages are the only ones validateNoSensitiveMaterial raises.
+function isSensitiveMaterialError(error) {
+  const message = error && typeof error.message === "string" ? error.message : "";
+  return /appears to contain secrets, auth headers, cookies, or tokens/.test(message)
+    || /is too large; do not persist raw large response bodies/.test(message);
+}
+
 function advanceSession(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   let toState;
@@ -552,9 +566,43 @@ function advanceSession(args) {
     let verificationEntry = null;
     try {
       const { raw, state } = readSessionStateStrict(domain);
-      verificationEntry = (toState === "VERIFY")
-        ? require("./verification.js").prepareVerificationEntry(domain, state)
-        : null;
+      if (toState === "VERIFY") {
+        try {
+          verificationEntry = require("./verification.js").prepareVerificationEntry(domain, state);
+        } catch (verificationError) {
+          if (!isSensitiveMaterialError(verificationError)) throw verificationError;
+          // A persisted claim's evidence trips the sensitive-material scan and
+          // has no operator-approved secret_evidence_bypass. The claim was
+          // validated at write, so this is a recoverable fail-closed block, not
+          // an unbypassable INTERNAL_ERROR. operator_force proceeds past it by
+          // skipping the VERIFY snapshot bootstrap; otherwise surface a clean
+          // STATE_CONFLICT naming the offending field so the operator can
+          // re-record the finding with a secret_detection_bypass.
+          if (override === "operator_force") {
+            verificationEntry = null;
+          } else {
+            const message = verificationError && typeof verificationError.message === "string"
+              ? verificationError.message
+              : String(verificationError);
+            const offendingPath = (message.match(/^(\S+)\s+(?:appears to contain|is too large)/) || [])[1] || null;
+            throw new ToolError(
+              ERROR_CODES.STATE_CONFLICT,
+              `lifecycle transition blocked: a recorded claim's evidence contains secret-shaped material without an operator-approved secret_detection_bypass${offendingPath ? ` (${offendingPath})` : ""}`,
+              {
+                blocked_by: "claim_evidence_secret_blocked",
+                code: "claim_evidence_secret_blocked",
+                block_code: "claim_evidence_secret_blocked",
+                from: fromState,
+                to: toState,
+                offending_path: offendingPath,
+              },
+              {
+                remediation: `Re-record the offending finding with a secret_detection_bypass for the flagged field${offendingPath ? ` (${offendingPath})` : ""}, or rerun with override="operator_force" to advance without the VERIFY snapshot bootstrap.`,
+              },
+            );
+          }
+        }
+      }
       const derivedLegacyPhase = deriveLegacyPhaseFromLifecycleState(toState);
       const nextState = {
         ...state,
