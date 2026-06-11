@@ -89,16 +89,39 @@ function evaluateEvidenceCompletion(marker) {
     };
   }
   // Post-report evidence runs are allowed only when the session has reached
-  // REPORT (or re-entered OPEN_FRONTIER from REPORT). Either lifecycle state
-  // signals the evidence-collection window per the topology re-entry edge.
-  // The hook reads state.json directly (not through readSessionStateStrict)
-  // so lifecycle_state may be absent on legacy disk; fall back to the legacy
-  // phase field where REPORT and EXPLORE both signal the post-report window.
+  // REPORT (or re-entered OPEN_FRONTIER from REPORT — the legacy EXPLORE
+  // window). The lifecycle vocabulary is lossy here: OPEN_FRONTIER covers both
+  // active EVALUATE (block) and post-report EXPLORE (allow), so the legacy
+  // phase remains the discriminator for that one ambiguous lifecycle state.
+  //
+  // Step 4: session-nucleus.json is the single source of truth for lifecycle
+  // state; state.json is a projection of it. Source lifecycle_state from the
+  // nucleus so a partially-written / drifted state.json can never gate this
+  // hook against the authoritative lifecycle (the REPORT vs CLAIM_FREEZE drift
+  // class). The nucleus read is best-effort: the hook process may not have the
+  // MCP server in scope at SubagentStop time (and the session may predate the
+  // nucleus), so on any read failure fall back to state.json's own copy.
   const allowedLifecycleStates = new Set(["REPORT", "OPEN_FRONTIER"]);
   const allowedLegacyPhases = new Set(["REPORT", "EXPLORE"]);
-  const lifecycleState = state && state.lifecycle_state;
+  let lifecycleState = state && state.lifecycle_state;
   const legacyPhase = state && state.phase;
-  const lifecycleAllowed = lifecycleState && allowedLifecycleStates.has(lifecycleState);
+  try {
+    const { readSessionNucleus } = require("./governance-store.js");
+    const nucleus = readSessionNucleus(targetDomain);
+    if (nucleus && typeof nucleus.lifecycle_state === "string") {
+      lifecycleState = nucleus.lifecycle_state;
+    }
+  } catch (_error) {
+    // Nucleus unavailable (hook out of MCP scope, or legacy session without a
+    // nucleus). Keep the state.json-derived lifecycle_state above.
+  }
+  // REPORT is unambiguous at the lifecycle level and is sourced from the
+  // nucleus. OPEN_FRONTIER is ambiguous (EVALUATE vs EXPLORE), so it is only an
+  // evidence window when the legacy phase confirms the EXPLORE re-entry. When
+  // no lifecycle_state is available at all (legacy disk), fall back entirely to
+  // the legacy phase.
+  const lifecycleAllowed = lifecycleState === "REPORT"
+    || (lifecycleState === "OPEN_FRONTIER" && legacyPhase && allowedLegacyPhases.has(legacyPhase));
   const legacyAllowed = !lifecycleState && legacyPhase && allowedLegacyPhases.has(legacyPhase);
   if (!state || (!lifecycleAllowed && !legacyAllowed)) {
     return {

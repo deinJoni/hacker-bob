@@ -4526,6 +4526,12 @@ test("bob_read_session_summary derives compact status without raw proof evidence
       feedback: null,
     }));
     fs.writeFileSync(reportMarkdownPath(domain), fullReport, "utf8");
+    // seedVerificationPipeline advances the nucleus to VERIFY while restoring
+    // the REPORT-phase state.json. Step 4 makes the summary derive phase from
+    // the nucleus (the single source of truth), so re-align the nucleus to the
+    // REPORT phase this fixture intends — exactly the agreement Step 4
+    // guarantees in production.
+    syncNucleusFromStateJson(domain);
 
     const result = JSON.parse(readSessionSummary({ target_domain: domain }));
     assert.equal(result.version, 1);

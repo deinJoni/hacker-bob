@@ -16,6 +16,7 @@ const {
   isSessionDirEffectivelyEmpty,
   readJsonFile,
   withSessionLock,
+  writeFileAtomic,
 } = require("./storage.js");
 const {
   ERROR_CODES,
@@ -554,18 +555,38 @@ function advanceSession(args) {
       operator_constraint: priorNucleus.operator_constraint,
       lifecycle_state: toState,
     });
-    writeJsonDocument(sessionNucleusPath(domain), nextNucleus);
 
-    // Mirror the new lifecycle_state into state.json. The legacy `phase` field
-    // is also refreshed via the back-compat projection so unmigrated readers
-    // see the lifecycle move. state.json is dual-write authoritative during
-    // the deprecation window; the nucleus is the topology-level authority.
-    // The VERIFY transition also triggers verification snapshot bootstrap so
-    // downstream evidence/grade gates have the v2 attempt context the legacy
-    // phase machine used to bind here.
+    // Single-source-of-truth lifecycle write (Step 4). The two durable
+    // lifecycle stores (session-nucleus.json and state.json) must never
+    // disagree, even on a partial write. The historical ordering wrote the
+    // nucleus FIRST and unconditionally, then ran the fallible verification
+    // bootstrap; a throw there left the nucleus advanced while state.json
+    // stayed at the prior state — a permanent split-brain. The fix:
+    //
+    //   1. Run ALL fallible work (prepareVerificationEntry, nextState) BEFORE
+    //      any durable lifecycle-store write. prepareVerificationEntry throws
+    //      at verification.js:342 (the sensitive-material re-scan) BEFORE the
+    //      snapshot write at :343, so on a throw neither lifecycle store has
+    //      been mutated. (The snapshot/archive are idempotently recomputable
+    //      and are not lifecycle stores, so this still yields no-drift.)
+    //   2. Write state.json, then the nucleus LAST.
+    //   3. On ANY throw after the first durable write (state.json,
+    //      nucleus, or the post-nucleus refreshVerificationManifest), restore
+    //      BOTH files to their captured prior bytes — a symmetric rollback.
+    //
+    // The legacy `phase` field is refreshed via the back-compat projection so
+    // unmigrated readers see the lifecycle move. The VERIFY transition also
+    // triggers verification snapshot bootstrap so downstream evidence/grade
+    // gates have the v2 attempt context the legacy phase machine used to bind.
     let verificationEntry = null;
+    const nucleusPath = sessionNucleusPath(domain);
+    const priorNucleusRaw = fs.existsSync(nucleusPath)
+      ? fs.readFileSync(nucleusPath, "utf8")
+      : null;
     try {
       const { raw, state } = readSessionStateStrict(domain);
+
+      // (1) Fallible work FIRST — before any durable lifecycle-store write.
       if (toState === "VERIFY") {
         try {
           verificationEntry = require("./verification.js").prepareVerificationEntry(domain, state);
@@ -577,7 +598,9 @@ function advanceSession(args) {
           // an unbypassable INTERNAL_ERROR. operator_force proceeds past it by
           // skipping the VERIFY snapshot bootstrap; otherwise surface a clean
           // STATE_CONFLICT naming the offending field so the operator can
-          // re-record the finding with a secret_detection_bypass.
+          // re-record the finding with a secret_detection_bypass. Because this
+          // throws BEFORE the durable writes below, neither lifecycle store is
+          // mutated and the two stores still agree (no drift).
           if (override === "operator_force") {
             verificationEntry = null;
           } else {
@@ -610,25 +633,47 @@ function advanceSession(args) {
         lifecycle_state: toState,
         ...(derivedLegacyPhase ? { phase: derivedLegacyPhase } : {}),
       };
-      writeSessionStateDocument(domain, raw, nextState);
-      if (verificationEntry && verificationEntry.schema_version === 2) {
-        try {
+
+      // (2)+(3) Durable writes with symmetric rollback. Capture prior bytes of
+      // BOTH lifecycle stores, then write state.json, then the nucleus LAST. On
+      // any throw after the first durable write, restore both files. The
+      // restore is inlined here (not a nested closure) so it runs synchronously
+      // inside the session lock — see test/session-state-store.test.js lock
+      // containment guard.
+      let firstDurableWriteDone = false;
+      try {
+        writeSessionStateDocument(domain, raw, nextState);
+        firstDurableWriteDone = true;
+        writeJsonDocument(nucleusPath, nextNucleus);
+        if (verificationEntry && verificationEntry.schema_version === 2) {
           require("./verification.js").refreshVerificationManifest(domain, { throw_on_error: true });
-        } catch (manifestError) {
-          // Roll back state mirror on manifest failure; nucleus already
-          // advanced but downstream re-entry is allowed by the topology.
+        }
+      } catch (writeError) {
+        if (firstDurableWriteDone) {
           try {
             writeSessionStateDocument(domain, raw, state);
-          } catch {}
-          throw manifestError;
+          } catch (_restoreStateError) {
+            // best-effort symmetric rollback
+          }
+          if (priorNucleusRaw !== null) {
+            try {
+              writeFileAtomic(nucleusPath, priorNucleusRaw);
+            } catch (_restoreNucleusError) {
+              // best-effort symmetric rollback
+            }
+          }
         }
+        throw writeError;
       }
     } catch (error) {
       if (!sessionStateMissing(error)) {
         throw error;
       }
-      // Session predates init-session-with-state-store; nucleus mutation is
-      // still authoritative. Downstream readers fall back to the nucleus.
+      // Session predates init-session-with-state-store; there is no state.json
+      // to keep in sync, so the nucleus is the sole lifecycle store. Advance it
+      // directly (no symmetric rollback is needed — there is nothing to drift
+      // against). Downstream readers fall back to the nucleus.
+      writeJsonDocument(nucleusPath, nextNucleus);
     }
 
     const advancedEvent = appendSessionEvent({

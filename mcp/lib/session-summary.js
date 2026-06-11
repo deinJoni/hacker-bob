@@ -17,6 +17,7 @@ const {
   readSessionNucleus,
 } = require("./governance-store.js");
 const {
+  deriveLegacyPhaseFromLifecycleState,
   deriveLifecycleStateFromLegacyPhase,
 } = require("./session-state-contracts.js");
 const {
@@ -212,11 +213,19 @@ function readSessionSummary(args) {
     lifecycleState = null;
   }
 
+  // Step 4: state.json is a pure projection of nucleus.lifecycle_state. Derive
+  // the legacy `phase` from the nucleus (the single source of truth) so a
+  // partially-written state.json can never make this summary disagree with the
+  // lifecycle authority. Fall back to state.phase only when the nucleus carries
+  // no lifecycle_state (legacy disk that predates the nucleus).
+  const derivedPhase = deriveLegacyPhaseFromLifecycleState(lifecycleState);
+  const phase = derivedPhase || state.phase;
+
   return JSON.stringify({
     version: 1,
     summary: {
       target: domain,
-      phase: state.phase,
+      phase,
       nucleus_hash: nucleusHash,
       lifecycle_state: lifecycleState,
       auth_status: state.auth_status,
