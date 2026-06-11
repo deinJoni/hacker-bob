@@ -6,16 +6,20 @@
 // an evidence run only inside the post-report window.
 //
 // Allowed:  lifecycle_state REPORT (the evidence-amplification window), or
-//           OPEN_FRONTIER when the legacy phase confirms an explicit EXPLORE/
-//           REPORT re-entry.
+//           OPEN_FRONTIER when the legacy phase confirms an explicit EXPLORE
+//           re-entry. advanceSession stamps phase EXPLORE when OPEN_FRONTIER is
+//           re-entered from REPORT/GRADE, so the post-report evidence/re-mine
+//           window is admitted (see test/lifecycle-advance.test.js
+//           "REPORT -> OPEN_FRONTIER re-entry stamps legacy phase EXPLORE").
 // Blocked:  CLAIM_FREEZE / VERIFY / GRADE, and — critically — OPEN_FRONTIER with
-//           phase EVALUATE. The nucleus read SYNTHESIZES OPEN_FRONTIER from a
-//           legacy phase=EVALUATE session, so the phase discriminator is what
-//           keeps an ACTIVE EVALUATE (or a post-report OPEN_FRONTIER re-entry,
-//           which is a NEW evaluation pass, not an evidence window) blocked.
-//           Dropping the discriminator would newly admit evidence during active
-//           evaluation — see test/mcp-server.test.js "blocks evidence markers
-//           before REPORT or EXPLORE".
+//           phase EVALUATE, which is ACTIVE evaluation (a first-time frontier
+//           pass, NOT a post-report re-entry). The nucleus read SYNTHESIZES
+//           OPEN_FRONTIER from a legacy phase=EVALUATE session, so the phase
+//           discriminator is what keeps active evaluation blocked while still
+//           admitting the EXPLORE re-entry. Dropping the discriminator would
+//           newly admit evidence during active evaluation — see
+//           test/mcp-server.test.js "blocks evidence markers before REPORT or
+//           EXPLORE".
 //
 // The gate reads state.json directly and the nucleus via readSessionNucleus,
 // which synthesizes a nucleus from state.json when no nucleus file exists — so

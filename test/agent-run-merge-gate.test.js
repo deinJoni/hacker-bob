@@ -426,14 +426,19 @@ test("Test D: provenance-verified handoff is honored even after a `failed` row, 
       content: "# Handoff\n\nbody",
     }));
 
-    // The runaway stop-hook loop appended `failed` rows for the same run.
+    // The runaway stop-hook loop appended a `failed` row tagged
+    // `missing_handoff` — the RCA [3] gate self-poison: finalize flipped to
+    // missing_handoff even though a cryptographically valid handoff is on disk.
+    // missing_handoff is a recoverable block (surface-agnostic) precisely
+    // BECAUSE the on-disk HMAC re-validation below proves the run is settleable.
     markAgentRunTerminal({
       targetDomain: domain,
       wave: "w1",
       agent: "a1",
       surfaceId: "surface-a",
       status: "failed",
-      failureReason: "missing technique attempt log",
+      blockCode: "missing_handoff",
+      failureReason: "gate self-poisoned to missing_handoff despite a valid handoff on disk",
     });
 
     const latest = readAgentRuns(domain).slice(-1)[0];
@@ -520,23 +525,26 @@ function runStopHook({ domain, tempHome, marker }) {
 test("Test E: stop hook escapes a recoverable block after the retry cap with one `abandoned` row, not a 4th `failed`", () => {
   withTempHome((tempHome) => {
     const domain = "agent-runs-bounded-escape.example.com";
-    const start = driveWaveStart(domain, ["surface-a"]);
+    const start = driveWaveStart(domain, ["lead-a"]);
     const assignmentToken = start.assignments[0].handoff_token;
     const marker = {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
-      surface_id: "surface-a",
+      surface_id: "lead-a",
     };
 
     // The agent wrote a valid handoff but never logged a technique attempt
     // (attempt_log_required defaults to true), so finalize returns
-    // `missing_technique_attempt_log` — the canonical recoverable gap.
+    // `missing_technique_attempt_log`. This is recoverable ONLY because the
+    // surface is a promoted-lead surface (id "lead-*"), where the genuine
+    // tooling gap lives. An ordinary "surface-*" assignment with the same block
+    // stays terminal — see the ordinary-surface control below.
     JSON.parse(writeWaveHandoff({
       target_domain: domain,
       wave: "w1",
       agent: "a1",
-      surface_id: "surface-a",
+      surface_id: "lead-a",
       surface_status: "complete",
       handoff_token: assignmentToken,
       summary: "covered but could not log a technique attempt on this surface",
@@ -550,8 +558,10 @@ test("Test E: stop hook escapes a recoverable block after the retry cap with one
         targetDomain: domain,
         wave: "w1",
         agent: "a1",
-        surfaceId: "surface-a",
+        surfaceId: "lead-a",
         status: "failed",
+        blockCode: "missing_technique_attempt_log",
+        failureKind: "recoverable_tooling_gap",
         failureReason: "missing technique attempt log",
       });
     }
@@ -579,20 +589,20 @@ test("Test E: stop hook escapes a recoverable block after the retry cap with one
 test("Test E control: below the cap the stop hook still writes a `failed` row and exits non-zero", () => {
   withTempHome((tempHome) => {
     const domain = "agent-runs-below-cap.example.com";
-    const start = driveWaveStart(domain, ["surface-a"]);
+    const start = driveWaveStart(domain, ["lead-a"]);
     const assignmentToken = start.assignments[0].handoff_token;
     const marker = {
       target_domain: domain,
       wave: "w1",
       agent: "a1",
-      surface_id: "surface-a",
+      surface_id: "lead-a",
     };
 
     JSON.parse(writeWaveHandoff({
       target_domain: domain,
       wave: "w1",
       agent: "a1",
-      surface_id: "surface-a",
+      surface_id: "lead-a",
       surface_status: "complete",
       handoff_token: assignmentToken,
       summary: "covered but could not log a technique attempt on this surface",
@@ -611,5 +621,116 @@ test("Test E control: below the cap the stop hook still writes a `failed` row an
     assert.equal(failed[0].block_code, "missing_technique_attempt_log");
     assert.equal(failed[0].failure_kind, "recoverable_tooling_gap");
     assert.equal(runsAfter.filter((r) => r.agent_id === "a1" && r.status === "abandoned").length, 0);
+  });
+});
+
+// Step 2b — surface-scoping control: a `missing_technique_attempt_log` terminal
+// row is relaxed by a verified handoff ONLY for a promoted-lead ("lead-*")
+// surface, where the genuine tooling gap lives. The SAME block on an ordinary
+// "surface-*" assignment must stay gated closed even with a provenance-valid
+// handoff on disk — otherwise an evaluator could skip the registry-enforced
+// attempt_log_required control and still merge via the abandoned +
+// verified-handoff path. This pins the merge-gate half of the bypass closure
+// (the security-critical path); the stop-hook half is scoped in
+// agent-run-stop.js isRecoverableBlock.
+test("Test E2: missing_technique_attempt_log is relaxed for lead-* but NOT for an ordinary surface", () => {
+  withTempHome(() => {
+    const domain = "agent-runs-technique-scope.example.com";
+    const start = driveWaveStart(domain, ["surface-a", "lead-b"]);
+    const tokenBySurface = new Map(start.assignments.map((a) => [a.surface_id, a.handoff_token]));
+
+    // Both agents wrote a cryptographically valid handoff, then a stop-hook
+    // `abandoned` row tagged missing_technique_attempt_log was appended.
+    for (const [agent, surfaceId] of [["a1", "surface-a"], ["a2", "lead-b"]]) {
+      JSON.parse(writeWaveHandoff({
+        target_domain: domain,
+        wave: "w1",
+        agent,
+        surface_id: surfaceId,
+        surface_status: "complete",
+        handoff_token: tokenBySurface.get(surfaceId),
+        summary: "covered but the technique-attempt log was not written",
+        content: "# Handoff\n\nbody",
+      }));
+      markAgentRunTerminal({
+        targetDomain: domain,
+        wave: "w1",
+        agent,
+        surfaceId,
+        status: "abandoned",
+        blockCode: "missing_technique_attempt_log",
+        failureKind: "recoverable_tooling_gap",
+        failureReason: "missing technique attempt log",
+      });
+    }
+
+    const doc = buildWaveHandoffsDocument(domain, [1]);
+    // Ordinary surface stays missing (control enforced); lead surface is honored.
+    assert.ok(
+      doc.missing_handoffs.some((m) => m.agent === "a1" && m.surface_id === "surface-a"),
+      "ordinary surface must stay missing (attempt_log_required not bypassed)",
+    );
+    assert.ok(
+      doc.handoffs.some((h) => h.agent === "a2" && h.surface_id === "lead-b"),
+      "promoted-lead surface's verified handoff must be honored",
+    );
+    assert.ok(!doc.handoffs.some((h) => h.agent === "a1"));
+
+    const { merge } = mergeWaveHandoffsInternal(domain, 1);
+    assert.ok(merge.missing_surface_ids.includes("surface-a"));
+    assert.ok(merge.completed_surface_ids.includes("lead-b"));
+  });
+});
+
+// Step 2b — scoping control: the verified-handoff relaxation overrides ONLY
+// recoverable block_codes. A non-recoverable blocker such as
+// `missing_oss_coverage` (an OSS surface marked complete with no coverage) must
+// keep the surface gated closed even when a provenance-valid handoff sits on
+// disk — otherwise a terminal finalize failure no longer prevents the merge.
+test("Test F: a non-recoverable missing_oss_coverage failure is NOT relaxed by a verified handoff", () => {
+  withTempHome(() => {
+    const domain = "agent-runs-nonrecoverable-blocker.example.com";
+    const start = driveWaveStart(domain, ["surface-a"]);
+    const assignmentToken = start.assignments[0].handoff_token;
+
+    // A cryptographically valid handoff IS on disk.
+    JSON.parse(writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      surface_status: "complete",
+      handoff_token: assignmentToken,
+      summary: "claims complete but no coverage rows or findings were recorded",
+      content: "# Handoff\n\nbody",
+    }));
+
+    // The finalize gate recorded a terminal, non-recoverable blocker.
+    markAgentRunTerminal({
+      targetDomain: domain,
+      wave: "w1",
+      agent: "a1",
+      surfaceId: "surface-a",
+      status: "failed",
+      blockCode: "missing_oss_coverage",
+      failureReason: "OSS surface marked complete with zero coverage and zero findings",
+    });
+
+    // The verified handoff must NOT relax a non-recoverable blocker: the agent
+    // stays in missing_handoffs and the surface does not merge.
+    const doc = buildWaveHandoffsDocument(domain, [1]);
+    assert.ok(
+      doc.missing_handoffs.some((m) => m.agent === "a1" && m.surface_id === "surface-a"),
+      "missing_oss_coverage must keep the agent in missing_handoffs despite a valid handoff",
+    );
+    assert.ok(!doc.handoffs.some((h) => h.agent === "a1"));
+
+    const readiness = buildWaveReadiness(loadWaveArtifacts(domain, 1), { domain });
+    assert.equal(readiness.is_complete, false);
+    assert.ok(!readiness.received_agents.includes("a1"));
+
+    const { merge } = mergeWaveHandoffsInternal(domain, 1);
+    assert.ok(merge.missing_surface_ids.includes("surface-a"));
+    assert.equal(merge.completed_surface_ids.length, 0);
   });
 });

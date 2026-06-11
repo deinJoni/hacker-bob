@@ -626,7 +626,20 @@ function advanceSession(args) {
           }
         }
       }
-      const derivedLegacyPhase = deriveLegacyPhaseFromLifecycleState(toState);
+      // OPEN_FRONTIER is the one lifecycle state whose canonical legacy phase
+      // (EVALUATE) is ambiguous: it is both the active evaluate window AND the
+      // post-report evidence/re-mine window the operator re-enters from a
+      // post-evaluation state. The evidence completion gate
+      // (agent-run-completion.js) distinguishes them by the legacy phase —
+      // OPEN_FRONTIER + EXPLORE is the evidence window, OPEN_FRONTIER + EVALUATE
+      // is active evaluation. When we re-enter OPEN_FRONTIER from REPORT or
+      // GRADE (a backwards move only the post-report re-mine takes), stamp the
+      // legacy phase EXPLORE so that gate accepts the evidence run instead of
+      // rejecting it as active evaluation (evidence_phase_mismatch).
+      let derivedLegacyPhase = deriveLegacyPhaseFromLifecycleState(toState);
+      if (toState === "OPEN_FRONTIER" && (fromState === "REPORT" || fromState === "GRADE")) {
+        derivedLegacyPhase = "EXPLORE";
+      }
       const nextState = {
         ...state,
         ...(verificationEntry ? verificationEntry.state_fields : {}),

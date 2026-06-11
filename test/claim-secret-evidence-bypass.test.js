@@ -149,6 +149,63 @@ test("NEGATIVE CONTROL: the same secret-shaped PoC with NO bypass still throws a
   });
 });
 
+test("a bypass RATIONALE that smuggles a raw secret is redacted before it is persisted", () => {
+  withTempHome(() => {
+    const domain = "cors-rationale-secret.example.com";
+    initSession({ target_domain: domain, target_url: `https://${domain}/` });
+
+    // The bypass legitimately clears the secret-shaped PoC value-path, but the
+    // rationale free-text itself carries the raw token. The rationale is
+    // persisted into claims.jsonl and is NOT covered by the finding value-paths,
+    // so it must be scrubbed independently — otherwise the bypass metadata
+    // becomes a covert channel for secrets into the persistent ledger. The claim
+    // still records (redaction, not rejection), but the raw token never lands.
+    // A token that appears ONLY in the rationale (distinct from the PoC's own
+    // bypassed secret-shaped evidence), so we can prove the rationale-borne
+    // value is scrubbed everywhere it could land.
+    const rationaleToken = "rationaleOnlyTok123ABC456def";
+    const response = JSON.parse(recordCandidateClaimTool.handler(findingInput(domain, {
+      secret_detection_bypass: [{
+        field: "proof_of_concept",
+        rationale: `The evidence is the reflected header Authorization: Bearer ${rationaleToken} captured from the victim.`,
+      }],
+    })));
+    assert.equal(response.recorded, true, "the claim still records — the rationale is redacted, not rejected");
+
+    // The persisted rationale must NOT contain the rationale-borne token; it was
+    // redacted, while the descriptive prose around it survives.
+    const persisted = JSON.parse(fs.readFileSync(claimsJsonlPath(domain), "utf8").trim());
+    const bypassRow = persisted.payload.secret_evidence_bypass.find((r) => r.field === "proof_of_concept");
+    assert.ok(bypassRow, "the bypass row must persist");
+    assert.match(bypassRow.rationale, /REDACTED/, "the redaction marker must replace the secret value");
+    // The rationale-borne token must not survive anywhere in claims.jsonl (the
+    // PoC's own bypassed token is a separate, legitimately-recorded value).
+    assert.doesNotMatch(
+      fs.readFileSync(claimsJsonlPath(domain), "utf8"),
+      new RegExp(rationaleToken),
+      "the rationale-borne token must be scrubbed from the persistent ledger",
+    );
+  });
+});
+
+test("a descriptive (secret-free) bypass rationale still records", () => {
+  withTempHome(() => {
+    const domain = "cors-rationale-clean.example.com";
+    initSession({ target_domain: domain, target_url: `https://${domain}/` });
+
+    // Positive control: the rationale DESCRIBES the secret-shaped evidence
+    // without embedding a raw token, so the new rationale value-scan passes and
+    // the claim records normally.
+    const response = JSON.parse(recordCandidateClaimTool.handler(findingInput(domain, {
+      secret_detection_bypass: [{
+        field: "proof_of_concept",
+        rationale: "The reflected authorization header is the CORS finding evidence; it is the victim's own request header, not a persisted credential.",
+      }],
+    })));
+    assert.equal(response.recorded, true, "a secret-free rationale must still record");
+  });
+});
+
 test("the read-time value-scan still fires when a persisted row lacks a backing rationale", () => {
   withTempHome(() => {
     const domain = "cors-stripped.example.com";

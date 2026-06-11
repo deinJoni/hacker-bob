@@ -15,6 +15,7 @@ const {
 } = require("../storage.js");
 const {
   validateNoSensitiveMaterial,
+  redactTextSensitiveValues,
 } = require("../sensitive-material.js");
 const {
   validateAssignedWaveAgentSurface,
@@ -123,10 +124,22 @@ function normalizeSecretDetectionBypass(raw) {
         `secret_detection_bypass.rationale must be at most ${SECRET_DETECTION_BYPASS_RATIONALE_MAX} chars`,
       );
     }
+    // The rationale is audit free-text that explains WHY the secret-shaped
+    // evidence is benign (e.g. "the reflected Authorization header is the CORS
+    // proof"). It is persisted into claims.jsonl under
+    // payload.secret_evidence_bypass and is NOT covered by the finding-field
+    // value scan, so an evaluator could smuggle the raw secret VALUE into it.
+    // Scrub any token-shaped material out of the rationale before it is stored
+    // (the same free-text redactor Plane O JSONL writers use): a real
+    // `Authorization: Bearer <token>` / JWT / key value is replaced with
+    // REDACTED, while descriptive prose ("a bearer token surfaced in the
+    // narrative") is left intact — so the bypass metadata can never become a
+    // covert channel for secrets, without rejecting legitimate rationales.
+    const safeRationale = redactTextSensitiveValues(rationale);
     if (bypass.has(field)) {
       throw new Error(`secret_detection_bypass.field ${field} listed twice`);
     }
-    bypass.set(field, rationale);
+    bypass.set(field, safeRationale);
   }
   return bypass;
 }

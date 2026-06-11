@@ -108,13 +108,13 @@ function loadWaveHandoffStore() {
 // each retry appending another `failed` row that poisoned the merge gate.
 const TERMINAL_RETRY_CAP = 3;
 
-// block_codes that represent a recoverable coordination/tooling gap rather than
-// a genuine terminal failure. For these the agent SHOULD be allowed to escape
-// to a clean `abandoned` terminal after a bounded number of retries instead of
-// looping forever and poisoning the ledger with `failed` rows.
-const RECOVERABLE_BLOCK_CODES = new Set([
-  "missing_technique_attempt_log",
-]);
+// Which block_codes represent a recoverable coordination/tooling gap (an agent
+// allowed to escape to a clean `abandoned` terminal after a bounded number of
+// retries instead of looping forever and poisoning the ledger with `failed`
+// rows) is decided per-marker by isRecoverableBlock below — a
+// `missing_technique_attempt_log` is recoverable only for promoted-lead
+// surfaces, and `missing_handoff`/`invalid_handoff` only with a verified
+// handoff on disk.
 
 // Count prior `failed` AgentRun rows already appended for this marker's run
 // lineage. Used to bound the stop-hook retry loop (Step 2a). Best-effort: any
@@ -142,14 +142,23 @@ function priorFailedRunCountForMarker(marker) {
 }
 
 // Decide whether a finalize block_code is recoverable for THIS marker. A
-// `missing_technique_attempt_log` is always recoverable (a promoted-lead
-// surface can be unloggable). A self-induced `missing_handoff`/`invalid_handoff`
+// `missing_technique_attempt_log` is recoverable ONLY for promoted-lead
+// surfaces (surface_id starting with "lead-"), where the genuine tooling gap
+// lives — a promoted lead-* surface cannot always log a technique attempt. For
+// an ordinary "surface-*" assignment the registry's `attempt_log_required`
+// control is terminal, NOT a recoverable gap: letting it escape to `abandoned`
+// after the retry cap would bypass that control via the merge gate's
+// verified-handoff relaxation. A self-induced `missing_handoff`/`invalid_handoff`
 // is recoverable ONLY when a cryptographically verified handoff is present on
 // disk — i.e. the stop-hook's own `failed` row is masking a settleable run.
 // A forged/absent handoff is NOT recoverable and stays a genuine failure.
 function isRecoverableBlock(marker, blockCode) {
   if (!blockCode) return false;
-  if (RECOVERABLE_BLOCK_CODES.has(blockCode)) return true;
+  if (blockCode === "missing_technique_attempt_log") {
+    return Boolean(marker)
+      && typeof marker.surface_id === "string"
+      && marker.surface_id.startsWith("lead-");
+  }
   if (blockCode === "missing_handoff" || blockCode === "invalid_handoff") {
     return verifiedHandoffPresentForMarker(marker);
   }
