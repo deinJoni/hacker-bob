@@ -32,11 +32,28 @@ const {
   buildPromotionPreview,
   isAssignableSurfaceLead,
   normalizePromotionOptions,
-  selectPromotableSurfaceLeads,
+  partitionLeadPromotion,
+  scoreStaticLeadWithReachability,
   sortLeadsByScore,
 } = require("./lead-scoring.js");
+const {
+  STATIC_LEAD_SOURCE,
+  staticFindingToSurfaceLead,
+} = require("./static-lead-mapping.js");
+const {
+  normalizeStaticAnalysisIndexRecord,
+  queryStaticAnalysisIndex,
+  readStaticAnalysisIndex,
+  registerStaticAnalysisLeadRecorder,
+} = require("./static-analysis-index.js");
+const {
+  OSS_ROOTCAUSE_FAMILIES,
+  suggestFamiliesForSurface,
+} = require("./oss-rootcause-family-corpus.js");
 const { ERROR_CODES, ToolError } = require("./envelope.js");
 const { loadQueuePolicy } = require("./queue-policy.js");
+const { safeAppendPipelineEventDirect } = require("./pipeline-events.js");
+const { safeGovernanceContextForDomain } = require("./governance-context.js");
 
 const PROMOTED_SURFACE_LEAD_LABEL = "promoted_surface_lead";
 
@@ -311,7 +328,7 @@ function recordSurfaceLeadsInternal(domain, leads, context = {}) {
 
 function previewSurfaceLeadPromotion(domain, options = {}) {
   const document = readSurfaceLeadsDocument(domain);
-  return buildPromotionPreview(domain, selectPromotableSurfaceLeads(document, options));
+  return buildPromotionPreview(domain, partitionLeadPromotion(document, options).selectedLeads);
 }
 
 function promoteSurfaceLeadsInternal(domain, options = {}) {
@@ -322,9 +339,11 @@ function promoteSurfaceLeadsInternal(domain, options = {}) {
     assertBoolean(options.update_state, "update_state");
   }
   const document = readSurfaceLeadsDocument(domain);
-  const candidates = selectPromotableSurfaceLeads(document, options);
-  if (candidates.length === 0) return buildPromotionEnvelope(domain, []);
-  const { promoted_surface_ids: promotedSurfaceIds } = applyPromotionToFrontier(domain, candidates);
+  const promotion = partitionLeadPromotion(document, options);
+  const candidates = promotion.selectedLeads;
+  const { promoted_surface_ids: promotedSurfaceIds } = candidates.length > 0
+    ? applyPromotionToFrontier(domain, candidates)
+    : { promoted_surface_ids: [] };
   const now = new Date().toISOString();
   for (let i = 0; i < candidates.length; i += 1) {
     const index = document.leads.findIndex((item) => item.id === candidates[i].id);
@@ -336,7 +355,38 @@ function promoteSurfaceLeadsInternal(domain, options = {}) {
       promoted_at: now,
     };
   }
-  writeSurfaceLeadsDocument(domain, document);
+  const newlyFilteredIndexes = [];
+  for (const lead of promotion.filteredLeads) {
+    const index = document.leads.findIndex((item) => item.id === lead.id);
+    if (index === -1 || document.leads[index].evaluator_run_avoided_recorded_at) continue;
+    newlyFilteredIndexes.push(index);
+  }
+  const newlyFiltered = newlyFilteredIndexes.length;
+  const deferredByLimit = Math.max(0, promotion.promotableLeads.length - promotion.limit);
+  let avoidedEvent = null;
+  if (newlyFiltered > 0 || deferredByLimit > 0) {
+    avoidedEvent = safeAppendPipelineEventDirect(domain, "evaluator_run_avoided", {
+      source: options.source || "bob_promote_surface_leads",
+      counts: {
+        assignable: promotion.assignableLeads.length,
+        promoted: promotedSurfaceIds.length,
+        filtered: newlyFiltered,
+        deferred_by_limit: deferredByLimit,
+        evaluator_runs_avoided: newlyFiltered,
+      },
+    }, safeGovernanceContextForDomain(domain));
+  }
+  if (avoidedEvent) {
+    for (const index of newlyFilteredIndexes) {
+      document.leads[index] = {
+        ...document.leads[index],
+        evaluator_run_avoided_recorded_at: now,
+      };
+    }
+  }
+  if (candidates.length > 0 || (avoidedEvent && newlyFiltered > 0)) {
+    writeSurfaceLeadsDocument(domain, document);
+  }
   return buildPromotionEnvelope(domain, promotedSurfaceIds);
 }
 
@@ -359,6 +409,271 @@ function recordSurfaceLeadsForWaveHandoff(domain, leads, context = {}) {
   return withSessionLock(domain, () => recordSurfaceLeadsInternal(domain, leads, context));
 }
 
+function isPlainObject(value) {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+const REACHABILITY_ATTACK_VECTORS = new Set(["local", "network"]);
+const REACHABILITY_SEVERITY_CEILINGS = new Set(["none", "low", "medium", "high", "critical"]);
+
+function findingFile(finding) {
+  const location = isPlainObject(finding && finding.location) ? finding.location : {};
+  return typeof location.path === "string"
+    ? location.path
+    : (typeof (finding && finding.file) === "string" ? finding.file : null);
+}
+
+function findingLine(finding) {
+  const location = isPlainObject(finding && finding.location) ? finding.location : {};
+  return Number.isInteger(location.line)
+    ? location.line
+    : (Number.isInteger(finding && finding.start_line) ? finding.start_line : null);
+}
+
+function arrayStrings(value) {
+  const values = Array.isArray(value) ? value : [value];
+  return values
+    .filter((item) => item != null)
+    .map((item) => String(item))
+    .filter((item) => item.length > 0);
+}
+
+function candidateFindingKeys(finding, { includeRuleClass = false } = {}) {
+  const file = findingFile(finding);
+  const line = findingLine(finding);
+  const keys = [
+    finding && finding.finding_hash,
+    finding && finding.source_result_sha256,
+    finding && finding.surface_id,
+    file,
+    file && Number.isInteger(line) ? `${file}:${line}` : null,
+  ];
+  if (includeRuleClass) {
+    keys.push(
+      finding && finding.rule_id,
+      ...arrayStrings(finding && finding.cwe),
+    );
+  }
+  return keys.filter((key) => typeof key === "string" && key.length > 0);
+}
+
+function candidateFamilyKeys(finding) {
+  return candidateFindingKeys(finding, { includeRuleClass: true });
+}
+
+function normalizedReachabilityString(value, allowed) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return allowed.has(normalized) ? normalized : null;
+}
+
+function directReachability(value) {
+  if (!isPlainObject(value)) return null;
+  const reachability = {};
+  if (Object.prototype.hasOwnProperty.call(value, "attack_vector")) {
+    const attackVector = normalizedReachabilityString(value.attack_vector, REACHABILITY_ATTACK_VECTORS);
+    if (!attackVector) return null;
+    reachability.attack_vector = attackVector;
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "severity_ceiling")) {
+    const severityCeiling = normalizedReachabilityString(value.severity_ceiling, REACHABILITY_SEVERITY_CEILINGS);
+    if (!severityCeiling) return null;
+    reachability.severity_ceiling = severityCeiling;
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "network_reachable")) {
+    if (typeof value.network_reachable !== "boolean") return null;
+    reachability.network_reachable = value.network_reachable;
+  }
+  return Object.keys(reachability).length > 0 ? reachability : null;
+}
+
+function reachabilityValueAt(index, keys) {
+  if (!index) return null;
+  if (index instanceof Map) {
+    for (const key of keys) {
+      const value = directReachability(index.get(key));
+      if (value) return value;
+    }
+  }
+  if (isPlainObject(index)) {
+    for (const key of keys) {
+      const value = directReachability(index[key]);
+      if (value) return value;
+    }
+  }
+  return null;
+}
+
+function reachabilityEntriesFromIndex(index) {
+  const entries = [];
+  const pushEntry = (key, value) => {
+    const reachability = directReachability(value);
+    if (reachability) entries.push({ key, reachability });
+  };
+  const scanRecord = (record) => {
+    if (!isPlainObject(record)) return;
+    [
+      record.id,
+      record.surface_id,
+      record.file_path,
+      record.file,
+    ].forEach((key) => pushEntry(key, record));
+  };
+  if (index instanceof Map) {
+    index.forEach((value, key) => pushEntry(key, value));
+  }
+  if (isPlainObject(index)) {
+    if (isPlainObject(index.perSurface)) {
+      for (const [key, value] of Object.entries(index.perSurface)) pushEntry(key, value);
+    } else if (index.perSurface instanceof Map) {
+      index.perSurface.forEach((value, key) => pushEntry(key, value));
+    }
+    const reachability = isPlainObject(index.reachability) ? index.reachability : index;
+    if (Array.isArray(reachability.surface_ceilings)) {
+      reachability.surface_ceilings.forEach(scanRecord);
+    }
+  }
+  return entries;
+}
+
+function fileMatchesReachabilityKey(file, key) {
+  if (typeof file !== "string" || typeof key !== "string" || !file || !key) return false;
+  return file === key || file.startsWith(`${key}/`) || key.startsWith(`${file}/`);
+}
+
+function reachabilityForFinding(finding, reachabilityIndex) {
+  const keys = candidateFindingKeys(finding);
+  const keyed = reachabilityValueAt(reachabilityIndex, keys);
+  if (keyed) return keyed;
+  const file = findingFile(finding);
+  for (const entry of reachabilityEntriesFromIndex(reachabilityIndex)) {
+    if (keys.includes(entry.key) || fileMatchesReachabilityKey(file, entry.key)) {
+      return entry.reachability;
+    }
+  }
+  return {};
+}
+
+function staticFindingsForRecord(domain, findings, context = {}) {
+  if (Array.isArray(findings)) return findings;
+  if (context.query_static_analysis_index === true) {
+    return queryStaticAnalysisIndex(domain, {
+      top_k: context.top_k,
+      min_severity: context.min_severity,
+      rule_id: context.rule_id,
+      surface_id: context.surface_id,
+    });
+  }
+  return readStaticAnalysisIndex(domain);
+}
+
+function normalizeStaticFindingForRecord(domain, finding) {
+  return normalizeStaticAnalysisIndexRecord({
+    ...finding,
+    target_domain: finding && finding.target_domain ? finding.target_domain : domain,
+    indexed_at: finding && finding.indexed_at ? finding.indexed_at : new Date(0).toISOString(),
+  });
+}
+
+const OSS_ROOTCAUSE_FAMILY_LABELS = new Set(OSS_ROOTCAUSE_FAMILIES.map((family) => family.family));
+
+function familyFromIndexValue(value) {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (isPlainObject(value) && typeof value.family === "string" && value.family.trim()) return value.family.trim();
+  if (Array.isArray(value) && value.length > 0) return familyFromIndexValue(value[0]);
+  return null;
+}
+
+function familyFromIndex(finding, familyIndex) {
+  const keys = candidateFamilyKeys(finding);
+  if (familyIndex && typeof familyIndex.get === "function") {
+    for (const key of keys) {
+      const family = familyFromIndexValue(familyIndex.get(key));
+      if (family) return family;
+    }
+  }
+  if (isPlainObject(familyIndex)) {
+    for (const key of keys) {
+      const family = familyFromIndexValue(familyIndex[key]);
+      if (family) return family;
+    }
+  }
+  return null;
+}
+
+function familyFromCorpus(finding, context = {}) {
+  const file = findingFile(finding);
+  const surface = {
+    id: finding && finding.surface_id,
+    title: finding && finding.rule_id,
+    surface_type: "oss_static_sink",
+    file_path: file,
+    endpoints: file && Number.isInteger(findingLine(finding)) ? [`${file}:${findingLine(finding)}`] : [],
+    bug_class_hints: [
+      finding && finding.rule_id,
+      ...arrayStrings(finding && finding.cwe),
+      ...arrayStrings(finding && finding.tags),
+    ],
+    evidence: [finding && finding.message].filter(Boolean),
+    task_lens: context.task_lens || "taint_trace",
+  };
+  try {
+    const result = suggestFamiliesForSurface(surface, {
+      lens: context.task_lens || "taint_trace",
+      limit: 3,
+    });
+    const matched = (result.suggestions || []).find((suggestion) => (
+      OSS_ROOTCAUSE_FAMILY_LABELS.has(suggestion.family)
+      && Array.isArray(suggestion.matched_signature)
+      && suggestion.matched_signature.length > 0
+    ));
+    return matched ? matched.family : null;
+  } catch {
+    return null;
+  }
+}
+
+function familyForFinding(finding, familyIndex, context = {}) {
+  return familyFromIndex(finding, familyIndex)
+    || familyFromCorpus(finding, context)
+    || null;
+}
+
+function recordStaticAnalysisLeads(domainRaw, findings, reachabilityIndex = {}, familyIndex = {}, context = {}) {
+  const domain = assertNonEmptyString(domainRaw, "target_domain");
+  const inputFindings = staticFindingsForRecord(domain, findings, context);
+  const leads = [];
+  const warnings = [];
+  for (let i = 0; i < inputFindings.length; i += 1) {
+    const rawFinding = inputFindings[i];
+    try {
+      const finding = normalizeStaticFindingForRecord(domain, rawFinding);
+      const reachability = reachabilityForFinding(finding, reachabilityIndex);
+      const family = familyForFinding(finding, familyIndex, context);
+      const lead = staticFindingToSurfaceLead(finding, reachability, family);
+      if (!lead) {
+        warnings.push(`skipped static finding at index ${i}: missing file or line`);
+        continue;
+      }
+      leads.push(scoreStaticLeadWithReachability(lead, reachability));
+    } catch (error) {
+      warnings.push(`skipped static finding at index ${i}: ${error.message || String(error)}`);
+    }
+  }
+  return withSessionLock(domain, () => ({
+    version: 1,
+    target_domain: domain,
+    input_findings: inputFindings.length,
+    mapped_leads: leads.length,
+    skipped_findings: warnings.length,
+    warnings,
+    ...recordSurfaceLeadsInternal(domain, leads, {
+      ...context,
+      source: STATIC_LEAD_SOURCE,
+    }),
+  }));
+}
+
 function readSurfaceLeads(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   const limit = args.limit == null ? 50 : assertInteger(args.limit, "limit", { min: 1, max: 200 });
@@ -376,6 +691,8 @@ function readSurfaceLeads(args) {
     leads,
   });
 }
+
+registerStaticAnalysisLeadRecorder(recordStaticAnalysisLeads);
 
 function promoteSurfaceLeads(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
@@ -398,5 +715,6 @@ module.exports = {
   promoteSurfaceLeadsForWave,
   readSurfaceLeads,
   recordSurfaceLeads,
+  recordStaticAnalysisLeads,
   recordSurfaceLeadsForWaveHandoff,
 };

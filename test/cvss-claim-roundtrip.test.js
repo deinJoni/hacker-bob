@@ -158,9 +158,37 @@ test("OSS reachability assertion fills cvss_inputs.attack_vector when none is su
   }, { expectedDomain: "repo.example.com", requireCwe: true });
   assert.equal(networkFinding.cvss_inputs.attack_vector, "network");
 
-  // An explicitly-supplied attack_vector is NOT overridden by the assertion.
-  const explicitFinding = normalizeFindingRecord({
-    id: "F-2",
+  // A CONFLICTING explicit attack_vector is REJECTED. reachability_assertion is
+  // authoritative for AV, so a finding cannot assert network-reachable while
+  // claiming a "local" CVSS attack vector. (Previously the explicit value was
+  // silently kept, persisting a self-contradictory finding.)
+  assert.throws(
+    () => normalizeFindingRecord({
+      id: "F-2",
+      target_domain: "repo.example.com",
+      title: "OOB write in parser",
+      severity: "high",
+      cwe: "CWE-787",
+      endpoint: "src/parse.c",
+      description: "Heap out-of-bounds write.",
+      proof_of_concept: "afl crash",
+      validated: true,
+      capability_pack: "oss_native_code",
+      evaluator_agent: "evaluator-agent",
+      brief_profile: "oss",
+      reachability_assertion: {
+        attack_vector: "network",
+        network_reachable: true,
+        call_path: "UDP-161 SNMP SET -> write_status -> parse_oid",
+      },
+      cvss_inputs: { attack_vector: "local", privileges_required: "none", confidentiality: "high" },
+    }, { expectedDomain: "repo.example.com", requireCwe: true }),
+    /conflicts with reachability_assertion/,
+  );
+
+  // An explicit attack_vector that AGREES with the assertion is accepted.
+  const agreeingFinding = normalizeFindingRecord({
+    id: "F-3",
     target_domain: "repo.example.com",
     title: "OOB write in parser",
     severity: "high",
@@ -177,9 +205,9 @@ test("OSS reachability assertion fills cvss_inputs.attack_vector when none is su
       network_reachable: true,
       call_path: "UDP-161 SNMP SET -> write_status -> parse_oid",
     },
-    cvss_inputs: { attack_vector: "local", privileges_required: "none", confidentiality: "high" },
+    cvss_inputs: { attack_vector: "network", privileges_required: "none", confidentiality: "high" },
   }, { expectedDomain: "repo.example.com", requireCwe: true });
-  assert.equal(explicitFinding.cvss_inputs.attack_vector, "local");
+  assert.equal(agreeingFinding.cvss_inputs.attack_vector, "network");
 });
 
 test("normalizeCvssInputs canonicalizes single-letter aliases and drops empty", () => {

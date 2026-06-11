@@ -313,6 +313,64 @@ test("bob_compose_report renders a server-derived CVSS v3.1 + CWE block whose ve
   });
 });
 
+test("CVSS annotations exclude non-reportable findings and never appear before a final round", () => {
+  withTempHome(() => {
+    const domain = "audit.example.com";
+    recordWebClaim(domain, {
+      cvss_inputs: { attack_vector: "network", privileges_required: "low", confidentiality: "high" },
+    });
+    const sections = [{
+      kind: "impact", heading: "Impact", prose: "x", provenance: "operator_osint", evidence_refs: [],
+    }];
+
+    // No final round yet: nothing is reportable, so the candidate finding must
+    // NOT be enumerated in the informational CVSS/CWE block (no pre-verification
+    // disclosure of candidate titles/CWEs).
+    let result = callTool(composeReportTool, { target_domain: domain, sections });
+    assert.equal(result.cvss_annotations_rendered, 0);
+    assert.doesNotMatch(fs.readFileSync(reportMarkdownPath(domain), "utf8"), /## CVSS \/ CWE/);
+
+    // A final round that marks the finding NOT reportable keeps it excluded too.
+    seedFinalRound(domain, [{
+      finding_id: "F-1", disposition: "rejected", severity: "high", reportable: false,
+      reasoning: "Held / not reportable", repro_steps: [], evidence_refs: [],
+    }]);
+    result = callTool(composeReportTool, { target_domain: domain, sections });
+    assert.equal(result.cvss_annotations_rendered, 0);
+    assert.doesNotMatch(fs.readFileSync(reportMarkdownPath(domain), "utf8"), /## CVSS \/ CWE/);
+  });
+});
+
+test("a non-enum verification-round severity is not interpolated into the report Markdown", () => {
+  withTempHome(() => {
+    const domain = "audit.example.com";
+    recordWebClaim(domain, {
+      cvss_inputs: { attack_vector: "network", privileges_required: "low", confidentiality: "high" },
+    });
+    // A corrupted/hand-edited verification round carrying a non-enum severity
+    // that embeds Markdown must not inject into the report.
+    const injected = "high\n\n## Injected Heading\n- arbitrary attacker text";
+    seedFinalRound(domain, [{
+      finding_id: "F-1", disposition: "confirmed", severity: injected, reportable: true,
+      reasoning: "Confirmed", repro_steps: ["s"], evidence_refs: ["frontier_event:e1"],
+    }]);
+
+    const result = callTool(composeReportTool, {
+      target_domain: domain,
+      sections: [{ kind: "impact", heading: "Impact", prose: "x", provenance: "operator_osint", evidence_refs: [] }],
+    });
+    // Finding is reportable, so it is still annotated...
+    assert.equal(result.cvss_annotations_rendered, 1);
+    const rendered = fs.readFileSync(reportMarkdownPath(domain), "utf8");
+    // ...but the injected heading/text must NOT appear. The invalid severity
+    // degrades to null and the line falls back to the finding's own (enum-valid)
+    // severity instead of interpolating attacker-controlled text.
+    assert.doesNotMatch(rendered, /## Injected Heading/);
+    assert.doesNotMatch(rendered, /arbitrary attacker text/);
+    assert.match(rendered, /Final verification round severity:\*\* high/);
+  });
+});
+
 test("bob_compose_report renders the insufficient-verified-facts marker for a legacy finding that lacks cvss_inputs", () => {
   withTempHome(() => {
     const domain = "audit.example.com";

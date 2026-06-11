@@ -19,6 +19,8 @@ const CWE_CATALOG = Object.freeze({
   "CWE-89": "Improper Neutralization of Special Elements used in an SQL Command (SQL Injection)",
   "CWE-94": "Improper Control of Generation of Code (Code Injection)",
   "CWE-100": "Deprecated: Was catch-all for input validation issues",
+  "CWE-119": "Improper Restriction of Operations within the Bounds of a Memory Buffer",
+  "CWE-120": "Buffer Copy without Checking Size of Input ('Classic Buffer Overflow')",
   "CWE-125": "Out-of-bounds Read",
   "CWE-190": "Integer Overflow or Wraparound",
   "CWE-200": "Exposure of Sensitive Information to an Unauthorized Actor",

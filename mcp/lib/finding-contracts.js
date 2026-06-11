@@ -524,19 +524,30 @@ function normalizeFindingRecord(record, { expectedDomain = null, lineNumber = nu
     // vector itself is NEVER persisted — it is re-derived server-side at report
     // time. cvss_inputs is intentionally excluded from computeFindingDedupeKey,
     // so adding/refining it never reshuffles existing finding ids.
-    const cvssInputs = normalizeCvssInputs(record.cvss_inputs);
+    // strict on the write path (requireCwe), tolerant on read-back projection so
+    // a persisted finding whose cvss_inputs predates/postdates the current spec
+    // still projects instead of being dropped by findingPayloadsFromClaims' catch.
+    const cvssInputs = normalizeCvssInputs(record.cvss_inputs, "cvss_inputs", { strict: requireCwe });
     if (cvssInputs) {
       finding.cvss_inputs = cvssInputs;
     }
-    // OSS native-code fallback: when no explicit attack_vector is supplied but a
-    // reachability assertion is present, carry its network/local classification
-    // into the CVSS attack_vector so the derived base score reflects the
-    // evaluator-asserted reachability. (network -> AV:N, local -> AV:L.)
-    if (finding.reachability_assertion
-      && (!finding.cvss_inputs || finding.cvss_inputs.attack_vector == null)) {
+    // OSS native-code contract: reachability_assertion is AUTHORITATIVE for the
+    // CVSS attack_vector (network -> AV:N, local -> AV:L). On the write path,
+    // reject a conflicting explicit cvss_inputs.attack_vector rather than letting
+    // the later derivation silently use the contradictory value (which would
+    // persist a self-contradictory finding). Then derive AV from reachability.
+    if (finding.reachability_assertion) {
       const derivedAv = finding.reachability_assertion.attack_vector === "network"
         ? "network"
         : "local";
+      const explicitAv = finding.cvss_inputs && finding.cvss_inputs.attack_vector != null
+        ? finding.cvss_inputs.attack_vector
+        : null;
+      if (requireCwe && explicitAv != null && explicitAv !== derivedAv) {
+        throw new Error(
+          `cvss_inputs.attack_vector ${JSON.stringify(explicitAv)} conflicts with reachability_assertion.attack_vector ${JSON.stringify(finding.reachability_assertion.attack_vector)} (derives ${JSON.stringify(derivedAv)}); omit cvss_inputs.attack_vector so it is derived from reachability, or make them agree.`,
+        );
+      }
       finding.cvss_inputs = { ...(finding.cvss_inputs || {}), attack_vector: derivedAv };
     }
     if (finding.surface_type === "smart_contract" && !finding.sc_evidence) {

@@ -242,16 +242,29 @@ function missingCvssBaseMetrics(inputs) {
 // attack_vector still passes. The insufficient-verified-facts marker still
 // renders for legacy read-back rows and low/info findings, which never reach
 // this assert.
-function assertReportableCvssInputsOnWrite(finding, surfaceType) {
+function assertReportableCvssInputsOnWrite(finding) {
   const severity = finding && finding.severity;
   if (severity !== "critical" && severity !== "high" && severity !== "medium") return;
   const derived = deriveCvss31(finding.cvss_inputs);
-  if (!derived.insufficient) return;
+  // A derivable AND non-zero vector satisfies the gate. A "none"-banded vector
+  // (base_score 0.0) is derivable but means all of confidentiality/integrity/
+  // availability are "none" — it cannot back a medium+ severity claim, so it is
+  // rejected below alongside the insufficient case.
+  if (!derived.insufficient && derived.base_score > 0) return;
+  // The reachability_assertion fallback exists ONLY for the oss_native_code pack
+  // (assertReachabilityAssertionScope rejects it on web/SC), so only surface that
+  // guidance for OSS findings — pointing a web evaluator at reachability_assertion
+  // would direct them to a field their write will reject.
+  const ossHint = finding && finding.capability_pack === "oss_native_code"
+    ? " For routed oss_native_code findings, attack_vector is auto-derived from reachability_assertion (network -> AV:N, local -> AV:L), so supply reachability_assertion instead of attack_vector."
+    : "";
+  if (!derived.insufficient && derived.base_score === 0) {
+    throw new Error(
+      `cvss_inputs for ${severity} findings must describe real impact: confidentiality, integrity, and availability are all "none", which derives a CVSS v3.1 base score of 0.0 (band "none") and contradicts the claimed severity. Set at least one impact metric to low or high.`,
+    );
+  }
   const missing = missingCvssBaseMetrics(finding.cvss_inputs);
   const missingList = missing.length ? missing.join(", ") : "attack_vector, privileges_required, at least one of confidentiality/integrity/availability";
-  const ossHint = surfaceType === "smart_contract"
-    ? ""
-    : " For routed oss_native_code findings, attack_vector is auto-derived from reachability_assertion (network -> AV:N, local -> AV:L), so supply reachability_assertion instead of attack_vector.";
   throw new Error(
     `cvss_inputs is required for ${severity} findings and must be sufficient to derive a CVSS v3.1 base vector; supply the missing base metrics (${missingList}) as enums on cvss_inputs.${ossHint}`,
   );
@@ -514,7 +527,7 @@ function recordCandidateClaimHandler(args) {
     const counter = scan.maxNumber + 1;
     assertReportableCweOnWrite(args, surfaceType);
     const finding = buildFindingPayloadRecord(args, context, `F-${counter}`, { requireCwe: true });
-    assertReportableCvssInputsOnWrite(finding, surfaceType);
+    assertReportableCvssInputsOnWrite(finding);
     validateClaimForPersistence(finding, secretBypass);
 
     const findingContentHash = hashCanonicalJson(finding);

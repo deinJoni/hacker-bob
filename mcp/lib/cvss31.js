@@ -7,12 +7,13 @@
 //
 // Banding thresholds are NOT duplicated here. The numeric cut points
 // (>=9.0 critical, >=7.0 high, >=4.0 medium, >0 low, else bottom band) live in
-// cve-feed-parser.js classifyCvss and are reused so the two surfaces cannot
-// drift. The only adaptation is the bottom-band label: the CVSS v3.1 spec names
-// the 0.0 band "none", so classifyCvss's "informational" result is mapped to
-// "none" here for severity_band parity with the spec's qualitative scale.
+// the dependency-free cvss-bands.js classifyCvss and are reused so every surface
+// shares one definition and cannot drift. The only adaptation is the bottom-band
+// label: the CVSS v3.1 spec names the 0.0 band "none", so classifyCvss's
+// "informational" result is mapped to "none" here for severity_band parity with
+// the spec's qualitative scale.
 
-const { classifyCvss } = require("./cve-feed-parser.js");
+const { classifyCvss } = require("./cvss-bands.js");
 
 // FIRST.org CVSS v3.1 base metric weights.
 const AV_WEIGHTS = Object.freeze({ N: 0.85, A: 0.62, L: 0.55, P: 0.20 });
@@ -245,9 +246,17 @@ const CVSS_INPUT_ENUMS = Object.freeze(
 // strings only for keys the caller actually provided — deriveCvss31's own
 // defaults (AC=low, UI=none, S=unchanged) stay implicit so we never invent
 // facts the caller did not assert.
-function normalizeCvssInputs(value, fieldName = "cvss_inputs") {
+// strict (default, write path): reject (throw) on any unknown key or value so a
+// malformed enum can never be persisted. strict=false (read-back projection):
+// mirror assertCwe({ strictPresent:false }) — a present-but-unrecognized key or
+// value is SKIPPED rather than thrown, so a persisted finding whose cvss_inputs
+// predates or postdates the current CVSS_INPUT_SPEC (e.g. a metric key renamed
+// or removed in a future schema) still projects with its recognizable metrics
+// instead of being silently dropped from every read by a caller's catch.
+function normalizeCvssInputs(value, fieldName = "cvss_inputs", { strict = true } = {}) {
   if (value == null) return null;
   if (typeof value !== "object" || Array.isArray(value)) {
+    if (!strict) return null;
     throw new Error(`${fieldName} must be an object of CVSS v3.1 metric enums`);
   }
   const out = {};
@@ -255,11 +264,13 @@ function normalizeCvssInputs(value, fieldName = "cvss_inputs") {
     if (value[key] == null) continue;
     const spec = CVSS_INPUT_SPEC[key];
     if (!spec) {
+      if (!strict) continue;
       throw new Error(`${fieldName}.${key} is not a recognized CVSS v3.1 metric (allowed: ${CVSS_INPUT_KEYS.join(", ")})`);
     }
     const token = normalizeToken(value[key]);
     const code = token == null ? null : spec.aliases[token];
     if (!code) {
+      if (!strict) continue;
       throw new Error(`${fieldName}.${key} ${JSON.stringify(value[key])} is not a valid value (allowed: ${CVSS_INPUT_ENUMS[key].join(", ")})`);
     }
     out[key] = spec.names[code];

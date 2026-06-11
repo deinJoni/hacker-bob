@@ -133,6 +133,39 @@ const STIGMERGIC_CONSUMERS = Object.freeze([
     rationale:
       "OSS brief composition consumes OSS_TECHNIQUE_PACKS and partitions them by task-lens affinity",
   }),
+  Object.freeze({
+    consumer_id: "assignment_brief_oss_rootcause_family_renderer",
+    source_location: Object.freeze({
+      file: "mcp/lib/assignment-brief.js",
+      token_or_regex: "suggestFamiliesForSurface",
+    }),
+    producer_id: "oss_rootcause_family_corpus",
+    decision_boundary: "brief_composition",
+    rationale:
+      "OSS brief composition consumes OSS_ROOTCAUSE_FAMILIES as bounded root_cause_families inside technique_packs",
+  }),
+  Object.freeze({
+    consumer_id: "c11_static_analysis_reachability_ranker",
+    source_location: Object.freeze({
+      file: "mcp/lib/assignment-brief.js",
+      token_or_regex: /attack_vector[\s\S]*severity_ceiling[\s\S]*network_reachable[\s\S]*static_analysis_leads/,
+    }),
+    producer_id: "repo_inventory_reachability_stamp",
+    decision_boundary: "brief_composition",
+    rationale:
+      "C11 static_analysis_leads consumes I9 severity_ceiling/attack_vector/network_reachable to rank static source-audit hypotheses",
+  }),
+  Object.freeze({
+    consumer_id: "c11_static_analysis_brief_slice",
+    source_location: Object.freeze({
+      file: "mcp/lib/assignment-brief.js",
+      token_or_regex: /readSurfaceLeadsDocument[\s\S]*static_analysis_leads/,
+    }),
+    producer_id: "static_analysis_index",
+    decision_boundary: "brief_composition",
+    rationale:
+      "C11 brief slice consumes I10 static-analysis-index rows as unverified lead seeds",
+  }),
 ]);
 
 const CONSUMER_IDS = Object.freeze(

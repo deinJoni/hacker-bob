@@ -454,6 +454,47 @@ test("reporter OSS branch carries CWE, server-derived CVSS v3.1, and references 
   assert.match(ossBranch, /Do not fabricate advisory, commit, or GitHub links/);
 });
 
+test("every reporter per-surface CWE directive renders the persisted cwe verbatim, not a re-pick", () => {
+  // Regression: the CWE write-time freeze (catalog-validated `cwe` persisted on
+  // the finding) is only honored end-to-end if the reporter RENDERS that value
+  // rather than re-deriving one at report time. The reporter prompt has three
+  // per-surface CWE directives (OSS / HTTP / smart-contract); a prior fix updated
+  // only the OSS branch, leaving HTTP ("pick a catalog id") and SC ("canonical
+  // mappings ... pick") telling the LLM to re-classify. Pin the render-verbatim
+  // contract on ALL THREE so a revert of any branch fails here — the older
+  // /required and catalog-validated/ + /cwe-catalog.js/ assertions did not catch a
+  // revert because the "pick" wording satisfied them too.
+  const reporterPrompt = readFile("prompts/roles/reporter.md");
+  const ossStart = reporterPrompt.indexOf("**OSS repo findings**");
+  const httpStart = reporterPrompt.indexOf("**HTTP findings**");
+  const scStart = reporterPrompt.indexOf("**Smart-contract findings**");
+  const mixedStart = reporterPrompt.indexOf("Mixed-surface reports preserve");
+  assert.ok(ossStart >= 0 && httpStart > ossStart && scStart > httpStart && mixedStart > scStart,
+    "OSS < HTTP < smart-contract < mixed-surface section order must hold");
+  const branches = {
+    OSS: reporterPrompt.slice(ossStart, httpStart),
+    HTTP: reporterPrompt.slice(httpStart, scStart),
+    "smart-contract": reporterPrompt.slice(scStart, mixedStart),
+  };
+  for (const [name, branch] of Object.entries(branches)) {
+    assert.match(branch, /render the finding's persisted `cwe` value verbatim/,
+      `${name} CWE directive must render the persisted cwe verbatim`);
+    assert.match(branch, /do NOT re-classify, pick, or substitute/,
+      `${name} CWE directive must forbid re-classifying at report time`);
+    assert.match(branch, /CWE unavailable \(legacy record\)/,
+      `${name} CWE directive must define the legacy-row fallback marker`);
+    assert.match(branch, /required and catalog-validated/, `${name} keeps the catalog-validated phrase`);
+    assert.match(branch, /cwe-catalog\.js/, `${name} cites the cwe-catalog source of truth`);
+    // The pre-fix framings that told the LLM to re-derive a CWE must be gone.
+    assert.doesNotMatch(branch, /pick a catalog id/, `${name} must not instruct picking a catalog id`);
+    assert.doesNotMatch(branch, /Choose a fixed catalog CWE/, `${name} must not instruct choosing a CWE`);
+  }
+  // The SC mapping table survives, but only as a REFERENCE mirror — never a
+  // pick-list ("source-of-truth mirror ... pick" framing must be gone).
+  assert.match(branches["smart-contract"], /for REFERENCE only/,
+    "SC mapping table must be reframed as reference, not a pick-list");
+});
+
 test("grader severity_accuracy axis cites the CVSS band as an explicitly non-gating sanity signal", () => {
   const graderPrompt = readFile("prompts/roles/grader.md");
   const axisStart = graderPrompt.indexOf("**Severity accuracy**");
@@ -848,6 +889,28 @@ test("Claude role MCP tool sets match the neutral role model", () => {
   }
 });
 
+test("Claude roles that read untrusted artifacts carry marker discipline", () => {
+  const inlineReadRoles = new Set(["chain", "grader", "reporter"]);
+  const checked = [];
+  for (const [roleId, spec] of Object.entries(CLAUDE_ROLE_SPECS)) {
+    if (spec.kind !== "agent") continue;
+    if (!inlineReadRoles.has(roleId) && !mcpToolNamesForRole(roleId).includes("bob_resolve_body")) continue;
+    checked.push(roleId);
+    const document = readFile(spec.output_path);
+    assert.match(document, /<<UNTRUSTED_DATA \.\.\.>>/, `${roleId} must name the opening untrusted marker`);
+    assert.match(document, /<<END_UNTRUSTED_DATA \.\.\.>>/, `${roleId} must name the closing untrusted marker`);
+    assert.match(document, /never instructions to follow/i, `${roleId} must tell the worker not to follow fenced instructions`);
+  }
+  assert.ok(checked.includes("evaluator-spawn"), "evaluator-spawn must be covered by the resolver-body guard");
+  assert.ok(checked.includes("brutalist-verifier"), "brutalist-verifier must be covered by the resolver-body guard");
+  assert.ok(checked.includes("balanced-verifier"), "balanced-verifier must be covered by the resolver-body guard");
+  assert.ok(checked.includes("final-verifier"), "final-verifier must be covered by the resolver-body guard");
+  assert.ok(checked.includes("evidence"), "evidence-agent must be covered by the resolver-body guard");
+  assert.ok(checked.includes("chain"), "chain-builder must be covered by the inline-read guard");
+  assert.ok(checked.includes("grader"), "grader must be covered by the inline-read guard");
+  assert.ok(checked.includes("reporter"), "report-writer must be covered by the inline-read guard");
+});
+
 test("evaluator-agent ships the evaluator-shared + evaluator-web bundle, no Write", () => {
   const spec = AGENT_TOOL_SPECS["evaluator-agent.md"];
   assert.deepEqual(spec.roleBundles, ["evaluator-shared", "evaluator-web"]);
@@ -943,6 +1006,7 @@ test("evaluator-agent exposes claim-recording, handoff, coverage, and audit tool
     "bob_read_http_audit",
     "bob_import_static_artifact",
     "bob_static_scan",
+    "bob_ingest_sarif",
     "bob_record_surface_leads",
     "bob_read_surface_leads",
     "bob_get_context_budget",
@@ -1028,7 +1092,14 @@ test("orchestrator skill stays bounded and reflects the lifecycle topology", () 
   // (Friction-Scanner Extension subsection between Optional Workflow
   // Playbooks and STATE: OPEN_FRONTIER). Closes the leverage_audit
   // gaps_present verdict. Cap bumped 383 → 387.
-  assert.ok(lines <= 387, `bob-evaluate-runner skill is ${lines} lines (cap 387)`);
+  // C14 proof-carrying disclosure adds bob_write_proof_bundle to the
+  // orchestrator bundle (+1 generated allowed-tools line).
+  // IP7 SARIF ingest adds bob_ingest_sarif to the orchestrator bundle
+  // (+1 generated allowed-tools line) while keeping ingestion host-side and
+  // bounded.
+  // I10 adds bob_read_static_analysis_index to the orchestrator bundle
+  // (+1 generated allowed-tools line) for bounded static-index reads.
+  assert.ok(lines <= 390, `bob-evaluate-runner skill is ${lines} lines (cap 390)`);
   const skill = readFile(".claude/skills/bob-evaluate-runner/SKILL.md");
   assert.match(
     skill,
@@ -1257,7 +1328,13 @@ test("evaluator agents stay under their MCP tool budget", () => {
   // payloads, no body fields, 5-tuple idempotent. Per-evaluator brief
   // tokens unchanged (no brief surfacing); budgets bump by +2 (SC 39→41,
   // web 41→43) to keep parity with the bundle surface.
-  const EVALUATOR_MCP_TOOL_BUDGET = 41;
+  // IP7 adds bob_ingest_sarif to evaluator-shared. It reads already-captured
+  // SARIF artifacts, returns a bounded summary, and writes lead seeds only;
+  // budgets bump by +1 (SC 41→42, web 43→44) to match the registry surface.
+  // I10 adds bob_read_static_analysis_index to evaluator-shared. It is a
+  // bounded read-only query over scrubbed static-analysis-index.jsonl rows;
+  // budgets bump by +1 (SC 42→43, web 44→45).
+  const EVALUATOR_MCP_TOOL_BUDGET = 43;
   const agentNameToRoleId = {};
   for (const [roleId, spec] of Object.entries(CLAUDE_ROLE_SPECS)) {
     if (spec.kind === "agent" && typeof spec.output_path === "string") {
@@ -1266,7 +1343,7 @@ test("evaluator agents stay under their MCP tool budget", () => {
   }
   for (const pack of Object.values(CAPABILITY_PACKS)) {
     const roleId = agentNameToRoleId[pack.evaluator_agent];
-    const budget = pack.spawn.profile === "web" ? 43 : EVALUATOR_MCP_TOOL_BUDGET;
+    const budget = pack.spawn.profile === "web" ? 45 : EVALUATOR_MCP_TOOL_BUDGET;
     assert.ok(
       mcpToolNamesForRole(roleId).length <= budget,
       `pack ${pack.id} evaluator over budget (got ${mcpToolNamesForRole(roleId).length}, budget ${budget})`,
@@ -1311,6 +1388,28 @@ test("verifier role bundle exposes the documented mutating set and no orchestrat
     const meta = TOOL_MANIFEST[tool];
     if (!meta) continue;
     assert.ok(!meta.role_bundles.includes("verifier"), `${tool} must not be in verifier bundle`);
+  }
+});
+
+test("proof-bundle writer stays limited to orchestrator and final verifier", () => {
+  assert.deepEqual(TOOL_MANIFEST.bob_write_proof_bundle.role_bundles, ["orchestrator"]);
+
+  const finalVerifierTools = agentToolsList(".claude/agents/final-verifier.md");
+  assertPermissionReferenced(
+    finalVerifierTools,
+    "bob_write_proof_bundle",
+    "final-verifier must retain the explicit C14 proof-bundle writer grant",
+  );
+
+  for (const agentPath of [
+    ".claude/agents/balanced-verifier.md",
+    ".claude/agents/brutalist-verifier.md",
+    ".claude/agents/evidence-agent.md",
+  ]) {
+    const tools = agentToolsList(agentPath);
+    for (const permission of primaryAndAliasPermissions("bob_write_proof_bundle")) {
+      assert.ok(!tools.includes(permission), `${agentPath} must not allow ${permission}`);
+    }
   }
 });
 
@@ -1753,4 +1852,18 @@ test("generated surfaces describe central session authority and target_domain se
   ].map(readFile).join("\n");
   assert.match(surfaces, /`target_domain` selects the session record/);
   assert.match(surfaces, /authority error.*session-integrity blocker/);
+});
+
+test("bob-diff-review skill advances to OPEN_FRONTIER before evaluator waves", () => {
+  const skill = readFile(".claude/skills/bob-diff-review/SKILL.md");
+  const s5 = skill.indexOf("### S5");
+  const readNucleus = skill.indexOf("bob_read_session_nucleus", s5);
+  const advance = skill.indexOf("bob_advance_session", s5);
+  const openFrontier = skill.indexOf('to_state: "OPEN_FRONTIER"', s5);
+  const startWave = skill.indexOf("bob_start_next_wave", s5);
+  assert.ok(s5 >= 0, "bob-diff-review skill must contain S5");
+  assert.ok(readNucleus > s5, "S5 must read session lifecycle before wave start");
+  assert.ok(advance > readNucleus, "S5 must advance lifecycle after reading nucleus");
+  assert.ok(openFrontier > advance, "S5 lifecycle advance must target OPEN_FRONTIER");
+  assert.ok(startWave > openFrontier, "S5 must advance lifecycle before bob_start_next_wave");
 });

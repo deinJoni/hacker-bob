@@ -47,6 +47,7 @@ const {
 const {
   assertSafeDomain,
   repoCommandRunsJsonlPath,
+  repoCheckoutDir,
   repoInventoryPath,
   repoRunsDir,
   repoWorkDir,
@@ -74,6 +75,8 @@ const {
   readSessionStateStrict,
 } = require("./session-state-store.js");
 const {
+  assertHistoryAvailableForRef,
+  normalizeHistoryRef,
   readRepoSession,
 } = require("./repo-target.js");
 
@@ -125,6 +128,7 @@ const C_DEFAULT_APT_PACKAGES = Object.freeze([
   "cmake",
   "ninja-build",
   "clang",
+  "clang-18",
   "gdb",
   "valgrind",
 ]);
@@ -136,6 +140,28 @@ const NFS_EXTRA_APT_PACKAGES = Object.freeze([
   "libkrb5-dev",
   "libtirpc-dev",
 ]);
+const NATIVE_FUZZ_EXTRA_APT_PACKAGES = Object.freeze([
+  "libclang-rt-18-dev",
+  "pkg-config",
+  "autoconf",
+  "automake",
+  "libtool",
+  "unzip",
+  "zlib1g-dev",
+]);
+
+const NATIVE_FUZZ_MAX_TOTAL_TIME_SECONDS = 240;
+const NATIVE_LIBFUZZER_DEFINITION_PERL = shellQuote(
+  "s{/\\*.*?\\*/}{}gs; s{//[^\\n]*}{}g; s/\"(?:\\\\.|[^\"\\\\])*\"/\"\"/gs; s/'(?:\\\\.|[^'\\\\])*'/''/gs; exit(/\\b(?:extern\\s+(?:\"C\"|\"\"|'C'|'')\\s+)?(?:int|auto)\\s+LLVMFuzzerTestOneInput\\s*\\([^;{}]*\\)\\s*(?:\\{|try\\b)/s ? 0 : 1)",
+);
+const FUZZ_STATS_NULL = Object.freeze({
+  cov: null,
+  ft: null,
+  exec_per_s: null,
+  corpus_size: null,
+  crashes: null,
+});
+const FUZZ_STATS_PROBE_BYTES = 512 * 1024;
 
 const RECOMMENDED_COMMAND_ROLES = Object.freeze([
   "build",
@@ -210,17 +236,79 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
 
-function firstSeedCorpusRel(seedCorpus) {
+function normalizeRepoRelativePath(raw) {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed || /^[A-Za-z]:[\\/]/.test(trimmed)) return null;
+  const normalized = path.posix.normalize(trimmed.replace(/\\/g, "/"));
+  if (!normalized || normalized === "." || path.posix.isAbsolute(normalized)) return null;
+  if (normalized === ".." || normalized.startsWith("../")) return null;
+  return normalized;
+}
+
+function firstSeedCorpus(seedCorpus) {
   if (!Array.isArray(seedCorpus)) return null;
   for (const entry of seedCorpus) {
-    if (entry && typeof entry.rel_path === "string" && entry.rel_path.trim()) {
-      return entry.rel_path.trim();
+    const safeRel = normalizeRepoRelativePath(entry && entry.rel_path);
+    if (safeRel) {
+      return {
+        rel_path: safeRel,
+        has_zip: (entry && entry.has_zip === true) || /\.zip$/i.test(safeRel),
+      };
     }
   }
   return null;
 }
 
-function recommendedCommandsFor(language, { nfsXdrShape = false, seedCorpus = [] } = {}) {
+function cNativeFuzzRecipe(seedCorpusEntry) {
+  const seedRel = seedCorpusEntry && seedCorpusEntry.rel_path;
+  const seedIsZip = seedCorpusEntry && seedCorpusEntry.has_zip === true;
+  const seedShellPath = seedRel ? `./${seedRel}` : null;
+  const seedSetup = seedRel
+    ? [
+        `SEED=${shellQuote(seedShellPath)}`,
+        "SEED_REAL=$(realpath -m -- \"$SEED\")",
+        "case \"$SEED_REAL\" in /work/repo/*) ;; *) echo \"seed corpus path escapes staged repo\" >&2; exit 2 ;; esac",
+        `SEED_IS_ZIP=${seedIsZip ? "1" : "0"}`,
+        "ZIP_MAX_BYTES=16777216",
+        "ZIP_MAX_FILES=4096",
+        "if [ \"$SEED_IS_ZIP\" = 1 ] && [ -f \"$SEED_REAL\" ]; then ZIP_LIST=/work/out/zip-entries.txt; unzip -Z -1 \"$SEED_REAL\" > \"$ZIP_LIST\"; ZIP_COUNT=$(wc -l < \"$ZIP_LIST\" | tr -d ' '); test \"$ZIP_COUNT\" -le \"$ZIP_MAX_FILES\"; awk '($0 ~ /(^|\\/)\\.\\.($|\\/)/ || $0 ~ /^\\//) { bad=1 } END { exit bad ? 1 : 0 }' \"$ZIP_LIST\"; ZIP_TOTAL=$(unzip -l -- \"$SEED_REAL\" | awk 'BEGIN{dash=0} /^---------/{dash += 1; next} dash == 2 && $1 ~ /^[0-9]+$/ { print $1; exit }'); test -n \"$ZIP_TOTAL\"; test \"$ZIP_TOTAL\" -le \"$ZIP_MAX_BYTES\"; unzip -qq -o -j -- \"$SEED_REAL\" -d /work/out/corpus; elif [ -d \"$SEED_REAL\" ]; then cp -a -- \"$SEED_REAL\"/. /work/out/corpus/; elif [ -f \"$SEED_REAL\" ]; then cp -- \"$SEED_REAL\" /work/out/corpus/seed; fi",
+      ]
+    : [":"];
+  return [
+    "set -eu",
+    "rm -rf /work/repo /work/out",
+    "mkdir -p /work/repo /work/out/corpus",
+    "cp -a /src/. /work/repo/",
+    "cd /work/repo",
+    "if [ -x ./configure ]; then ./configure; fi",
+    `HARNESS=$({ find . -type f \\( -name '*_fuzzer.c' -o -name '*_fuzzer.cc' -o -name '*_fuzzer.cpp' -o -name '*_fuzzer.cxx' \\) -print 2>/dev/null | sort; find . -type f \\( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.cxx' \\) -print 2>/dev/null | sort; } | awk '!seen[$0]++' | while IFS= read -r f; do perl -0ne ${NATIVE_LIBFUZZER_DEFINITION_PERL} -- "$f" && { printf '%s\\n' "$f"; break; }; done)`,
+    "test -n \"$HARNESS\"",
+    "CC=clang-18",
+    "case \"$HARNESS\" in *.cc|*.cpp|*.cxx) CC=clang++-18 ;; esac",
+    ...seedSetup,
+    "\"$CC\" -fsanitize=address,undefined,fuzzer -g -O1 -I. -Iinclude -Isrc -Ilib -o /work/out/h -- \"$HARNESS\"",
+    `/work/out/h -max_total_time=${NATIVE_FUZZ_MAX_TOTAL_TIME_SECONDS} /work/out/corpus`,
+  ].join(" && ");
+}
+
+function boundedNativeFuzzRecipe(seedEntry) {
+  let effectiveSeedEntry = seedEntry;
+  let recipe = cNativeFuzzRecipe(effectiveSeedEntry);
+  if (effectiveSeedEntry && recipe.length > REPO_DOCKER_RUN_MAX_TOKEN_LENGTH) {
+    effectiveSeedEntry = null;
+    recipe = cNativeFuzzRecipe(null);
+  }
+  if (recipe.length > REPO_DOCKER_RUN_MAX_TOKEN_LENGTH) {
+    throw new Error(`native fuzz base recipe (no-seed) exceeds token limit: ${recipe.length}`);
+  }
+  return { seedEntry: effectiveSeedEntry, recipe };
+}
+
+function recommendedCommandsFor(
+  language,
+  { nfsXdrShape = false, seedCorpus = [], nativeFuzzShape = false, nativeFuzzOnly = false } = {},
+) {
   if (language === "node") {
     return [
       {
@@ -334,16 +422,29 @@ function recommendedCommandsFor(language, { nfsXdrShape = false, seedCorpus = []
     const staging =
       "cp -a /src/. /work/repo/ && cd /work/repo && cmake -S . -B build && cmake --build build && ctest --test-dir build --output-on-failure";
     const sanitizerNote = nfsXdrShape ? " (NFS/XDR shape detected — preload libtirpc/libssl/libkrb5)" : "";
-    const commands = [
-      {
+    const commands = [];
+    if (!nativeFuzzOnly) {
+      commands.push({
         id: "build_and_test",
         description: `Stage /src into /work/repo, build with cmake, run ctest.${sanitizerNote}`,
         command: ["sh", "-lc", staging],
         role: "compose",
-      },
-    ];
-    const seedRel = firstSeedCorpusRel(seedCorpus);
-    if (seedRel) {
+      });
+    }
+    const seedEntry = firstSeedCorpus(seedCorpus);
+    if (nativeFuzzShape) {
+      const { seedEntry: effectiveSeedEntry, recipe } = boundedNativeFuzzRecipe(seedEntry);
+      const seedRel = effectiveSeedEntry && effectiveSeedEntry.rel_path;
+      const fuzzCommand = {
+        id: "fuzz_asan_ubsan",
+        description: "Stage /src into /work/repo, verify a native libFuzzer harness, build it with ASAN+UBSAN+libFuzzer, and run the seeded corpus.",
+        command: ["sh", "-lc", recipe],
+        role: "fuzz",
+      };
+      if (seedRel) fuzzCommand.seed_path = seedRel;
+      commands.push(fuzzCommand);
+    } else if (seedEntry) {
+      const seedRel = seedEntry.rel_path;
       const quotedSeedRel = shellQuote(seedRel);
       commands.push({
         id: "fuzz_seed_probe",
@@ -352,7 +453,7 @@ function recommendedCommandsFor(language, { nfsXdrShape = false, seedCorpus = []
         command: [
           "sh",
           "-lc",
-          `cp -a /src/. /work/repo/ && cd /work/repo && find ${quotedSeedRel} -maxdepth 2 -type f | head -20`,
+          `cp -a /src/. /work/repo/ && cd /work/repo && find -- ${quotedSeedRel} -maxdepth 2 -type f | head -20`,
         ],
         role: "fuzz",
       });
@@ -360,6 +461,15 @@ function recommendedCommandsFor(language, { nfsXdrShape = false, seedCorpus = []
     return commands;
   }
   return [];
+}
+
+function detectionProfileForRepoEnv(detection, nativeFuzzShape) {
+  if (!nativeFuzzShape || !detection || detection.language === "c") return detection;
+  return {
+    language: "c",
+    base_image: C_BASE_IMAGE,
+    marker: "native_fuzz_shape",
+  };
 }
 
 // Compose the generated Dockerfile.bob. Plane O reasons:
@@ -380,6 +490,7 @@ function buildDockerfileBob({
   baseImage,
   targetDomain,
   nfsXdrShape,
+  nativeFuzzShape,
   allowNetwork,
 }) {
   const lines = [];
@@ -401,9 +512,11 @@ function buildDockerfileBob({
     lines.push("ARG NO_PROXY=");
   }
   if (language === "c") {
-    const packages = nfsXdrShape
-      ? [...C_DEFAULT_APT_PACKAGES, ...NFS_EXTRA_APT_PACKAGES]
-      : [...C_DEFAULT_APT_PACKAGES];
+    const packages = [
+      ...C_DEFAULT_APT_PACKAGES,
+      ...(nfsXdrShape ? NFS_EXTRA_APT_PACKAGES : []),
+      ...(nativeFuzzShape ? NATIVE_FUZZ_EXTRA_APT_PACKAGES : []),
+    ];
     if (allowNetwork) {
       lines.push("RUN apt-get update \\");
       lines.push(`    && apt-get install -y --no-install-recommends ${packages.join(" ")} \\`);
@@ -519,6 +632,7 @@ function buildRepoEnvDocument({
   nfsXdrShape,
   seedCorpus,
   seedCorpusCount,
+  nativeFuzzShape,
 }) {
   const normalizedSeedCorpusCount = Number.isInteger(seedCorpusCount) && seedCorpusCount >= 0
     ? seedCorpusCount
@@ -533,6 +647,7 @@ function buildRepoEnvDocument({
       language: detection.language,
       marker: detection.marker,
       nfs_xdr_shape: nfsXdrShape,
+      native_fuzz_shape: nativeFuzzShape,
       seed_corpus_count: normalizedSeedCorpusCount,
     },
     base_image: baseImage,
@@ -596,6 +711,18 @@ function loadSeedCorpusCount(targetDomain) {
   }
 }
 
+function loadNativeFuzzShape(targetDomain) {
+  const invPath = repoInventoryPath(targetDomain);
+  if (!fs.existsSync(invPath)) return false;
+  try {
+    const raw = fs.readFileSync(invPath, "utf8");
+    const doc = JSON.parse(raw);
+    return Boolean(doc && doc.native_fuzz_shape);
+  } catch {
+    return false;
+  }
+}
+
 async function prepareRepoEnv({
   target_domain: targetDomain,
   base_image: baseImageOverride = null,
@@ -632,13 +759,21 @@ async function prepareRepoEnv({
     : assertInteger(timeoutMsOverride, "timeout_ms", { min: 1000, max: MAX_DOCKER_BUILD_TIMEOUT_MS });
 
   const detection = detectLanguageProfile(repoRoot);
-  const baseImage = baseImageOverride
-    ? assertNonEmptyString(baseImageOverride, "base_image")
-    : detection.base_image;
   const nfsXdrShape = loadNfsXdrShape(domain);
   const seedCorpus = loadSeedCorpus(domain);
   const seedCorpusCount = loadSeedCorpusCount(domain);
-  const recommendedCommands = recommendedCommandsFor(detection.language, { nfsXdrShape, seedCorpus });
+  const nativeFuzzShape = loadNativeFuzzShape(domain);
+  const nativeFuzzOnly = Boolean(nativeFuzzShape && detection && detection.language !== "c");
+  const envDetection = detectionProfileForRepoEnv(detection, nativeFuzzShape);
+  const baseImage = baseImageOverride
+    ? assertNonEmptyString(baseImageOverride, "base_image")
+    : envDetection.base_image;
+  const recommendedCommands = recommendedCommandsFor(envDetection.language, {
+    nfsXdrShape,
+    seedCorpus,
+    nativeFuzzShape,
+    nativeFuzzOnly,
+  });
   for (const command of recommendedCommands) {
     assertEnumValue(command.role, RECOMMENDED_COMMAND_ROLES, `recommended_commands[${command.id}].role`);
   }
@@ -681,10 +816,11 @@ async function prepareRepoEnv({
     : null;
 
   const dockerfileContent = buildDockerfileBob({
-    language: detection.language,
+    language: envDetection.language,
     baseImage,
     targetDomain: domain,
     nfsXdrShape,
+    nativeFuzzShape,
     allowNetwork: normalizedAllowNetwork,
   });
   assertNoEnvSecretLeak(dockerfileContent);
@@ -694,7 +830,7 @@ async function prepareRepoEnv({
     targetDomain: domain,
     repoSession,
     repoRoot,
-    detection,
+    detection: envDetection,
     recommendedCommands,
     imageTag,
     baseImage,
@@ -706,6 +842,7 @@ async function prepareRepoEnv({
     nfsXdrShape,
     seedCorpus,
     seedCorpusCount,
+    nativeFuzzShape,
   });
   // O-P7: scrub-validate before persistence. The recommended_commands carry
   // shell strings; the validator already catches inline tokens like
@@ -769,8 +906,9 @@ async function prepareRepoEnv({
     repo_env_path: repoEnvPath,
     image_tag: imageTag,
     base_image: baseImage,
-    language: detection.language,
+    language: envDetection.language,
     nfs_xdr_shape: nfsXdrShape,
+    native_fuzz_shape: nativeFuzzShape,
     seed_corpus: seedCorpus,
     seed_corpus_count: seedCorpusCount,
     dry_run: normalizedDryRun,
@@ -824,9 +962,11 @@ async function prepareRepoEnv({
 const REPO_DOCKER_RUN_VERSION = 1;
 const REPO_DOCKER_RUN_DEFAULT_TIMEOUT_MS = 300_000;
 const REPO_DOCKER_RUN_MAX_TIMEOUT_MS = 600_000;
+const DIFFERENTIAL_MATERIALIZER_TIMEOUT_MS = 30_000;
 const REPO_DOCKER_RUN_MAX_OUTPUT_BYTES = 16 * 1024 * 1024; // 16 MB per stream
 const REPO_DOCKER_RUN_MAX_COMMAND_TOKENS = 64;
 const REPO_DOCKER_RUN_MAX_TOKEN_LENGTH = 2048;
+const REPO_WORK_MOUNT_MODE = "read_write";
 // Plane X Cycle X.7 (X-P9 retrofit): stdout/stderr first-line previews
 // cap. 200 chars matches the http_record body_preview discipline; the
 // per-stream first line is captured at completion time so the JSONL
@@ -837,6 +977,11 @@ const REPO_DOCKER_RUN_FIRST_LINE_MAX_CHARS = 200;
 // does not pull 16 MB into RAM just to compute a 200-char preview.
 const REPO_DOCKER_RUN_FIRST_LINE_PROBE_BYTES = 4096;
 const REPO_MOUNT_MODE_VALUES = Object.freeze(["read_only", "read_write"]);
+const DIFFERENTIAL_CHECKOUT_KIND_VALUES = Object.freeze([
+  "upstream_fix",
+  "pre_introduction",
+  "self_patch",
+]);
 const REPO_DOCKER_RUN_DNS = "1.1.1.1";
 const REPO_DOCKER_RUN_PROXY_ARG = Object.freeze({
   http: "HTTP_PROXY",
@@ -888,6 +1033,305 @@ function assertCommandArray(command) {
     normalized.push(raw);
   }
   return normalized;
+}
+
+function assertCheckoutRef(value, fieldName) {
+  return normalizeHistoryRef(value, fieldName);
+}
+
+function normalizeDifferentialCheckout(checkout) {
+  if (checkout == null) return null;
+  if (typeof checkout !== "object" || Array.isArray(checkout)) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "checkout must be an object when provided",
+    );
+  }
+  return {
+    ref: assertCheckoutRef(checkout.ref, "checkout.ref"),
+    kind: assertEnumValue(checkout.kind, DIFFERENTIAL_CHECKOUT_KIND_VALUES, "checkout.kind"),
+  };
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+function assertWorkPath(value, fieldName) {
+  const normalized = assertNonEmptyString(value, fieldName);
+  if (!normalized.startsWith("/work/")
+      || normalized.includes("..")
+      || normalized.includes("//")
+      || !/^\/work\/[A-Za-z0-9._/-]+$/.test(normalized)) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `${fieldName} must be a safe path under /work`,
+      { repo_error_code: "invalid_differential_dest" },
+    );
+  }
+  return normalized;
+}
+
+function assertWorkDest(dest) {
+  return assertWorkPath(dest, "dest");
+}
+
+function assertContainerCheckoutDest(dest) {
+  const normalized = assertNonEmptyString(dest, "dest");
+  // S14 control replay intentionally runs from /src: repoDockerRun binds
+  // /src to a run-scoped checkout under repo-checkouts/, outside writable
+  // /work. Other container paths must stay under /work.
+  if (normalized === "/src") return normalized;
+  return assertWorkDest(normalized);
+}
+
+function hostPathContains(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function realpathIfPossible(filePath) {
+  try {
+    return fs.realpathSync(filePath);
+  } catch {
+    return path.resolve(filePath);
+  }
+}
+
+function assertRunScopedPathBoundary(base, candidate) {
+  const baseReal = realpathIfPossible(base);
+  const relative = path.relative(base, candidate);
+  if (!relative) return;
+  let cursor = base;
+  for (const part of relative.split(path.sep)) {
+    if (!part || part === ".") continue;
+    cursor = path.join(cursor, part);
+    let lstat = null;
+    try {
+      lstat = fs.lstatSync(cursor);
+    } catch (error) {
+      if (error && error.code === "ENOENT") break;
+      throw error;
+    }
+    if (lstat.isSymbolicLink()) {
+      throw new ToolError(
+        ERROR_CODES.INVALID_ARGUMENTS,
+        "differential checkout run path must not include symlinks",
+        { repo_error_code: "differential_checkout_symlink_escape" },
+      );
+    }
+    const cursorReal = realpathIfPossible(cursor);
+    if (!hostPathContains(baseReal, cursorReal)) {
+      throw new ToolError(
+        ERROR_CODES.INVALID_ARGUMENTS,
+        "differential checkout run path escaped the repo work directory",
+        { repo_error_code: "differential_checkout_symlink_escape" },
+      );
+    }
+  }
+}
+
+function assertRepoWorkDirBoundary(workDir, sessionRoot) {
+  const base = path.resolve(workDir);
+  const sessionReal = realpathIfPossible(sessionRoot);
+  const parent = path.dirname(base);
+  if (!fs.existsSync(parent) || !fs.statSync(parent).isDirectory()) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "repo work directory parent is missing",
+      { repo_error_code: "repo_work_path_invalid" },
+    );
+  }
+  const parentReal = realpathIfPossible(parent);
+  if (!hostPathContains(sessionReal, parentReal)) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "repo work directory parent escaped the session directory",
+      { repo_error_code: "repo_work_symlink_escape" },
+    );
+  }
+  let baseLstat = null;
+  try {
+    baseLstat = fs.lstatSync(base);
+  } catch (error) {
+    if (!error || error.code !== "ENOENT") throw error;
+  }
+  if (baseLstat) {
+    const lstat = baseLstat;
+    if (lstat.isSymbolicLink()) {
+      throw new ToolError(
+        ERROR_CODES.INVALID_ARGUMENTS,
+        "repo work directory must not be a symlink",
+        { repo_error_code: "repo_work_symlink_escape" },
+      );
+    }
+    if (!fs.statSync(base).isDirectory()) {
+      throw new ToolError(
+        ERROR_CODES.INVALID_ARGUMENTS,
+        "repo work path is not a directory",
+        { repo_error_code: "repo_work_path_invalid" },
+      );
+    }
+    const baseReal = realpathIfPossible(base);
+    if (!hostPathContains(sessionReal, baseReal)) {
+      throw new ToolError(
+        ERROR_CODES.INVALID_ARGUMENTS,
+        "repo work directory escaped the session directory",
+        { repo_error_code: "repo_work_symlink_escape" },
+      );
+    }
+  }
+  return base;
+}
+
+function runScopedHostPath(workDir, sessionRoot, runId, ...parts) {
+  const base = assertRepoWorkDirBoundary(workDir, sessionRoot);
+  const candidate = path.resolve(base, runId, ...parts);
+  if (!hostPathContains(base, candidate)) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "differential checkout run path escaped the repo work directory",
+      { repo_error_code: "invalid_differential_dest" },
+    );
+  }
+  assertRunScopedPathBoundary(base, candidate);
+  return candidate;
+}
+
+function mkdirDifferentialRunDirectory(dirPath, mode) {
+  try {
+    fs.mkdirSync(dirPath, { mode });
+  } catch (error) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `differential checkout run path could not be created safely: ${error.message || error}`,
+      { repo_error_code: "differential_checkout_symlink_escape" },
+    );
+  }
+  const lstat = fs.lstatSync(dirPath);
+  if (lstat.isSymbolicLink() || !fs.statSync(dirPath).isDirectory()) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "differential checkout run path must be a directory and must not be a symlink",
+      { repo_error_code: "differential_checkout_symlink_escape" },
+    );
+  }
+  fs.chmodSync(dirPath, mode);
+}
+
+async function execDifferentialMaterializer(command, args, stage) {
+  try {
+    await execFilePromise(command, args, {
+      timeout: DIFFERENTIAL_MATERIALIZER_TIMEOUT_MS,
+      maxBuffer: 1024 * 1024,
+    });
+  } catch (error) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      `differential checkout materialization failed during ${stage}: ${error.message || error}`,
+      { repo_error_code: "differential_checkout_materialization_failed" },
+    );
+  }
+}
+
+async function materializeDifferentialCheckoutTree({
+  repoRoot,
+  checkoutRoot,
+  workDir,
+  sessionRoot,
+  runId,
+  checkoutRef,
+  checkoutObject,
+  checkoutKind,
+  expectedPatchHash = null,
+}) {
+  assertCheckoutRef(checkoutRef, "checkout_ref");
+  const archiveRef = assertCheckoutRef(checkoutObject || checkoutRef, "checkout_object");
+  const kind = assertEnumValue(checkoutKind, DIFFERENTIAL_CHECKOUT_KIND_VALUES, "checkout_kind");
+  const runWorkDir = runScopedHostPath(checkoutRoot, sessionRoot, runId);
+  const checkoutDir = runScopedHostPath(checkoutRoot, sessionRoot, runId, "repo");
+  const checkoutTar = runScopedHostPath(checkoutRoot, sessionRoot, runId, "checkout.tar");
+  fs.rmSync(runWorkDir, { recursive: true, force: true });
+  fs.mkdirSync(checkoutRoot, { recursive: true, mode: 0o755 });
+  assertRepoWorkDirBoundary(checkoutRoot, sessionRoot);
+  fs.mkdirSync(workDir, { recursive: true, mode: 0o755 });
+  assertRepoWorkDirBoundary(workDir, sessionRoot);
+  mkdirDifferentialRunDirectory(runWorkDir, 0o755);
+  assertRunScopedPathBoundary(path.resolve(checkoutRoot), runWorkDir);
+  mkdirDifferentialRunDirectory(checkoutDir, 0o755);
+  assertRunScopedPathBoundary(path.resolve(checkoutRoot), checkoutDir);
+
+  if (kind !== "self_patch") {
+    try {
+      await execDifferentialMaterializer(
+        "git",
+        ["-C", repoRoot, "archive", "--format=tar", `--output=${checkoutTar}`, archiveRef],
+        "git archive",
+      );
+      await execDifferentialMaterializer("tar", ["-x", "-f", checkoutTar, "-C", checkoutDir], "tar extract");
+    } finally {
+      fs.rmSync(checkoutTar, { force: true });
+    }
+    return { checkout_path: checkoutDir };
+  }
+
+  const patchBuffer = readSelfPatchBuffer(workDir, sessionRoot);
+  const observedPatchHash = patchBuffer ? sha256Hex(patchBuffer) : null;
+  if (!observedPatchHash) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "self_patch checkout requires /work/patch.diff before bob_repo_docker_run",
+      { repo_error_code: "missing_differential_patch" },
+    );
+  }
+  if (expectedPatchHash && observedPatchHash !== expectedPatchHash) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "self_patch checkout patch changed during differential materialization",
+      { repo_error_code: "differential_patch_changed" },
+    );
+  }
+
+  const tempRoot = runScopedHostPath(checkoutRoot, sessionRoot, runId, "host-materialize");
+  const patchSnapshot = path.join(tempRoot, "patch.diff");
+  const baseTar = runScopedHostPath(checkoutRoot, sessionRoot, runId, "base.tar");
+  fs.mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
+  try {
+    fs.writeFileSync(patchSnapshot, patchBuffer, { mode: 0o600 });
+    await execDifferentialMaterializer(
+      "git",
+      ["-C", repoRoot, "archive", "--format=tar", `--output=${baseTar}`, archiveRef],
+      "git archive",
+    );
+    await execDifferentialMaterializer("tar", ["-x", "-f", baseTar, "-C", checkoutDir], "tar extract");
+    await execDifferentialMaterializer("git", ["-C", checkoutDir, "apply", patchSnapshot], "git apply");
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(baseTar, { force: true });
+    fs.rmSync(checkoutTar, { force: true });
+  }
+  return { checkout_path: checkoutDir };
+}
+
+function buildDifferentialCheckoutCommand({
+  checkout_ref: checkoutRef,
+  checkout_kind: checkoutKind,
+  dest = "/src",
+  after_command: afterCommand = null,
+} = {}) {
+  assertCheckoutRef(checkoutRef, "checkout_ref");
+  assertEnumValue(checkoutKind, DIFFERENTIAL_CHECKOUT_KIND_VALUES, "checkout_kind");
+  const checkoutDest = assertContainerCheckoutDest(dest);
+  const normalizedAfterCommand = afterCommand == null ? null : assertCommandArray(afterCommand);
+  const script = [
+    "set -eu",
+    `test -d ${shellQuote(checkoutDest)}`,
+  ];
+  if (normalizedAfterCommand) {
+    script.push(`cd ${shellQuote(checkoutDest)}`);
+    script.push(normalizedAfterCommand.map(shellQuote).join(" "));
+  }
+  return assertCommandArray(["sh", "-c", script.join(" && ")]);
 }
 
 // Build the docker run argv. Each O-P3 sandbox flag is emitted in
@@ -957,10 +1401,25 @@ function buildDockerRunArgv({
 // returns {exit_code, signal, duration_ms, timed_out, stdout_bytes,
 //          stderr_bytes, stdout_truncated, stderr_truncated}.
 //
-// Stdout/stderr are streamed to disk (capped at 16 MB each) — never
-// held in process memory. Tests inject a stub so they can assert the
-// constructed argv and synthesize an exit code without actually
-// invoking docker.
+// Stdout/stderr are streamed to disk (capped at 16 MB each). A separate
+// bounded tail is retained only for scalar parsers such as fuzz_stats so
+// completion-state telemetry is not stale when the capture file truncates.
+// Tests inject a stub so they can assert the constructed argv and synthesize
+// an exit code without actually invoking docker.
+function appendTailBuffer(current, chunk, maxBytes) {
+  const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk || "");
+  if (maxBytes <= 0 || data.length === 0) return current;
+  if (data.length >= maxBytes) {
+    return Buffer.from(data.subarray(data.length - maxBytes));
+  }
+  if (!current || current.length === 0) {
+    return Buffer.from(data);
+  }
+  const combined = Buffer.concat([current, data]);
+  if (combined.length <= maxBytes) return combined;
+  return Buffer.from(combined.subarray(combined.length - maxBytes));
+}
+
 function defaultDockerRuntime() {
   return {
     async run({ command, args, timeoutMs, stdoutPath, stderrPath }) {
@@ -979,6 +1438,8 @@ function defaultDockerRuntime() {
         let stderrBytes = 0;
         let stdoutTruncated = false;
         let stderrTruncated = false;
+        let stdoutTail = Buffer.alloc(0);
+        let stderrTail = Buffer.alloc(0);
         let timedOut = false;
         const startedAt = Date.now();
         const timer = setTimeout(() => {
@@ -989,6 +1450,7 @@ function defaultDockerRuntime() {
           }, 5000);
         }, timeoutMs);
         child.stdout.on("data", (chunk) => {
+          stdoutTail = appendTailBuffer(stdoutTail, chunk, FUZZ_STATS_PROBE_BYTES);
           const remaining = REPO_DOCKER_RUN_MAX_OUTPUT_BYTES - stdoutBytes;
           if (remaining > 0) {
             const slice = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
@@ -1000,6 +1462,7 @@ function defaultDockerRuntime() {
           if (stdoutBytes > REPO_DOCKER_RUN_MAX_OUTPUT_BYTES) stdoutTruncated = true;
         });
         child.stderr.on("data", (chunk) => {
+          stderrTail = appendTailBuffer(stderrTail, chunk, FUZZ_STATS_PROBE_BYTES);
           const remaining = REPO_DOCKER_RUN_MAX_OUTPUT_BYTES - stderrBytes;
           if (remaining > 0) {
             const slice = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
@@ -1029,6 +1492,8 @@ function defaultDockerRuntime() {
             stderr_bytes: stderrBytes,
             stdout_truncated: stdoutTruncated,
             stderr_truncated: stderrTruncated,
+            stdout_tail_text: stdoutTail.toString("utf8"),
+            stderr_tail_text: stderrTail.toString("utf8"),
           });
         });
       });
@@ -1065,6 +1530,40 @@ function hashFile(filePath) {
   }
 }
 
+function readSelfPatchBuffer(workDir, sessionRoot) {
+  const base = assertRepoWorkDirBoundary(workDir, sessionRoot);
+  const patchPath = path.join(base, "patch.diff");
+  let lstat = null;
+  try {
+    lstat = fs.lstatSync(patchPath);
+  } catch (error) {
+    if (error && error.code === "ENOENT") return null;
+    throw error;
+  }
+  if (!lstat.isFile()) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "self_patch checkout requires /work/patch.diff to be a regular Bob-owned file",
+      { repo_error_code: "invalid_differential_patch" },
+    );
+  }
+  const baseReal = realpathIfPossible(base);
+  const patchReal = realpathIfPossible(patchPath);
+  if (!hostPathContains(baseReal, patchReal)) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "self_patch checkout patch escaped the repo work directory",
+      { repo_error_code: "differential_patch_symlink_escape" },
+    );
+  }
+  return fs.readFileSync(patchPath);
+}
+
+function hashSelfPatchFile(workDir, sessionRoot) {
+  const patchBuffer = readSelfPatchBuffer(workDir, sessionRoot);
+  return patchBuffer ? sha256Hex(patchBuffer) : null;
+}
+
 // Plane X Cycle X.7 (X-P9 retrofit): read the first line of a capture
 // file for the brief-inlinable summary. Bounded by a 4KB probe so a
 // degenerate single-line capture file does not pull 16MB into memory
@@ -1099,6 +1598,89 @@ function readFirstLine(filePath, maxChars) {
   }
 }
 
+function readTailText(filePath, maxBytes) {
+  try {
+    if (!fs.existsSync(filePath)) return "";
+    const stat = fs.statSync(filePath);
+    if (stat.size === 0) return "";
+    const readLen = Math.min(stat.size, maxBytes);
+    const offset = Math.max(0, stat.size - readLen);
+    const fd = fs.openSync(filePath, "r");
+    try {
+      const buf = Buffer.alloc(readLen);
+      const bytesRead = fs.readSync(fd, buf, 0, readLen, offset);
+      if (bytesRead <= 0) return "";
+      return buf.subarray(0, bytesRead).toString("utf8");
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return "";
+  }
+}
+
+function integerToken(line, re) {
+  const match = re.exec(line);
+  if (!match) return null;
+  const value = Number.parseInt(match[1], 10);
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function parseFuzzStatsText(text) {
+  const stats = { ...FUZZ_STATS_NULL };
+  try {
+    if (!text) return stats;
+    const lines = text.split(/\r?\n/);
+    let sawLibFuzzerProgress = false;
+    for (const line of lines) {
+      if (!/^#\d+\b/.test(line)) continue;
+      const cov = integerToken(line, /\bcov:\s*(\d+)\b/);
+      const ft = integerToken(line, /\bft:\s*(\d+)\b/);
+      const execPerS = integerToken(line, /\bexec\/s:\s*(\d+)\b/);
+      const corpusSize = integerToken(line, /\bcorp:\s*(\d+)\b/);
+      if (cov == null && ft == null && execPerS == null && corpusSize == null) continue;
+      sawLibFuzzerProgress = true;
+      if (cov != null) stats.cov = cov;
+      if (ft != null) stats.ft = ft;
+      if (execPerS != null) stats.exec_per_s = execPerS;
+      if (corpusSize != null) stats.corpus_size = corpusSize;
+    }
+    const crashSeen = /(?:==\d+==ERROR:\s*(?:AddressSanitizer|UndefinedBehaviorSanitizer|MemorySanitizer)|ERROR:\s*libFuzzer:|Test unit written to|crash-[0-9a-f]{8,}|DEDUP_TOKEN:)/i.test(text);
+    if (sawLibFuzzerProgress || crashSeen) {
+      stats.crashes = crashSeen ? 1 : 0;
+    }
+    return stats;
+  } catch {
+    return { ...FUZZ_STATS_NULL };
+  }
+}
+
+function parseFuzzStats(stdoutPath, stderrPath = null) {
+  try {
+    return parseFuzzStatsText([
+      readTailText(stdoutPath, FUZZ_STATS_PROBE_BYTES),
+      stderrPath ? readTailText(stderrPath, FUZZ_STATS_PROBE_BYTES) : "",
+    ].filter(Boolean).join("\n"));
+  } catch {
+    return { ...FUZZ_STATS_NULL };
+  }
+}
+
+function boundedTailText(value) {
+  if (typeof value !== "string") return null;
+  if (value.length <= FUZZ_STATS_PROBE_BYTES) return value;
+  return value.slice(value.length - FUZZ_STATS_PROBE_BYTES);
+}
+
+function parseFuzzStatsFromRun(runResult, stdoutPath, stderrPath) {
+  const stdoutTail = boundedTailText(runResult && runResult.stdout_tail_text);
+  const stderrTail = boundedTailText(runResult && runResult.stderr_tail_text);
+  if (stdoutTail != null || stderrTail != null) {
+    return parseFuzzStatsText([stdoutTail || "", stderrTail || ""].filter(Boolean).join("\n"));
+  }
+  return parseFuzzStats(stdoutPath, stderrPath);
+}
+
 // Normalize replay_context. Operators pass {wave, agent, surface_id?, ...}
 // so we can correlate runs back to their evaluator dispatch. The shape
 // must not carry secrets (sensitive-material scan catches that).
@@ -1114,6 +1696,7 @@ function normalizeReplayContext(value) {
     "wave",
     "agent",
     "surface_id",
+    "finding_id",
     "task_lens",
     "technique_pack_id",
     "purpose",
@@ -1149,6 +1732,7 @@ function normalizeReplayContext(value) {
 async function repoDockerRun({
   target_domain: targetDomain,
   command,
+  checkout = null,
   dry_run: dryRun = true,
   allow_network: allowNetwork = false,
   repo_mount_mode: repoMountMode = "read_only",
@@ -1162,6 +1746,9 @@ async function repoDockerRun({
   const domain = assertSafeDomain(targetDomain);
   const repoSession = readRepoSession(domain);
   const repoRoot = repoSession.target_repo.root_path;
+  const sessionRoot = sessionDir(domain);
+  const workDir = repoWorkDir(domain);
+  const checkoutRoot = repoCheckoutDir(domain);
   if (!fs.existsSync(repoRoot) || !fs.statSync(repoRoot).isDirectory()) {
     throw new ToolError(
       ERROR_CODES.INVALID_ARGUMENTS,
@@ -1170,7 +1757,25 @@ async function repoDockerRun({
     );
   }
 
-  const normalizedCommand = assertCommandArray(command);
+  const runId = generateRunId();
+  const normalizedCheckout = normalizeDifferentialCheckout(checkout);
+  const normalizedInputCommand = assertCommandArray(command);
+  let checkoutHistory = null;
+  if (normalizedCheckout) {
+    checkoutHistory = assertHistoryAvailableForRef(repoRoot, normalizedCheckout.ref);
+  }
+  const checkoutSrcRoot = normalizedCheckout
+    ? runScopedHostPath(checkoutRoot, sessionRoot, runId, "repo")
+    : repoRoot;
+  const effectiveCommand = normalizedCheckout
+    ? buildDifferentialCheckoutCommand({
+        checkout_ref: normalizedCheckout.ref,
+        checkout_kind: normalizedCheckout.kind,
+        dest: "/src",
+        after_command: normalizedInputCommand,
+      })
+    : normalizedInputCommand;
+  const normalizedCommand = assertCommandArray(effectiveCommand);
   const normalizedDryRun = dryRun == null ? true : assertBoolean(dryRun, "dry_run");
   const normalizedAllowNetwork = allowNetwork == null ? false : assertBoolean(allowNetwork, "allow_network");
   const normalizedMountMode = assertEnumValue(
@@ -1178,6 +1783,13 @@ async function repoDockerRun({
     REPO_MOUNT_MODE_VALUES,
     "repo_mount_mode",
   );
+  if (normalizedCheckout && normalizedMountMode !== "read_only") {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "differential checkout runs require repo_mount_mode read_only",
+      { repo_error_code: "differential_checkout_requires_read_only_mount" },
+    );
+  }
   const normalizedTimeoutMs = timeoutMsOverride == null
     ? REPO_DOCKER_RUN_DEFAULT_TIMEOUT_MS
     : assertInteger(timeoutMsOverride, "timeout_ms", {
@@ -1241,9 +1853,8 @@ async function repoDockerRun({
 
   // Build the argv deterministically before any I/O so dry-run and
   // live-run paths share the exact same flags.
-  const workDir = repoWorkDir(domain);
   const argv = buildDockerRunArgv({
-    repoRoot,
+    repoRoot: checkoutSrcRoot,
     workDir,
     imageTag,
     command: normalizedCommand,
@@ -1252,11 +1863,26 @@ async function repoDockerRun({
     egressProfile: egressProfileResolved,
   });
   const commandHash = sha256Hex(JSON.stringify(normalizedCommand));
+  const replayCommandHash = normalizedInputCommand
+    ? sha256Hex(JSON.stringify(normalizedInputCommand))
+    : null;
   const argvHash = sha256Hex(JSON.stringify(argv.args));
-  const runId = generateRunId();
   const runsDir = repoRunsDir(domain);
   const stdoutPath = path.join(runsDir, `${runId}.stdout`);
   const stderrPath = path.join(runsDir, `${runId}.stderr`);
+  if (normalizedCheckout && normalizedCheckout.kind === "self_patch") {
+    assertRepoWorkDirBoundary(workDir, sessionRoot);
+  }
+  const checkoutPatchHash = normalizedCheckout && normalizedCheckout.kind === "self_patch"
+    ? hashSelfPatchFile(workDir, sessionRoot)
+    : null;
+  if (normalizedCheckout && normalizedCheckout.kind === "self_patch" && !checkoutPatchHash) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "self_patch checkout requires /work/patch.diff before bob_repo_docker_run",
+      { repo_error_code: "missing_differential_patch" },
+    );
+  }
   const startedAt = new Date().toISOString();
 
   // Network mode is the value we'd hand to docker --network. We capture
@@ -1274,12 +1900,25 @@ async function repoDockerRun({
       argv_hash: argvHash,
       network_mode: networkMode,
       mount_mode: normalizedMountMode,
+      work_mount_mode: REPO_WORK_MOUNT_MODE,
       image_tag: imageTag,
       timeout_ms: normalizedTimeoutMs,
       planned_at: startedAt,
       planned_argv: argv.args,
       egress_profile: egressProfileSummary,
     };
+    if (replayCommandHash) planRow.replay_command_hash = replayCommandHash;
+    if (normalizedCheckout) {
+      planRow.checkout_ref = normalizedCheckout.ref;
+      planRow.checkout_kind = normalizedCheckout.kind;
+      if (normalizedCheckout.kind === "self_patch") {
+        planRow.checkout_patch_hash = checkoutPatchHash;
+      }
+      if (checkoutHistory) {
+        planRow.checkout_object = checkoutHistory.checkout_object;
+        planRow.checkout_object_format = checkoutHistory.checkout_object_format;
+      }
+    }
     if (normalizedReplayContext) planRow.replay_context = normalizedReplayContext;
     if (normalizedBlockedHarnessRunId) planRow.blocked_harness_run_id = normalizedBlockedHarnessRunId;
     // O-P7: scrub-validate before persistence. planned_argv carries the
@@ -1299,7 +1938,9 @@ async function repoDockerRun({
       image_tag: imageTag,
       network_mode: networkMode,
       mount_mode: normalizedMountMode,
+      work_mount_mode: REPO_WORK_MOUNT_MODE,
       command_hash: commandHash,
+      replay_command_hash: replayCommandHash,
       argv_hash: argvHash,
       planned_argv: argv.args,
       stdout_path: null,
@@ -1312,6 +1953,15 @@ async function repoDockerRun({
       egress_profile: egressProfileSummary,
       replay_context: normalizedReplayContext,
       blocked_harness_run_id: normalizedBlockedHarnessRunId,
+      ...(normalizedCheckout ? {
+        checkout_ref: normalizedCheckout.ref,
+        checkout_kind: normalizedCheckout.kind,
+        ...(checkoutHistory ? {
+          checkout_object: checkoutHistory.checkout_object,
+          checkout_object_format: checkoutHistory.checkout_object_format,
+        } : {}),
+        ...(normalizedCheckout.kind === "self_patch" ? { checkout_patch_hash: checkoutPatchHash } : {}),
+      } : {}),
     };
   }
 
@@ -1325,6 +1975,19 @@ async function repoDockerRun({
       "docker is not installed or not in PATH; rerun with dry_run: true",
       { repo_error_code: "docker_unavailable" },
     );
+  }
+  if (normalizedCheckout) {
+    await materializeDifferentialCheckoutTree({
+      repoRoot,
+      checkoutRoot,
+      workDir,
+      sessionRoot,
+      runId,
+      checkoutRef: normalizedCheckout.ref,
+      checkoutObject: checkoutHistory && checkoutHistory.checkout_object,
+      checkoutKind: normalizedCheckout.kind,
+      expectedPatchHash: checkoutPatchHash,
+    });
   }
   withSessionLock(domain, () => {
     fs.mkdirSync(runsDir, { recursive: true });
@@ -1370,6 +2033,7 @@ async function repoDockerRun({
   const stderrHash = hashFile(stderrPath);
   const stdoutFirstLine = readFirstLine(stdoutPath, REPO_DOCKER_RUN_FIRST_LINE_MAX_CHARS);
   const stderrFirstLine = readFirstLine(stderrPath, REPO_DOCKER_RUN_FIRST_LINE_MAX_CHARS);
+  const fuzzStats = parseFuzzStatsFromRun(runResult, stdoutPath, stderrPath);
   const completedAt = new Date().toISOString();
 
   const liveRow = {
@@ -1381,6 +2045,7 @@ async function repoDockerRun({
     argv_hash: argvHash,
     network_mode: networkMode,
     mount_mode: normalizedMountMode,
+    work_mount_mode: REPO_WORK_MOUNT_MODE,
     image_tag: imageTag,
     timeout_ms: normalizedTimeoutMs,
     started_at: startedAt,
@@ -1407,8 +2072,21 @@ async function repoDockerRun({
     stderr_first_line: stderrFirstLine,
     stdout_size_bytes: stdoutBytes,
     stderr_size_bytes: stderrBytes,
+    fuzz_stats: fuzzStats,
     egress_profile: egressProfileSummary,
   };
+  if (replayCommandHash) liveRow.replay_command_hash = replayCommandHash;
+  if (normalizedCheckout) {
+    liveRow.checkout_ref = normalizedCheckout.ref;
+    liveRow.checkout_kind = normalizedCheckout.kind;
+    if (checkoutHistory) {
+      liveRow.checkout_object = checkoutHistory.checkout_object;
+      liveRow.checkout_object_format = checkoutHistory.checkout_object_format;
+    }
+    if (normalizedCheckout.kind === "self_patch") {
+      liveRow.checkout_patch_hash = checkoutPatchHash;
+    }
+  }
   if (normalizedReplayContext) liveRow.replay_context = normalizedReplayContext;
   if (normalizedBlockedHarnessRunId) liveRow.blocked_harness_run_id = normalizedBlockedHarnessRunId;
   // O-P7: pre-flight before persistence. The validator catches both the
@@ -1429,7 +2107,9 @@ async function repoDockerRun({
     image_tag: imageTag,
     network_mode: networkMode,
     mount_mode: normalizedMountMode,
+    work_mount_mode: REPO_WORK_MOUNT_MODE,
     command_hash: commandHash,
+    replay_command_hash: replayCommandHash,
     argv_hash: argvHash,
     planned_argv: argv.args,
     stdout_path: stdoutPath,
@@ -1442,6 +2122,7 @@ async function repoDockerRun({
     stderr_size_bytes: stderrBytes,
     stdout_first_line: stdoutFirstLine,
     stderr_first_line: stderrFirstLine,
+    fuzz_stats: fuzzStats,
     stdout_truncated: stdoutTruncated,
     stderr_truncated: stderrTruncated,
     exit_code: exitCode,
@@ -1451,6 +2132,15 @@ async function repoDockerRun({
     egress_profile: egressProfileSummary,
     replay_context: normalizedReplayContext,
     blocked_harness_run_id: normalizedBlockedHarnessRunId,
+    ...(normalizedCheckout ? {
+      checkout_ref: normalizedCheckout.ref,
+      checkout_kind: normalizedCheckout.kind,
+      ...(checkoutHistory ? {
+        checkout_object: checkoutHistory.checkout_object,
+        checkout_object_format: checkoutHistory.checkout_object_format,
+      } : {}),
+      ...(normalizedCheckout.kind === "self_patch" ? { checkout_patch_hash: checkoutPatchHash } : {}),
+    } : {}),
   };
 }
 
@@ -1461,19 +2151,25 @@ module.exports = {
   // Helpers exposed for cross-module reuse / tests
   buildDockerfileBob,
   buildDockerBuildArgv,
+  buildDifferentialCheckoutCommand,
   buildDockerRunArgv,
   buildImageTag,
+  runScopedHostPath,
   detectLanguageProfile,
   recommendedCommandsFor,
   loadSeedCorpus,
   loadSeedCorpusCount,
+  loadNativeFuzzShape,
   assertNoEnvSecretLeak,
   dockerfileBobPath,
   readFirstLine,
+  parseFuzzStats,
   repoEnvJsonPath,
   loadNfsXdrShape,
   // Constants
   DEFAULT_DOCKER_BUILD_TIMEOUT_MS,
+  DIFFERENTIAL_CHECKOUT_KIND_VALUES,
+  DIFFERENTIAL_MATERIALIZER_TIMEOUT_MS,
   MAX_DOCKER_BUILD_TIMEOUT_MS,
   RECOMMENDED_COMMAND_ROLES,
   REPO_DOCKER_RUN_DEFAULT_TIMEOUT_MS,
@@ -1485,6 +2181,7 @@ module.exports = {
   REPO_MOUNT_MODE_VALUES,
   C_DEFAULT_APT_PACKAGES,
   NFS_EXTRA_APT_PACKAGES,
+  NATIVE_FUZZ_EXTRA_APT_PACKAGES,
   ENV_SECRET_LEAK_RE,
 };
 

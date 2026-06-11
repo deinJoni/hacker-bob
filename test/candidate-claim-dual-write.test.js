@@ -111,6 +111,17 @@ test("recording 5 candidate claims writes 5 claims plus 5 claim.candidate.linked
     for (const finding of findings) {
       const claim = claimsByFindingId.get(finding.id);
       assert.ok(claim, `every projected finding must have a CandidateClaim (missing for ${finding.id})`);
+      // CVSS round-trip: the cvss_inputs written on the fixture must survive the
+      // write -> findingPayloadsFromClaims read-back projection intact, so a
+      // regression that strips or mis-normalizes CVSS in either path is caught
+      // here rather than passing silently.
+      assert.ok(
+        finding.cvss_inputs && typeof finding.cvss_inputs === "object",
+        `projected finding ${finding.id} must carry cvss_inputs`,
+      );
+      assert.equal(finding.cvss_inputs.attack_vector, "network");
+      assert.equal(finding.cvss_inputs.privileges_required, "low");
+      assert.equal(finding.cvss_inputs.confidentiality, "high");
       assert.equal(
         claim.evidence_refs[0].content_hash,
         hashCanonicalJson(finding),

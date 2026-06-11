@@ -241,6 +241,14 @@ function staticScanResultsJsonlPath(domain) {
   return path.join(sessionDir(domain), "static-scan-results.jsonl");
 }
 
+function staticAnalysisResultsJsonlPath(domain) {
+  return path.join(sessionDir(domain), "static-analysis-results.jsonl");
+}
+
+function staticAnalysisIndexPath(domain) {
+  return path.join(sessionDir(domain), "static-analysis-index.jsonl");
+}
+
 function verificationRoundPaths(domain, round) {
   const normalizedRound = assertEnumValue(round, VERIFICATION_ROUND_VALUES, "round");
   const fileNames = VERIFICATION_ROUND_FILE_MAP[normalizedRound];
@@ -265,6 +273,14 @@ function evidencePackPaths(domain) {
   return {
     json: path.join(dir, "evidence-packs.json"),
     markdown: path.join(dir, "evidence-packs.md"),
+  };
+}
+
+function proofBundlePaths(domain) {
+  const dir = sessionDir(domain);
+  return {
+    json: path.join(dir, "proof-bundles.json"),
+    markdown: path.join(dir, "proof-bundles.md"),
   };
 }
 
@@ -312,6 +328,14 @@ function repoInventoryPath(domain) {
   return path.join(sessionDir(domain), "repo-inventory.json");
 }
 
+// Cycle O.S4 — diff-impact.json is written by bob_summarize_diff_impact after
+// diff impact analysis. Records which files/line-ranges were touched by the
+// diff and which surface IDs they map to. This is MCP-owned; agents MUST NOT
+// write it directly via the Write tool.
+function diffImpactPath(domain) {
+  return path.join(sessionDir(domain), "diff-impact.json");
+}
+
 // Cycle O.4: repo-command-runs.jsonl is the append-only run ledger for
 // bob_repo_docker_run. Each entry carries the run id, command hash, exit
 // code, duration, network/mount/image identity, and the on-disk paths to
@@ -331,6 +355,13 @@ function repoRunsDir(domain) {
 // container. Stays out of /src (read-only mount of the bound repo).
 function repoWorkDir(domain) {
   return path.join(sessionDir(domain), "repo-work");
+}
+
+// Cycle O.4/S14: host-materialized differential checkouts mounted as
+// /src:ro. Kept outside repo-work so the writable /work bind never aliases
+// the control tree.
+function repoCheckoutDir(domain) {
+  return path.join(sessionDir(domain), "repo-checkouts");
 }
 
 // Cycle O.5: repo-checks.jsonl is the append-only read-only evidence-probe
@@ -382,6 +413,8 @@ const AUDIT_GRADED_BASENAMES = Object.freeze([
   "chains.md",
   "evidence-packs.md",
   "evidence-packs.json",
+  "proof-bundles.md",
+  "proof-bundles.json",
   "grade.md",
   "grade.json",
   "claim-freeze.json",
@@ -391,6 +424,7 @@ const AUDIT_GRADED_BASENAMES = Object.freeze([
   "report-snapshots.jsonl",
   "report-amendments.jsonl",
   "chain-attempts.jsonl",
+  "diff-impact.json",
   // Verification-round mirrors live at the session root with fixed names.
   "brutalist.json",
   "brutalist.md",
@@ -499,12 +533,14 @@ module.exports = {
   httpAuditJsonlPath,
   liveDeadEndsJsonlPath,
   pipelineEventsJsonlPath,
+  proofBundlePaths,
   publicIntelPath,
   queuePolicyPath,
   reportMarkdownPath,
   resolveEvidencePath,
   repoChecksJsonlPath,
   repoCommandRunsJsonlPath,
+  repoCheckoutDir,
   repoDockerfilePath,
   repoEnvPath,
   repoInventoryPath,
@@ -525,6 +561,7 @@ module.exports = {
   auditReportsJsonlPath,
   authDifferentialResultsPath,
   agentRunsJsonlPath,
+  diffImpactPath,
   chainTreeJsonlPath,
   claimClustersJsonlPath,
   claimFreezePath,
@@ -544,6 +581,8 @@ module.exports = {
   staticArtifactImportDir,
   staticArtifactPath,
   staticArtifactsJsonlPath,
+  staticAnalysisIndexPath,
+  staticAnalysisResultsJsonlPath,
   staticScanResultsJsonlPath,
   taskGraphPath,
   taskQueuePath,

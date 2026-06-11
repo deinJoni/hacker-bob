@@ -45,6 +45,55 @@ function evidenceScore(lead) {
   return Math.min(100, score);
 }
 
+function staticLeadEvidenceInput(lead) {
+  const arrayField = (field) => (Array.isArray(lead && lead[field]) ? lead[field] : []);
+  return {
+    hosts: arrayField("hosts"),
+    endpoints: arrayField("endpoints"),
+    interesting_params: arrayField("interesting_params"),
+    nuclei_hits: arrayField("nuclei_hits"),
+    bug_class_hints: arrayField("bug_class_hints"),
+    evidence: arrayField("evidence"),
+  };
+}
+
+function reachabilitySummary(reachability = {}) {
+  const attackVector = typeof reachability.attack_vector === "string"
+    ? reachability.attack_vector
+    : "unknown";
+  const networkReachable = typeof reachability.network_reachable === "boolean"
+    ? String(reachability.network_reachable)
+    : "unknown";
+  const severityCeiling = typeof reachability.severity_ceiling === "string"
+    ? reachability.severity_ceiling
+    : "unknown";
+  return `attack_vector=${attackVector}; network_reachable=${networkReachable}; severity_ceiling=${severityCeiling}`;
+}
+
+function scoreStaticLeadWithReachability(lead, reachability = {}) {
+  const baseScore = evidenceScore(staticLeadEvidenceInput(lead || {}));
+  const networkReachable = reachability
+    && reachability.network_reachable === true
+    && reachability.attack_vector === "network";
+  const score = networkReachable
+    ? Math.max(baseScore, 72)
+    : Math.min(Math.max(baseScore, 45), 59);
+  const rationale = lead && typeof lead.rationale === "string" && lead.rationale.trim()
+    ? lead.rationale
+    : (
+      networkReachable
+        ? `Static analysis lead is network-reachable (${reachabilitySummary(reachability)}); trace source to sink and replay before finding promotion.`
+        : `Static analysis lead is capped but retained (${reachabilitySummary(reachability)}); record as a lower-priority hypothesis until live replay proves impact.`
+    );
+  return {
+    ...lead,
+    score,
+    confidence: confidenceFromScore(score),
+    priority: normalizePriority(lead && lead.priority, score),
+    rationale,
+  };
+}
+
 function confidenceFromScore(score) {
   if (score >= 70) return "high";
   if (score >= 40) return "medium";
@@ -79,11 +128,39 @@ function sortLeadsByScore(leads) {
     || String(a.id).localeCompare(String(b.id)));
 }
 
-function selectPromotableSurfaceLeads(document, options = {}) {
+function partitionLeadPromotion(document, options = {}) {
   const { limit, minScore, includeMedium } = normalizePromotionOptions(options);
-  return sortLeadsByScore(document.leads.filter(
+  const leads = Array.isArray(document && document.leads) ? document.leads : [];
+  const assignableLeads = leads.filter((lead) => (
+    lead.status !== "promoted" &&
+    !lead.promoted_surface_id &&
+    isAssignableSurfaceLead(lead)
+  ));
+  const promotableLeads = sortLeadsByScore(assignableLeads.filter(
     (lead) => shouldPromoteLead(lead, { minScore, includeMedium }),
-  )).slice(0, limit);
+  ));
+  const promotableSet = new Set(promotableLeads);
+  return {
+    limit,
+    assignableLeads,
+    promotableLeads,
+    filteredLeads: assignableLeads.filter((lead) => !promotableSet.has(lead)),
+    selectedLeads: promotableLeads.slice(0, limit),
+  };
+}
+
+function selectPromotableSurfaceLeads(document, options = {}) {
+  return partitionLeadPromotion(document, options).selectedLeads;
+}
+
+function summarizeLeadPromotion(document, options = {}) {
+  const promotion = partitionLeadPromotion(document, options);
+  return {
+    assignable: promotion.assignableLeads.length,
+    promoted: promotion.selectedLeads.length,
+    filtered: promotion.filteredLeads.length,
+    deferred_by_limit: Math.max(0, promotion.promotableLeads.length - promotion.limit),
+  };
 }
 
 function leadPathsEnvelope(domain) {
@@ -120,7 +197,10 @@ module.exports = {
   normalizePriority,
   normalizePromotionOptions,
   normalizeScore,
+  partitionLeadPromotion,
   selectPromotableSurfaceLeads,
   shouldPromoteLead,
+  scoreStaticLeadWithReachability,
   sortLeadsByScore,
+  summarizeLeadPromotion,
 };

@@ -38,6 +38,9 @@ const {
   writeGradeVerdict,
 } = require("../mcp/lib/grade-verdict-store.js");
 const {
+  normalizeProofBundlesDocument,
+} = require("../mcp/lib/proof-bundle.js");
+const {
   writeVerificationRound,
 } = require("../mcp/lib/verification-round-store.js");
 const {
@@ -49,6 +52,9 @@ const {
 const {
   evidencePackPaths,
   gradeArtifactPaths,
+  proofBundlePaths,
+  repoCommandRunsJsonlPath,
+  repoRunsDir,
   reportMarkdownPath,
   sessionDir,
   statePath,
@@ -57,8 +63,10 @@ const {
 } = require("../mcp/lib/paths.js");
 const {
   finalVerificationHash,
+  hashCanonicalJson,
 } = require("../mcp/lib/verification-contracts.js");
 const {
+  appendJsonlLine,
   writeFileAtomic,
 } = require("../mcp/lib/storage.js");
 const {
@@ -263,6 +271,74 @@ function sha256OfFile(filePath) {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
 
+function appendRepoRunFixture(domain) {
+  const runId = "run-proof";
+  const replayCommand = ["sh", "-lc", "./repro.sh"];
+  const stdout = "proof reproduced\n";
+  const stderr = "";
+  const replayCommandHash = crypto.createHash("sha256").update(JSON.stringify(replayCommand)).digest("hex");
+  fs.mkdirSync(repoRunsDir(domain), { recursive: true });
+  fs.writeFileSync(path.join(repoRunsDir(domain), `${runId}.stdout`), stdout);
+  fs.writeFileSync(path.join(repoRunsDir(domain), `${runId}.stderr`), stderr);
+  appendJsonlLine(repoCommandRunsJsonlPath(domain), {
+    version: 1,
+    target_domain: domain,
+    run_id: runId,
+    dry_run: false,
+    command_hash: replayCommandHash,
+    replay_command_hash: replayCommandHash,
+    argv_hash: crypto.createHash("sha256").update(JSON.stringify(["run", "--network", "none"])).digest("hex"),
+    network_mode: "none",
+    mount_mode: "read_only",
+    work_mount_mode: "read_write",
+    replay_context: { finding_id: "F-1" },
+    image_tag: `bob-oss-${domain}:stable`,
+    timeout_ms: 300000,
+    exit_code: 1,
+    signal: null,
+    timed_out: false,
+    stdout_hash: crypto.createHash("sha256").update(stdout).digest("hex"),
+    stderr_hash: crypto.createHash("sha256").update(stderr).digest("hex"),
+    stdout_size_bytes: Buffer.byteLength(stdout),
+    stderr_size_bytes: Buffer.byteLength(stderr),
+    stdout_truncated: false,
+    stderr_truncated: false,
+  });
+  return { runId, replayCommand };
+}
+
+function writeProofBundleDocument(domain) {
+  const finalRound = JSON.parse(fs.readFileSync(verificationRoundPaths(domain, "final").json, "utf8"));
+  const binding = {
+    verification_attempt_id: finalRound.verification_attempt_id,
+    verification_snapshot_hash: finalRound.verification_snapshot_hash,
+    final_verification_hash: finalRound.final_verification_hash,
+  };
+  const { runId, replayCommand } = appendRepoRunFixture(domain);
+  const document = normalizeProofBundlesDocument({
+    version: 1,
+    target_domain: domain,
+    ...binding,
+    packs: [{
+      finding_id: "F-1",
+      bundle_kind: "replay_script",
+      artifacts: [{
+        run_id: runId,
+        replay_command: replayCommand,
+        replay_summary: "Offline proof replay reproduces F-1.",
+      }],
+    }],
+  }, {
+    expectedDomain: domain,
+    findingIdSet: new Set(["F-1"]),
+    finalReportableIdSet: new Set(["F-1"]),
+    verificationBinding: binding,
+  });
+  const paths = proofBundlePaths(domain);
+  fs.writeFileSync(paths.json, `${JSON.stringify(document, null, 2)}\n`);
+  return document;
+}
+
 test("bob_finalize_report appends a five-hash ReportSnapshot row after a full pipeline", () => {
   withTempHome(() => {
     const domain = "bind.example.com";
@@ -306,6 +382,135 @@ test("bob_finalize_report appends a five-hash ReportSnapshot row after a full pi
     assert.equal(events.length, 1, "exactly one claim.report_snapshot.appended event must be emitted per finalize");
     assert.equal(events[0].payload.snapshot_id, row.snapshot_id);
     assert.equal(events[0].payload.report_content_hash, row.report_content_hash);
+  });
+});
+
+test("bob_finalize_report binds proof bundles when report cites proof_bundle refs", () => {
+  withTempHome(() => {
+    const domain = "bind-proof.example.com";
+    drivePipelineToReportWritten(domain);
+    const proofDocument = writeProofBundleDocument(domain);
+    fs.writeFileSync(
+      reportMarkdownPath(domain),
+      "# Bob Report\n\n## Proof Bundle\n\nEvidence:\n- `proof_bundle:F-1`\n",
+    );
+
+    const response = JSON.parse(finalizeReportTool.handler({ target_domain: domain }));
+    const expectedProofHash = hashCanonicalJson(proofDocument);
+    assert.equal(response.proof_bundle_hash, expectedProofHash);
+
+    const snapshots = readReportSnapshots(domain);
+    assert.equal(snapshots.length, 1);
+    const row = snapshots[0];
+    assert.equal(row.proof_bundle_hash, expectedProofHash);
+    assert.deepEqual(row.artifact_refs.find((ref) => ref.kind === "proof_bundle"), {
+      kind: "proof_bundle",
+      path: "proof-bundles.json",
+      content_hash: expectedProofHash,
+    });
+  });
+});
+
+test("bob_finalize_report refuses proof bundle files with unnormalized fields", () => {
+  withTempHome(() => {
+    const domain = "proof-extra-field.example.com";
+    drivePipelineToReportWritten(domain);
+    const proofDocument = writeProofBundleDocument(domain);
+    proofDocument.packs[0].artifacts[0].local_debug_path = "/Users/operator/harness/test/BobInvariant.t.sol";
+    fs.writeFileSync(proofBundlePaths(domain).json, `${JSON.stringify(proofDocument, null, 2)}\n`);
+    fs.writeFileSync(
+      reportMarkdownPath(domain),
+      "# Bob Report\n\n## Proof Bundle\n\nEvidence:\n- `proof_bundle:F-1`\n",
+    );
+
+    assert.throws(
+      () => finalizeReportTool.handler({ target_domain: domain }),
+      /do not match the normalized proof bundle artifact/,
+    );
+    assert.equal(readReportSnapshots(domain).length, 0, "finalization must not append a snapshot for mutated proof bundles");
+  });
+});
+
+test("bob_finalize_report refuses proof_bundle refs without proof-bundles.json", () => {
+  withTempHome(() => {
+    const domain = "missing-proof.example.com";
+    drivePipelineToReportWritten(domain);
+    fs.writeFileSync(
+      reportMarkdownPath(domain),
+      "# Bob Report\n\n## Proof Bundle\n\nEvidence:\n- `proof_bundle:F-1`\n",
+    );
+
+    assert.throws(
+      () => finalizeReportTool.handler({ target_domain: domain }),
+      /proof bundles are not present/,
+    );
+  });
+});
+
+test("bob_finalize_report ignores prose proof_bundle mentions without F-N refs", () => {
+  withTempHome(() => {
+    const domain = "loose-proof-prose.example.com";
+    drivePipelineToReportWritten(domain);
+    fs.writeFileSync(
+      reportMarkdownPath(domain),
+      "# Bob Report\n\n## Notes\n\nThe proof_bundle: field is documented for future evidence refs.\n",
+    );
+
+    const response = JSON.parse(finalizeReportTool.handler({ target_domain: domain }));
+    assert.equal(response.finalized, true);
+    assert.equal(response.proof_bundle_hash, undefined);
+    assert.equal(readReportSnapshots(domain).length, 1);
+  });
+});
+
+test("bob_finalize_report refuses proof_bundle refs after proof bundle replacement", () => {
+  withTempHome(() => {
+    const domain = "replaced-proof.example.com";
+    drivePipelineToReportWritten(domain);
+    const finalRound = JSON.parse(fs.readFileSync(verificationRoundPaths(domain, "final").json, "utf8"));
+    fs.writeFileSync(
+      reportMarkdownPath(domain),
+      "# Bob Report\n\n## Proof Bundle\n\nEvidence:\n- `proof_bundle:F-1`\n",
+    );
+    fs.writeFileSync(proofBundlePaths(domain).json, `${JSON.stringify({
+      version: 1,
+      target_domain: domain,
+      verification_attempt_id: finalRound.verification_attempt_id,
+      verification_snapshot_hash: finalRound.verification_snapshot_hash,
+      final_verification_hash: finalRound.final_verification_hash,
+      packs: [],
+    }, null, 2)}\n`);
+
+    assert.throws(
+      () => finalizeReportTool.handler({ target_domain: domain }),
+      /proof_bundle:F-1 does not resolve/,
+    );
+    assert.equal(readReportSnapshots(domain).length, 0, "finalization must not append a snapshot for stale proof refs");
+  });
+});
+
+test("bob_finalize_report refuses proof bundles stale against current final verification", () => {
+  withTempHome(() => {
+    const domain = "stale-proof-finalize.example.com";
+    drivePipelineToReportWritten(domain);
+    fs.writeFileSync(
+      reportMarkdownPath(domain),
+      "# Bob Report\n\n## Proof Bundle\n\nEvidence:\n- `proof_bundle:F-1`\n",
+    );
+    fs.writeFileSync(proofBundlePaths(domain).json, `${JSON.stringify({
+      version: 1,
+      target_domain: domain,
+      verification_attempt_id: "old-attempt",
+      verification_snapshot_hash: "a".repeat(64),
+      final_verification_hash: "b".repeat(64),
+      packs: [],
+    }, null, 2)}\n`);
+
+    assert.throws(
+      () => finalizeReportTool.handler({ target_domain: domain }),
+      /do not validate against the current final verification/,
+    );
+    assert.equal(readReportSnapshots(domain).length, 0, "finalization must not append a snapshot for stale proof bindings");
   });
 });
 

@@ -45,6 +45,9 @@ const {
   summarizeStaticScanHints,
 } = require("./static-artifacts.js");
 const {
+  readSurfaceLeadsDocument,
+} = require("./lead-intake.js");
+const {
   summarizeSchemaSliceForSurface,
 } = require("./schema-contracts-store.js");
 const {
@@ -81,10 +84,14 @@ const {
 const {
   EVALUATOR_KNOWLEDGE_MAX_CHARS,
   OSS_TECHNIQUE_PACKS,
+  TECHNIQUE_SUMMARY_ITEM_MAX_CHARS,
   evaluatorKnowledgeCandidatePaths,
   resolveEvaluatorKnowledge,
   selectTechniquePacksForSurface,
 } = require("./technique-packs.js");
+const {
+  suggestFamiliesForSurface,
+} = require("./oss-rootcause-family-corpus.js");
 const {
   CLI_TOOL_PACKS,
   fillInvocationPlaceholders,
@@ -105,6 +112,14 @@ const {
 const {
   repoEnvPath,
 } = require("./paths.js");
+const {
+  wrapUntrusted,
+  UNTRUSTED_DATA_SYSTEM_NOTE,
+  OPEN_SENTINEL,
+  CLOSE_SENTINEL,
+  UNTRUSTED_FENCE_OVERHEAD_CHARS,
+  fenceOverheadForLabel,
+} = require("./untrusted-envelope.js");
 const fs = require("fs");
 
 // Bypass table tech-to-file map used by evaluator brief generation.
@@ -209,12 +224,15 @@ const ASSIGNMENT_BRIEF_RANKING_REASON_MAX_CHARS = 160;
 // Default brief message returned when bob-spec.json is absent. The loader is
 // real (mcp/lib/bob-spec.js); this message is the empty-state fallback.
 const BOB_SPEC_ABSENT_MESSAGE = "bob-spec.json not present in the session directory; the smart_contract anti-stop rule still applies (record at least one bypass_attempts[] entry citing the trust assumption you actually attempted to break, or record a finding).";
+const UNTRUSTED_CONTENT_POLICY =
+  `${UNTRUSTED_DATA_SYSTEM_NOTE} Markers: ${OPEN_SENTINEL} / ${CLOSE_SENTINEL}.`;
 
-function briefSliceEntry(key, budget_chars, read) {
+function briefSliceEntry(key, budget_chars, read, untrusted = false) {
   return Object.freeze({
     key,
     budget_chars,
     read,
+    untrusted: untrusted === true,
   });
 }
 
@@ -283,13 +301,13 @@ const WEB_BRIEF_SLICE_REGISTRY = Object.freeze([
     observations: context.cliToolObservations,
     target_domain: context.cliToolTargetDomain,
   })),
-  briefSliceEntry("traffic_summary", 4096, (context) => context.trafficSummary),
-  briefSliceEntry("audit_summary", 4096, (context) => context.auditSummary),
+  briefSliceEntry("traffic_summary", 4096 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.trafficSummary, true),
+  briefSliceEntry("audit_summary", 4096 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.auditSummary, true),
   briefSliceEntry("circuit_breaker_summary", 1024, (context) => context.circuitBreakerSummary),
-  briefSliceEntry("intel_hints", 4096, (context) => context.intelHints),
-  briefSliceEntry("static_scan_hints", 4096, (context) => context.staticScanHints),
-  briefSliceEntry("schema_slice", 8192, (context) => context.schemaSlice),
-  briefSliceEntry("surface_graph_slice", 8192, (context) => context.surfaceGraphSlice),
+  briefSliceEntry("intel_hints", 4096 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.intelHints, true),
+  briefSliceEntry("static_scan_hints", 4096 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.staticScanHints, true),
+  briefSliceEntry("schema_slice", 8192 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.schemaSlice, true),
+  briefSliceEntry("surface_graph_slice", 8192 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.surfaceGraphSlice, true),
   briefSliceEntry("auth_profiles_hint", 512, () => "Call `bob_list_auth_profiles`; pass the chosen profile name as `auth_profile` to `bob_http_scan`."),
 ]);
 
@@ -363,6 +381,42 @@ function ossTechniquePackForBrief(pack, { summary = true } = {}) {
   return brief;
 }
 
+const OSS_ROOTCAUSE_FAMILY_BRIEF_LIMIT = 10;
+
+function emptyRootCauseFamilyResult(lens, { unmatchedLens = false } = {}) {
+  return {
+    lens: typeof lens === "string" && lens.length > 0 ? lens : "unknown",
+    family_count: 0,
+    suggestions: [],
+    unmatched_lens: unmatchedLens,
+    summary_limits: {
+      item_max_chars: TECHNIQUE_SUMMARY_ITEM_MAX_CHARS,
+      limit: 0,
+      returned: 0,
+    },
+  };
+}
+
+function normalizedBriefSignal(value) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function isTrueSignal(value) {
+  return value === true || normalizedBriefSignal(value) === "true";
+}
+
+function isNativeCodeFamilySurface(surface, routeMetadata) {
+  const surfaceObj = surface && typeof surface === "object" && !Array.isArray(surface) ? surface : {};
+  const routePack = normalizedBriefSignal(routeMetadata && routeMetadata.capability_pack);
+  const surfacePack = normalizedBriefSignal(surfaceObj.capability_pack);
+  const surfaceType = normalizedBriefSignal(surfaceObj.surface_type);
+  return routePack === "oss_native_code"
+    || surfacePack === "oss_native_code"
+    || surfaceType === "oss_native_code"
+    || isTrueSignal(surfaceObj.native_source)
+    || isTrueSignal(surfaceObj.nativeSource);
+}
+
 function partitionOssTechniquePacksByLens(packs, taskLens) {
   const packList = Array.isArray(packs) ? packs : [];
   if (!isOssLens(taskLens)) {
@@ -387,14 +441,38 @@ function partitionOssTechniquePacksByLens(packs, taskLens) {
   };
 }
 
-function buildOssTechniquePacksSlice(taskLens) {
+function buildOssTechniquePacksSlice(taskLens, surface, routeMetadata) {
   const partitioned = partitionOssTechniquePacksByLens(OSS_TECHNIQUE_PACKS, taskLens);
+  const routeCapabilityPack = routeMetadata && typeof routeMetadata.capability_pack === "string"
+    ? routeMetadata.capability_pack
+    : null;
+  const familySurface = surface && typeof surface === "object" && !Array.isArray(surface)
+    ? { ...surface, ...(routeCapabilityPack ? { capability_pack: routeCapabilityPack } : {}), task_lens: taskLens }
+    : { ...(routeCapabilityPack ? { capability_pack: routeCapabilityPack } : {}), task_lens: taskLens };
+  const rootCauseFamilies = isNativeCodeFamilySurface(surface, routeMetadata)
+    ? suggestFamiliesForSurface(familySurface, {
+      lens: taskLens,
+      limit: OSS_ROOTCAUSE_FAMILY_BRIEF_LIMIT,
+    })
+    : emptyRootCauseFamilyResult(taskLens, { unmatchedLens: !isOssLens(taskLens) });
+  const renderedFamilies = rootCauseFamilies.suggestions;
   return {
     selected: partitioned.selected,
     other_applicable: partitioned.other_applicable,
+    root_cause_families: renderedFamilies,
+    root_cause_family_limits: {
+      lens: rootCauseFamilies.lens,
+      family_count: rootCauseFamilies.family_count,
+      unmatched_lens: rootCauseFamilies.unmatched_lens,
+      item_max_chars: rootCauseFamilies.summary_limits?.item_max_chars,
+      limit: rootCauseFamilies.summary_limits?.limit,
+      returned: rootCauseFamilies.summary_limits?.returned,
+    },
     selection_limits: {
       selected_chars: JSON.stringify(partitioned.selected).length,
       selected_count: partitioned.selected.length,
+      root_cause_family_chars: JSON.stringify(renderedFamilies).length,
+      root_cause_family_count: renderedFamilies.length,
     },
     lens_partitioned: isOssLens(taskLens),
   };
@@ -403,7 +481,7 @@ function buildOssTechniquePacksSlice(taskLens) {
 const SMART_CONTRACT_BRIEF_SLICE_REGISTRY = Object.freeze([
   briefSliceEntry("bob_spec_status", 4096, (context) => context.bobSpecStatus),
   briefSliceEntry("rpc_pool", 4096, (context) => context.rpcPool),
-  briefSliceEntry("surface_graph_slice", 8192, (context) => context.surfaceGraphSlice),
+  briefSliceEntry("surface_graph_slice", 8192 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.surfaceGraphSlice, true),
 ]);
 
 // ── Plane O Cycle O.6 — OSS brief slice registry ─────────────────────────────
@@ -444,8 +522,19 @@ const REPO_WORKFLOW_TEXT = [
   "3. `bob_repo_docker_run({ target_domain, command, allow_network?: false })`",
   "   — sandboxed execution (cap-drop ALL, no-new-privileges, --user 1000:1000,",
   "   --network none default). Use for fuzz / sanitizer / build runs.",
-  "4. Static analyzers via cli_tools: semgrep, trivy, cargo-audit, npm-audit,",
-  "   pip-audit. Each pack lists the install_check + invocation template.",
+  "4. Static analyzers via cli_tools: semgrep, trivy, CodeQL, Coccinelle,",
+  "   cargo-audit, npm-audit, pip-audit. Each pack lists the install_check",
+  "   + invocation template.",
+  "",
+  "Structure-aware fuzzing: under `fuzz_run`, prefer the bounded",
+  "`repo-env.json` `role:\"fuzz\"` command when present. Shape seeds to the",
+  "target parser's framing (length-prefixed records, magic bytes, checksums,",
+  "chunk order) and start from discovered testdata/seed corpora rather than",
+  "blind empty inputs.",
+  "",
+  "Plateau read: compare only the `fuzz_stats` scalars on recent",
+  "`repo-command-runs.jsonl` rows. Flat `cov`/`ft` means switch seed or",
+  "harness strategy; it never completes or blocks a surface by itself.",
   "",
   "The curl-shaped HTTP playbook (`bob_http_scan`, ffuf-style content",
   "discovery, param fuzzing) is de-emphasized under OSS lenses — repo-bound",
@@ -463,6 +552,12 @@ const OSS_BRIEF_SLICE_REGISTRY = Object.freeze([
   briefSliceEntry("governance", 1024, (context) => context.governance),
   briefSliceEntry("goal_orientation", 1024, (context) => context.goalOrientation),
   briefSliceEntry("code_surface_pack", 4096, (context) => context.codeSurfacePack),
+  briefSliceEntry(
+    "static_analysis_leads",
+    4096 + UNTRUSTED_FENCE_OVERHEAD_CHARS,
+    (context) => context.staticAnalysisLeads,
+    true,
+  ),
   briefSliceEntry("repo_env_recommendations", 4096, (context) => context.repoEnvRecommendations),
   briefSliceEntry("technique_packs", 8192, (context) => context.ossTechniquePacks),
   briefSliceEntry("cli_tools", 2048, (context) => renderAvailableCliToolsSectionSync({
@@ -515,12 +610,12 @@ const NODE_BRIEF_SLICE_REGISTRY = Object.freeze([
   briefSliceEntry("governance", 1024, (context) => context.governance),
   briefSliceEntry("node_context", 1024, (context) => context.nodeContext),
   briefSliceEntry("contract", 4096, (context) => context.contract),
-  briefSliceEntry("cross_stack_composition", 8192, (context) => context.crossStackComposition || ""),
+  briefSliceEntry("cross_stack_composition", 8192 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.crossStackComposition || "", true),
   briefSliceEntry("allowed_tools_for_node", 2048, (context) => context.allowedToolsForNode),
-  briefSliceEntry("recommended_reads", 4096, (context) => context.recommendedReads),
-  briefSliceEntry("adjacent_observations", 4096, (context) => context.adjacentObservations),
-  briefSliceEntry("prior_attempt", 4096, (context) => context.priorAttempt || ""),
-  briefSliceEntry("adjacent_hypotheses", 2048, (context) => context.adjacentHypotheses || ""),
+  briefSliceEntry("recommended_reads", 4096 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.recommendedReads, true),
+  briefSliceEntry("adjacent_observations", 4096 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.adjacentObservations, true),
+  briefSliceEntry("prior_attempt", 4096 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.priorAttempt || "", true),
+  briefSliceEntry("adjacent_hypotheses", 2048 + UNTRUSTED_FENCE_OVERHEAD_CHARS, (context) => context.adjacentHypotheses || "", true),
   briefSliceEntry("recap_and_handoff", 2048, (context) => context.recapAndHandoff),
 ]);
 
@@ -560,7 +655,10 @@ function briefSliceRegistryForProfile(profile) {
 // context sets it to "" when neither applies; we drop the empty key so the
 // brief stays absent rather than carrying an empty header (T-R1 guard).
 function renderNodeBriefExtras(context) {
-  const extras = buildBriefExtrasFromRegistry(NODE_BRIEF_SLICE_REGISTRY, context);
+  const extras = {
+    untrusted_content_policy: UNTRUSTED_CONTENT_POLICY,
+    ...buildBriefExtrasFromRegistry(NODE_BRIEF_SLICE_REGISTRY, context),
+  };
   if (extras.prior_attempt === "" || extras.prior_attempt == null) {
     delete extras.prior_attempt;
   }
@@ -576,9 +674,36 @@ function renderNodeBriefExtras(context) {
 function buildBriefExtrasFromRegistry(registry, context) {
   const extras = {};
   for (const slice of registry) {
-    extras[slice.key] = slice.read(context);
+    const value = slice.read(context);
+    if (slice.untrusted === true) {
+      const rendered = renderUntrustedBriefSlice(slice.key, value);
+      if (rendered === "") continue;
+      extras[slice.key] = rendered;
+      continue;
+    }
+    extras[slice.key] = value;
   }
   return extras;
+}
+
+function renderUntrustedBriefSlice(label, value) {
+  if (value === "" || value == null) return "";
+  let body;
+  if (Buffer.isBuffer(value) || typeof value === "string") {
+    body = value;
+  } else {
+    try {
+      body = JSON.stringify(value, null, 2);
+    } catch {
+      body = String(value);
+    }
+  }
+  if (body == null || body === "") return "";
+  const overhead = fenceOverheadForLabel(label);
+  if (overhead > UNTRUSTED_FENCE_OVERHEAD_CHARS) {
+    throw new Error(`untrusted brief slice ${label} fence overhead ${overhead} exceeds addend ${UNTRUSTED_FENCE_OVERHEAD_CHARS}`);
+  }
+  return wrapUntrusted(body, { label }).fenced;
 }
 
 function resolveBypassTable(techStack) {
@@ -647,7 +772,9 @@ function capStringValue(value, maxChars) {
 
 const REPO_ENV_RECOMMENDED_COMMAND_LIMIT = 8;
 const REPO_ENV_COMMAND_ARG_LIMIT = 12;
-const REPO_ENV_COMMAND_ARG_MAX_CHARS = 400;
+// Match bob_repo_docker_run's per-token limit so briefed command arrays stay
+// executable instead of silently clipping long `sh -lc` recipes.
+const REPO_ENV_COMMAND_ARG_MAX_CHARS = 2048;
 const REPO_ENV_STRING_MAX_CHARS = 240;
 const REPO_ENV_SEED_CORPUS_LIMIT = 8;
 const REPO_ENV_SEED_SAMPLE_LIMIT = 8;
@@ -970,6 +1097,7 @@ function readAssignmentBrief(args) {
   );
 
   return JSON.stringify({
+    untrusted_content_policy: UNTRUSTED_CONTENT_POLICY,
     run_context: {
       target_domain: domain,
       lifecycle_state: state.lifecycle_state,
@@ -1249,6 +1377,135 @@ function buildWebBriefExtras(domain, surfaceObj, routeMetadata, assignment) {
   return extras;
 }
 
+const STATIC_ANALYSIS_LEAD_MAX_ITEMS = 10;
+const STATIC_ANALYSIS_LEAD_SLICE_MAX_CHARS = 4096;
+const STATIC_ANALYSIS_LEAD_LINE_MAX_CHARS = 300;
+
+function staticLeadField(lead, fieldName) {
+  const meta = lead && typeof lead.reachability_meta === "object" && !Array.isArray(lead.reachability_meta)
+    ? lead.reachability_meta
+    : null;
+  if (meta && Object.prototype.hasOwnProperty.call(meta, fieldName)) {
+    return String(meta[fieldName]) || null;
+  }
+  const prefix = `${fieldName}=`;
+  for (const flow of (Array.isArray(lead.high_value_flows) ? lead.high_value_flows : [])) {
+    if (typeof flow === "string" && flow.startsWith(prefix)) return flow.slice(prefix.length) || null;
+  }
+  return null;
+}
+
+function staticLeadEndpoint(lead) {
+  const endpoints = Array.isArray(lead.endpoints) ? lead.endpoints : [];
+  return endpoints.find((endpoint) => typeof endpoint === "string" && endpoint.includes(":"))
+    || endpoints.find((endpoint) => typeof endpoint === "string")
+    || "unknown:0";
+}
+
+function staticLeadEndpointFile(endpoint) {
+  const match = String(endpoint).match(/^(.+):[1-9][0-9]*$/);
+  return match ? match[1] : String(endpoint);
+}
+
+function surfaceReferenceValues(surfaceObj) {
+  if (!surfaceObj || typeof surfaceObj !== "object" || Array.isArray(surfaceObj)) return [];
+  return [
+    surfaceObj.file_path,
+    surfaceObj.file,
+    surfaceObj.path,
+    ...(Array.isArray(surfaceObj.endpoints) ? surfaceObj.endpoints : []),
+  ].filter((value) => typeof value === "string" && value.length > 0);
+}
+
+function endpointMatchesSurface(endpoint, surfaceObj) {
+  const file = staticLeadEndpointFile(endpoint);
+  return surfaceReferenceValues(surfaceObj).some((value) => (
+    value === endpoint
+    || value === file
+    || file.startsWith(`${value}/`)
+  ));
+}
+
+function staticLeadAppliesToSurface(lead, surfaceObj) {
+  if (!lead || lead.source !== "bob_static_scan" || lead.surface_type !== "oss_static_sink") return false;
+  if (lead.source_surface_id && surfaceObj && lead.source_surface_id === surfaceObj.id) return true;
+  if (lead.promoted_surface_id && surfaceObj && lead.promoted_surface_id === surfaceObj.id) return true;
+  if (lead.source_surface_id && surfaceObj && lead.source_surface_id !== surfaceObj.id) return false;
+  const endpoints = Array.isArray(lead.endpoints) ? lead.endpoints : [];
+  if (endpoints.some((endpoint) => endpointMatchesSurface(endpoint, surfaceObj))) return true;
+  return !lead.source_surface_id && (!surfaceObj || !surfaceObj.id);
+}
+
+function staticLeadTimestamp(lead) {
+  const value = lead.scanned_at || lead.indexed_at || lead.created_at || "";
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sortStaticAnalysisLeads(leads) {
+  return [...leads].sort((a, b) => (
+    (b.score || 0) - (a.score || 0)
+      || staticLeadTimestamp(b) - staticLeadTimestamp(a)
+      || String(a.key || a.id || "").localeCompare(String(b.key || b.id || ""))
+  ));
+}
+
+function capStaticLeadLine(line) {
+  if (line.length <= STATIC_ANALYSIS_LEAD_LINE_MAX_CHARS) return line;
+  return line.slice(0, STATIC_ANALYSIS_LEAD_LINE_MAX_CHARS);
+}
+
+function capStaticAnalysisLeadSlice(lines) {
+  const kept = [];
+  for (const line of lines) {
+    const next = [...kept, line].join("\n");
+    if (next.length > STATIC_ANALYSIS_LEAD_SLICE_MAX_CHARS) break;
+    kept.push(line);
+  }
+  return kept.join("\n");
+}
+
+function staticLeadBriefValue(value) {
+  return String(value == null ? "" : value)
+    .replace(/[|\r\n]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function renderStaticAnalysisLead(lead) {
+  const endpoint = staticLeadBriefValue(staticLeadEndpoint(lead)) || "unknown:0";
+  const family = Array.isArray(lead.bug_class_hints) && lead.bug_class_hints.length > 0
+    ? staticLeadBriefValue(lead.bug_class_hints[0]) || "static_analysis"
+    : "static_analysis";
+  const attackVector = staticLeadBriefValue(staticLeadField(lead, "attack_vector")) || "unknown";
+  const networkReachable = staticLeadBriefValue(staticLeadField(lead, "network_reachable")) || "unknown";
+  const severityCeiling = staticLeadBriefValue(staticLeadField(lead, "severity_ceiling")) || "unknown";
+  const recommendation = attackVector === "network" && networkReachable === "true"
+    ? "trace source->sink, prioritize write/UAF/RCE, prove with non-dry-run bob_repo_docker_run"
+    : "trace source->sink, keep capped until replay proves impact";
+  return capStaticLeadLine(
+    `- ${endpoint} | family=${family} | AV=${attackVector} | network_reachable=${networkReachable} | severity_ceiling=${severityCeiling} | score=${lead.score || 0} | ${recommendation}`,
+  );
+}
+
+function summarizeStaticAnalysisLeadsForBrief(domain, surfaceObj) {
+  let document;
+  try {
+    document = readSurfaceLeadsDocument(domain);
+  } catch {
+    return "";
+  }
+  const leads = Array.isArray(document.leads) ? document.leads : [];
+  const ranked = sortStaticAnalysisLeads(
+    leads.filter((lead) => staticLeadAppliesToSurface(lead, surfaceObj)),
+  ).slice(0, STATIC_ANALYSIS_LEAD_MAX_ITEMS);
+  if (ranked.length === 0) return "";
+  return capStaticAnalysisLeadSlice([
+    "### Static analysis leads",
+    ...ranked.map(renderStaticAnalysisLead),
+  ]);
+}
+
 function buildOssBriefExtras(domain, surfaceObj, routeMetadata, assignment) {
   const taskLens = assignment && typeof assignment.task_lens === "string" ? assignment.task_lens : null;
   const slimSurface = slimSurfaceForBrief(surfaceObj);
@@ -1274,8 +1531,9 @@ function buildOssBriefExtras(domain, surfaceObj, routeMetadata, assignment) {
         brief_profile: routeMetadata.brief_profile,
       },
     },
+    staticAnalysisLeads: summarizeStaticAnalysisLeadsForBrief(domain, slimSurface.surface),
     repoEnvRecommendations: buildRepoEnvRecommendationsForBrief(domain),
-    ossTechniquePacks: buildOssTechniquePacksSlice(taskLens),
+    ossTechniquePacks: buildOssTechniquePacksSlice(taskLens, slimSurface.surface, routeMetadata),
     cliToolSurfaceFingerprint,
     cliToolTaskLens: taskLens,
     cliToolObservations,
@@ -1296,6 +1554,9 @@ function buildOssBriefExtras(domain, surfaceObj, routeMetadata, assignment) {
   }
   if (!extras.cli_tools) {
     delete extras.cli_tools;
+  }
+  if (!extras.static_analysis_leads) {
+    delete extras.static_analysis_leads;
   }
   if (!extras.repo_env_recommendations) {
     delete extras.repo_env_recommendations;
@@ -1336,6 +1597,13 @@ const AVAILABLE_CLI_TOOLS_MAX = 5;
 const TELEMETRY_PROMOTION_WEIGHT = 0.5;
 const APPLICABLE_MATCH_WEIGHT = 2;
 const INSTALL_PRESENT_WEIGHT = 1;
+const CLI_TOOL_TIE_BREAK_PRIORITY = Object.freeze({
+  // I10's baseline repo scanners feed the SARIF/secret index path. Keep them
+  // visible under the five-pack cap when all repo packs tie on score.
+  semgrep: 0,
+  trivy: 1,
+});
+const CLI_TOOL_DEFAULT_TIE_BREAK_PRIORITY = 100;
 
 async function loadCliToolInstallStatus(targetDomain, packs) {
   const status = {};
@@ -1441,6 +1709,9 @@ function scoreAndRenderCliToolPacks({
     .filter((entry) => entry.applicable)
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
+      const aPriority = CLI_TOOL_TIE_BREAK_PRIORITY[a.pack.id] ?? CLI_TOOL_DEFAULT_TIE_BREAK_PRIORITY;
+      const bPriority = CLI_TOOL_TIE_BREAK_PRIORITY[b.pack.id] ?? CLI_TOOL_DEFAULT_TIE_BREAK_PRIORITY;
+      if (aPriority !== bPriority) return aPriority - bPriority;
       return a.pack.id.localeCompare(b.pack.id);
     })
     .slice(0, AVAILABLE_CLI_TOOLS_MAX);
@@ -1556,8 +1827,11 @@ module.exports = {
   partitionOssTechniquePacksByLens,
   buildOssBriefExtras,
   buildRepoEnvRecommendationsForBrief,
+  buildBriefExtrasFromRegistry,
   buildBriefExtrasForProfile,
   ASSIGNMENT_BRIEF_SLICE_REGISTRY,
+  UNTRUSTED_CONTENT_POLICY,
+  UNTRUSTED_FENCE_OVERHEAD_CHARS,
   readAssignmentBrief,
   renderAvailableCliToolsSection,
   renderAvailableCliToolsSectionSync,
