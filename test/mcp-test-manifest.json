@@ -133,5 +133,6 @@
   "test/read-candidate-claims-cvss.test.js",
   "test/technique-attempt-lead-surface.test.js",
   "test/claim-secret-evidence-bypass.test.js",
-  "test/lifecycle-state-drift.test.js"
+  "test/lifecycle-state-drift.test.js",
+  "test/evidence-gate-lifecycle.test.js"
 ]
