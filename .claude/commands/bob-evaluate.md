@@ -15,6 +15,8 @@ allowed-tools:
   - mcp__hacker-bob__bob_read_doc_delta_results
   - mcp__hacker-bob__bob_run_auth_differential
   - mcp__hacker-bob__bob_read_auth_differential_results
+  - mcp__hacker-bob__bob_ingest_sarif
+  - mcp__hacker-bob__bob_read_static_analysis_index
   - mcp__hacker-bob__bob_record_candidate_claim
   - mcp__hacker-bob__bob_list_candidate_claims
   - mcp__hacker-bob__bob_read_chain_attempts
@@ -27,6 +29,7 @@ allowed-tools:
   - mcp__hacker-bob__bob_diff_verification_attempts
   - mcp__hacker-bob__bob_build_verification_adjudication
   - mcp__hacker-bob__bob_read_evidence_packs
+  - mcp__hacker-bob__bob_write_proof_bundle
   - mcp__hacker-bob__bob_read_grade_verdict
   - mcp__hacker-bob__bob_init_session
   - mcp__hacker-bob__bob_init_repo_session

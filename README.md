@@ -161,6 +161,97 @@ hacker-bob doctor /path/to/your/project --adapter codex
 hacker-bob doctor /path/to/your/project --adapter kimi
 ```
 
+## Integrating Bob Diff Review into your repo
+
+Bob can review pull request diffs automatically using GitHub Actions. The
+review runs headless inside GitHub-hosted runners and posts inline comments
+plus a Check Run result on every PR.
+
+### Quick setup
+
+1. **Set org-level secrets and variables** once in your GitHub organization
+   (Settings > Secrets and variables > Actions):
+
+   | Name | Type | Description |
+   |---|---|---|
+   | `ANTHROPIC_OAUTH_TOKEN` | Secret | Recommended Anthropic OAuth token from `claude setup-token` for the headless Claude reviewer. |
+   | `ANTHROPIC_API_KEY` | Secret | Anthropic API key fallback for the headless Claude reviewer. Required only when `ANTHROPIC_OAUTH_TOKEN` is not set. |
+   | `BOB_INSTALL_TOKEN` | Secret | GitHub App token or fine-grained PAT with `read:packages` and `contents:read` scopes. Used to install `@bobnetsec/*` packages. |
+   | `BOB_VERSION` | Variable | Bob release tag to cache, e.g. `v1.2.3`. Shared across repos in the org so they reuse the same warm workspace cache. |
+
+2. **Add the caller workflow** to each repository you want reviewed. Create
+   `.github/workflows/bob-review.yml` with the minimal content below:
+
+   ```yaml
+   name: Bob Diff Review
+
+   on:
+     pull_request:
+       types: [opened, synchronize, reopened]
+
+   permissions:
+     pull-requests: write
+     checks: write
+     contents: read
+
+   jobs:
+     bob-review:
+       uses: bobnetsec/bob-workflows/.github/workflows/bob-review.yml@v1
+       secrets: inherit
+   ```
+
+   That is the complete file. `secrets: inherit` propagates the org-level
+   secrets automatically — no per-repo secret declarations required.
+
+### Optional inputs
+
+Pass these under `with:` on the `bob-review` job if you need to override the
+reusable workflow defaults:
+
+| Input | Default | Description |
+|---|---|---|
+| `min-severity-for-failure` | `high` | Minimum severity that sets the PR check to failed. Accepts `critical`, `high`, `medium`, or `low`. Set to `critical` to fail only on critical findings; set to `low` to fail on any finding. |
+
+Example with `min-severity-for-failure` overridden:
+
+```yaml
+jobs:
+  bob-review:
+    uses: bobnetsec/bob-workflows/.github/workflows/bob-review.yml@v1
+    secrets: inherit
+    with:
+      min-severity-for-failure: critical
+      bob-workflows-ref: v1
+```
+
+### Viewing findings
+
+- **Inline PR comments**: Bob posts a comment on each changed line that
+  contains a finding. Comments include severity, a short description, and a
+  suggested fix when available.
+- **Check Run**: A "Bob Diff Review" check appears in the PR Checks tab. The
+  summary shows `findings_count`, `critical_count`, and links to the full
+  report artifact.
+- **Actions log**: The "Log review outputs" step in the run log prints
+  `findings_count`, `critical_count`, and `review_url` for quick triage.
+
+### Fork PRs
+
+Forked PRs do not receive org-level secrets, and same-repo PRs may also run
+before reviewer credentials are configured. The workflow detects missing
+Anthropic credentials and skips the Bob review steps instead of failing the PR
+check in setup. No additional guard is needed in the caller workflow.
+
+### Versioning
+
+Pin the reusable workflow to a release tag or full commit SHA. If you override
+`bob-workflows-ref`, set it to the same immutable ref so the workflow checks out
+the matching local action source:
+
+```yaml
+uses: bobnetsec/bob-workflows/.github/workflows/bob-review.yml@v1
+```
+
 ## How A Evaluation Works
 
 Bob follows a structured workflow:

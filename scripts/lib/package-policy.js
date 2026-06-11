@@ -118,6 +118,10 @@ function isInternalRefactorDoc(file) {
   return /^docs\/refactor-[^/]+\.md$/.test(file);
 }
 
+function isInternalPlaneDeltaDetailDoc(file) {
+  return /^docs\/plane-delta\/detail\/[^/]+\.md$/.test(file);
+}
+
 function isInternalRefactorScratch(file) {
   return file === "tmp" || file.startsWith("tmp/");
 }
@@ -177,14 +181,7 @@ function expectedCanonicalFiles(root = DEFAULT_ROOT) {
     ...sourceTreeFiles(root, ".claude").filter((file) => !LOCAL_INSTALL_METADATA_FILES.has(file)),
     ...sourceTreeFiles(root, "adapters"),
     ...sourceTreeFiles(root, "bin").filter(isPackableBin),
-    ...sourceTreeFiles(root, "docs").filter((file) => !isInternalRefactorDoc(file)),
-    // mcp/node_modules is never part of the canonical package: the installer
-    // sources runtime deps from the published package's ROOT node_modules
-    // (scripts/install.js copyRuntimeNodeDependencies), and the pack-size budget
-    // keeps the tarball lean. It is excluded from package.json "files" too, so it
-    // must not be expected here — otherwise the package test breaks whenever a
-    // pre-pack step (e.g. the installer smoke tests) has populated it on disk and
-    // a bundled dep ships an npm-stripped dotfile (.npmignore/.gitignore).
+    ...sourceTreeFiles(root, "docs").filter((file) => !isInternalRefactorDoc(file) && !isInternalPlaneDeltaDetailDoc(file)),
     ...sourceTreeFiles(root, "mcp").filter((file) => !file.startsWith("mcp/node_modules/")),
     ...sourceTreeFiles(root, "prompts"),
     ...sourceTreeFiles(root, "scripts").filter(isPackableScript),
@@ -204,6 +201,7 @@ module.exports = {
   expectedCanonicalFiles,
   isInternalRefactorScratch,
   isInternalRefactorDoc,
+  isInternalPlaneDeltaDetailDoc,
   isExcludedCanonicalPackageFile,
   isPackableBin,
   isPackableBobResource,

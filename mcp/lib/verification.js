@@ -5,6 +5,7 @@ const path = require("path");
 const crypto = require("crypto");
 const {
   SEVERITY_VALUES,
+  VERIFICATION_REASONING_DIVERGENCE_VALUES,
   VERIFICATION_ROUND_VALUES,
   VERIFY_QA_SAMPLE_MAX,
   VERIFY_SMALL_REPORTABLE_THRESHOLD,
@@ -14,6 +15,7 @@ const {
 } = require("./validation.js");
 const {
   evidencePackPaths,
+  proofBundlePaths,
   verificationAdjudicationPath,
   verificationAttemptsDir,
   verificationManifestPath,
@@ -140,6 +142,9 @@ function verificationSourceFiles(domain) {
   const evidence = evidencePackPaths(domain);
   files.push([path.basename(evidence.json), evidence.json]);
   files.push([path.basename(evidence.markdown), evidence.markdown]);
+  const proofBundles = proofBundlePaths(domain);
+  if (fs.existsSync(proofBundles.json)) files.push([path.basename(proofBundles.json), proofBundles.json]);
+  if (fs.existsSync(proofBundles.markdown)) files.push([path.basename(proofBundles.markdown), proofBundles.markdown]);
   return files;
 }
 
@@ -476,6 +481,27 @@ function findingDiffs(a, b) {
   return diffs;
 }
 
+function artifactDivergence(rawB, rawC) {
+  const bReasons = rawB && Array.isArray(rawB.confidence_reasons) ? rawB.confidence_reasons : [];
+  const cReasons = rawC && Array.isArray(rawC.confidence_reasons) ? rawC.confidence_reasons : [];
+  if (!bReasons.includes("fresh_replay_passed") || !cReasons.includes("fresh_replay_passed")) {
+    return "none";
+  }
+  const bHashes = rawB && isPlainObject(rawB.artifact_hashes) ? rawB.artifact_hashes : {};
+  const cHashes = rawC && isPlainObject(rawC.artifact_hashes) ? rawC.artifact_hashes : {};
+  const bKeys = Object.keys(bHashes).sort((a, b) => a.localeCompare(b));
+  const cKeys = Object.keys(cHashes).sort((a, b) => a.localeCompare(b));
+  if (bKeys.length === 0 || cKeys.length === 0) return "none";
+
+  const cKeySet = new Set(cKeys);
+  const sharedKeys = bKeys.filter((key) => cKeySet.has(key));
+  if (sharedKeys.length === 0) return "artifact_key_divergence";
+  if (sharedKeys.some((key) => !Object.is(bHashes[key], cHashes[key]))) {
+    return "artifact_hash_divergence";
+  }
+  return "none";
+}
+
 function isHighOrCritical(severity) {
   return ["critical", "high"].includes(severity);
 }
@@ -534,6 +560,7 @@ function compactAdjudicationContextFromDocument(document, { current = true, stal
         replay_reasons: [],
         disagreement: false,
         disagreement_fields: [],
+        reasoning_divergence: "none",
         brutalist: null,
         balanced: null,
       });
@@ -571,6 +598,16 @@ function compactAdjudicationContextFromDocument(document, { current = true, stal
       : [];
   }
 
+  const reasoningDivergence = isPlainObject(document.reasoning_divergence)
+    ? document.reasoning_divergence
+    : {};
+  for (const item of byFinding.values()) {
+    const value = reasoningDivergence[item.finding_id];
+    if (VERIFICATION_REASONING_DIVERGENCE_VALUES.includes(value)) {
+      item.reasoning_divergence = value;
+    }
+  }
+
   return {
     current: true,
     stale: false,
@@ -602,6 +639,8 @@ function buildVerificationAdjudication(args) {
   const dispositionDiffs = [];
   const severityDiffs = [];
   const reportableDiffs = [];
+  const reasoningDivergence = {};
+  const reasoningDivergenceIds = new Set();
   const replayRequired = new Set();
   const replayReasons = {};
   const unionReportables = new Set();
@@ -631,6 +670,14 @@ function buildVerificationAdjudication(args) {
       if (diffs.includes("severity")) severityDiffs.push(findingId);
       if (diffs.includes("reportable")) reportableDiffs.push(findingId);
     }
+    if (diffs.length === 0) {
+      const rd = artifactDivergence(brutalistById.get(findingId), balancedById.get(findingId));
+      if (rd !== "none") {
+        reasoningDivergence[findingId] = rd;
+        reasoningDivergenceIds.add(findingId);
+        if (rd === "artifact_key_divergence") addReplay(findingId, "reasoning_divergence");
+      }
+    }
     if ((b.reportable || c.reportable) && (isHighOrCritical(b.severity) || isHighOrCritical(c.severity))) {
       addReplay(findingId, "agreed_high_or_critical_reportable");
     }
@@ -653,6 +700,9 @@ function buildVerificationAdjudication(args) {
   const qaSampledIds = deterministicQaSample(domain, state, snapshot, qaCandidates);
   for (const findingId of qaSampledIds) addReplay(findingId, "qa_sample");
 
+  const reasoningDivergenceEntries = Object.entries(reasoningDivergence)
+    .sort(([a], [b]) => a.localeCompare(b));
+
   const payload = {
     version: 1,
     schema_version: VERIFICATION_SCHEMA_V2,
@@ -673,6 +723,8 @@ function buildVerificationAdjudication(args) {
     disposition_diffs: dispositionDiffs,
     severity_diffs: severityDiffs,
     reportable_diffs: reportableDiffs,
+    reasoning_divergence: Object.fromEntries(reasoningDivergenceEntries),
+    reasoning_divergence_ids: Array.from(reasoningDivergenceIds).sort((a, b) => a.localeCompare(b)),
     replay_required_ids: Array.from(replayRequired).sort((a, b) => a.localeCompare(b)),
     replay_reasons: Object.fromEntries(Object.entries(replayReasons).sort(([a], [b]) => a.localeCompare(b)).map(([id, reasons]) => [id, reasons.sort()])),
     replay_skipped_ids: Array.from(unionReportables).filter((id) => !replayRequired.has(id)).sort((a, b) => a.localeCompare(b)),
@@ -689,6 +741,7 @@ function buildVerificationAdjudication(args) {
       union_reportables: unionReportables.size,
       replay_required: replayRequired.size,
       qa_sampled: qaSampledIds.length,
+      reasoning_divergence: reasoningDivergenceIds.size,
     },
   };
   const adjudicationPlanHash = computeAdjudicationPlanHash(payload);
@@ -710,6 +763,7 @@ function buildVerificationAdjudication(args) {
       disagreements: disagreements.length,
       replay_required: replayRequired.size,
       qa_sampled: qaSampledIds.length,
+      reasoning_divergence: reasoningDivergenceIds.size,
     },
   }, governanceContextForDomain(domain));
   refreshVerificationManifest(domain);
@@ -1302,6 +1356,7 @@ module.exports = {
   VERIFICATION_REPLAY_LEASE_TTL_MS,
   VERIFICATION_SCHEMA_V1,
   VERIFICATION_SCHEMA_V2,
+  artifactDivergence,
   assertCurrentV2RoundDocument,
   assertEvidenceMatchesFinal,
   assertAdjudicationRoundInputsCurrent,

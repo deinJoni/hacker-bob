@@ -446,6 +446,9 @@ test("OSS brief extras partition technique packs by task lens and keep CLI packs
   assert.ok(extras.technique_packs.selected.some((pack) => pack.id === "oss_native_code"));
   assert.ok(extras.technique_packs.other_applicable.some((pack) => pack.id === "oss_ci_cd"));
   assert.equal(extras.technique_packs.selection_limits.selected_count, extras.technique_packs.selected.length);
+  assert.ok(extras.technique_packs.root_cause_families.length > 0);
+  assert.ok(extras.technique_packs.root_cause_families.some((family) => family.family === "validate_vs_consume"));
+  assert.ok(extras.technique_packs.root_cause_families.some((family) => family.family === "crypto_ordering"));
   assert.match(extras.cli_tools, /semgrep|trivy/);
 });
 
@@ -455,6 +458,8 @@ test("readAssignmentBrief accepts routed OSS brief_profile and emits OSS techniq
   fs.writeFileSync(path.join(repo, "CMakeLists.txt"), "cmake_minimum_required(VERSION 3.22)\nproject(brief_oss C)\n");
   fs.mkdirSync(path.join(repo, "src"), { recursive: true });
   fs.writeFileSync(path.join(repo, "src", "parser.c"), "int parse(const char *b, int n){ return n > 0 ? b[0] : 0; }\n");
+  fs.mkdirSync(path.join(repo, "fuzzing"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "fuzzing", "parser_fuzzer.cc"), "extern \"C\" int LLVMFuzzerTestOneInput(const unsigned char *data, unsigned long size){ return size > 0 ? data[0] : 0; }\n");
   fs.mkdirSync(path.join(repo, "fuzz", "corpus"), { recursive: true });
   fs.writeFileSync(path.join(repo, "fuzz", "corpus", "minimal.bin"), "AAAA");
 
@@ -499,8 +504,17 @@ test("readAssignmentBrief accepts routed OSS brief_profile and emits OSS techniq
   assert.equal(brief.repo_env_recommendations.seed_corpus[0].rel_path, "fuzz/corpus");
   const fuzzCommand = brief.repo_env_recommendations.recommended_commands.find((command) => command.role === "fuzz");
   assert.ok(fuzzCommand, "brief must expose a fuzz recommendation when seed corpus exists");
+  assert.equal(fuzzCommand.id, "fuzz_asan_ubsan");
   assert.equal(fuzzCommand.seed_path, "fuzz/corpus");
+  assert.equal(fuzzCommand.command[0], "sh");
+  assert.equal(fuzzCommand.command[1], "-lc");
+  assert.ok(fuzzCommand.command[2].length > 400, "native fuzz recipe should not be clipped at the old argv cap");
+  assert.ok(fuzzCommand.command[2].length <= 2048, "native fuzz recipe token must remain bounded by brief cap");
+  assert.match(fuzzCommand.command[2], /-fsanitize=address,undefined,fuzzer/);
+  assert.match(fuzzCommand.command[2], /\/work\/out\/h -max_total_time=240 \/work\/out\/corpus/);
   assert.ok(brief.technique_packs.selected.some((pack) => pack.id === "oss_native_code"));
+  assert.ok(brief.technique_packs.root_cause_families.some((family) => family.family === "validate_vs_consume"));
+  assert.ok(brief.technique_packs.root_cause_families.some((family) => family.family === "crypto_ordering"));
   assert.ok(!String(JSON.stringify(brief)).includes("Unsupported brief profile"));
 }));
 

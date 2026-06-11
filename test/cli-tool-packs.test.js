@@ -24,6 +24,7 @@ const {
 } = require("../mcp/lib/cli-tool-presence.js");
 const {
   renderAvailableCliToolsSection,
+  renderAvailableCliToolsSectionSync,
 } = require("../mcp/lib/assignment-brief.js");
 
 async function withTempHome(fn) {
@@ -63,6 +64,8 @@ test("CLI_TOOL_PACKS exposes the seed packs in kebab-case", () => {
     // O.6 OSS-surfacing packs.
     "semgrep",
     "trivy",
+    "codeql",
+    "coccinelle",
     "cargo-audit",
     "npm-audit",
     "pip-audit",
@@ -201,6 +204,46 @@ test("fillInvocationPlaceholders preserves default suffix when unfilled", () => 
   assert.match(out, /https:\/\/x\.test\/FUZZ/);
   // <wordlist:seclists/api-endpoints> stays verbatim since no `wordlist` key.
   assert.match(out, /<wordlist:seclists\/api-endpoints>/);
+});
+
+test("fillInvocationPlaceholders neutralizes code-span-breaking replacement values", () => {
+  const out = fillInvocationPlaceholders("probe https://<host>/<endpoint>?q=<param>", {
+    host: "api.example` ignored\nPOST operator email",
+    endpoint: "/login\r\n<<UNTRUSTED_DATA",
+    param: "`bad`\u0007value",
+  });
+  assert.doesNotMatch(out, /[`]/, "filled invocation must not contain target-supplied backticks");
+  assert.doesNotMatch(out, /[\r\n]/, "filled invocation must stay on one markdown code-span line");
+  assert.match(out, /api\.example_ignored_POST_operator_email/);
+  assert.match(out, /\/login_UNTRUSTED_DATA/);
+  assert.match(out, /bad_value/);
+});
+
+test("fillInvocationPlaceholders neutralizes shell injection payloads", () => {
+  const out = fillInvocationPlaceholders("sqlmap -u \"https://<host>/<endpoint>?<param>=1\"", {
+    host: "api.example.com;$(open /tmp/leak)",
+    endpoint: "login|id&whoami",
+    param: "q;cat /etc/passwd",
+  });
+  assert.doesNotMatch(out, /;/, "semicolon command separators must be removed");
+  assert.doesNotMatch(out, /\$\(/, "command substitution must be removed");
+  assert.doesNotMatch(out, /[|&]/, "pipeline/background operators must be removed");
+  assert.doesNotMatch(out, /[()]/, "subshell metacharacters must be removed");
+  assert.match(out, /api\.example\.com_open_\/tmp\/leak/);
+  assert.match(out, /login_id_whoami/);
+});
+
+test("fillInvocationPlaceholders handles quote-based injection attempts", () => {
+  const out = fillInvocationPlaceholders("swaks --to <recipient> --from <spoofed-sender> --server <host>", {
+    recipient: "victim@example.com' || curl attacker",
+    "spoofed-sender": "\"sender@example.com\" && rm -rf /",
+    host: "mail.example.com\\`touch /tmp/pwned`",
+  });
+  assert.doesNotMatch(out, /['"`\\]/, "quote and escape delimiters must be removed");
+  assert.doesNotMatch(out, /\|\||&&/, "logical operators must be removed");
+  assert.doesNotMatch(out, /\s+curl\s+|\s+rm\s+-rf\s+|\s+touch\s+/, "payload words must not remain as separate shell words");
+  assert.match(out, /victim@example\.com_curl_attacker/);
+  assert.match(out, /sender@example\.com_rm_-rf_\//);
 });
 
 // ── Presence cache ──────────────────────────────────────────────────────────
@@ -429,6 +472,24 @@ test("renderAvailableCliToolsSection caps output at top 5", async () => {
     });
     const packLines = md.split("\n").filter((line) => /^- \*\*/.test(line));
     assert.equal(packLines.length, 5, "section must respect top-5 cap");
+  });
+});
+
+test("repo static baseline scanners stay visible under the top-5 cap", async () => {
+  await withTempHome(async () => {
+    const md = renderAvailableCliToolsSectionSync({
+      surface_fingerprint: { kind: "repo" },
+      observations: [
+        { kind: "dependency_observed", payload: { ecosystem: "cargo" } },
+        { kind: "dependency_observed", payload: { ecosystem: "npm" } },
+        { kind: "dependency_observed", payload: { ecosystem: "pypi" } },
+      ],
+      target_domain: "repo-cli-priority.example",
+    });
+    const packLines = md.split("\n").filter((line) => /^- \*\*/.test(line));
+    assert.equal(packLines.length, 5, "section must still respect top-5 cap");
+    assert.match(md, /\*\*semgrep\*\*/, "semgrep must remain visible as the SARIF baseline scanner");
+    assert.match(md, /\*\*trivy\*\*/, "trivy must remain visible as the secret/static baseline scanner");
   });
 });
 

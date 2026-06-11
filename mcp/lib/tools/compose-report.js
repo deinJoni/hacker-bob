@@ -40,6 +40,7 @@ const {
   verificationRoundPaths,
   frontierEventsJsonlPath,
   evidencePackPaths,
+  proofBundlePaths,
   chainAttemptsJsonlPath,
 } = require("../paths.js");
 const {
@@ -55,6 +56,7 @@ const SECTION_KINDS = Object.freeze([
   "severity",
   "remediation",
   "chain_summary",
+  "proof_bundle",
   "provenance",
 ]);
 const PROVENANCE_VALUES = Object.freeze([
@@ -75,6 +77,7 @@ const EVIDENCE_REF_PARSERS = Object.freeze([
   { prefix: "verification_round:", validate: validateVerificationRoundRef },
   { prefix: "chain_attempt:", validate: validateChainAttemptRef },
   { prefix: "evidence_pack:", validate: validateEvidencePackRef },
+  { prefix: "proof_bundle:", validate: validateProofBundleRef },
 ]);
 
 // Banner is prepended on every render so operators see the policy verbatim
@@ -190,6 +193,56 @@ function validateEvidencePackRef(domain, id) {
   }
 }
 
+function findingSetsFromFinalRound(finalRound) {
+  const findingIdSet = new Set();
+  const finalReportableIdSet = new Set();
+  const results = Array.isArray(finalRound && finalRound.results) ? finalRound.results : [];
+  for (const result of results) {
+    if (!result || typeof result.finding_id !== "string" || !result.finding_id.trim()) continue;
+    findingIdSet.add(result.finding_id);
+    if (result.reportable === true) finalReportableIdSet.add(result.finding_id);
+  }
+  return { findingIdSet, finalReportableIdSet };
+}
+
+function validateProofBundleRef(domain, id) {
+  const paths = proofBundlePaths(domain);
+  if (!fs.existsSync(paths.json)) return false;
+  try {
+    const doc = JSON.parse(fs.readFileSync(paths.json, "utf8"));
+    const bindingFields = ["verification_attempt_id", "verification_snapshot_hash", "final_verification_hash"];
+    const hasBinding = bindingFields.some((field) => doc[field] != null);
+    const finalPaths = verificationRoundPaths(domain, "final");
+    let finalBinding = null;
+    let finalRound = null;
+    if (fs.existsSync(finalPaths.json)) {
+      finalRound = JSON.parse(fs.readFileSync(finalPaths.json, "utf8"));
+      const finalHasBinding = bindingFields.some((field) => finalRound && finalRound[field] != null);
+      if ((finalRound && finalRound.version === 2) || finalHasBinding) {
+        if (!bindingFields.every((field) => typeof finalRound[field] === "string" && finalRound[field].trim())) {
+          return false;
+        }
+        finalBinding = Object.fromEntries(bindingFields.map((field) => [field, finalRound[field]]));
+      }
+    }
+    if (!finalRound) return false;
+    if (hasBinding || finalBinding) {
+      if (!hasBinding || !finalBinding) return false;
+      if (!bindingFields.every((field) => typeof doc[field] === "string" && doc[field].trim())) return false;
+      if (!bindingFields.every((field) => finalBinding[field] === doc[field])) return false;
+    }
+    const { normalizeProofBundlesDocument } = require("../proof-bundle.js");
+    const normalized = normalizeProofBundlesDocument(doc, {
+      expectedDomain: domain,
+      ...findingSetsFromFinalRound(finalRound),
+      verificationBinding: finalBinding,
+    });
+    return normalized.packs.some((pack) => pack && pack.finding_id === id);
+  } catch {
+    return false;
+  }
+}
+
 function validateProvenance(domain, section) {
   if (section.provenance !== "bob_verified") return;
   if (!Array.isArray(section.evidence_refs) || section.evidence_refs.length === 0) {
@@ -208,7 +261,7 @@ function validateProvenance(domain, section) {
     if (!classified) {
       throw new ToolError(
         ERROR_CODES.INVALID_ARGUMENTS,
-        `evidence_ref ${ref} does not parse as a known prefix (frontier_event:, http_record:, verification_round:, chain_attempt:, evidence_pack:)`,
+        `evidence_ref ${ref} does not parse as a known prefix (frontier_event:, http_record:, verification_round:, chain_attempt:, evidence_pack:, proof_bundle:)`,
         { ref },
         {
           remediation: "rewrite the evidence_ref with a known prefix or remove provenance: bob_verified",
@@ -499,13 +552,12 @@ function handler(args) {
     : assertString(args.severity_summary, "severity_summary", { maxLength: SEVERITY_SUMMARY_MAX, minLength: 0 });
   const reproSteps = normalizeReproSteps(args.repro_steps_by_finding);
 
-  // Provenance enforcement (Y-P13c). Runs AFTER normalization so error messages
-  // can reference the structured section_id.
-  for (const section of sections) {
-    validateProvenance(domain, section);
-  }
-
   return withSessionLock(domain, () => {
+    // Provenance enforcement (Y-P13c). Runs under the session lock so
+    // cross-artifact proof/evidence binding checks share the render window.
+    for (const section of sections) {
+      validateProvenance(domain, section);
+    }
     const dir = sessionDir(domain);
     fs.mkdirSync(dir, { recursive: true });
     const amendments = readAmendments(domain);
@@ -536,7 +588,7 @@ const { wrapWriteTool } = require("./_write-base.js");
 module.exports = wrapWriteTool({
   name: "bob_compose_report",
   description:
-    "Render the canonical session report.md from structured sections (Y-D15b / Y-P13). Agents emit closed-shape input; MCP renders markdown server-side, prepends the operator-edit-warning banner (Y-P13a), enforces provenance on bob_verified sections (Y-P13c — at least one evidence_ref must resolve to a verification_round result_id with reportable=true), caps prose per Y-P13b. Subsequent calls re-render with current report-amendments.jsonl appended (Y-P13a). bob_finalize_report still binds the 5-hash ReportSnapshot on top.",
+    "Render the canonical session report.md from structured sections (Y-D15b / Y-P13). Agents emit closed-shape input; MCP renders markdown server-side, prepends the operator-edit-warning banner (Y-P13a), enforces provenance on bob_verified sections (Y-P13c — at least one evidence_ref must resolve to a verification_round result_id with reportable=true), caps prose per Y-P13b. Subsequent calls re-render with current report-amendments.jsonl appended (Y-P13a). bob_finalize_report still binds the hash-bound ReportSnapshot on top.",
   inputSchema: {
     type: "object",
     properties: {

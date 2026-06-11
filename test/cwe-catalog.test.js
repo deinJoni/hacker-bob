@@ -88,7 +88,10 @@ test("cweTitle returns a title for known ids and null otherwise", () => {
 // Intentional negative fixtures: ids referenced in tests precisely because they
 // are NOT in the catalog (assertValidCwe / write-path rejection coverage). They
 // must be excluded from the completeness sweep below.
-const NEGATIVE_CWE_FIXTURES = new Set(["CWE-602", "CWE-999999"]);
+// CWE-0 is not a real id: the /CWE-[0-9]+/ sweep matches the literal "CWE-0"
+// inside the regex /^CWE-0?22$/ in static-analysis-index.test.js (an optional
+// leading zero on CWE-22). Treat it as a scan artifact, not a seedable id.
+const NEGATIVE_CWE_FIXTURES = new Set(["CWE-0", "CWE-602", "CWE-999999"]);
 
 function collectReferencedCwes(dir) {
   const ids = new Set();

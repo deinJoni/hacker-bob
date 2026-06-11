@@ -251,6 +251,24 @@ const {
 // the call sites do not have to know about the renamed artifact.
 const findingsJsonlPath = (domain) => claimsJsonlPath(domain);
 const findingsMarkdownPath = (domain) => path.join(sessionDir(domain), "claims.md");
+
+function parseUntrustedBriefJsonSlice(brief, key) {
+  const value = brief[key];
+  const pattern = new RegExp(
+    `^${escapeRegex(OPEN_SENTINEL)} nonce=([0-9a-f]{32}) label=([^>\\n]+)>>\n([\\s\\S]*)\n${escapeRegex(CLOSE_SENTINEL)} nonce=\\1>>$`,
+  );
+  const match = String(value).match(pattern);
+  assert.ok(match, `${key} must be wrapped in an untrusted fence`);
+  assert.equal(match[2], key);
+  assert.equal(String(value).split(OPEN_SENTINEL).length - 1, 1);
+  assert.equal(String(value).split(CLOSE_SENTINEL).length - 1, 1);
+  return JSON.parse(match[3]);
+}
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 const {
   normalizeGradeVerdictDocument,
   readGradeVerdict,
@@ -297,6 +315,10 @@ const {
   readAssignmentBrief,
   resolveEvaluatorKnowledge,
 } = require("../mcp/lib/assignment-brief.js");
+const {
+  OPEN_SENTINEL,
+  CLOSE_SENTINEL,
+} = require("../mcp/lib/untrusted-envelope.js");
 const {
   readCapabilityPlaybook,
 } = require("../mcp/lib/capability-playbooks.js");
@@ -390,6 +412,8 @@ const EXPECTED_TOOL_NAMES = [
   "bob_run_auth_differential",
   "bob_read_auth_differential_results",
   "bob_static_scan",
+  "bob_ingest_sarif",
+  "bob_read_static_analysis_index",
   "bob_record_candidate_claim",
   "bob_read_candidate_claims",
   "bob_list_candidate_claims",
@@ -406,6 +430,7 @@ const EXPECTED_TOOL_NAMES = [
   "bob_build_verification_adjudication",
   "bob_write_evidence_packs",
   "bob_read_evidence_packs",
+  "bob_write_proof_bundle",
   "bob_write_grade_verdict",
   "bob_read_grade_verdict",
   "bob_init_session",
@@ -2071,6 +2096,7 @@ test("MCP per-tool modules preserve representative tool behavior", () => {
     "surface-index.json",
     "task-queue.json",
     "task-graph.json",
+    "pipeline-events.jsonl",
   ]);
   assert.deepEqual(TOOL_MANIFEST.bob_get_context_budget.role_bundles, ["evaluator-shared", "orchestrator"]);
   assert.equal(TOOL_MANIFEST.bob_get_context_budget.mutating, false);
@@ -3352,6 +3378,7 @@ test("pipeline analytics records metadata-only events for a complete synthetic r
     const adjudicationEvent = rows.find((row) => row.type === "verification_adjudication_built");
     assert.match(adjudicationEvent.adjudication_plan_hash, /^[a-f0-9]{64}$/);
     assert.equal(Object.hasOwn(adjudicationEvent, "plan_hash"), false);
+    assert.equal(adjudicationEvent.counts.reasoning_divergence, 0);
     const finalVerificationEvent = rows.find((row) => row.type === "verification_written" && row.status === "final");
     assert.equal(finalVerificationEvent.adjudication_plan_hash, adjudicationEvent.adjudication_plan_hash);
     assert.equal(Object.hasOwn(finalVerificationEvent, "plan_hash"), false);
@@ -12435,6 +12462,92 @@ test("verification v2 round and final hashes are stable across confidence_reason
   });
 });
 
+test("verification v2 adjudication flags reasoning divergence and binds it into the plan hash", () => {
+  withTempHome(() => {
+    const domain = "reasoning-divergence.example.com";
+    enterVerifyV2(domain);
+    const context = JSON.parse(readVerificationContext({ target_domain: domain }));
+
+    const writePair = (brutalistResult, balancedResult) => {
+      for (const [round, result] of [
+        ["brutalist", brutalistResult],
+        ["balanced", balancedResult],
+      ]) {
+        writeVerificationRound({
+          target_domain: domain,
+          round,
+          notes: null,
+          verification_attempt_id: context.current_attempt_id,
+          verification_snapshot_hash: context.snapshot_hash,
+          round_profile: round,
+          results: [result],
+        });
+      }
+      const response = JSON.parse(buildVerificationAdjudication({ target_domain: domain }));
+      const document = JSON.parse(fs.readFileSync(verificationAdjudicationPath(domain), "utf8"));
+      return { response, document };
+    };
+
+    const divergent = writePair(
+      v2VerificationResult("F-1", {
+        artifact_hashes: { sqli_response: "1".repeat(64) },
+      }),
+      v2VerificationResult("F-1", {
+        artifact_hashes: { xss_response: "2".repeat(64) },
+      }),
+    );
+
+    assert.deepEqual(divergent.document.agreed.map((entry) => entry.finding_id), ["F-1"]);
+    assert.deepEqual(divergent.document.disagreements, []);
+    assert.deepEqual(divergent.document.reasoning_divergence, {
+      "F-1": "artifact_key_divergence",
+    });
+    assert.deepEqual(divergent.document.reasoning_divergence_ids, ["F-1"]);
+    assert.equal(divergent.document.counts.reasoning_divergence, 1);
+    assert.equal(divergent.document.replay_required_ids.includes("F-1"), true);
+    assert.equal(divergent.document.replay_reasons["F-1"].includes("reasoning_divergence"), true);
+    assert.equal(
+      divergent.response.adjudication_context.findings[0].reasoning_divergence,
+      "artifact_key_divergence",
+    );
+
+    const enumCleared = JSON.parse(JSON.stringify(divergent.document));
+    enumCleared.reasoning_divergence = {};
+    enumCleared.reasoning_divergence_ids = [];
+    enumCleared.counts.reasoning_divergence = 0;
+    assert.notEqual(
+      computeAdjudicationPlanHash(enumCleared),
+      divergent.document.adjudication_plan_hash,
+    );
+
+    const matching = writePair(
+      v2VerificationResult("F-1", {
+        artifact_hashes: { sqli_response: "1".repeat(64) },
+      }),
+      v2VerificationResult("F-1", {
+        artifact_hashes: { sqli_response: "1".repeat(64) },
+      }),
+    );
+
+    assert.notEqual(
+      matching.document.adjudication_plan_hash,
+      divergent.document.adjudication_plan_hash,
+    );
+    assert.deepEqual(matching.document.reasoning_divergence, {});
+    assert.deepEqual(matching.document.reasoning_divergence_ids, []);
+    assert.equal(matching.document.counts.reasoning_divergence, 0);
+    assert.equal(
+      matching.response.adjudication_context.findings[0].reasoning_divergence,
+      "none",
+    );
+
+    const adjudicationEvents = readJsonl(pipelineEventsJsonlPath(domain))
+      .filter((row) => row.type === "verification_adjudication_built");
+    assert.equal(adjudicationEvents.at(-2).counts.reasoning_divergence, 1);
+    assert.equal(adjudicationEvents.at(-1).counts.reasoning_divergence, 0);
+  });
+});
+
 test("verification v2 round results sort deterministically across multi-finding writes", () => {
   withTempHome(() => {
     const domain = "multi-finding.example.com";
@@ -12542,6 +12655,7 @@ test("verification v2 supports independent round order, deterministic adjudicati
       union_reportables: 1,
       replay_required: 1,
       qa_sampled: 0,
+      reasoning_divergence: 0,
     });
     const adjudicationDoc = JSON.parse(fs.readFileSync(verificationAdjudicationPath(domain), "utf8"));
     assert.equal(adjudicationDoc.adjudication_plan_hash, adjudication.adjudication_plan_hash);
@@ -12565,6 +12679,7 @@ test("verification v2 supports independent round order, deterministic adjudicati
     assert.deepEqual(verificationContext.adjudication_context.finding_ids, ["F-1"]);
     assert.equal(verificationContext.adjudication_context.findings[0].finding_id, "F-1");
     assert.equal(verificationContext.adjudication_context.findings[0].replay_required, true);
+    assert.equal(verificationContext.adjudication_context.findings[0].reasoning_divergence, "none");
     assert.equal(Object.hasOwn(verificationContext.adjudication_context.findings[0], "reasoning"), false);
     assert.doesNotMatch(JSON.stringify(verificationContext.adjudication_context), /curl|account_id|proof_of_concept|response_evidence/i);
 
@@ -16173,13 +16288,14 @@ test("bob_import_http_traffic validates, dedupes, stores session-local traffic, 
     assert.equal(fs.readFileSync(attackSurfacePath(domain), "utf8"), attackSurfaceBeforeImport);
 
     const brief = JSON.parse(readAssignmentBrief({ target_domain: domain, wave: "w1", agent: "a1" }));
-    assert.equal(brief.traffic_summary.total, 1);
-    assert.equal(brief.traffic_summary.authenticated_count, 1);
-    assert.match(brief.traffic_summary.recent[0].url, /\/api\/me/);
+    const trafficSummary = parseUntrustedBriefJsonSlice(brief, "traffic_summary");
+    assert.equal(trafficSummary.total, 1);
+    assert.equal(trafficSummary.authenticated_count, 1);
+    assert.match(trafficSummary.recent[0].url, /\/api\/me/);
     assert.equal(brief.surface.priority, "HIGH");
     assert.ok(brief.ranking_summary.reasons.includes("imported_traffic"));
     assert.ok(brief.ranking_summary.reasons.includes("authenticated_observed_traffic"));
-    assert.doesNotMatch(JSON.stringify(brief.traffic_summary), /evil\.example\.net/);
+    assert.doesNotMatch(JSON.stringify(trafficSummary), /evil\.example\.net/);
     assert.equal(fs.readFileSync(attackSurfacePath(domain), "utf8"), attackSurfaceBeforeImport);
   });
 });
@@ -16432,12 +16548,13 @@ test("bob_static_scan scans only imported artifacts and feeds bounded evaluator 
     assert.doesNotMatch(JSON.stringify(scan), /secret-static-token/);
 
     const brief = JSON.parse(readAssignmentBrief({ target_domain: domain, wave: "w1", agent: "a1" }));
-    assert.equal(brief.static_scan_hints.available, true);
-    assert.equal(brief.static_scan_hints.total_results, 1);
-    assert.ok(brief.static_scan_hints.findings.length > 0);
-    assert.ok(brief.static_scan_hints.findings.length <= 10);
-    assert.equal(brief.static_scan_hints.artifacts[0].artifact_id, "SA-1");
-    assert.doesNotMatch(JSON.stringify(brief.static_scan_hints), /secret-static-token|_isBlacklisted|evidence/);
+    const staticScanHints = parseUntrustedBriefJsonSlice(brief, "static_scan_hints");
+    assert.equal(staticScanHints.available, true);
+    assert.equal(staticScanHints.total_results, 1);
+    assert.ok(staticScanHints.findings.length > 0);
+    assert.ok(staticScanHints.findings.length <= 10);
+    assert.equal(staticScanHints.artifacts[0].artifact_id, "SA-1");
+    assert.doesNotMatch(JSON.stringify(staticScanHints), /secret-static-token|_isBlacklisted|evidence/);
   });
 });
 
@@ -16676,8 +16793,9 @@ test("bob_public_intel caps output, persists optional intel, handles API failure
       assert.equal(fs.readFileSync(attackSurfacePath(domain), "utf8"), attackSurfaceBeforeIntel);
 
       const brief = JSON.parse(readAssignmentBrief({ target_domain: domain, wave: "w1", agent: "a1" }));
-      assert.equal(brief.intel_hints.available, true);
-      assert.equal(brief.intel_hints.reports.length, 1);
+      const intelHints = parseUntrustedBriefJsonSlice(brief, "intel_hints");
+      assert.equal(intelHints.available, true);
+      assert.equal(intelHints.reports.length, 1);
       assert.ok(brief.ranking_summary.reasons.includes("disclosed_report_hints"));
       assert.equal(fs.readFileSync(attackSurfacePath(domain), "utf8"), attackSurfaceBeforeIntel);
 
