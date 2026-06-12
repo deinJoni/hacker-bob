@@ -284,6 +284,7 @@ function sourceCommitSha(sourceRoot) {
 }
 
 function commandExists(command) {
+  if (!/^[a-z0-9_-]+$/i.test(command)) return false;
   const result = spawnSync("sh", ["-c", `command -v ${command}`], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
