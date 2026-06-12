@@ -210,6 +210,12 @@ TESTS = [
      {"tool_input": {"command": f"cat {SESSION}/raw-response-body.txt"}},
      2,
      "bob_read_session_summary"),
+
+    # --- shlex.split ValueError must block, not silently allow ---
+    ("Bash with unterminated quote blocks (shlex ValueError)",
+     {"tool_input": {"command": f"cat '{SESSION}/findings.jsonl"}},
+     2,
+     "cannot be safely parsed"),
 ]
 
 

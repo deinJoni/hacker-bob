@@ -223,6 +223,11 @@ TESTS = [
     ("Bash with open() in echo string (not a real write) → allow",
      {"tool_input": {"command": "echo \"open('/tmp/test.json','w')\""}},
      0),
+
+    # --- shlex.split ValueError must block, not silently allow ---
+    ("Bash with unterminated quote blocks (shlex ValueError)",
+     {"tool_input": {"command": f"rm '{SESSION}/findings.jsonl"}},
+     2),
 ]
 
 

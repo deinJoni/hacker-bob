@@ -205,7 +205,10 @@ def check_mutating_path_commands(command):
     try:
         tokens = shlex.split(command, posix=True)
     except ValueError:
-        return
+        block(
+            "BLOCKED: Command cannot be safely parsed. "
+            "Refusing to allow potentially unsafe shell operation."
+        )
 
     mutators = {"rm", "unlink", "mv", "cp", "chmod", "chown"}
     for index, token in enumerate(tokens):
