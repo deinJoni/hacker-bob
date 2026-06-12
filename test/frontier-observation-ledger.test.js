@@ -34,12 +34,25 @@ function withTempHome(fn) {
   const previousHome = process.env.HOME;
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "bob-observation-ledger-"));
   process.env.HOME = home;
-  try {
-    return fn(home);
-  } finally {
+  const restore = () => {
     process.env.HOME = previousHome;
     fs.rmSync(home, { recursive: true, force: true });
+  };
+  let result;
+  try {
+    result = fn(home);
+  } catch (err) {
+    restore();
+    throw err;
   }
+  if (result && typeof result.then === "function") {
+    return result.then(
+      (value) => { restore(); return value; },
+      (err) => { restore(); throw err; },
+    );
+  }
+  restore();
+  return result;
 }
 
 function ensureSessionDir(domain) {
