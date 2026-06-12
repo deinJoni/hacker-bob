@@ -8,14 +8,10 @@ const {
   updateKimiSkillFiles,
 } = require("../../scripts/lib/kimi-role-renderer.js");
 const { createSafeInstallFs } = require("../../scripts/lib/install-fs.js");
+const { BRUTALIST_MCP_SERVER } = require("../../scripts/merge-claude-config.js");
 
 const id = "kimi";
 const DEFAULT_ROOT = path.join(__dirname, "..", "..");
-
-const BRUTALIST_MCP_SERVER = Object.freeze({
-  command: "npx",
-  args: ["-y", "@brutalist/mcp@latest"],
-});
 
 const { BOB_SKILLS, LEGACY_BOB_SKILLS } = config;
 

@@ -84,6 +84,7 @@ const {
   LIFECYCLE_STATE_VALUES,
 } = require("../mcp/lib/governance-contracts.js");
 const claimsModule = require("../mcp/lib/claims.js");
+const { BRUTALIST_MCP_SERVER } = require("../scripts/merge-claude-config.js");
 
 const ROOT = path.join(__dirname, "..");
 
@@ -1703,7 +1704,7 @@ test("Codex bundled .mcp.json registers brutalist as optional alongside the host
   const mcp = JSON.parse(readFile("adapters/codex/hacker-bob/.mcp.json"));
   assert.ok(mcp.mcpServers.brutalist);
   assert.equal(mcp.mcpServers.brutalist.command, "npx");
-  assert.deepEqual(mcp.mcpServers.brutalist.args, ["-y", "@brutalist/mcp@latest"]);
+  assert.deepEqual(mcp.mcpServers.brutalist.args, BRUTALIST_MCP_SERVER.args);
 });
 
 // =============================================================================

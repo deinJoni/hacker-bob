@@ -8,6 +8,7 @@ const {
   updateCodexSkillFiles,
 } = require("../../scripts/lib/codex-role-renderer.js");
 const { createSafeInstallFs } = require("../../scripts/lib/install-fs.js");
+const { BRUTALIST_MCP_SERVER } = require("../../scripts/merge-claude-config.js");
 
 const id = "codex";
 const PLUGIN_NAME = "hacker-bob";
@@ -163,15 +164,6 @@ function managedDirs() {
     ".agents",
   ];
 }
-
-// External adversarial-roast MCP server consumed by the brutalist-verifier
-// role. Optional — registered alongside hacker-bob but not required at
-// runtime. See prompts/roles/brutalist-verifier.md for the graceful-fallback
-// contract.
-const BRUTALIST_MCP_SERVER = Object.freeze({
-  command: "npx",
-  args: ["-y", "@brutalist/mcp@latest"],
-});
 
 function mergeConfig({ serverPath }) {
   return {
