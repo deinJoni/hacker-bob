@@ -395,7 +395,7 @@ function mergeSettings(existing, bobSettings) {
 // contract.
 const BRUTALIST_MCP_SERVER = Object.freeze({
   command: "npx",
-  args: ["-y", "@brutalist/mcp@latest"],
+  args: ["-y", "@brutalist/mcp@1.14.7"],
 });
 
 function mergeMcp(existing, serverPath) {

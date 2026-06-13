@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
 const { createSafeInstallFs } = require("../../scripts/lib/install-fs.js");
+const { BRUTALIST_MCP_SERVER } = require("../../scripts/merge-claude-config.js");
 
 const id = "generic-mcp";
 const PROMPT_SOURCE_DIR = path.join("adapters", "generic-mcp", "prompts");
@@ -36,15 +37,6 @@ function dirExists(dirPath) {
     return false;
   }
 }
-
-// External adversarial-roast MCP server consumed by the brutalist-verifier
-// role. Optional — registered alongside hacker-bob but not required at
-// runtime. See prompts/roles/brutalist-verifier.md for the graceful-fallback
-// contract.
-const BRUTALIST_MCP_SERVER = Object.freeze({
-  command: "npx",
-  args: ["-y", "@brutalist/mcp@latest"],
-});
 
 function mergeConfig({ serverPath }) {
   return {

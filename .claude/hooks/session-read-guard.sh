@@ -222,7 +222,12 @@ def check_bash_command(command):
     try:
         tokens = shlex.split(command, posix=True)
     except ValueError:
-        return
+        print(
+            "BLOCKED: Command cannot be safely parsed. "
+            "Refusing to allow potentially unsafe shell operation.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     for index, token in enumerate(tokens):
         command_name = pathlib.PurePosixPath(token).name
         if command_name not in READ_COMMANDS:

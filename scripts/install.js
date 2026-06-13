@@ -12,6 +12,7 @@ const {
   getAdapter,
 } = require("../adapters/index.js");
 const { clearUpdateCache } = require("../mcp/lib/update-check.js");
+const { commandExists } = require("./lib/command-exists.js");
 
 const BOB_RESOURCE_DIR = ".hacker-bob";
 const NEUTRAL_INSTALL_SCHEMA_VERSION = 2;
@@ -281,14 +282,6 @@ function sourceCommitSha(sourceRoot) {
   if (result.status !== 0) return null;
   const sha = result.stdout.trim();
   return sha || null;
-}
-
-function commandExists(command) {
-  const result = spawnSync("sh", ["-c", `command -v ${command}`], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-  });
-  return result.status === 0;
 }
 
 function commandOrGoBinExists(command) {

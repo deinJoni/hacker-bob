@@ -10,7 +10,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "@brutalist/mcp@latest"
+        "@brutalist/mcp@1.14.7"
       ]
     }
   }

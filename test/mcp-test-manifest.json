@@ -65,6 +65,7 @@
   "test/realization-e2e-smoke.test.js",
   "test/installer-legacy-upgrade.test.js",
   "test/installer-bounty-tool-rewrite.test.js",
+  "test/command-exists.test.js",
   "test/agent-run-merge-gate.test.js",
   "test/claim-clusters-priors-saturation.test.js",
   "test/cross-stack-brief-composition.test.js",
