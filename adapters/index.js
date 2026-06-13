@@ -2,7 +2,9 @@
 
 const fs = require("fs");
 const path = require("path");
-const { spawnSync } = require("child_process");
+// Shared, allowlist-guarded PATH probe — the single sink for `command -v`.
+// Aliased to defaultCommandExists to preserve the detectAdapterId override hook.
+const { commandExists: defaultCommandExists } = require("../scripts/lib/command-exists.js");
 
 const claude = require("./claude/index.js");
 const codex = require("./codex/index.js");
@@ -47,14 +49,6 @@ function adapterIdsForSelection(selection, options = {}) {
     ids.push(id);
   }
   return ids;
-}
-
-function defaultCommandExists(command) {
-  const result = spawnSync("sh", ["-c", `command -v ${command}`], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-  });
-  return result.status === 0;
 }
 
 function safeIsDir(fsModule, candidate) {
