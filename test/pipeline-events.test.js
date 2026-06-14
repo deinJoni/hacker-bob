@@ -112,6 +112,34 @@ test("normalizePipelineEvent accepts evaluator_run_avoided and coerces counts", 
   });
 });
 
+test("severity_clamped clamps survive the write and read normalizers, bounded and value-capped", () => {
+  const written = normalizePipelineEvent("example.com", "severity_clamped", {
+    status: "balanced",
+    source: "bob_write_verification_round",
+    counts: { clamped: 2 },
+    clamps: [
+      { finding_id: "F-1", from: "critical", to: "low" },
+      { finding_id: "F-2", from: "high", to: "medium", extra: "dropped" },
+      { finding_id: "", from: "high", to: "low" },
+    ],
+  });
+  assert.equal(written.type, "severity_clamped");
+  assert.deepEqual(written.clamps, [
+    { finding_id: "F-1", from: "critical", to: "low" },
+    { finding_id: "F-2", from: "high", to: "medium" },
+  ]);
+
+  const readEvent = normalizePipelineEventForRead({
+    version: 1,
+    bob_version: "test",
+    ts: "2026-01-01T00:00:00.000Z",
+    target_domain: "example.com",
+    type: "severity_clamped",
+    clamps: written.clamps,
+  }, "example.com");
+  assert.deepEqual(readEvent.clamps, written.clamps);
+});
+
 test("readPipelineEvents does not backfill over an existing malformed event log", () => {
   withTempHome(() => {
     const filePath = pipelineEventsJsonlPath("example.com");

@@ -382,6 +382,8 @@ function normalizePipelineEventForRead(record, expectedDomain) {
   if (waveNumber != null) event.wave_number = waveNumber;
   const counts = normalizeCounts(record.counts);
   if (counts) event.counts = counts;
+  const clamps = normalizeClampList(record.clamps);
+  if (clamps) event.clamps = clamps;
   if (typeof record.force_merge === "boolean") event.force_merge = record.force_merge;
   const forceMergeReason = capString(record.force_merge_reason, 1000);
   if (forceMergeReason) event.force_merge_reason = forceMergeReason;
