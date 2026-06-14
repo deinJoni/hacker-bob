@@ -53,6 +53,7 @@ MCP_OWNED_EXACT = {
     "Dockerfile.bob",
     "repo-checks.jsonl",
     "repo-command-runs.jsonl",
+    "offensive-runs.jsonl",
     "repo-env.json",
     "repo-inventory.json",
     "surface-routes.json",

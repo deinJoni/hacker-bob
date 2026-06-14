@@ -8,6 +8,7 @@ const {
 const {
   assertSafeDomain,
   claimsJsonlPath,
+  offensiveRunsJsonlPath,
   repoCommandRunsJsonlPath,
 } = require("./paths.js");
 const {
@@ -35,6 +36,10 @@ const {
   ERROR_CODES,
   ToolError,
 } = require("./envelope.js");
+const {
+  OFFENSIVE_OUTCOME_VALUES,
+  SAFE_ORACLE_KINDS,
+} = require("./constants.js");
 const {
   readFrontierEvents,
 } = require("./frontier-events.js");
@@ -81,6 +86,11 @@ const CLAIM_SEVERITIES = Object.freeze(["critical", "high", "medium", "low", "in
 //                      (`stdout_hash`/`stderr_hash`). The raw stdout/stderr
 //                      live on disk under `repo-runs/<run_id>.{stdout,stderr}`
 //                      and are read-guard-protected per O.7.
+//
+//   exploit_run      : Carries the `run_id` of an offensive-runs.jsonl row
+//                      produced by the offensive runner, binding tool id,
+//                      target URL, safe offensive outcome, command hash,
+//                      exit code, and stdout/stderr capture hashes.
 const EVIDENCE_REFERENCE_KIND_VALUES = Object.freeze([
   "finding",
   "verification_round",
@@ -90,6 +100,7 @@ const EVIDENCE_REFERENCE_KIND_VALUES = Object.freeze([
   "agent_run",
   "repo_file",
   "repo_command_run",
+  "exploit_run",
 ]);
 
 function isHex64(value) {
@@ -151,6 +162,36 @@ function assertRepoCommandRunEvidenceShape(ref, fieldName) {
   }
 }
 
+function assertExploitRunEvidenceShape(ref, fieldName) {
+  // Offensive proof contract:
+  //   {kind, run_id, tool_id, target, offensive_outcome, command_hash,
+  //    exit_code, stdout_hash, stderr_hash, source_run_id?}
+  // The row cross-check later proves this ref is backed by a real,
+  // non-dry-run offensive-runs.jsonl row.
+  if (typeof ref.run_id !== "string" || !ref.run_id.trim()) {
+    throw new Error(`${fieldName}.run_id must be a non-empty string for kind="exploit_run"`);
+  }
+  if (typeof ref.tool_id !== "string" || !ref.tool_id.trim()) {
+    throw new Error(`${fieldName}.tool_id must be a non-empty string for kind="exploit_run"`);
+  }
+  if (typeof ref.target !== "string" || !ref.target.trim()) {
+    throw new Error(`${fieldName}.target must be a non-empty string for kind="exploit_run"`);
+  }
+  assertEnumValue(ref.offensive_outcome, OFFENSIVE_OUTCOME_VALUES, `${fieldName}.offensive_outcome`);
+  if (!isHex64(ref.command_hash)) {
+    throw new Error(`${fieldName}.command_hash must be a 64-hex content digest for kind="exploit_run"`);
+  }
+  if (!isHex64(ref.stdout_hash)) {
+    throw new Error(`${fieldName}.stdout_hash must be a 64-hex content digest for kind="exploit_run"`);
+  }
+  if (!isHex64(ref.stderr_hash)) {
+    throw new Error(`${fieldName}.stderr_hash must be a 64-hex content digest for kind="exploit_run"`);
+  }
+  if (ref.exit_code != null && !Number.isInteger(ref.exit_code)) {
+    throw new Error(`${fieldName}.exit_code must be an integer or null for kind="exploit_run"`);
+  }
+}
+
 function normalizeEvidenceReferenceShape(ref, fieldName = "evidence_refs[]") {
   if (ref == null || typeof ref !== "object" || Array.isArray(ref)) {
     throw new Error(`${fieldName} must be an object`);
@@ -178,6 +219,8 @@ function normalizeEvidenceReferenceShape(ref, fieldName = "evidence_refs[]") {
     assertRepoFileEvidenceShape(ref, fieldName);
   } else if (kind === "repo_command_run") {
     assertRepoCommandRunEvidenceShape(ref, fieldName);
+  } else if (kind === "exploit_run") {
+    assertExploitRunEvidenceShape(ref, fieldName);
   }
   return ref;
 }
@@ -224,6 +267,9 @@ function evidenceReferenceLookupKey(ref) {
   }
   if (kind === "repo_command_run" && typeof ref.run_id === "string") {
     return `repo_command_run:${ref.run_id}`;
+  }
+  if (kind === "exploit_run" && typeof ref.run_id === "string") {
+    return `exploit_run:${ref.run_id}`;
   }
   return `${kind}:${ref.artifact_path || ""}:${ref.content_hash || ""}`;
 }
@@ -319,6 +365,29 @@ function normalizeConfidence(value) {
   return Number(value.toFixed(4));
 }
 
+function normalizeExploitOutcome(value) {
+  if (value == null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("exploit_outcome must be an object when present");
+  }
+  const outcome = assertEnumValue(value.outcome, OFFENSIVE_OUTCOME_VALUES, "exploit_outcome.outcome");
+  const safeOracle = value.safe_oracle;
+  if (outcome === "exploited_safely") {
+    if (safeOracle == null || typeof safeOracle !== "object" || Array.isArray(safeOracle)) {
+      throw new Error("exploit_outcome.safe_oracle must be an object when outcome is exploited_safely");
+    }
+    const kind = assertEnumValue(safeOracle.kind, SAFE_ORACLE_KINDS, "exploit_outcome.safe_oracle.kind");
+    return {
+      outcome,
+      safe_oracle: { kind },
+    };
+  }
+  if (safeOracle != null) {
+    throw new Error("exploit_outcome.safe_oracle is only allowed when outcome is exploited_safely");
+  }
+  return { outcome };
+}
+
 function generatedClaimId(fields) {
   return `CL-${hashCanonicalJson(fields).slice(0, 24)}`;
 }
@@ -356,6 +425,7 @@ function normalizeCandidateClaim(input, { targetDomain = null, now = new Date(),
     .map((ref, index) => normalizeEvidenceReferenceShape(ref, `evidence_refs[${index}]`));
   const controlExpectation = normalizeOptionalObject(input.control_expectation, "control_expectation");
   const impact = normalizeOptionalText(input.impact, "impact");
+  const exploitOutcome = normalizeExploitOutcome(input.exploit_outcome);
   const confidence = normalizeConfidence(input.confidence);
   const sourceTaskIds = normalizeOptionalTextArray(input.source_task_ids, "source_task_ids");
   const agentRunIds = normalizeOptionalTextArray(input.agent_run_ids, "agent_run_ids");
@@ -419,6 +489,7 @@ function normalizeCandidateClaim(input, { targetDomain = null, now = new Date(),
   if (evidenceRefs.length > 0) base.evidence_refs = evidenceRefs;
   if (controlExpectation) base.control_expectation = controlExpectation;
   if (impact) base.impact = impact;
+  if (exploitOutcome) base.exploit_outcome = exploitOutcome;
   if (confidence != null) base.confidence = confidence;
   if (sourceTaskIds.length > 0) base.source_task_ids = sourceTaskIds;
   if (agentRunIds.length > 0) base.agent_run_ids = agentRunIds;
@@ -507,7 +578,31 @@ function readRepoCommandRunRecords(domain) {
   return rows;
 }
 
+function readOffensiveRunRecords(domain) {
+  const filePath = offensiveRunsJsonlPath(domain);
+  if (!fs.existsSync(filePath)) return [];
+  const stats = fs.statSync(filePath);
+  if (DEFAULT_ARTIFACT_READ_MAX_BYTES != null && stats.size > DEFAULT_ARTIFACT_READ_MAX_BYTES) {
+    throw new ToolError(
+      ERROR_CODES.STATE_CONFLICT,
+      `offensive-runs.jsonl exceeds read cap of ${DEFAULT_ARTIFACT_READ_MAX_BYTES} bytes: ${filePath}`,
+    );
+  }
+  const rows = [];
+  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      rows.push(JSON.parse(line));
+    } catch {
+      // Malformed proof-ledger rows simply cannot back an exploit_run ref.
+    }
+  }
+  return rows;
+}
+
 const O_P4_DISALLOWED_REPO_COMMAND_EXIT_CODES = Object.freeze([125, 126, 127]);
+const OFFENSIVE_RUN_DISALLOWED_EXIT_CODES = Object.freeze([125, 126, 127]);
 
 function repoCommandRunRowSatisfiesEvidence(row, ref) {
   // The cross-check (additive to the evidence_ref shape gate): the row must
@@ -524,6 +619,24 @@ function repoCommandRunRowSatisfiesEvidence(row, ref) {
   // a result). If the evidence_ref also pinned a value, it must match.
   if (!Number.isInteger(row.exit_code)) return false;
   if (O_P4_DISALLOWED_REPO_COMMAND_EXIT_CODES.includes(row.exit_code)) return false;
+  if (Number.isInteger(ref.exit_code) && row.exit_code !== ref.exit_code) return false;
+  return true;
+}
+
+function offensiveRunRowSatisfiesEvidence(row, ref) {
+  if (!row || typeof row !== "object") return false;
+  if (row.dry_run === true) return false;
+  if (row.timed_out === true) return false;
+  if (typeof row.run_id !== "string" || row.run_id !== ref.run_id) return false;
+  if (typeof row.tool_id !== "string" || row.tool_id !== ref.tool_id) return false;
+  if (typeof row.target !== "string" || row.target !== ref.target) return false;
+  if (typeof row.command_hash !== "string" || row.command_hash !== ref.command_hash) return false;
+  if (typeof row.stdout_hash !== "string" || row.stdout_hash !== ref.stdout_hash) return false;
+  if (typeof row.stderr_hash !== "string" || row.stderr_hash !== ref.stderr_hash) return false;
+  if (row.offensive_outcome !== "exploited_safely") return false;
+  if (ref.offensive_outcome != null && row.offensive_outcome !== ref.offensive_outcome) return false;
+  if (!Number.isInteger(row.exit_code)) return false;
+  if (OFFENSIVE_RUN_DISALLOWED_EXIT_CODES.includes(row.exit_code)) return false;
   if (Number.isInteger(ref.exit_code) && row.exit_code !== ref.exit_code) return false;
   return true;
 }
@@ -576,6 +689,37 @@ function assertNotStaticOnlyNativeHighSeverity(claim) {
   }
 }
 
+function assertExploitedClaimHasProof(claim) {
+  if (claim.exploit_outcome?.outcome !== "exploited_safely") return;
+  const evidenceRefs = Array.isArray(claim.evidence_refs) ? claim.evidence_refs : [];
+  const exploitRunRefs = evidenceRefs.filter((ref) => ref && ref.kind === "exploit_run");
+  if (exploitRunRefs.length === 0) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "exploited_safely claims must include at least one evidence_refs[] entry with kind: \"exploit_run\".",
+      {
+        code: "exploit_proof_missing_exploit_run_evidence",
+        outcome: claim.exploit_outcome.outcome,
+      },
+    );
+  }
+  const runRows = readOffensiveRunRecords(claim.target_domain);
+  const backedRef = exploitRunRefs.some((ref) => (
+    runRows.some((row) => offensiveRunRowSatisfiesEvidence(row, ref))
+  ));
+  if (!backedRef) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "exploited_safely claims require at least one exploit_run evidence_ref backed by a matching non-dry-run offensive-runs.jsonl row.",
+      {
+        code: "exploit_proof_unbacked_exploit_run_evidence",
+        outcome: claim.exploit_outcome.outcome,
+        disallowed_offensive_run_exit_codes: OFFENSIVE_RUN_DISALLOWED_EXIT_CODES,
+      },
+    );
+  }
+}
+
 function appendCandidateClaim(input, options = {}) {
   const claim = normalizeCandidateClaim(input, options);
   // O-P4 validator runs before the JSONL append so a rejected claim leaves
@@ -583,6 +727,7 @@ function appendCandidateClaim(input, options = {}) {
   // sibling gate on the handoff path; the claim path owns the native-code
   // severity gate.
   assertNotStaticOnlyNativeHighSeverity(claim);
+  assertExploitedClaimHasProof(claim);
   return withSessionLock(claim.target_domain, () => {
     appendJsonlLine(claimsJsonlPath(claim.target_domain), claim, {
       maxRecords: options.maxRecords == null ? CLAIMS_MAX_RECORDS : options.maxRecords,
@@ -606,9 +751,12 @@ module.exports = {
   CLAIM_STATUSES,
   CLAIM_VERSION,
   EVIDENCE_REFERENCE_KIND_VALUES,
+  OFFENSIVE_OUTCOME_VALUES,
   O_P4_NATIVE_LANGUAGES,
   O_P4_TRIGGERING_SEVERITIES,
+  SAFE_ORACLE_KINDS,
   appendCandidateClaim,
+  assertExploitedClaimHasProof,
   assertNotStaticOnlyNativeHighSeverity,
   claimSurfaceLanguageMap,
   evidenceReferenceLookupKey,
