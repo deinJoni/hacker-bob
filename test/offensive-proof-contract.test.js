@@ -520,3 +520,32 @@ test("exploited_safely fails closed when offensive-runs.jsonl is hard-linked", (
   assert.equal(error.code, "STATE_CONFLICT");
   assert.equal(fs.existsSync(claimsJsonlPath(domain)), false);
 }));
+
+test("exploit_run refs are rejected on a claim that omits the exploited_safely outcome", () => withTempHome(() => {
+  const domain = "offensive-ref-no-outcome.example";
+  // Codex round-6 P1: a self-authored exploit_run ref must not slip into the claim
+  // when the top-level exploit_outcome is absent (it would skip the MAC proof gate).
+  const error = mustThrow(() => appendCandidateClaim({
+    target_domain: domain,
+    title: "Sneak an exploit_run ref past the gate",
+    summary: "No exploited_safely outcome, but a self-authored exploit_run ref.",
+    severity: "low",
+    evidence_refs: [exploitRef(domain)],
+  }));
+  assertInvalidArgumentsCode(error, "exploit_run_ref_without_exploited_outcome");
+  assert.equal(fs.existsSync(claimsJsonlPath(domain)), false);
+}));
+
+test("exploit_run refs are rejected on a blocked_by_defense claim", () => withTempHome(() => {
+  const domain = "offensive-ref-blocked-outcome.example";
+  const error = mustThrow(() => appendCandidateClaim({
+    target_domain: domain,
+    title: "Sneak an exploit_run ref onto a blocked claim",
+    summary: "blocked_by_defense outcome carrying an exploit_run ref.",
+    severity: "low",
+    exploit_outcome: { outcome: "blocked_by_defense" },
+    evidence_refs: [exploitRef(domain)],
+  }));
+  assertInvalidArgumentsCode(error, "exploit_run_ref_without_exploited_outcome");
+  assert.equal(fs.existsSync(claimsJsonlPath(domain)), false);
+}));

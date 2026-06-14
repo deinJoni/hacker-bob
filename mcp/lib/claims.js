@@ -784,10 +784,20 @@ function exploitTargetHostInScope(targetUrl, domain) {
 function offensiveRunRowSatisfiesEvidence(row, ref, domain, signingKey) {
   if (!row || typeof row !== "object") return false;
   // PR #108: the row must be HMAC-signed by the trusted producer (offensive runner) with
-  // the per-session key. This is the un-fakeable anchor: an agent-authored / symlinked /
-  // tampered / wrong-key row has no valid MAC and fails here before any field check. (It
-  // does NOT defend a local actor with direct read access to the 0600 signing key — cf.
-  // wave-handoff-contracts.js validateHandoffProvenance.)
+  // the per-session key. An agent-authored / symlinked / tampered / wrong-key row has no
+  // valid MAC and fails here before any field check.
+  //
+  // THREAT-MODEL BOUNDARY (Codex round-6 P1, be honest about this): the MAC defends
+  // against an agent confined to the MCP tool surface and the guarded Bash surface. It
+  // does NOT, on its own, defend against an agent that executes arbitrary in-process code
+  // (e.g. `node -e` that require()s readHandoffSigningKey and reads the 0600 key via fs) —
+  // a same-UID actor with arbitrary code execution can read any file its UID can, and the
+  // PreToolUse hooks cannot mediate in-process syscalls. This is the SAME assumption Bob's
+  // existing wave-handoff signing already makes (cf. wave-handoff-contracts.js
+  // validateHandoffProvenance). Absolute un-fakeability therefore requires running the
+  // offensive runner/agent under privilege or container separation so the agent's UID
+  // cannot read the signing key — a HARD REQUIREMENT of the offensive-sandbox PR. The MAC
+  // is the necessary foundation that makes that separation sufficient.
   if (!verifyOffensiveRunRowMac(row, signingKey)) return false;
   // PR #108 review (Codex P1): require the row to AFFIRMATIVELY assert a
   // completed, non-dry-run execution. Accepting an omitted/non-boolean dry_run
@@ -862,9 +872,26 @@ function assertNotStaticOnlyNativeHighSeverity(claim) {
 }
 
 function assertExploitedClaimHasProof(claim) {
-  if (claim.exploit_outcome?.outcome !== "exploited_safely") return;
   const evidenceRefs = Array.isArray(claim.evidence_refs) ? claim.evidence_refs : [];
   const exploitRunRefs = evidenceRefs.filter((ref) => ref && ref.kind === "exploit_run");
+  // PR #108 review (Codex round-6 P1): exploit_run refs are proof-of-exploitation
+  // evidence and may ONLY ride on a claim whose top-level exploit_outcome asserts
+  // exploited_safely. Without this, a claim that omits exploit_outcome (or sets a
+  // blocked_* outcome) could smuggle a self-authored exploit_run ref into
+  // claims.jsonl/the freeze without ever reaching the MAC-backed proof gate below.
+  if (claim.exploit_outcome?.outcome !== "exploited_safely") {
+    if (exploitRunRefs.length > 0) {
+      throw new ToolError(
+        ERROR_CODES.INVALID_ARGUMENTS,
+        "exploit_run evidence_refs are only allowed on claims whose exploit_outcome.outcome is \"exploited_safely\".",
+        {
+          code: "exploit_run_ref_without_exploited_outcome",
+          outcome: claim.exploit_outcome?.outcome ?? null,
+        },
+      );
+    }
+    return;
+  }
   if (exploitRunRefs.length === 0) {
     throw new ToolError(
       ERROR_CODES.INVALID_ARGUMENTS,
