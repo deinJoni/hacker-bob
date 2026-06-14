@@ -41,9 +41,130 @@ const {
 const {
   findingIdSetForVerificationContext,
 } = require("./verification-finding-id-adapter.js");
+const {
+  readCurrentClaimFreeze,
+} = require("./claim-freeze.js");
+const {
+  readOffensiveRunRecords,
+  offensiveRunRowSatisfiesEvidence,
+} = require("./claims.js");
+const {
+  readHandoffSigningKey,
+} = require("./handoff-signing-key.js");
+const {
+  readSessionNucleus,
+} = require("./governance-store.js");
 
 function verificationLib() {
   return require("./verification.js");
+}
+
+const VERIFY_SEVERITY_RANK = Object.freeze({
+  info: 1,
+  informational: 1,
+  low: 2,
+  medium: 3,
+  high: 4,
+  critical: 5,
+});
+
+function verifySeverityRank(severity) {
+  return (typeof severity === "string" && VERIFY_SEVERITY_RANK[severity.toLowerCase()]) || 0;
+}
+
+function toRoundSeverity(claimSeverity) {
+  return claimSeverity === "informational" ? "info" : claimSeverity;
+}
+
+// Web/smart_contract is a per-FINDING technology axis, orthogonal to session
+// scope: a single web-scoped session (scope_policy.target_url set) can carry
+// smart-contract surfaces in cross-stack mode (orchestrator.md "web +
+// smart_contract_evm"). The severity clamp is a WEB-only anti-inflation guard;
+// it must NEVER touch smart-contract findings, whose balanced-verifier
+// legitimately re-judges severity UPWARD from on-chain effect. The recorder
+// stamps the finding's surface_type / sc_evidence / capability_pack onto the
+// claim payload (record-candidate-claim.js buildClaimPayloadFromFinding), which
+// is the sanctioned place consumers read finding fields off a claim. None of
+// these signals can be present on a web finding, so this carve-out never
+// weakens the clamp on a pure-web engagement.
+function claimIsSmartContractFinding(claim) {
+  const payload = claim && typeof claim.payload === "object" && claim.payload !== null
+    ? claim.payload
+    : null;
+  const finding = payload && typeof payload.finding === "object" && payload.finding !== null
+    ? payload.finding
+    : null;
+  if (!finding) return false;
+  if (finding.surface_type === "smart_contract") return true;
+  if (finding.sc_evidence != null && typeof finding.sc_evidence === "object") return true;
+  if (typeof finding.capability_pack === "string"
+    && finding.capability_pack.startsWith("smart_contract")) return true;
+  return false;
+}
+
+function clampUnprovenSeverityRises(domain, results) {
+  let nucleus;
+  try {
+    nucleus = readSessionNucleus(domain);
+  } catch {
+    return;
+  }
+  if (!nucleus || nucleus.scope_policy == null || nucleus.scope_policy.target_url == null) return;
+
+  const freeze = readCurrentClaimFreeze(domain);
+  if (!freeze || !Array.isArray(freeze.claims)) return;
+
+  const byFinding = new Map();
+  for (const claim of freeze.claims) {
+    if (!claim || typeof claim !== "object") continue;
+    const rank = verifySeverityRank(claim.severity);
+    const refs = Array.isArray(claim.evidence_refs) ? claim.evidence_refs : [];
+    const findingIds = refs
+      .filter((ref) => ref && ref.kind === "finding" && typeof ref.finding_id === "string")
+      .map((ref) => ref.finding_id);
+    const exploitRunRefs = refs.filter((ref) => ref && ref.kind === "exploit_run");
+    const smartContract = claimIsSmartContractFinding(claim);
+    for (const findingId of findingIds) {
+      const current = byFinding.get(findingId)
+        || { maxRank: 0, maxSeverity: null, exploitRunRefs: [], isSmartContract: false };
+      if (rank > current.maxRank) {
+        current.maxRank = rank;
+        current.maxSeverity = claim.severity;
+      }
+      // Any contributing smart-contract claim marks the whole finding off-limits
+      // to the clamp (conservative toward the spec invariant).
+      if (smartContract) current.isSmartContract = true;
+      for (const ref of exploitRunRefs) current.exploitRunRefs.push(ref);
+      byFinding.set(findingId, current);
+    }
+  }
+
+  let runRows = null;
+  let signingKey = null;
+  for (const result of results) {
+    if (!result || typeof result.severity !== "string") continue;
+    const base = byFinding.get(result.finding_id);
+    if (!base || base.maxRank === 0) continue;
+    // Spec invariant: never clamp smart-contract findings, even inside a
+    // web-scoped (cross-stack) session. Their upward on-chain severity re-judge
+    // is legitimate and proof-free.
+    if (base.isSmartContract) continue;
+    if (verifySeverityRank(result.severity) <= base.maxRank) continue;
+
+    const hasExploitReplaySignal = Array.isArray(result.confidence_reasons)
+      && result.confidence_reasons.includes("exploit_replay_confirmed");
+    let proven = false;
+    if (hasExploitReplaySignal && base.exploitRunRefs.length > 0) {
+      if (runRows === null) runRows = readOffensiveRunRecords(domain);
+      if (runRows.length > 0) {
+        if (signingKey === null) signingKey = readHandoffSigningKey(domain);
+        proven = base.exploitRunRefs.some((ref) => (
+          runRows.some((row) => offensiveRunRowSatisfiesEvidence(row, ref, domain, signingKey))
+        ));
+      }
+    }
+    if (!proven) result.severity = toRoundSeverity(base.maxSeverity);
+  }
 }
 
 function normalizeStringEnumArray(value, fieldName, allowedValues, { required = false } = {}) {
@@ -341,6 +462,8 @@ function writeVerificationRound(args) {
       throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "adjudication_plan_hash is only allowed for final v2 verification");
     }
   }
+
+  clampUnprovenSeverityRises(domain, results);
 
   const document = {
     version: schemaVersion,
