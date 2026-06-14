@@ -1,5 +1,6 @@
 "use strict";
 
+const fs = require("fs");
 const {
   SEVERITY_VALUES,
   VERIFICATION_CONFIDENCE_REASON_VALUES,
@@ -17,6 +18,7 @@ const {
   parseFindingId,
 } = require("./validation.js");
 const {
+  sessionNucleusPath,
   verificationRoundPaths,
 } = require("./paths.js");
 const {
@@ -54,6 +56,9 @@ const {
 const {
   readSessionNucleus,
 } = require("./governance-store.js");
+const {
+  readSurfaceRoutesStrict,
+} = require("./surface-router.js");
 
 function verificationLib() {
   return require("./verification.js");
@@ -76,43 +81,93 @@ function toRoundSeverity(claimSeverity) {
   return claimSeverity === "informational" ? "info" : claimSeverity;
 }
 
+function routeIsSmartContract(route) {
+  if (!route || typeof route !== "object") return false;
+  if (route.surface_type === "smart_contract") return true;
+  if (typeof route.capability_pack === "string"
+    && route.capability_pack.startsWith("smart_contract")) return true;
+  return false;
+}
+
+// Trusted surface_id -> route map from the WRITE-GUARDED surface-routes.json
+// (classifySurfaceCapability output). This is the ONLY trustworthy SC signal:
+// an agent cannot tamper the routes file, whereas the claim payload is
+// arbitrary, agent-settable content (deriving the SC exemption from
+// claim.payload would let any web claim spoof the carve-out by injecting
+// sc_evidence). Missing/unreadable routes -> null: no exemption, the web clamp
+// proceeds (pure-web sessions have no SC routes, so this never weakens them).
+function smartContractSurfaceIdsFromRoutes(domain) {
+  let document;
+  try {
+    document = readSurfaceRoutesStrict(domain).document;
+  } catch {
+    return null;
+  }
+  const scSurfaceIds = new Set();
+  for (const route of document.routes) {
+    if (route && typeof route.surface_id === "string" && routeIsSmartContract(route)) {
+      scSurfaceIds.add(route.surface_id);
+    }
+  }
+  return scSurfaceIds;
+}
+
 // Web/smart_contract is a per-FINDING technology axis, orthogonal to session
 // scope: a single web-scoped session (scope_policy.target_url set) can carry
 // smart-contract surfaces in cross-stack mode (orchestrator.md "web +
 // smart_contract_evm"). The severity clamp is a WEB-only anti-inflation guard;
 // it must NEVER touch smart-contract findings, whose balanced-verifier
-// legitimately re-judges severity UPWARD from on-chain effect. The recorder
-// stamps the finding's surface_type / sc_evidence / capability_pack onto the
-// claim payload (record-candidate-claim.js buildClaimPayloadFromFinding), which
-// is the sanctioned place consumers read finding fields off a claim. None of
-// these signals can be present on a web finding, so this carve-out never
-// weakens the clamp on a pure-web engagement.
-function claimIsSmartContractFinding(claim) {
-  const payload = claim && typeof claim.payload === "object" && claim.payload !== null
-    ? claim.payload
-    : null;
-  const finding = payload && typeof payload.finding === "object" && payload.finding !== null
-    ? payload.finding
-    : null;
-  if (!finding) return false;
-  if (finding.surface_type === "smart_contract") return true;
-  if (finding.sc_evidence != null && typeof finding.sc_evidence === "object") return true;
-  if (typeof finding.capability_pack === "string"
-    && finding.capability_pack.startsWith("smart_contract")) return true;
-  return false;
+// legitimately re-judges severity UPWARD from on-chain effect. SC-ness is
+// resolved from the claim's surface_ids against the trusted routes — never from
+// the claim payload.
+function claimIsSmartContractFinding(claim, scSurfaceIds) {
+  if (!scSurfaceIds || scSurfaceIds.size === 0) return false;
+  const surfaceIds = Array.isArray(claim.surface_ids) ? claim.surface_ids : [];
+  return surfaceIds.some((surfaceId) => scSurfaceIds.has(surfaceId));
 }
 
+// Returns the list of clamps applied: [{ finding_id, from, to }]. Empty when
+// nothing was clamped (non-web session, no rise, all proven, or all SC).
 function clampUnprovenSeverityRises(domain, results) {
   let nucleus;
   try {
     nucleus = readSessionNucleus(domain);
-  } catch {
-    return;
+  } catch (error) {
+    // Security boundary vs. availability: a session-nucleus.json that EXISTS but
+    // fails to parse is a corrupt scope record on an established session — fail
+    // closed so the guard cannot be silently disabled by tampering the nucleus.
+    // If the nucleus is simply ABSENT and the state isn't readable either, scope
+    // is indeterminate (e.g. a partially-seeded session), so pass through rather
+    // than block verification. A real web session at VERIFY always derives a
+    // target_url nucleus from its readable state, so it never lands here.
+    if (fs.existsSync(sessionNucleusPath(domain))) {
+      throw new ToolError(
+        ERROR_CODES.STATE_CONFLICT,
+        `severity-rise guard could not read session nucleus: ${error.message || String(error)}`,
+      );
+    }
+    return [];
   }
-  if (!nucleus || nucleus.scope_policy == null || nucleus.scope_policy.target_url == null) return;
+  if (!nucleus || nucleus.scope_policy == null || nucleus.scope_policy.target_url == null) return [];
 
-  const freeze = readCurrentClaimFreeze(domain);
-  if (!freeze || !Array.isArray(freeze.claims)) return;
+  let freeze;
+  try {
+    freeze = readCurrentClaimFreeze(domain);
+  } catch (error) {
+    // Defense-in-depth: a corrupt freeze is already rejected upstream of this
+    // guard (v1 via findingIdSetForVerificationContext; v2 via the snapshot
+    // freshness check assertSnapshotMatchesFreeze), so this branch is not the
+    // first reader. If it is ever reached, fail closed rather than skip the
+    // guard. A missing freeze returns null (handled below) — only a corrupt
+    // one throws.
+    throw new ToolError(
+      ERROR_CODES.STATE_CONFLICT,
+      `severity-rise guard could not read claim freeze: ${error.message || String(error)}`,
+    );
+  }
+  if (!freeze || !Array.isArray(freeze.claims)) return [];
+
+  const scSurfaceIds = smartContractSurfaceIdsFromRoutes(domain);
 
   const byFinding = new Map();
   for (const claim of freeze.claims) {
@@ -123,7 +178,7 @@ function clampUnprovenSeverityRises(domain, results) {
       .filter((ref) => ref && ref.kind === "finding" && typeof ref.finding_id === "string")
       .map((ref) => ref.finding_id);
     const exploitRunRefs = refs.filter((ref) => ref && ref.kind === "exploit_run");
-    const smartContract = claimIsSmartContractFinding(claim);
+    const smartContract = claimIsSmartContractFinding(claim, scSurfaceIds);
     for (const findingId of findingIds) {
       const current = byFinding.get(findingId)
         || { maxRank: 0, maxSeverity: null, exploitRunRefs: [], isSmartContract: false };
@@ -139,6 +194,7 @@ function clampUnprovenSeverityRises(domain, results) {
     }
   }
 
+  const clamps = [];
   let runRows = null;
   let signingKey = null;
   for (const result of results) {
@@ -163,8 +219,16 @@ function clampUnprovenSeverityRises(domain, results) {
         ));
       }
     }
-    if (!proven) result.severity = toRoundSeverity(base.maxSeverity);
+    if (!proven) {
+      const from = result.severity;
+      const to = toRoundSeverity(base.maxSeverity);
+      if (to !== from) {
+        result.severity = to;
+        clamps.push({ finding_id: result.finding_id, from, to });
+      }
+    }
   }
+  return clamps;
 }
 
 function normalizeStringEnumArray(value, fieldName, allowedValues, { required = false } = {}) {
@@ -463,7 +527,7 @@ function writeVerificationRound(args) {
     }
   }
 
-  clampUnprovenSeverityRises(domain, results);
+  const severityClamps = clampUnprovenSeverityRises(domain, results);
 
   const document = {
     version: schemaVersion,
@@ -494,6 +558,11 @@ function writeVerificationRound(args) {
     results_count: results.length,
     written_json: paths.json,
   };
+  // Audit signal: surface the clamp so an operator (and the agent that
+  // submitted the higher severity) can tell a verifier's choice from a runtime
+  // clamp. Without this the persisted severity differs silently from the
+  // submitted one.
+  if (severityClamps.length > 0) response.severity_clamps = severityClamps;
   if (schemaVersion === 2) {
     response.verification_attempt_id = v2State.verification_attempt_id;
     response.verification_snapshot_hash = v2State.verification_snapshot_hash;
@@ -515,6 +584,14 @@ function writeVerificationRound(args) {
       confirmed: results.filter((result) => result.disposition === "confirmed").length,
     },
   }, safeGovernanceContextForDomain(domain));
+  if (severityClamps.length > 0) {
+    safeAppendPipelineEventDirect(domain, "severity_clamped", {
+      status: round,
+      source: "bob_write_verification_round",
+      counts: { clamped: severityClamps.length },
+      clamps: severityClamps,
+    }, safeGovernanceContextForDomain(domain));
+  }
   if (schemaVersion === 2) verificationLib().refreshVerificationManifest(domain, { throw_on_error: true });
   return JSON.stringify(response);
   });
@@ -543,5 +620,6 @@ module.exports = {
   renderVerificationRoundMarkdown,
   requirePriorVerificationRound,
   sortVerificationResultsByFindingIds,
+  verifySeverityRank,
   writeVerificationRound,
 };

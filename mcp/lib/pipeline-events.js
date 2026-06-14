@@ -44,6 +44,7 @@ const PIPELINE_EVENT_TYPES = Object.freeze([
   "verification_attempt_archived",
   "verification_archive_pruned",
   "verification_written",
+  "severity_clamped",
   "evidence_written",
   "proof_bundle_written",
   "grade_written",
@@ -98,6 +99,25 @@ function normalizeCounts(counts) {
     }
   }
   return Object.keys(normalized).length ? normalized : null;
+}
+
+// Bounded audit list of severity clamps applied by the web severity-rise guard.
+// Each entry is {finding_id, from, to}; capped and value-bounded so the event
+// stays small and free of free-text. Used by the "severity_clamped" event so a
+// runtime clamp is distinguishable from a verifier's choice in a persisted
+// artifact, not just the ephemeral tool response.
+function normalizeClampList(clamps) {
+  if (!Array.isArray(clamps)) return null;
+  const normalized = [];
+  for (const clamp of clamps.slice(0, 50)) {
+    if (!isPlainObject(clamp)) continue;
+    const findingId = capString(clamp.finding_id, 64);
+    const from = capString(clamp.from, 40);
+    const to = capString(clamp.to, 40);
+    if (!findingId || !from || !to) continue;
+    normalized.push({ finding_id: findingId, from, to });
+  }
+  return normalized.length ? normalized : null;
 }
 
 function normalizeWaveNumber(value) {
@@ -178,6 +198,7 @@ function normalizePipelineEvent(targetDomain, type, fields = {}) {
   const blockCode = capString(fields.block_code, 120);
   const source = capString(fields.source, 120);
   const counts = normalizeCounts(fields.counts);
+  const clamps = normalizeClampList(fields.clamps);
   const kind = capString(fields.kind, 64);
   const identifierHint = capString(fields.identifier_hint, 64);
   if (agent) event.agent = agent;
@@ -185,6 +206,7 @@ function normalizePipelineEvent(targetDomain, type, fields = {}) {
   if (status) event.status = status;
   if (blockCode) event.block_code = blockCode;
   if (counts) event.counts = counts;
+  if (clamps) event.clamps = clamps;
   if (source) event.source = source;
   if (kind) event.kind = kind;
   if (identifierHint) event.identifier_hint = identifierHint;

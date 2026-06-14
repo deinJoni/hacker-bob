@@ -22,9 +22,17 @@ const {
 } = require("../mcp/lib/handoff-signing-key.js");
 const {
   offensiveRunsJsonlPath,
+  sessionNucleusPath,
   statePath,
+  surfaceRoutesPath,
   verificationRoundPaths,
 } = require("../mcp/lib/paths.js");
+const {
+  getCapabilityPack,
+} = require("../mcp/lib/capability-packs.js");
+const {
+  SEVERITY_VALUES,
+} = require("../mcp/lib/constants.js");
 const {
   signOffensiveRunRow,
 } = require("../mcp/lib/offensive-row-mac.js");
@@ -148,6 +156,7 @@ function appendFrozenFindingClaim(domain, {
   exploitOutcome = null,
   title = null,
   payload = null,
+  surfaceIds = null,
 } = {}) {
   const claim = {
     target_domain: domain,
@@ -160,20 +169,30 @@ function appendFrozenFindingClaim(domain, {
   };
   if (exploitOutcome) claim.exploit_outcome = exploitOutcome;
   if (payload) claim.payload = payload;
+  if (surfaceIds) claim.surface_ids = surfaceIds;
   return appendCandidateClaim(claim);
 }
 
-// A claim recorded for a smart_contract surface carries the finding's
-// surface_type / sc_evidence on the claim payload (record-candidate-claim.js
-// buildClaimPayloadFromFinding). The guard reads it from there.
-function smartContractPayload(contractAddress = "0xabc") {
+// Build a conformant surface route for the given capability pack so
+// readSurfaceRoutesStrict accepts it (evaluator_agent/brief_profile must match
+// the pack). surface-routes.json is the WRITE-GUARDED, trusted source the guard
+// resolves SC-ness from — never the claim payload.
+function routeForPack(surfaceId, packId, surfaceType) {
+  const pack = getCapabilityPack(packId);
   return {
-    finding: {
-      surface_type: "smart_contract",
-      capability_pack: "smart_contract_evm",
-      sc_evidence: { contract_address: contractAddress },
-    },
+    surface_id: surfaceId,
+    surface_type: surfaceType,
+    capability_pack: packId,
+    capability_pack_version: pack.capability_pack_version,
+    evaluator_agent: pack.evaluator_agent,
+    brief_profile: pack.brief_profile,
   };
+}
+
+function writeSurfaceRoutes(domain, routes) {
+  const filePath = surfaceRoutesPath(domain);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileAtomic(filePath, `${JSON.stringify({ version: 1, route_version: 1, routes }, null, 2)}\n`);
 }
 
 function freezeClaims(domain) {
@@ -353,19 +372,18 @@ test("web v2 severity rises require both the confidence reason and a satisfying 
   assert.equal(persistedSeverity(domainWithReason), "low");
 }));
 
-test("smart-contract findings are never clamped in a web-scoped cross-stack session", () => withTempHome(() => {
+test("smart-contract findings (resolved from trusted surface routes) are never clamped in a web session", () => withTempHome(() => {
   const domain = "severity-rise-cross-stack.example";
   initWebSession(domain);
-  // Same web-scoped session carries BOTH a web finding and a smart-contract
-  // finding (cross-stack mode). The web finding's unproven rise must clamp; the
-  // smart-contract finding's legitimate on-chain upward re-judge must survive.
-  appendFrozenFindingClaim(domain, { findingId: "F-1", severity: "low", title: "Web finding" });
-  appendFrozenFindingClaim(domain, {
-    findingId: "F-2",
-    severity: "medium",
-    title: "Smart-contract finding",
-    payload: smartContractPayload(),
-  });
+  // Cross-stack: the trusted, write-guarded surface routes classify one surface
+  // as web and one as smart_contract. The web finding's unproven rise must
+  // clamp; the smart-contract finding's legitimate on-chain re-judge survives.
+  writeSurfaceRoutes(domain, [
+    routeForPack("surface-web-1", "web", "web"),
+    routeForPack("surface-sc-1", "smart_contract_evm", "smart_contract"),
+  ]);
+  appendFrozenFindingClaim(domain, { findingId: "F-1", severity: "low", title: "Web finding", surfaceIds: ["surface-web-1"] });
+  appendFrozenFindingClaim(domain, { findingId: "F-2", severity: "medium", title: "SC finding", surfaceIds: ["surface-sc-1"] });
   freezeClaims(domain);
 
   writeVerificationRound({
@@ -382,23 +400,64 @@ test("smart-contract findings are never clamped in a web-scoped cross-stack sess
   assert.equal(persistedSeverity(domain, "brutalist", "F-2"), "critical", "smart-contract finding is not clamped");
 }));
 
-test("smart-contract findings detected by sc_evidence alone are not clamped", () => withTempHome(() => {
-  const domain = "severity-rise-sc-evidence.example";
+test("payload-injected sc_evidence cannot spoof the carve-out without a trusted SC route", () => withTempHome(() => {
+  const domain = "severity-rise-sc-spoof.example";
   initWebSession(domain);
+  // No surface route classifies this finding as smart_contract. An attacker
+  // injects sc_evidence/surface_type into the (agent-settable) claim payload to
+  // try to dodge the clamp. The guard ignores payload and still clamps.
   appendFrozenFindingClaim(domain, {
     findingId: "F-1",
     severity: "low",
-    title: "SC finding via sc_evidence",
-    // No surface_type/capability_pack — only sc_evidence marks it smart-contract.
-    payload: { finding: { sc_evidence: { contract_address: "0xfeed" } } },
+    surfaceIds: ["surface-web-1"],
+    payload: { finding: { surface_type: "smart_contract", sc_evidence: { contract_address: "0xfeed" } } },
   });
   freezeClaims(domain);
 
   assert.equal(
     writeV1Round(domain, verificationResult("F-1", { severity: "critical" })),
-    "critical",
+    "low",
   );
 }));
+
+test("corrupt session nucleus fails the severity-rise guard closed", () => withTempHome(() => {
+  const domain = "severity-rise-bad-nucleus.example";
+  initWebSession(domain);
+  appendFrozenFindingClaim(domain, { findingId: "F-1", severity: "low" });
+  freezeClaims(domain);
+  fs.writeFileSync(sessionNucleusPath(domain), "{not-json\n", "utf8");
+
+  assert.throws(
+    () => writeV1Round(domain, verificationResult("F-1", { severity: "critical" })),
+    (error) => error && error.code === "STATE_CONFLICT" && /session nucleus/.test(error.message),
+  );
+}));
+
+test("clamps are surfaced in the tool response", () => withTempHome(() => {
+  const domain = "severity-rise-response-signal.example";
+  initWebSession(domain);
+  appendFrozenFindingClaim(domain, { findingId: "F-1", severity: "low" });
+  freezeClaims(domain);
+
+  const response = JSON.parse(writeVerificationRound({
+    target_domain: domain,
+    round: "brutalist",
+    notes: null,
+    results: [verificationResult("F-1", { severity: "critical" })],
+  }));
+
+  assert.ok(Array.isArray(response.severity_clamps), "response carries severity_clamps");
+  assert.deepEqual(response.severity_clamps, [{ finding_id: "F-1", from: "critical", to: "low" }]);
+}));
+
+test("every severity enum value maps to a non-zero VERIFY_SEVERITY_RANK", () => {
+  const { verifySeverityRank } = require("../mcp/lib/verification-round-store.js");
+  for (const severity of SEVERITY_VALUES) {
+    assert.ok(verifySeverityRank(severity) > 0, `${severity} must have a non-zero rank`);
+  }
+  // The claim enum uses "informational" where the round enum uses "info".
+  assert.ok(verifySeverityRank("informational") > 0, "informational must have a non-zero rank");
+});
 
 test("non-web repo sessions are not clamped", () => withTempHome((home) => {
   const domain = initRepoOnlySession(home, "severity-rise-repo.example");
