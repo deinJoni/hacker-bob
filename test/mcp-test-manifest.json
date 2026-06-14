@@ -98,6 +98,7 @@
   "test/oss-surfacing.test.js",
   "test/oss-blocked-harness.test.js",
   "test/oss-evidence-reference.test.js",
+  "test/offensive-proof-contract.test.js",
   "test/sarif-ingest.test.js",
   "test/static-analysis-index.test.js",
   "test/static-lead-mapping.test.js",

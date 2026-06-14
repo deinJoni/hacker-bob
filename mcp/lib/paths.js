@@ -344,6 +344,13 @@ function repoCommandRunsJsonlPath(domain) {
   return path.join(sessionDir(domain), "repo-command-runs.jsonl");
 }
 
+// Offensive proof ledger for safe web exploit attempts. This mirrors
+// repo-command-runs.jsonl as an append-only MCP-owned ledger, but is
+// audit-graded because exploit proof rows become the un-fakeable claim gate.
+function offensiveRunsJsonlPath(domain) {
+  return path.join(sessionDir(domain), "offensive-runs.jsonl");
+}
+
 // Cycle O.4: repo-runs/<run_id>.{stdout,stderr} are the bounded (16 MB
 // each) capture files for each docker run. Lives under sessionDir so
 // session-read-guard.sh can extend BLOCKED_DIRS to it in cycle O.7.
@@ -424,6 +431,10 @@ const AUDIT_GRADED_BASENAMES = Object.freeze([
   "report-snapshots.jsonl",
   "report-amendments.jsonl",
   "chain-attempts.jsonl",
+  // Deliberate asymmetry: repo-command-runs.jsonl is MCP-owned but not
+  // audit-graded; offensive-runs.jsonl is both because exploit-proof claims
+  // are structurally rejected unless backed by a real row in this ledger.
+  "offensive-runs.jsonl",
   "diff-impact.json",
   // Verification-round mirrors live at the session root with fixed names.
   "brutalist.json",
@@ -535,6 +546,7 @@ module.exports = {
   pipelineEventsJsonlPath,
   proofBundlePaths,
   publicIntelPath,
+  offensiveRunsJsonlPath,
   queuePolicyPath,
   reportMarkdownPath,
   resolveEvidencePath,

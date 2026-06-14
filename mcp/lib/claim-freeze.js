@@ -215,7 +215,12 @@ function* iterateFrozenEvidenceRefs(freeze) {
 // comparison is unambiguous.
 function evidenceReferenceIdentityHash(ref) {
   if (!ref || typeof ref !== "object") return null;
-  if (ref.kind === "repo_command_run") {
+  // PR #108 review (Codex P1): exploit_run shares repo_command_run's
+  // content-identity model — its `stdout_hash` is the natural capture identity.
+  // Without this, the completeness gate falls back to `content_hash` (which
+  // exploit_run refs never carry), so an observed ref with a matching run_id but
+  // a tampered/mismatched capture hash would satisfy the freeze silently.
+  if (ref.kind === "repo_command_run" || ref.kind === "exploit_run") {
     return typeof ref.stdout_hash === "string" ? ref.stdout_hash : null;
   }
   return typeof ref.content_hash === "string" ? ref.content_hash : null;
@@ -264,6 +269,20 @@ function assertCompletenessAgainstFreeze(freeze, suppliedRefs) {
     }
     const expectedHash = evidenceReferenceIdentityHash(entry.ref);
     const observedHash = observed.get(entry.ref_key);
+    // PR #108 review (Codex P1): exploit_run is hash-bound proof material. An
+    // observed ref that omits the capture hash must NOT silently satisfy the
+    // freeze (key-presence alone), so a missing observed hash counts as a
+    // mismatch for this kind rather than passing through.
+    if (entry.ref && entry.ref.kind === "exploit_run" && expectedHash != null && observedHash == null) {
+      mismatched.push({
+        claim_id: entry.claim_id,
+        kind: entry.ref.kind,
+        ref_key: entry.ref_key,
+        expected_hash: expectedHash,
+        observed_hash: null,
+      });
+      continue;
+    }
     if (expectedHash != null && observedHash != null && expectedHash !== observedHash) {
       mismatched.push({
         claim_id: entry.claim_id,

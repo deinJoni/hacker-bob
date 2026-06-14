@@ -53,6 +53,7 @@ MCP_OWNED_EXACT = {
     "Dockerfile.bob",
     "repo-checks.jsonl",
     "repo-command-runs.jsonl",
+    "offensive-runs.jsonl",
     "repo-env.json",
     "repo-inventory.json",
     "surface-routes.json",
@@ -130,26 +131,59 @@ def is_in_session_dir(resolved):
     return False
 
 
-def check_file(raw_path):
-    """Returns filename to block, or None to allow."""
+def extract_cd_targets(command):
+    """Directories the command cd's/pushd's into, resolved like other paths.
+
+    PR #108 review (Codex P1): a relative redirect/script target resolves
+    against the hook process cwd, so `cd <session_dir> && echo ... >> ledger`
+    slips past the guard because the bare `ledger` is judged outside any session
+    dir. Collecting cd targets lets check_file also resolve relative paths
+    against the shell's working directory, closing that bypass for every
+    MCP-owned file (not just offensive-runs.jsonl)."""
+    bases = []
+    # Consume any cd flags (`-L`/`-P`) and the `--` option terminator before the
+    # directory token (PR #108 review, Codex P1: `cd -- <dir>` must not slip the
+    # guard). Then drop `cd -` (previous-dir) cases.
+    for match in re.finditer(r"\b(?:cd|pushd)\s+(?:-[A-Za-z]+\s+|--\s+)*([\"']?)([^\"'\s;|&]+)\1", command):
+        raw = match.group(2)
+        if raw.startswith("-") or raw in {"-", "~-", "&&", "||"}:
+            continue
+        bases.append(resolve_path(raw))
+    return bases
+
+
+def check_file(raw_path, base_dirs=None):
+    """Returns filename to block, or None to allow.
+
+    When base_dirs (cd targets) are supplied, a relative path is also resolved
+    against each of them so a `cd <session_dir>`-then-relative-redirect cannot
+    escape the session-dir check.
+    """
     resolved = resolve_path(raw_path)
+    candidates = [resolved]
+    if not resolved.is_absolute() and base_dirs:
+        for base in base_dirs:
+            candidates.append(base / resolved)
 
-    if not is_in_session_dir(resolved):
-        return None
+    for candidate in candidates:
+        if not is_in_session_dir(candidate):
+            continue
 
-    filename = resolved.name
+        filename = candidate.name
 
-    if any(part in MCP_OWNED_DIRS for part in resolved.parts):
+        if any(part in MCP_OWNED_DIRS for part in candidate.parts):
+            return filename
+
+        if is_agent_allowed(filename):
+            return None
+
+        if is_mcp_owned(filename):
+            return filename
+
+        # Block by default for unrecognized files in session dir
         return filename
 
-    if is_agent_allowed(filename):
-        return None
-
-    if is_mcp_owned(filename):
-        return filename
-
-    # Block by default for unrecognized files in session dir
-    return filename
+    return None
 
 
 def block(message):
@@ -210,6 +244,7 @@ def check_mutating_path_commands(command):
             "Refusing to allow potentially unsafe shell operation."
         )
 
+    base_dirs = extract_cd_targets(command)
     mutators = {"rm", "unlink", "mv", "cp", "chmod", "chown"}
     for index, token in enumerate(tokens):
         command_name = pathlib.PurePosixPath(token).name
@@ -220,7 +255,7 @@ def check_mutating_path_commands(command):
                 break
             if candidate.startswith("-"):
                 continue
-            blocked = check_file(candidate)
+            blocked = check_file(candidate, base_dirs)
             if blocked:
                 block(
                     f"BLOCKED: Bash {command_name} on '{blocked}' in session directory. "
@@ -262,10 +297,14 @@ has_open_call = re.search(r"open\s*\(|Path\s*\(", command)
 if not has_redirects and not has_open_call:
     raise SystemExit(0)
 
+# Resolve any cd/pushd targets so relative redirect/script paths are checked
+# against the shell's working directory, not just the hook process cwd.
+cd_targets = extract_cd_targets(command)
+
 # Extract and check redirect targets
 if has_redirects:
     for target in extract_redirect_targets(command):
-        blocked = check_file(target)
+        blocked = check_file(target, cd_targets)
         if blocked:
             block(
                 f"BLOCKED: Bash redirect to '{blocked}' in session directory. "
@@ -275,7 +314,7 @@ if has_redirects:
 # Extract and check inline script file writes (open(), Path().write_text(), etc.)
 if has_open_call:
     for target in extract_inline_script_paths(command):
-        blocked = check_file(target)
+        blocked = check_file(target, cd_targets)
         if blocked:
             block(
                 f"BLOCKED: Inline script writes to '{blocked}' in session directory. "

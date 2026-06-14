@@ -1,6 +1,7 @@
 "use strict";
 
 const fs = require("fs");
+const path = require("path");
 const {
   assertEnumValue,
   normalizeOptionalText,
@@ -8,7 +9,9 @@ const {
 const {
   assertSafeDomain,
   claimsJsonlPath,
+  offensiveRunsJsonlPath,
   repoCommandRunsJsonlPath,
+  sessionsRoot,
 } = require("./paths.js");
 const {
   appendJsonlLine,
@@ -35,6 +38,16 @@ const {
   ERROR_CODES,
   ToolError,
 } = require("./envelope.js");
+const {
+  readHandoffSigningKey,
+} = require("./handoff-signing-key.js");
+const {
+  verifyOffensiveRunRowMac,
+} = require("./offensive-row-mac.js");
+const {
+  OFFENSIVE_OUTCOME_VALUES,
+  SAFE_ORACLE_KINDS,
+} = require("./constants.js");
 const {
   readFrontierEvents,
 } = require("./frontier-events.js");
@@ -81,6 +94,23 @@ const CLAIM_SEVERITIES = Object.freeze(["critical", "high", "medium", "low", "in
 //                      (`stdout_hash`/`stderr_hash`). The raw stdout/stderr
 //                      live on disk under `repo-runs/<run_id>.{stdout,stderr}`
 //                      and are read-guard-protected per O.7.
+//
+//   exploit_run      : Carries the `run_id` of an offensive-runs.jsonl row
+//                      produced by the offensive runner, binding tool id,
+//                      target URL, safe offensive outcome, command hash,
+//                      exit code, and stdout/stderr capture hashes.
+//                      DEFERRED (PR #108 review, Codex P2): once a frozen
+//                      claim carries an exploit_run ref, the C.5
+//                      freeze-completeness gate
+//                      (claim-freeze.js::assertCompletenessAgainstFreeze)
+//                      will mark it `missing` unless an observed projection is
+//                      supplied — there is no projectOffensiveRunObservedRef
+//                      yet. This is unreachable today (no tool surface emits
+//                      exploit_outcome), so the projection lands with the
+//                      offensive runner / tool-surface PR that defines where
+//                      raw exploit output is captured. Until then the
+//                      evidence-agent must supply the exploit_run observed ref
+//                      explicitly, or freeze-completeness will block GRADE.
 const EVIDENCE_REFERENCE_KIND_VALUES = Object.freeze([
   "finding",
   "verification_round",
@@ -90,6 +120,7 @@ const EVIDENCE_REFERENCE_KIND_VALUES = Object.freeze([
   "agent_run",
   "repo_file",
   "repo_command_run",
+  "exploit_run",
 ]);
 
 function isHex64(value) {
@@ -151,6 +182,80 @@ function assertRepoCommandRunEvidenceShape(ref, fieldName) {
   }
 }
 
+// Value-blind canonicalization of an exploit_run target. PR #108 review
+// (Codex P1/P2, four rounds): the hash-bound `target` is persisted verbatim into
+// claims.jsonl, so any credential embedded in the URL leaks on every claim read.
+// A secret-NAME denylist is whack-a-mole — it kept missing userinfo, OAuth
+// implicit `#access_token`, compound names (`client_secret`, `X-Amz-Signature`),
+// and routed fragments (`#/cb?token=`). So we reduce structurally to
+// origin + pathname: drop userinfo, the entire query, and the fragment. This is
+// the only value-blind form that BOTH avoids leaking secrets AND survives the
+// generic sensitive-material scan (which flags `access_token=<placeholder>` even
+// with a redacted value). The exact request — query, canary, payload — stays
+// bound by command_hash and recoverable from the read-guarded capture, so the
+// reportable PoC is not lost; only the proof-binding identifier is reduced.
+//
+// This is the single canonical form the offensive runner MUST also write to the
+// offensive-runs.jsonl row so the row and this ref stay byte-identical for the
+// proof binding (the runner imports canonicalizeExploitTarget for exactly this).
+function canonicalizeExploitTarget(targetUrl) {
+  let parsed;
+  try {
+    parsed = new URL(targetUrl);
+  } catch {
+    // Opaque / relative targets are rejected by the shape validator; leave them
+    // unchanged here rather than fabricating an origin.
+    return targetUrl;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return targetUrl;
+  }
+  return `${parsed.origin}${parsed.pathname}`;
+}
+
+function assertExploitRunEvidenceShape(ref, fieldName) {
+  // Offensive proof contract:
+  //   {kind, run_id, tool_id, target, offensive_outcome, command_hash,
+  //    exit_code, stdout_hash, stderr_hash, source_run_id?}
+  // The row cross-check later proves this ref is backed by a real,
+  // non-dry-run offensive-runs.jsonl row.
+  if (typeof ref.run_id !== "string" || !ref.run_id.trim()) {
+    throw new Error(`${fieldName}.run_id must be a non-empty string for kind="exploit_run"`);
+  }
+  if (typeof ref.tool_id !== "string" || !ref.tool_id.trim()) {
+    throw new Error(`${fieldName}.tool_id must be a non-empty string for kind="exploit_run"`);
+  }
+  if (typeof ref.target !== "string" || !ref.target.trim()) {
+    throw new Error(`${fieldName}.target must be a non-empty string for kind="exploit_run"`);
+  }
+  // PR #108 review (Codex P1): require an absolute http(s) URL. Relative/opaque
+  // targets cannot be value-blind redacted (canonicalizeExploitTarget can only
+  // parse absolute URLs) and cannot be scope-checked, so they are rejected
+  // rather than persisted raw.
+  let parsedTarget;
+  try {
+    parsedTarget = new URL(ref.target);
+  } catch {
+    throw new Error(`${fieldName}.target must be an absolute http(s) URL for kind="exploit_run"`);
+  }
+  if (parsedTarget.protocol !== "http:" && parsedTarget.protocol !== "https:") {
+    throw new Error(`${fieldName}.target must use the http(s) scheme for kind="exploit_run"`);
+  }
+  assertEnumValue(ref.offensive_outcome, OFFENSIVE_OUTCOME_VALUES, `${fieldName}.offensive_outcome`);
+  if (!isHex64(ref.command_hash)) {
+    throw new Error(`${fieldName}.command_hash must be a 64-hex content digest for kind="exploit_run"`);
+  }
+  if (!isHex64(ref.stdout_hash)) {
+    throw new Error(`${fieldName}.stdout_hash must be a 64-hex content digest for kind="exploit_run"`);
+  }
+  if (!isHex64(ref.stderr_hash)) {
+    throw new Error(`${fieldName}.stderr_hash must be a 64-hex content digest for kind="exploit_run"`);
+  }
+  if (ref.exit_code != null && !Number.isInteger(ref.exit_code)) {
+    throw new Error(`${fieldName}.exit_code must be an integer or null for kind="exploit_run"`);
+  }
+}
+
 function normalizeEvidenceReferenceShape(ref, fieldName = "evidence_refs[]") {
   if (ref == null || typeof ref !== "object" || Array.isArray(ref)) {
     throw new Error(`${fieldName} must be an object`);
@@ -178,6 +283,11 @@ function normalizeEvidenceReferenceShape(ref, fieldName = "evidence_refs[]") {
     assertRepoFileEvidenceShape(ref, fieldName);
   } else if (kind === "repo_command_run") {
     assertRepoCommandRunEvidenceShape(ref, fieldName);
+  } else if (kind === "exploit_run") {
+    assertExploitRunEvidenceShape(ref, fieldName);
+    // Value-blind redaction before the target is hash-bound into the claim, so
+    // no embedded secret is ever persisted (see canonicalizeExploitTarget).
+    ref.target = canonicalizeExploitTarget(ref.target);
   }
   return ref;
 }
@@ -224,6 +334,9 @@ function evidenceReferenceLookupKey(ref) {
   }
   if (kind === "repo_command_run" && typeof ref.run_id === "string") {
     return `repo_command_run:${ref.run_id}`;
+  }
+  if (kind === "exploit_run" && typeof ref.run_id === "string") {
+    return `exploit_run:${ref.run_id}`;
   }
   return `${kind}:${ref.artifact_path || ""}:${ref.content_hash || ""}`;
 }
@@ -319,6 +432,29 @@ function normalizeConfidence(value) {
   return Number(value.toFixed(4));
 }
 
+function normalizeExploitOutcome(value) {
+  if (value == null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("exploit_outcome must be an object when present");
+  }
+  const outcome = assertEnumValue(value.outcome, OFFENSIVE_OUTCOME_VALUES, "exploit_outcome.outcome");
+  const safeOracle = value.safe_oracle;
+  if (outcome === "exploited_safely") {
+    if (safeOracle == null || typeof safeOracle !== "object" || Array.isArray(safeOracle)) {
+      throw new Error("exploit_outcome.safe_oracle must be an object when outcome is exploited_safely");
+    }
+    const kind = assertEnumValue(safeOracle.kind, SAFE_ORACLE_KINDS, "exploit_outcome.safe_oracle.kind");
+    return {
+      outcome,
+      safe_oracle: { kind },
+    };
+  }
+  if (safeOracle != null) {
+    throw new Error("exploit_outcome.safe_oracle is only allowed when outcome is exploited_safely");
+  }
+  return { outcome };
+}
+
 function generatedClaimId(fields) {
   return `CL-${hashCanonicalJson(fields).slice(0, 24)}`;
 }
@@ -352,10 +488,25 @@ function normalizeCandidateClaim(input, { targetDomain = null, now = new Date(),
   // carry a kind; artifact_path and content_hash are validated when present so
   // a CandidateClaim whose refs cannot be content-hash-matched at GRADE time
   // is rejected up front.
-  const evidenceRefs = normalizeReferenceArray(input.evidence_refs, "evidence_refs")
+  // PR #108 review (Codex P2): normalizeReferenceArray runs the generic
+  // sensitive-material scan (validateNoSensitiveMaterial) BEFORE
+  // normalizeEvidenceReferenceShape. Without pre-redaction a genuinely
+  // token-bearing exploit target would be REJECTED by the scan rather than
+  // redacted, so a legitimate safe-exploit proof with a credential-bearing
+  // callback URL could not be recorded. Canonicalize exploit_run targets first
+  // so the scan only ever sees the value-redacted form.
+  const preRedactedRefs = Array.isArray(input.evidence_refs)
+    ? input.evidence_refs.map((ref) => (
+      ref && typeof ref === "object" && ref.kind === "exploit_run" && typeof ref.target === "string"
+        ? { ...ref, target: canonicalizeExploitTarget(ref.target) }
+        : ref
+    ))
+    : input.evidence_refs;
+  const evidenceRefs = normalizeReferenceArray(preRedactedRefs, "evidence_refs")
     .map((ref, index) => normalizeEvidenceReferenceShape(ref, `evidence_refs[${index}]`));
   const controlExpectation = normalizeOptionalObject(input.control_expectation, "control_expectation");
   const impact = normalizeOptionalText(input.impact, "impact");
+  const exploitOutcome = normalizeExploitOutcome(input.exploit_outcome);
   const confidence = normalizeConfidence(input.confidence);
   const sourceTaskIds = normalizeOptionalTextArray(input.source_task_ids, "source_task_ids");
   const agentRunIds = normalizeOptionalTextArray(input.agent_run_ids, "agent_run_ids");
@@ -419,6 +570,7 @@ function normalizeCandidateClaim(input, { targetDomain = null, now = new Date(),
   if (evidenceRefs.length > 0) base.evidence_refs = evidenceRefs;
   if (controlExpectation) base.control_expectation = controlExpectation;
   if (impact) base.impact = impact;
+  if (exploitOutcome) base.exploit_outcome = exploitOutcome;
   if (confidence != null) base.confidence = confidence;
   if (sourceTaskIds.length > 0) base.source_task_ids = sourceTaskIds;
   if (agentRunIds.length > 0) base.agent_run_ids = agentRunIds;
@@ -507,7 +659,94 @@ function readRepoCommandRunRecords(domain) {
   return rows;
 }
 
+// PR #108: realpath-containment for the proof ledger. Defends a symlinked SESSION
+// DIRECTORY (O_NOFOLLOW on the leaf file alone does not catch a symlinked parent dir).
+// Returns null when the session dir does not exist yet (caller maps null -> []).
+function resolveOffensiveRunsFilePathSecure(filePath) {
+  const nominalDir = path.dirname(filePath);
+  if (!fs.existsSync(nominalDir)) return null;
+  const realRoot = fs.realpathSync(sessionsRoot());
+  const realDir = fs.realpathSync(nominalDir);
+  const expectedDir = path.join(realRoot, path.basename(nominalDir));
+  if (realDir !== expectedDir) {
+    throw new ToolError(
+      ERROR_CODES.STATE_CONFLICT,
+      `offensive-runs.jsonl directory must stay inside its session root without domain-directory symlinks: ${nominalDir}`,
+    );
+  }
+  return path.join(realDir, path.basename(filePath));
+}
+
+function readOffensiveRunRecords(domain) {
+  const filePath = offensiveRunsJsonlPath(domain);
+  const realFilePath = resolveOffensiveRunsFilePathSecure(filePath);
+  if (realFilePath === null) return [];
+  const noFollow = fs.constants.O_NOFOLLOW || 0;
+  // On platforms without O_NOFOLLOW, pre-check the leaf for a symlink.
+  if (!noFollow) {
+    let entry;
+    try {
+      entry = fs.lstatSync(realFilePath);
+    } catch (e) {
+      if (e && e.code === "ENOENT") return [];
+      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Could not stat offensive-runs.jsonl: ${realFilePath} (${e.message || String(e)})`);
+    }
+    if (entry.isSymbolicLink()) {
+      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `offensive-runs.jsonl must be a regular file, not a symlink: ${realFilePath}`);
+    }
+  }
+  let fd = null;
+  let raw;
+  try {
+    fd = fs.openSync(realFilePath, fs.constants.O_RDONLY | noFollow);
+    const stats = fs.fstatSync(fd);
+    if (!stats.isFile()) {
+      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `offensive-runs.jsonl must be a regular file: ${realFilePath}`);
+    }
+    if (stats.nlink !== 1) {
+      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `offensive-runs.jsonl must not be hard-linked: ${realFilePath}`);
+    }
+    if (DEFAULT_ARTIFACT_READ_MAX_BYTES != null && stats.size > DEFAULT_ARTIFACT_READ_MAX_BYTES) {
+      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `offensive-runs.jsonl exceeds read cap of ${DEFAULT_ARTIFACT_READ_MAX_BYTES} bytes: ${realFilePath}`);
+    }
+    raw = fs.readFileSync(fd, "utf8");
+  } catch (error) {
+    if (error instanceof ToolError) throw error;
+    if (error && error.code === "ENOENT") return [];
+    if (error && error.code === "ELOOP") {
+      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `offensive-runs.jsonl must be a regular file, not a symlink: ${realFilePath}`);
+    }
+    throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Could not read offensive-runs.jsonl: ${realFilePath} (${error.message || String(error)})`);
+  } finally {
+    if (fd != null) {
+      try { fs.closeSync(fd); } catch {}
+    }
+  }
+  const rows = [];
+  const lines = raw.split(/\r?\n/);
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      rows.push(JSON.parse(line));
+    } catch {
+      // PR #108 review (Codex P2): unlike repo-command-runs.jsonl (convenience
+      // telemetry that tolerates a corrupt line), the offensive ledger is
+      // audit-graded proof material. A malformed line means an interrupted
+      // append or tampering, so fail closed rather than silently skipping it and
+      // letting a later row satisfy the exploit-proof gate against an
+      // incomplete/corrupt ledger. Blast radius is limited to exploited_safely
+      // claims (the only path that reads this ledger).
+      throw new ToolError(
+        ERROR_CODES.STATE_CONFLICT,
+        `offensive-runs.jsonl contains a malformed row; refusing to evaluate exploit proof against a corrupt proof ledger: ${realFilePath}`,
+      );
+    }
+  }
+  return rows;
+}
+
 const O_P4_DISALLOWED_REPO_COMMAND_EXIT_CODES = Object.freeze([125, 126, 127]);
+const OFFENSIVE_RUN_DISALLOWED_EXIT_CODES = Object.freeze([125, 126, 127]);
 
 function repoCommandRunRowSatisfiesEvidence(row, ref) {
   // The cross-check (additive to the evidence_ref shape gate): the row must
@@ -524,6 +763,62 @@ function repoCommandRunRowSatisfiesEvidence(row, ref) {
   // a result). If the evidence_ref also pinned a value, it must match.
   if (!Number.isInteger(row.exit_code)) return false;
   if (O_P4_DISALLOWED_REPO_COMMAND_EXIT_CODES.includes(row.exit_code)) return false;
+  if (Number.isInteger(ref.exit_code) && row.exit_code !== ref.exit_code) return false;
+  return true;
+}
+
+// PR #108 review (Codex P1): bind the proof to the claim's own target_domain.
+// Returns true only when the cited target URL's host is the claim domain or a
+// subdomain of it, so a row planted for another host can never back a claim.
+function exploitTargetHostInScope(targetUrl, domain) {
+  let host;
+  try {
+    host = new URL(targetUrl).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  const scope = String(domain).toLowerCase();
+  return host === scope || host.endsWith(`.${scope}`);
+}
+
+function offensiveRunRowSatisfiesEvidence(row, ref, domain, signingKey) {
+  if (!row || typeof row !== "object") return false;
+  // PR #108: the row must be HMAC-signed by the trusted producer (offensive runner) with
+  // the per-session key. An agent-authored / symlinked / tampered / wrong-key row has no
+  // valid MAC and fails here before any field check.
+  //
+  // THREAT-MODEL BOUNDARY (Codex round-6 P1, be honest about this): the MAC defends
+  // against an agent confined to the MCP tool surface and the guarded Bash surface. It
+  // does NOT, on its own, defend against an agent that executes arbitrary in-process code
+  // (e.g. `node -e` that require()s readHandoffSigningKey and reads the 0600 key via fs) —
+  // a same-UID actor with arbitrary code execution can read any file its UID can, and the
+  // PreToolUse hooks cannot mediate in-process syscalls. This is the SAME assumption Bob's
+  // existing wave-handoff signing already makes (cf. wave-handoff-contracts.js
+  // validateHandoffProvenance). Absolute un-fakeability therefore requires running the
+  // offensive runner/agent under privilege or container separation so the agent's UID
+  // cannot read the signing key — a HARD REQUIREMENT of the offensive-sandbox PR. The MAC
+  // is the necessary foundation that makes that separation sufficient.
+  if (!verifyOffensiveRunRowMac(row, signingKey)) return false;
+  // PR #108 review (Codex P1): require the row to AFFIRMATIVELY assert a
+  // completed, non-dry-run execution. Accepting an omitted/non-boolean dry_run
+  // or timed_out would let a hand-authored/incomplete row stand as proof.
+  if (row.dry_run !== false) return false;
+  if (row.timed_out !== false) return false;
+  // Domain binding (Codex P1): the ledger is read from the claim's session, but
+  // the row must also be *recorded for* this domain and the cited URL must be in
+  // its scope, so a cross-domain row in the same session cannot stand as proof.
+  if (typeof row.target_domain !== "string" || row.target_domain !== domain) return false;
+  if (!exploitTargetHostInScope(ref.target, domain)) return false;
+  if (typeof row.run_id !== "string" || row.run_id !== ref.run_id) return false;
+  if (typeof row.tool_id !== "string" || row.tool_id !== ref.tool_id) return false;
+  if (typeof row.target !== "string" || row.target !== ref.target) return false;
+  if (typeof row.command_hash !== "string" || row.command_hash !== ref.command_hash) return false;
+  if (typeof row.stdout_hash !== "string" || row.stdout_hash !== ref.stdout_hash) return false;
+  if (typeof row.stderr_hash !== "string" || row.stderr_hash !== ref.stderr_hash) return false;
+  if (row.offensive_outcome !== "exploited_safely") return false;
+  if (ref.offensive_outcome != null && row.offensive_outcome !== ref.offensive_outcome) return false;
+  if (!Number.isInteger(row.exit_code)) return false;
+  if (OFFENSIVE_RUN_DISALLOWED_EXIT_CODES.includes(row.exit_code)) return false;
   if (Number.isInteger(ref.exit_code) && row.exit_code !== ref.exit_code) return false;
   return true;
 }
@@ -576,6 +871,65 @@ function assertNotStaticOnlyNativeHighSeverity(claim) {
   }
 }
 
+function assertExploitedClaimHasProof(claim) {
+  const evidenceRefs = Array.isArray(claim.evidence_refs) ? claim.evidence_refs : [];
+  const exploitRunRefs = evidenceRefs.filter((ref) => ref && ref.kind === "exploit_run");
+  // PR #108 review (Codex round-6 P1): exploit_run refs are proof-of-exploitation
+  // evidence and may ONLY ride on a claim whose top-level exploit_outcome asserts
+  // exploited_safely. Without this, a claim that omits exploit_outcome (or sets a
+  // blocked_* outcome) could smuggle a self-authored exploit_run ref into
+  // claims.jsonl/the freeze without ever reaching the MAC-backed proof gate below.
+  if (claim.exploit_outcome?.outcome !== "exploited_safely") {
+    if (exploitRunRefs.length > 0) {
+      throw new ToolError(
+        ERROR_CODES.INVALID_ARGUMENTS,
+        "exploit_run evidence_refs are only allowed on claims whose exploit_outcome.outcome is \"exploited_safely\".",
+        {
+          code: "exploit_run_ref_without_exploited_outcome",
+          outcome: claim.exploit_outcome?.outcome ?? null,
+        },
+      );
+    }
+    return;
+  }
+  if (exploitRunRefs.length === 0) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "exploited_safely claims must include at least one evidence_refs[] entry with kind: \"exploit_run\".",
+      {
+        code: "exploit_proof_missing_exploit_run_evidence",
+        outcome: claim.exploit_outcome.outcome,
+      },
+    );
+  }
+  const runRows = readOffensiveRunRecords(claim.target_domain);
+  // Read the signing key only when there are rows to verify. If we read it
+  // unconditionally, the legitimate "no ledger yet" case would throw STATE_CONFLICT
+  // ("Missing handoff signing key") instead of the intended INVALID_ARGUMENTS
+  // exploit_proof_unbacked_exploit_run_evidence.
+  const signingKey = runRows.length > 0 ? readHandoffSigningKey(claim.target_domain) : null;
+  // PR #108 review (Codex P2): require EVERY exploit_run ref to be backed by an
+  // in-scope, non-dry-run ledger row — not just one. `some()` would let an extra
+  // unbacked or out-of-scope exploit_run ref ride along into claims.jsonl/the
+  // freeze on the coattails of one valid ref, smuggling off-scope offensive
+  // evidence. (Stricter than the O-P4 repo_command_run gate by design: offensive
+  // target URLs are scope-sensitive in a way native-code run ids are not.)
+  const allBacked = exploitRunRefs.every((ref) => (
+    runRows.some((row) => offensiveRunRowSatisfiesEvidence(row, ref, claim.target_domain, signingKey))
+  ));
+  if (!allBacked) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENTS,
+      "exploited_safely claims require every exploit_run evidence_ref to be backed by a matching in-scope, non-dry-run offensive-runs.jsonl row.",
+      {
+        code: "exploit_proof_unbacked_exploit_run_evidence",
+        outcome: claim.exploit_outcome.outcome,
+        disallowed_offensive_run_exit_codes: OFFENSIVE_RUN_DISALLOWED_EXIT_CODES,
+      },
+    );
+  }
+}
+
 function appendCandidateClaim(input, options = {}) {
   const claim = normalizeCandidateClaim(input, options);
   // O-P4 validator runs before the JSONL append so a rejected claim leaves
@@ -583,6 +937,7 @@ function appendCandidateClaim(input, options = {}) {
   // sibling gate on the handoff path; the claim path owns the native-code
   // severity gate.
   assertNotStaticOnlyNativeHighSeverity(claim);
+  assertExploitedClaimHasProof(claim);
   return withSessionLock(claim.target_domain, () => {
     appendJsonlLine(claimsJsonlPath(claim.target_domain), claim, {
       maxRecords: options.maxRecords == null ? CLAIMS_MAX_RECORDS : options.maxRecords,
@@ -606,9 +961,13 @@ module.exports = {
   CLAIM_STATUSES,
   CLAIM_VERSION,
   EVIDENCE_REFERENCE_KIND_VALUES,
+  OFFENSIVE_OUTCOME_VALUES,
   O_P4_NATIVE_LANGUAGES,
   O_P4_TRIGGERING_SEVERITIES,
+  SAFE_ORACLE_KINDS,
   appendCandidateClaim,
+  assertExploitedClaimHasProof,
+  canonicalizeExploitTarget,
   assertNotStaticOnlyNativeHighSeverity,
   claimSurfaceLanguageMap,
   evidenceReferenceLookupKey,
