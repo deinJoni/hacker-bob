@@ -375,52 +375,50 @@ test("web v2 severity rises require both the confidence reason and a satisfying 
   assert.equal(persistedSeverity(domainWithReason), "low");
 }));
 
-test("smart-contract findings (resolved from trusted surface routes) are never clamped in a web session", () => withTempHome(() => {
+test("a cross-stack session that routes any smart-contract surface skips the clamp entirely", () => withTempHome(() => {
   const domain = "severity-rise-cross-stack.example";
   initWebSession(domain);
-  // Cross-stack: the trusted, write-guarded surface routes classify one surface
-  // as web and one as smart_contract. The web finding's unproven rise must
-  // clamp; the smart-contract finding's legitimate on-chain re-judge survives.
+  // The trusted, write-guarded routes show this is a mixed web + smart_contract
+  // engagement. The pure-web clamp does not apply to such a session, so even a
+  // web finding's rise is left alone (and the SC re-judge is never clamped).
   writeSurfaceRoutes(domain, [
     routeForPack("surface-web-1", "web", "web"),
     routeForPack("surface-sc-1", "smart_contract_evm", "smart_contract"),
   ]);
-  appendFrozenFindingClaim(domain, { findingId: "F-1", severity: "low", title: "Web finding", surfaceIds: ["surface-web-1"] });
-  appendFrozenFindingClaim(domain, { findingId: "F-2", severity: "medium", title: "SC finding", surfaceIds: ["surface-sc-1"] });
+  appendFrozenFindingClaim(domain, { findingId: "F-1", severity: "low", surfaceIds: ["surface-web-1"] });
   freezeClaims(domain);
 
-  writeVerificationRound({
-    target_domain: domain,
-    round: "brutalist",
-    notes: null,
-    results: [
-      verificationResult("F-1", { severity: "critical" }),
-      verificationResult("F-2", { severity: "critical" }),
-    ],
-  });
-
-  assert.equal(persistedSeverity(domain, "brutalist", "F-1"), "low", "web finding clamps");
-  assert.equal(persistedSeverity(domain, "brutalist", "F-2"), "critical", "smart-contract finding is not clamped");
+  assert.equal(writeV1Round(domain, verificationResult("F-1", { severity: "critical" })), "critical");
 }));
 
-test("payload-injected sc_evidence cannot spoof the carve-out without a trusted SC route", () => withTempHome(() => {
+test("citing a smart-contract surface_id cannot dodge the clamp in a pure-web session", () => withTempHome(() => {
   const domain = "severity-rise-sc-spoof.example";
   initWebSession(domain);
-  // No surface route classifies this finding as smart_contract. An attacker
-  // injects sc_evidence/surface_type into the (agent-settable) claim payload to
-  // try to dodge the clamp. The guard ignores payload and still clamps.
+  // Pure-web session: routes classify the only surface as web. The claim cites a
+  // bogus/foreign surface_id and injects sc_evidence into its (agent-settable)
+  // payload to try to look smart-contract. The session-level gate ignores both —
+  // there are no SC routes — so the clamp still fires.
+  writeSurfaceRoutes(domain, [routeForPack("surface-web-1", "web", "web")]);
   appendFrozenFindingClaim(domain, {
     findingId: "F-1",
     severity: "low",
-    surfaceIds: ["surface-web-1"],
+    surfaceIds: ["surface-sc-totally-made-up"],
     payload: { finding: { surface_type: "smart_contract", sc_evidence: { contract_address: "0xfeed" } } },
   });
   freezeClaims(domain);
 
-  assert.equal(
-    writeV1Round(domain, verificationResult("F-1", { severity: "critical" })),
-    "low",
-  );
+  assert.equal(writeV1Round(domain, verificationResult("F-1", { severity: "critical" })), "low");
+}));
+
+test("the clamp is recorded in the persisted round document", () => withTempHome(() => {
+  const domain = "severity-rise-doc-audit.example";
+  initWebSession(domain);
+  appendFrozenFindingClaim(domain, { findingId: "F-1", severity: "low" });
+  freezeClaims(domain);
+
+  writeV1Round(domain, verificationResult("F-1", { severity: "critical" }));
+  const document = JSON.parse(fs.readFileSync(verificationRoundPaths(domain, "brutalist").json, "utf8"));
+  assert.deepEqual(document.severity_clamps, [{ finding_id: "F-1", from: "critical", to: "low" }]);
 }));
 
 test("scope is derived from validated state, so a drifted nucleus file cannot disable the guard", () => withTempHome(() => {

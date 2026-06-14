@@ -92,59 +92,47 @@ function routeIsSmartContract(route) {
   return false;
 }
 
-// Trusted surface_id -> route map from the WRITE-GUARDED surface-routes.json
-// (classifySurfaceCapability output). This is the ONLY trustworthy SC signal:
-// an agent cannot tamper the routes file, whereas the claim payload is
-// arbitrary, agent-settable content (deriving the SC exemption from
-// claim.payload would let any web claim spoof the carve-out by injecting
-// sc_evidence). Missing/unreadable routes -> null: no exemption, the web clamp
-// proceeds (pure-web sessions have no SC routes, so this never weakens them).
-function smartContractSurfaceIdsFromRoutes(domain) {
+// Does this session route ANY smart-contract surface? Read from the trusted,
+// WRITE-GUARDED surface-routes.json (classifySurfaceCapability output) — an
+// agent cannot add or remove a route, so this session-level signal cannot be
+// spoofed. We deliberately do NOT key the carve-out off per-finding data: a
+// claim's surface_ids / payload / capability_pack are all agent-settable (the
+// no-wave bob_record_candidate_claim path does not validate surface assignment),
+// so a per-finding "is this SC?" test lets a web claim cite an SC surface_id to
+// dodge the clamp. ABSENT routes = pure-web (or pre-routing) session, no SC;
+// a routes file that EXISTS yet fails to parse fails CLOSED (we cannot rule out
+// SC surfaces, and clamping an SC re-judge would violate the invariant).
+function sessionHasSmartContractRoutes(domain) {
   let document;
   try {
     document = readSurfaceRoutesStrict(domain).document;
   } catch (error) {
-    // ABSENT routes = a pure-web (or pre-routing) session with no SC surfaces:
-    // no exemption needed. But a routes file that EXISTS yet fails to parse
-    // means we cannot identify SC findings; silently treating them as web would
-    // clamp a smart-contract finding's legitimate on-chain re-judge — the exact
-    // thing the invariant forbids — so fail CLOSED instead.
     if (fs.existsSync(surfaceRoutesPath(domain))) {
       throw new ToolError(
         ERROR_CODES.STATE_CONFLICT,
         `severity-rise guard could not read surface routes: ${error.message || String(error)}`,
       );
     }
-    return new Set();
+    return false;
   }
-  const scSurfaceIds = new Set();
-  for (const route of document.routes) {
-    if (route && typeof route.surface_id === "string" && routeIsSmartContract(route)) {
-      scSurfaceIds.add(route.surface_id);
-    }
-  }
-  return scSurfaceIds;
-}
-
-// Web/smart_contract is a per-FINDING technology axis, orthogonal to session
-// scope: a single web-scoped session (scope_policy.target_url set) can carry
-// smart-contract surfaces in cross-stack mode (orchestrator.md "web +
-// smart_contract_evm"). The severity clamp is a WEB-only anti-inflation guard;
-// it must NEVER touch smart-contract findings, whose balanced-verifier
-// legitimately re-judges severity UPWARD from on-chain effect. SC-ness is
-// resolved from the claim's surface_ids against the trusted routes — never from
-// the claim payload.
-function claimIsSmartContractFinding(claim, scSurfaceIds) {
-  if (!scSurfaceIds || scSurfaceIds.size === 0) return false;
-  const surfaceIds = Array.isArray(claim.surface_ids) ? claim.surface_ids : [];
-  return surfaceIds.some((surfaceId) => scSurfaceIds.has(surfaceId));
+  return document.routes.some((route) => routeIsSmartContract(route));
 }
 
 // MUTATES `results` in place: lowers `result.severity` for each unproven web
 // severity rise. Returns the list of clamps applied: [{ finding_id, from, to }],
-// empty when nothing was clamped (non-web session, no rise, all proven, or all
-// SC). The in-place mutation is load-bearing — the same array is serialized into
-// the persisted round document by the caller.
+// empty when nothing was clamped (non-web session, cross-stack session, no rise,
+// or all proven). The in-place mutation is load-bearing — the same array is
+// serialized into the persisted round document by the caller.
+//
+// SCOPE: this is a PURE-WEB anti-inflation guard. The web/smart_contract axis is
+// per-finding (a web-scoped session can carry SC surfaces in cross-stack mode,
+// orchestrator.md "web + smart_contract_evm"), and the smart-contract
+// balanced-verifier legitimately re-judges severity UPWARD from on-chain effect.
+// Reliably separating web from SC findings per-claim would require a trusted
+// finding->surface assignment binding the claim layer does not provide, so the
+// guard scopes itself to sessions that route NO smart-contract surface. Pure-web
+// (the common case) is fully guarded; cross-stack sessions are left exactly as
+// they were before this guard existed — a strict, non-regressing addition.
 function applyUnprovenSeverityClamps(domain, results) {
   let nucleus;
   try {
@@ -157,10 +145,20 @@ function applyUnprovenSeverityClamps(domain, results) {
     nucleus = sessionNucleusFromState(readSessionStateStrict(domain).state);
   } catch {
     // No readable/validated state: scope is indeterminate (e.g. a partially
-    // seeded session) — pass through rather than block verification.
+    // seeded session) — pass through rather than block verification. In
+    // production this branch is effectively unreachable: the write tool authority
+    // validates state.json before this handler runs, so a readable, validated
+    // state is a precondition of reaching it. The durable audit of any clamp
+    // lives in the persisted round document (`severity_clamps`), so a clamp can
+    // always be reconstructed from the content-hashed artifact.
     return [];
   }
   if (!nucleus || nucleus.scope_policy == null || nucleus.scope_policy.target_url == null) return [];
+
+  // Cross-stack gate (see SCOPE note above): a session that routes any
+  // smart-contract surface is a mixed engagement; the pure-web clamp does not
+  // apply. Trusted, spoof-proof, session-level.
+  if (sessionHasSmartContractRoutes(domain)) return [];
 
   let freeze;
   try {
@@ -179,8 +177,6 @@ function applyUnprovenSeverityClamps(domain, results) {
   }
   if (!freeze || !Array.isArray(freeze.claims)) return [];
 
-  const scSurfaceIds = smartContractSurfaceIdsFromRoutes(domain);
-
   const byFinding = new Map();
   for (const claim of freeze.claims) {
     if (!claim || typeof claim !== "object") continue;
@@ -189,18 +185,20 @@ function applyUnprovenSeverityClamps(domain, results) {
     const findingIds = refs
       .filter((ref) => ref && ref.kind === "finding" && typeof ref.finding_id === "string")
       .map((ref) => ref.finding_id);
+    // NOTE: exploit_run refs are collected at CLAIM granularity and attached to
+    // every finding the claim references. For multi-finding claims this lets a
+    // row demonstrated for one finding stand for a sibling. Today claims carry a
+    // single finding ref and the allow-path is dormant; binding each exploit row
+    // to the specific finding it proves is a hard requirement of the future
+    // offensive-runner PR (same requirement as the cross-finding-replay note).
     const exploitRunRefs = refs.filter((ref) => ref && ref.kind === "exploit_run");
-    const smartContract = claimIsSmartContractFinding(claim, scSurfaceIds);
     for (const findingId of findingIds) {
       const current = byFinding.get(findingId)
-        || { maxRank: 0, maxSeverity: null, exploitRunRefs: [], isSmartContract: false };
+        || { maxRank: 0, maxSeverity: null, exploitRunRefs: [] };
       if (rank > current.maxRank) {
         current.maxRank = rank;
         current.maxSeverity = claim.severity;
       }
-      // Any contributing smart-contract claim marks the whole finding off-limits
-      // to the clamp (conservative toward the spec invariant).
-      if (smartContract) current.isSmartContract = true;
       for (const ref of exploitRunRefs) current.exploitRunRefs.push(ref);
       byFinding.set(findingId, current);
     }
@@ -213,10 +211,6 @@ function applyUnprovenSeverityClamps(domain, results) {
     if (!result || typeof result.severity !== "string") continue;
     const base = byFinding.get(result.finding_id);
     if (!base || base.maxRank === 0) continue;
-    // Spec invariant: never clamp smart-contract findings, even inside a
-    // web-scoped (cross-stack) session. Their upward on-chain severity re-judge
-    // is legitimate and proof-free.
-    if (base.isSmartContract) continue;
     if (verifySeverityRank(result.severity) <= base.maxRank) continue;
 
     // The exploit-backed allow-path requires proof bound to the ASSERTED
@@ -418,6 +412,26 @@ function normalizeVerificationRoundDocument(document, { expectedDomain, expected
     normalized.results.sort((a, b) => a.finding_id.localeCompare(b.finding_id));
   }
 
+  // Durable clamp audit. Preserved with the exact {finding_id, from, to} shape it
+  // was written with so the v2 final_verification_hash recomputes consistently on
+  // read; from/to are enum-validated so a tampered artifact cannot inject bogus
+  // severity transitions.
+  if (document.severity_clamps != null) {
+    if (!Array.isArray(document.severity_clamps)) {
+      throw new Error("severity_clamps must be an array");
+    }
+    normalized.severity_clamps = document.severity_clamps.map((clamp, index) => {
+      if (clamp == null || typeof clamp !== "object" || Array.isArray(clamp)) {
+        throw new Error(`severity_clamps[${index}] must be an object`);
+      }
+      return {
+        finding_id: parseFindingId(clamp.finding_id),
+        from: assertEnumValue(clamp.from, SEVERITY_VALUES, `severity_clamps[${index}].from`),
+        to: assertEnumValue(clamp.to, SEVERITY_VALUES, `severity_clamps[${index}].to`),
+      };
+    });
+  }
+
   if (expectedDomain != null && normalized.target_domain !== expectedDomain) {
     throw new Error(`verification round target_domain mismatch: expected ${expectedDomain}`);
   }
@@ -563,6 +577,11 @@ function writeVerificationRound(args) {
     notes,
     results,
   };
+  // Durable, authoritative clamp audit: record every {finding_id, from, to} in
+  // the persisted (content-hashed, for v2) round document so a runtime clamp is
+  // reconstructable from the artifact itself — not only the ephemeral response
+  // or the best-effort pipeline event. Omitted when nothing was clamped.
+  if (severityClamps.length > 0) document.severity_clamps = severityClamps;
   if (schemaVersion === 2) {
     document.verification_attempt_id = v2State.verification_attempt_id;
     document.verification_snapshot_hash = v2State.verification_snapshot_hash;
@@ -612,11 +631,13 @@ function writeVerificationRound(args) {
     },
   }, safeGovernanceContextForDomain(domain));
   if (severityClamps.length > 0) {
+    // Lightweight signal only: the authoritative, per-finding clamp audit lives
+    // in the persisted round document's `severity_clamps`. counts.clamped is the
+    // exact (uncapped) count, so this event never diverges from the record.
     safeAppendPipelineEventDirect(domain, "severity_clamped", {
       status: round,
       source: "bob_write_verification_round",
       counts: { clamped: severityClamps.length },
-      clamps: severityClamps,
     }, safeGovernanceContextForDomain(domain));
   }
   if (schemaVersion === 2) verificationLib().refreshVerificationManifest(domain, { throw_on_error: true });
