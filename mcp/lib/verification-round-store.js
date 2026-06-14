@@ -18,7 +18,7 @@ const {
   parseFindingId,
 } = require("./validation.js");
 const {
-  surfaceRoutesPath,
+  statePath,
   verificationRoundPaths,
 } = require("./paths.js");
 const {
@@ -59,9 +59,6 @@ const {
 const {
   readSessionStateStrict,
 } = require("./session-state-store.js");
-const {
-  readSurfaceRoutesStrict,
-} = require("./surface-router.js");
 
 function verificationLib() {
   return require("./verification.js");
@@ -84,56 +81,30 @@ function toRoundSeverity(claimSeverity) {
   return claimSeverity === "informational" ? "info" : claimSeverity;
 }
 
-function routeIsSmartContract(route) {
-  if (!route || typeof route !== "object") return false;
-  if (route.surface_type === "smart_contract") return true;
-  if (typeof route.capability_pack === "string"
-    && route.capability_pack.startsWith("smart_contract")) return true;
-  return false;
-}
-
-// Does this session route ANY smart-contract surface? Read from the trusted,
-// WRITE-GUARDED surface-routes.json (classifySurfaceCapability output) — an
-// agent cannot add or remove a route, so this session-level signal cannot be
-// spoofed. We deliberately do NOT key the carve-out off per-finding data: a
-// claim's surface_ids / payload / capability_pack are all agent-settable (the
-// no-wave bob_record_candidate_claim path does not validate surface assignment),
-// so a per-finding "is this SC?" test lets a web claim cite an SC surface_id to
-// dodge the clamp. ABSENT routes = pure-web (or pre-routing) session, no SC;
-// a routes file that EXISTS yet fails to parse fails CLOSED (we cannot rule out
-// SC surfaces, and clamping an SC re-judge would violate the invariant).
-function sessionHasSmartContractRoutes(domain) {
-  let document;
-  try {
-    document = readSurfaceRoutesStrict(domain).document;
-  } catch (error) {
-    if (fs.existsSync(surfaceRoutesPath(domain))) {
-      throw new ToolError(
-        ERROR_CODES.STATE_CONFLICT,
-        `severity-rise guard could not read surface routes: ${error.message || String(error)}`,
-      );
-    }
-    return false;
-  }
-  return document.routes.some((route) => routeIsSmartContract(route));
-}
-
-// MUTATES `results` in place: lowers `result.severity` for each unproven web
-// severity rise. Returns the list of clamps applied: [{ finding_id, from, to }],
-// empty when nothing was clamped (non-web session, cross-stack session, no rise,
-// or all proven). The in-place mutation is load-bearing — the same array is
-// serialized into the persisted round document by the caller.
+// MUTATES `results` in place: lowers `result.severity` for each unproven
+// severity rise, and strips a `exploit_replay_confirmed` reason that did not
+// back a validated rise. Returns the list of clamps applied:
+// [{ finding_id, from, to }]. The in-place mutation is load-bearing — the same
+// array is serialized into the persisted round document by the caller (hence
+// the explicit "InPlace" name).
 //
-// SCOPE: this is a PURE-WEB anti-inflation guard. The web/smart_contract axis is
-// per-finding (a web-scoped session can carry SC surfaces in cross-stack mode,
-// orchestrator.md "web + smart_contract_evm"), and the smart-contract
-// balanced-verifier legitimately re-judges severity UPWARD from on-chain effect.
-// Reliably separating web from SC findings per-claim would require a trusted
-// finding->surface assignment binding the claim layer does not provide, so the
-// guard scopes itself to sessions that route NO smart-contract surface. Pure-web
-// (the common case) is fully guarded; cross-stack sessions are left exactly as
-// they were before this guard existed — a strict, non-regressing addition.
-function applyUnprovenSeverityClamps(domain, results) {
+// SCOPE: this is an anti-inflation guard for WEB-SCOPED sessions
+// (scope_policy.target_url set), applied UNIFORMLY to every finding in such a
+// session. We deliberately do NOT carve out smart-contract findings. The
+// web/smart_contract axis is per-finding, but every per-finding and
+// per-session SC signal available before VERIFY is agent-influenced — claim
+// surface_ids / payload (agent-recorded), and even surface routes (an evaluator
+// can inject a synthetic smart-contract surface.observed via
+// bob_append_frontier_event that routing then classifies). A spoofable SC
+// exemption is strictly worse than none: it is an inflation bypass. The only
+// trusted, non-agent signal is the init-time session scope, so the guard keys
+// off that alone. Consequence: in a cross-stack web+SC session a smart-contract
+// finding is also held to its FROZEN (evaluator-recorded) severity unless
+// exploit-proven — the evaluator's assessment is the trusted baseline, and an
+// unproven verification-time raise above it is clamped, exactly as for web.
+// (Pure smart-contract engagements are repo-scoped — no target_url — and are
+// untouched by this guard.)
+function clampResultSeveritiesInPlace(domain, results) {
   let nucleus;
   try {
     // Derive web-scope from the VALIDATED session state (the write tool authority
@@ -143,22 +114,21 @@ function applyUnprovenSeverityClamps(domain, results) {
     // target_repo) silently disable the guard on a session whose state still
     // authorizes a web target. State is the trustworthy scope authority here.
     nucleus = sessionNucleusFromState(readSessionStateStrict(domain).state);
-  } catch {
-    // No readable/validated state: scope is indeterminate (e.g. a partially
-    // seeded session) — pass through rather than block verification. In
-    // production this branch is effectively unreachable: the write tool authority
-    // validates state.json before this handler runs, so a readable, validated
-    // state is a precondition of reaching it. The durable audit of any clamp
-    // lives in the persisted round document (`severity_clamps`), so a clamp can
-    // always be reconstructed from the content-hashed artifact.
+  } catch (error) {
+    // Distinguish "no state file yet" (a partially-seeded / pre-state session:
+    // pass through, nothing to guard) from a state file that EXISTS but is
+    // unreadable/corrupt (transient I/O, partial write, parse error: fail closed
+    // rather than silently skip the guard). In production neither occurs — the
+    // write tool authority validates state.json before this handler runs.
+    if (fs.existsSync(statePath(domain))) {
+      throw new ToolError(
+        ERROR_CODES.STATE_CONFLICT,
+        `severity-rise guard could not read session state: ${error.message || String(error)}`,
+      );
+    }
     return [];
   }
   if (!nucleus || nucleus.scope_policy == null || nucleus.scope_policy.target_url == null) return [];
-
-  // Cross-stack gate (see SCOPE note above): a session that routes any
-  // smart-contract surface is a mixed engagement; the pure-web clamp does not
-  // apply. Trusted, spoof-proof, session-level.
-  if (sessionHasSmartContractRoutes(domain)) return [];
 
   let freeze;
   try {
@@ -185,13 +155,16 @@ function applyUnprovenSeverityClamps(domain, results) {
     const findingIds = refs
       .filter((ref) => ref && ref.kind === "finding" && typeof ref.finding_id === "string")
       .map((ref) => ref.finding_id);
-    // NOTE: exploit_run refs are collected at CLAIM granularity and attached to
-    // every finding the claim references. For multi-finding claims this lets a
-    // row demonstrated for one finding stand for a sibling. Today claims carry a
-    // single finding ref and the allow-path is dormant; binding each exploit row
-    // to the specific finding it proves is a hard requirement of the future
-    // offensive-runner PR (same requirement as the cross-finding-replay note).
-    const exploitRunRefs = refs.filter((ref) => ref && ref.kind === "exploit_run");
+    // Bind exploit_run refs to a finding ONLY when the claim references exactly
+    // one finding. A multi-finding claim carrying an exploit row would otherwise
+    // let a row demonstrated for one finding stand as proof for a sibling
+    // (cross-finding spillover); refuse to propagate it. The remaining
+    // per-finding row->impact binding (which run proves which severity) is a hard
+    // requirement of the future offensive-runner PR; the allow-path is dormant
+    // until then.
+    const exploitRunRefs = findingIds.length === 1
+      ? refs.filter((ref) => ref && ref.kind === "exploit_run")
+      : [];
     for (const findingId of findingIds) {
       const current = byFinding.get(findingId)
         || { maxRank: 0, maxSeverity: null, exploitRunRefs: [] };
@@ -209,44 +182,54 @@ function applyUnprovenSeverityClamps(domain, results) {
   let signingKey = null;
   for (const result of results) {
     if (!result || typeof result.severity !== "string") continue;
-    const base = byFinding.get(result.finding_id);
-    if (!base || base.maxRank === 0) continue;
-    if (verifySeverityRank(result.severity) <= base.maxRank) continue;
 
-    // The exploit-backed allow-path requires proof bound to the ASSERTED
-    // severity, not merely that some exploit row exists. A matching, MAC-signed
-    // row must carry a `demonstrated_severity` (the impact tier the safe exploit
-    // actually demonstrated, MAC-covered so it can't be forged) that meets or
-    // exceeds `result.severity`. This closes the gap both reviewers flagged: a
-    // low-severity row (e.g. a reflected canary) can no longer unlock a critical
-    // rise. Because no producer writes `demonstrated_severity` yet (the offensive
-    // runner is a future PR), `verifySeverityRank(undefined)` is 0 and this never
-    // passes today — the branch is dormant and every unproven web rise clamps.
-    // The runner PR must set `demonstrated_severity` AND anchor each row to the
-    // current verification window (replay freshness) before relying on it.
     const hasExploitReplaySignal = Array.isArray(result.confidence_reasons)
       && result.confidence_reasons.includes("exploit_replay_confirmed");
-    const assertedRank = verifySeverityRank(result.severity);
-    let proven = false;
-    if (hasExploitReplaySignal && base.exploitRunRefs.length > 0) {
-      if (runRows === null) runRows = readOffensiveRunRecords(domain);
-      if (runRows.length > 0) {
-        if (signingKey === null) signingKey = readHandoffSigningKey(domain);
-        proven = base.exploitRunRefs.some((ref) => (
-          runRows.some((row) => (
-            offensiveRunRowSatisfiesEvidence(row, ref, domain, signingKey)
-            && verifySeverityRank(row.demonstrated_severity) >= assertedRank
-          ))
-        ));
+    let provenRise = false;
+
+    const base = byFinding.get(result.finding_id);
+    if (base && base.maxRank > 0 && verifySeverityRank(result.severity) > base.maxRank) {
+      // A rise above the frozen baseline. The exploit-backed allow-path requires
+      // proof bound to the ASSERTED severity, not merely that some exploit row
+      // exists. A matching, MAC-signed row must carry a `demonstrated_severity`
+      // (the impact tier the safe exploit actually demonstrated, MAC-covered so
+      // it can't be forged) that meets or exceeds `result.severity` — a
+      // low-severity row (e.g. a reflected canary) can never unlock a critical
+      // rise. No producer writes `demonstrated_severity` yet (the offensive
+      // runner is a future PR), so `verifySeverityRank(undefined)` is 0 and this
+      // never passes today: the branch is dormant and every unproven rise clamps.
+      // The runner PR must set `demonstrated_severity` AND anchor each row to the
+      // current verification window (replay freshness) before relying on it.
+      const assertedRank = verifySeverityRank(result.severity);
+      if (hasExploitReplaySignal && base.exploitRunRefs.length > 0) {
+        if (runRows === null) runRows = readOffensiveRunRecords(domain);
+        if (runRows.length > 0) {
+          if (signingKey === null) signingKey = readHandoffSigningKey(domain);
+          provenRise = base.exploitRunRefs.some((ref) => (
+            runRows.some((row) => (
+              offensiveRunRowSatisfiesEvidence(row, ref, domain, signingKey)
+              && verifySeverityRank(row.demonstrated_severity) >= assertedRank
+            ))
+          ));
+        }
+      }
+      if (!provenRise) {
+        const from = result.severity;
+        const to = toRoundSeverity(base.maxSeverity);
+        if (to !== from) {
+          result.severity = to;
+          clamps.push({ finding_id: result.finding_id, from, to });
+        }
       }
     }
-    if (!proven) {
-      const from = result.severity;
-      const to = toRoundSeverity(base.maxSeverity);
-      if (to !== from) {
-        result.severity = to;
-        clamps.push({ finding_id: result.finding_id, from, to });
-      }
+
+    // `exploit_replay_confirmed` is a proof claim. Keep it ONLY when it backed a
+    // validated severity rise; on a non-rise, an unproven (clamped) rise, or a
+    // finding with no frozen baseline, strip it so the persisted, content-hashed
+    // round artifact never carries a false exploit-proof audit signal.
+    if (hasExploitReplaySignal && !provenRise) {
+      result.confidence_reasons = result.confidence_reasons
+        .filter((reason) => reason !== "exploit_replay_confirmed");
     }
   }
   return clamps;
@@ -568,7 +551,7 @@ function writeVerificationRound(args) {
     }
   }
 
-  const severityClamps = applyUnprovenSeverityClamps(domain, results);
+  const severityClamps = clampResultSeveritiesInPlace(domain, results);
 
   const document = {
     version: schemaVersion,

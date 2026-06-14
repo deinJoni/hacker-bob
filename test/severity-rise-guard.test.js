@@ -24,12 +24,8 @@ const {
   offensiveRunsJsonlPath,
   sessionNucleusPath,
   statePath,
-  surfaceRoutesPath,
   verificationRoundPaths,
 } = require("../mcp/lib/paths.js");
-const {
-  getCapabilityPack,
-} = require("../mcp/lib/capability-packs.js");
 const {
   SEVERITY_VALUES,
 } = require("../mcp/lib/constants.js");
@@ -174,28 +170,6 @@ function appendFrozenFindingClaim(domain, {
   if (payload) claim.payload = payload;
   if (surfaceIds) claim.surface_ids = surfaceIds;
   return appendCandidateClaim(claim);
-}
-
-// Build a conformant surface route for the given capability pack so
-// readSurfaceRoutesStrict accepts it (evaluator_agent/brief_profile must match
-// the pack). surface-routes.json is the WRITE-GUARDED, trusted source the guard
-// resolves SC-ness from — never the claim payload.
-function routeForPack(surfaceId, packId, surfaceType) {
-  const pack = getCapabilityPack(packId);
-  return {
-    surface_id: surfaceId,
-    surface_type: surfaceType,
-    capability_pack: packId,
-    capability_pack_version: pack.capability_pack_version,
-    evaluator_agent: pack.evaluator_agent,
-    brief_profile: pack.brief_profile,
-  };
-}
-
-function writeSurfaceRoutes(domain, routes) {
-  const filePath = surfaceRoutesPath(domain);
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  writeFileAtomic(filePath, `${JSON.stringify({ version: 1, route_version: 1, routes }, null, 2)}\n`);
 }
 
 function freezeClaims(domain) {
@@ -375,39 +349,45 @@ test("web v2 severity rises require both the confidence reason and a satisfying 
   assert.equal(persistedSeverity(domainWithReason), "low");
 }));
 
-test("a cross-stack session that routes any smart-contract surface skips the clamp entirely", () => withTempHome(() => {
-  const domain = "severity-rise-cross-stack.example";
+test("the clamp applies uniformly: a finding with smart-contract-looking signals is still clamped", () => withTempHome(() => {
+  const domain = "severity-rise-uniform.example";
   initWebSession(domain);
-  // The trusted, write-guarded routes show this is a mixed web + smart_contract
-  // engagement. The pure-web clamp does not apply to such a session, so even a
-  // web finding's rise is left alone (and the SC re-judge is never clamped).
-  writeSurfaceRoutes(domain, [
-    routeForPack("surface-web-1", "web", "web"),
-    routeForPack("surface-sc-1", "smart_contract_evm", "smart_contract"),
-  ]);
-  appendFrozenFindingClaim(domain, { findingId: "F-1", severity: "low", surfaceIds: ["surface-web-1"] });
-  freezeClaims(domain);
-
-  assert.equal(writeV1Round(domain, verificationResult("F-1", { severity: "critical" })), "critical");
-}));
-
-test("citing a smart-contract surface_id cannot dodge the clamp in a pure-web session", () => withTempHome(() => {
-  const domain = "severity-rise-sc-spoof.example";
-  initWebSession(domain);
-  // Pure-web session: routes classify the only surface as web. The claim cites a
-  // bogus/foreign surface_id and injects sc_evidence into its (agent-settable)
-  // payload to try to look smart-contract. The session-level gate ignores both —
-  // there are no SC routes — so the clamp still fires.
-  writeSurfaceRoutes(domain, [routeForPack("surface-web-1", "web", "web")]);
+  // No trusted, non-agent SC signal exists before VERIFY (surface_ids, payload,
+  // and even routes are agent-influenced), so the guard does NOT exempt
+  // smart-contract findings — it applies to every finding in a web-scoped
+  // session. A claim stuffed with SC-looking signals is still clamped.
   appendFrozenFindingClaim(domain, {
     findingId: "F-1",
     severity: "low",
-    surfaceIds: ["surface-sc-totally-made-up"],
-    payload: { finding: { surface_type: "smart_contract", sc_evidence: { contract_address: "0xfeed" } } },
+    surfaceIds: ["surface-claims-to-be-sc"],
+    payload: { finding: { surface_type: "smart_contract", capability_pack: "smart_contract_evm", sc_evidence: { contract_address: "0xfeed" } } },
   });
   freezeClaims(domain);
 
   assert.equal(writeV1Round(domain, verificationResult("F-1", { severity: "critical" })), "low");
+}));
+
+test("a multi-finding claim's exploit row cannot prove a sibling finding's rise", () => withTempHome(() => {
+  const domain = "severity-rise-multi-finding.example";
+  initWebSession(domain);
+  const ref = exploitRef(domain);
+  seedSignedOffensiveRow(domain, ref, { demonstrated_severity: "critical" });
+  // One claim references BOTH F-1 and F-2 plus a single exploit_run ref. The
+  // guard refuses to propagate that row to either finding (cross-finding
+  // spillover guard), so an exploit_replay_confirmed rise on F-2 is clamped.
+  appendFrozenFindingClaim(domain, {
+    severity: "low",
+    evidenceRefs: [findingRef("F-1"), findingRef("F-2"), ref],
+    exploitOutcome: { outcome: "exploited_safely", safe_oracle: { kind: "reflected_canary" } },
+  });
+  freezeClaims(domain);
+  const context = enterVerifyV2(domain);
+
+  writeV2Round(domain, context, "brutalist", [
+    v2VerificationResult("F-1", { severity: "low", confidence_reasons: ["fresh_replay_passed"] }),
+    v2VerificationResult("F-2", { severity: "critical", confidence_reasons: ["exploit_replay_confirmed"] }),
+  ]);
+  assert.equal(persistedSeverity(domain, "brutalist", "F-2"), "low");
 }));
 
 test("the clamp is recorded in the persisted round document", () => withTempHome(() => {
@@ -453,17 +433,29 @@ test("an exploit row that demonstrates a lower severity does not unlock a higher
   assert.equal(persistedSeverity(domain), "low", "low-impact row cannot prove a critical rise");
 }));
 
-test("malformed surface routes fails the guard closed on a web session", () => withTempHome(() => {
-  const domain = "severity-rise-bad-routes.example";
+test("exploit_replay_confirmed is stripped from a result that did not back a validated rise", () => withTempHome(() => {
+  const domain = "severity-rise-strip-reason.example";
   initWebSession(domain);
-  appendFrozenFindingClaim(domain, { findingId: "F-1", severity: "low", surfaceIds: ["surface-1"] });
+  // No offensive row exists, so the proof can never validate. A verifier asserts
+  // exploit_replay_confirmed on (a) a clamped rise and (b) a non-rise. Both must
+  // have the unproven proof-claim stripped from the persisted artifact.
+  appendFrozenFindingClaim(domain, { findingId: "F-1", severity: "low" });
+  appendFrozenFindingClaim(domain, { findingId: "F-2", severity: "high" });
   freezeClaims(domain);
-  fs.writeFileSync(surfaceRoutesPath(domain), "{not-json\n", "utf8");
+  const context = enterVerifyV2(domain);
 
-  assert.throws(
-    () => writeV1Round(domain, verificationResult("F-1", { severity: "critical" })),
-    (error) => error && error.code === "STATE_CONFLICT" && /surface routes/.test(error.message),
-  );
+  writeV2Round(domain, context, "brutalist", [
+    v2VerificationResult("F-1", { severity: "critical", confidence_reasons: ["exploit_replay_confirmed"] }),
+    v2VerificationResult("F-2", { severity: "high", confidence_reasons: ["fresh_replay_passed", "exploit_replay_confirmed"] }),
+  ]);
+
+  const document = JSON.parse(fs.readFileSync(verificationRoundPaths(domain, "brutalist").json, "utf8"));
+  const f1 = document.results.find((r) => r.finding_id === "F-1");
+  const f2 = document.results.find((r) => r.finding_id === "F-2");
+  assert.equal(f1.severity, "low", "unproven rise is clamped");
+  assert.ok(!f1.confidence_reasons.includes("exploit_replay_confirmed"), "stripped on the clamped rise");
+  assert.ok(!f2.confidence_reasons.includes("exploit_replay_confirmed"), "stripped on the non-rise");
+  assert.ok(f2.confidence_reasons.includes("fresh_replay_passed"), "other reasons are preserved");
 }));
 
 test("clamps are surfaced in the tool response", () => withTempHome(() => {
