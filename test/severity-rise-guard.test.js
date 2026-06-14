@@ -446,7 +446,13 @@ test("exploit_replay_confirmed is stripped from a result that did not back a val
 
   writeV2Round(domain, context, "brutalist", [
     v2VerificationResult("F-1", { severity: "critical", confidence_reasons: ["exploit_replay_confirmed"] }),
-    v2VerificationResult("F-2", { severity: "high", confidence_reasons: ["fresh_replay_passed", "exploit_replay_confirmed"] }),
+    v2VerificationResult("F-2", {
+      severity: "high",
+      confidence_reasons: ["fresh_replay_passed"],
+      // The proof claim hidden in the provenance arrays must also be stripped.
+      inherited_confidence_reasons: ["exploit_replay_confirmed"],
+      resolved_confidence_reasons: ["exploit_replay_confirmed"],
+    }),
   ]);
 
   const document = JSON.parse(fs.readFileSync(verificationRoundPaths(domain, "brutalist").json, "utf8"));
@@ -455,6 +461,8 @@ test("exploit_replay_confirmed is stripped from a result that did not back a val
   assert.equal(f1.severity, "low", "unproven rise is clamped");
   assert.ok(!f1.confidence_reasons.includes("exploit_replay_confirmed"), "stripped on the clamped rise");
   assert.ok(!f2.confidence_reasons.includes("exploit_replay_confirmed"), "stripped on the non-rise");
+  assert.ok(!f2.inherited_confidence_reasons.includes("exploit_replay_confirmed"), "stripped from inherited_");
+  assert.ok(!f2.resolved_confidence_reasons.includes("exploit_replay_confirmed"), "stripped from resolved_");
   assert.ok(f2.confidence_reasons.includes("fresh_replay_passed"), "other reasons are preserved");
 }));
 

@@ -81,6 +81,14 @@ function toRoundSeverity(claimSeverity) {
   return claimSeverity === "informational" ? "info" : claimSeverity;
 }
 
+// The three v2 result fields that can carry confidence reasons. An unvalidated
+// `exploit_replay_confirmed` proof claim must be stripped from all of them.
+const REASON_ARRAY_FIELDS = Object.freeze([
+  "confidence_reasons",
+  "inherited_confidence_reasons",
+  "resolved_confidence_reasons",
+]);
+
 // MUTATES `results` in place: lowers `result.severity` for each unproven
 // severity rise, and strips a `exploit_replay_confirmed` reason that did not
 // back a validated rise. Returns the list of clamps applied:
@@ -198,8 +206,11 @@ function clampResultSeveritiesInPlace(domain, results) {
       // rise. No producer writes `demonstrated_severity` yet (the offensive
       // runner is a future PR), so `verifySeverityRank(undefined)` is 0 and this
       // never passes today: the branch is dormant and every unproven rise clamps.
-      // The runner PR must set `demonstrated_severity` AND anchor each row to the
-      // current verification window (replay freshness) before relying on it.
+      // The runner PR must (a) write `demonstrated_severity` as a valid
+      // SEVERITY_VALUES member before signing — an unrecognized value ranks 0 and
+      // silently never unlocks (fail-safe but unobservable), (b) anchor each row
+      // to the current verification window (replay freshness), and (c) bind the
+      // row to the specific finding it proves — before relying on this path.
       const assertedRank = verifySeverityRank(result.severity);
       if (hasExploitReplaySignal && base.exploitRunRefs.length > 0) {
         if (runRows === null) runRows = readOffensiveRunRecords(domain);
@@ -225,11 +236,19 @@ function clampResultSeveritiesInPlace(domain, results) {
 
     // `exploit_replay_confirmed` is a proof claim. Keep it ONLY when it backed a
     // validated severity rise; on a non-rise, an unproven (clamped) rise, or a
-    // finding with no frozen baseline, strip it so the persisted, content-hashed
-    // round artifact never carries a false exploit-proof audit signal.
-    if (hasExploitReplaySignal && !provenRise) {
-      result.confidence_reasons = result.confidence_reasons
-        .filter((reason) => reason !== "exploit_replay_confirmed");
+    // finding with no frozen baseline, strip it from ALL THREE persisted reason
+    // arrays (confidence_reasons + the inherited_/resolved_ provenance arrays,
+    // which the tool schema also permits to carry it) so the content-hashed round
+    // artifact never carries a false exploit-proof audit signal — in any field.
+    const exploitReasonAnywhere = REASON_ARRAY_FIELDS.some((field) => (
+      Array.isArray(result[field]) && result[field].includes("exploit_replay_confirmed")
+    ));
+    if (exploitReasonAnywhere && !provenRise) {
+      for (const field of REASON_ARRAY_FIELDS) {
+        if (Array.isArray(result[field])) {
+          result[field] = result[field].filter((reason) => reason !== "exploit_replay_confirmed");
+        }
+      }
     }
   }
   return clamps;
