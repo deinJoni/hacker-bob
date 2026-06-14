@@ -1727,7 +1727,7 @@ Each v1 `results` entry must include:
 
 For v2, the round must cover exactly the snapshot finding IDs and every `results` entry must also include:
 - `confidence`: `high|medium|low`
-- `confidence_reasons`: any of `fresh_replay_passed`, `auth_expired`, `tooling_blocked`, `state_changed`, `manual_inference`, `roast_disagreement`, `disambiguation_failed`, `agreement_not_replayed`
+- `confidence_reasons`: any of `fresh_replay_passed`, `auth_expired`, `tooling_blocked`, `state_changed`, `manual_inference`, `roast_disagreement`, `disambiguation_failed`, `agreement_not_replayed`, `exploit_replay_confirmed`
 - `state_sensitive`: boolean; set true when target state, auth state, chain state, or fresh replay timing could change the result
 - `artifact_hashes`: object of bounded replay/audit artifact hashes when available, otherwise `{}`
 
@@ -1737,6 +1737,7 @@ Suggested v2 confidence mapping:
 - Tooling/RPC blocked: include `tooling_blocked`, usually deny/fail closed unless local policy says otherwise.
 - Roast disagreement: include `roast_disagreement`.
 - Manual inference without replay: include `manual_inference`.
+- Web severity rises above the frozen claim require real exploit proof; include `exploit_replay_confirmed` only when the replay is backed by the exploit-run proof contract.
 
 Do not write verifier markdown directly. The MCP tool owns `brutalist.json` and the human/debug mirror.
 
@@ -1861,7 +1862,7 @@ Each v1 `results` entry must include:
 - `reportable`: boolean
 - `reasoning`: required non-empty string
 
-For v2, add top-level `verification_attempt_id`, `verification_snapshot_hash`, and `round_profile: "balanced"` to the write call. Each result must also include `confidence`, `confidence_reasons`, `state_sensitive`, and `artifact_hashes`. Use the same allowed confidence reasons as brutalist; preserve `state_sensitive: true` whenever fresh state, auth, or chain state could change the outcome.
+For v2, add top-level `verification_attempt_id`, `verification_snapshot_hash`, and `round_profile: "balanced"` to the write call. Each result must also include `confidence`, `confidence_reasons`, `state_sensitive`, and `artifact_hashes`. Use the same allowed confidence reasons as brutalist; preserve `state_sensitive: true` whenever fresh state, auth, or chain state could change the outcome. Web severity rises above the frozen claim require real exploit proof; include `exploit_replay_confirmed` only when the replay is backed by the exploit-run proof contract.
 
 Do not write verifier markdown directly. The MCP tool owns `balanced.json` and the human/debug mirror.
 
@@ -1975,7 +1976,7 @@ Each v1 `results` entry must include:
 - `reportable`: boolean
 - `reasoning`: required non-empty string
 
-For v2, add top-level `verification_attempt_id`, `verification_snapshot_hash`, `round_profile: "final"`, and `adjudication_plan_hash` to the write call. Every result must also include `confidence`, `confidence_reasons`, `state_sensitive`, and `artifact_hashes`; optional `inherited_confidence_reasons` and `resolved_confidence_reasons` are allowed.
+For v2, add top-level `verification_attempt_id`, `verification_snapshot_hash`, `round_profile: "final"`, and `adjudication_plan_hash` to the write call. Every result must also include `confidence`, `confidence_reasons`, `state_sensitive`, and `artifact_hashes`; optional `inherited_confidence_reasons` and `resolved_confidence_reasons` are allowed. Web severity rises above the frozen claim require real exploit proof; include `exploit_replay_confirmed` only when the replay is backed by the exploit-run proof contract.
 
 Do not write verifier markdown directly. The MCP tool owns `verified-final.json` and the human/debug mirror.
 

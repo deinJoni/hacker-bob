@@ -975,4 +975,6 @@ module.exports = {
   normalizeCandidateClaim,
   normalizeEvidenceReferenceShape,
   readCandidateClaims,
+  readOffensiveRunRecords,
+  offensiveRunRowSatisfiesEvidence,
 };
