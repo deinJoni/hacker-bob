@@ -91,6 +91,18 @@ const CLAIM_SEVERITIES = Object.freeze(["critical", "high", "medium", "low", "in
 //                      produced by the offensive runner, binding tool id,
 //                      target URL, safe offensive outcome, command hash,
 //                      exit code, and stdout/stderr capture hashes.
+//                      DEFERRED (PR #108 review, Codex P2): once a frozen
+//                      claim carries an exploit_run ref, the C.5
+//                      freeze-completeness gate
+//                      (claim-freeze.js::assertCompletenessAgainstFreeze)
+//                      will mark it `missing` unless an observed projection is
+//                      supplied — there is no projectOffensiveRunObservedRef
+//                      yet. This is unreachable today (no tool surface emits
+//                      exploit_outcome), so the projection lands with the
+//                      offensive runner / tool-surface PR that defines where
+//                      raw exploit output is captured. Until then the
+//                      evidence-agent must supply the exploit_run observed ref
+//                      explicitly, or freeze-completeness will block GRADE.
 const EVIDENCE_REFERENCE_KIND_VALUES = Object.freeze([
   "finding",
   "verification_round",
@@ -162,6 +174,34 @@ function assertRepoCommandRunEvidenceShape(ref, fieldName) {
   }
 }
 
+// Secret-shaped query parameter names. PR #108 review (Codex P2): the
+// hash-bound `target` is persisted verbatim into claims.jsonl, so a raw
+// `?token=...`/`?session=...` URL would leak a live secret on every claim read.
+// Full value-redaction is the offensive runner's job (it must redact the SAME
+// canonical string it writes to both the offensive-runs.jsonl row and this ref
+// so the two stay byte-identical for the proof binding); this validator is the
+// fail-closed backstop that rejects a secret-bearing target before it is ever
+// stored, forcing the runner to redact first.
+const EXPLOIT_TARGET_SECRET_QUERY_RE = /^(?:access[_-]?token|id[_-]?token|refresh[_-]?token|token|session(?:[_-]?id)?|sid|auth(?:orization)?|api[_-]?key|apikey|secret|password|passwd|pwd|jwt|bearer|x[_-]?api[_-]?key|signature|sig)$/i;
+
+function assertExploitTargetCarriesNoSecretQuery(targetUrl, fieldName) {
+  let parsed;
+  try {
+    parsed = new URL(targetUrl);
+  } catch {
+    // Opaque / relative targets carry no parseable query string; the proof gate
+    // additionally requires an in-scope absolute URL before a row can back them.
+    return;
+  }
+  for (const key of parsed.searchParams.keys()) {
+    if (EXPLOIT_TARGET_SECRET_QUERY_RE.test(key)) {
+      throw new Error(
+        `${fieldName}.target must not carry a secret-shaped query parameter ("${key}") for kind="exploit_run"; the offensive runner must redact it before recording`,
+      );
+    }
+  }
+}
+
 function assertExploitRunEvidenceShape(ref, fieldName) {
   // Offensive proof contract:
   //   {kind, run_id, tool_id, target, offensive_outcome, command_hash,
@@ -177,6 +217,7 @@ function assertExploitRunEvidenceShape(ref, fieldName) {
   if (typeof ref.target !== "string" || !ref.target.trim()) {
     throw new Error(`${fieldName}.target must be a non-empty string for kind="exploit_run"`);
   }
+  assertExploitTargetCarriesNoSecretQuery(ref.target, fieldName);
   assertEnumValue(ref.offensive_outcome, OFFENSIVE_OUTCOME_VALUES, `${fieldName}.offensive_outcome`);
   if (!isHex64(ref.command_hash)) {
     throw new Error(`${fieldName}.command_hash must be a 64-hex content digest for kind="exploit_run"`);
@@ -623,10 +664,29 @@ function repoCommandRunRowSatisfiesEvidence(row, ref) {
   return true;
 }
 
-function offensiveRunRowSatisfiesEvidence(row, ref) {
+// PR #108 review (Codex P1): bind the proof to the claim's own target_domain.
+// Returns true only when the cited target URL's host is the claim domain or a
+// subdomain of it, so a row planted for another host can never back a claim.
+function exploitTargetHostInScope(targetUrl, domain) {
+  let host;
+  try {
+    host = new URL(targetUrl).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  const scope = String(domain).toLowerCase();
+  return host === scope || host.endsWith(`.${scope}`);
+}
+
+function offensiveRunRowSatisfiesEvidence(row, ref, domain) {
   if (!row || typeof row !== "object") return false;
   if (row.dry_run === true) return false;
   if (row.timed_out === true) return false;
+  // Domain binding (Codex P1): the ledger is read from the claim's session, but
+  // the row must also be *recorded for* this domain and the cited URL must be in
+  // its scope, so a cross-domain row in the same session cannot stand as proof.
+  if (typeof row.target_domain !== "string" || row.target_domain !== domain) return false;
+  if (!exploitTargetHostInScope(ref.target, domain)) return false;
   if (typeof row.run_id !== "string" || row.run_id !== ref.run_id) return false;
   if (typeof row.tool_id !== "string" || row.tool_id !== ref.tool_id) return false;
   if (typeof row.target !== "string" || row.target !== ref.target) return false;
@@ -705,7 +765,7 @@ function assertExploitedClaimHasProof(claim) {
   }
   const runRows = readOffensiveRunRecords(claim.target_domain);
   const backedRef = exploitRunRefs.some((ref) => (
-    runRows.some((row) => offensiveRunRowSatisfiesEvidence(row, ref))
+    runRows.some((row) => offensiveRunRowSatisfiesEvidence(row, ref, claim.target_domain))
   ));
   if (!backedRef) {
     throw new ToolError(

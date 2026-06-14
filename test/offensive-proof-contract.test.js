@@ -40,12 +40,14 @@ function hex(char) {
   return char.repeat(64);
 }
 
-function exploitRef(overrides = {}) {
+// The cited target host must be in scope for the claim domain (Codex P1 binding),
+// so the ref/row target is derived from the domain unless a test overrides it.
+function exploitRef(domain = "example.com", overrides = {}) {
   return {
     kind: "exploit_run",
     run_id: "run-exploit-1",
     tool_id: "bob_http_confirm_reflected_canary",
-    target: "https://example.com/search?q=BOB_CANARY_1",
+    target: `https://${domain}/search?q=BOB_CANARY_1`,
     offensive_outcome: "exploited_safely",
     command_hash: hex("a"),
     exit_code: 0,
@@ -65,13 +67,13 @@ function exploitedClaim(domain, overrides = {}) {
       outcome: "exploited_safely",
       safe_oracle: { kind: "reflected_canary" },
     },
-    evidence_refs: [exploitRef()],
+    evidence_refs: [exploitRef(domain)],
     ...overrides,
   };
 }
 
 function appendOffensiveRunRow(domain, overrides = {}) {
-  const ref = exploitRef();
+  const ref = exploitRef(domain);
   const row = {
     version: 1,
     target_domain: domain,
@@ -150,13 +152,13 @@ test("normalizeEvidenceReferenceShape enforces exploit_run payload shape", () =>
     ["exit_code", "0", /exit_code must be an integer or null/],
   ]) {
     assert.throws(
-      () => normalizeEvidenceReferenceShape(exploitRef({ [field]: value })),
+      () => normalizeEvidenceReferenceShape(exploitRef("example.com", { [field]: value })),
       pattern,
       `${field} should be validated`,
     );
   }
 
-  const ok = normalizeEvidenceReferenceShape(exploitRef({ exit_code: null }));
+  const ok = normalizeEvidenceReferenceShape(exploitRef("example.com", { exit_code: null }));
   assert.equal(ok.kind, "exploit_run");
   assert.equal(ok.exit_code, null);
 });
@@ -227,7 +229,7 @@ test("exploited_safely claims require a real matching offensive-runs ledger row"
       const domain = `offensive-${label.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.example`;
       if (rowOverride) appendOffensiveRunRow(domain, rowOverride);
       const error = mustThrow(() => appendCandidateClaim(exploitedClaim(domain, {
-        evidence_refs: [exploitRef(refOverride)],
+        evidence_refs: [exploitRef(domain, refOverride)],
       })));
       assertInvalidArgumentsCode(error, "exploit_proof_unbacked_exploit_run_evidence");
       assert.equal(fs.existsSync(claimsJsonlPath(domain)), false, `${label}: claims.jsonl should be untouched`);
@@ -302,6 +304,63 @@ test("exploit proof gate is severity-agnostic", () => {
     assert.equal(claim.severity, "informational");
   });
 });
+
+test("exploit_run rejects targets carrying secret-shaped query parameters", () => {
+  for (const target of [
+    "https://example.com/cb?token=abc123",
+    "https://example.com/login?session=deadbeef",
+    "https://example.com/api?api_key=k",
+    "https://example.com/x?access_token=t",
+    "https://example.com/y?Authorization=Bearer%20z",
+  ]) {
+    assert.throws(
+      () => normalizeEvidenceReferenceShape(exploitRef("example.com", { target })),
+      /must not carry a secret-shaped query parameter/,
+      `${target} should be rejected`,
+    );
+  }
+  // Benign query params (canaries, pagination) are still accepted.
+  const ok = normalizeEvidenceReferenceShape(
+    exploitRef("example.com", { target: "https://example.com/s?q=BOB_CANARY_1&page=2" }),
+  );
+  assert.equal(ok.kind, "exploit_run");
+});
+
+test("exploited_safely proof is bound to the claim target_domain", () => {
+  // (a) A row planted in this session's ledger but recorded for another domain
+  // cannot back the claim, even though run_id/hashes match.
+  withTempHome(() => {
+    const domain = "victim.example";
+    appendOffensiveRunRow(domain, { target_domain: "attacker.example" });
+    const error = mustThrow(() => appendCandidateClaim(exploitedClaim(domain)));
+    assertInvalidArgumentsCode(error, "exploit_proof_unbacked_exploit_run_evidence");
+    assert.equal(fs.existsSync(claimsJsonlPath(domain)), false);
+  });
+
+  // (b) An out-of-scope target URL (host not under the claim domain) cannot back
+  // the claim, even with a row whose target_domain matches the claim.
+  withTempHome(() => {
+    const domain = "victim.example";
+    const offHost = "https://attacker.example/steal?q=BOB_CANARY_1";
+    appendOffensiveRunRow(domain, { target: offHost });
+    const error = mustThrow(() => appendCandidateClaim(exploitedClaim(domain, {
+      evidence_refs: [exploitRef(domain, { target: offHost })],
+    })));
+    assertInvalidArgumentsCode(error, "exploit_proof_unbacked_exploit_run_evidence");
+    assert.equal(fs.existsSync(claimsJsonlPath(domain)), false);
+  });
+});
+
+test("exploited_safely accepts an in-scope subdomain target", () => withTempHome(() => {
+  const domain = "example.com";
+  const subTarget = "https://api.example.com/v1/search?q=BOB_CANARY_1";
+  appendOffensiveRunRow(domain, { target: subTarget });
+  const claim = appendCandidateClaim(exploitedClaim(domain, {
+    evidence_refs: [exploitRef(domain, { target: subTarget })],
+  }));
+  assert.equal(claim.exploit_outcome.outcome, "exploited_safely");
+  assert.equal(claim.evidence_refs[0].target, subTarget);
+}));
 
 test("offensive-runs.jsonl is audit-graded while repo-command-runs.jsonl stays non-audit-graded", () => withTempHome(() => {
   const domain = "offensive-audit-graded.example";

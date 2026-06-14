@@ -70,6 +70,11 @@ BLOCKED_EXACT = {
     "repo-env.json",
     "Dockerfile.bob",
     "repo-inventory.json",
+    # PR #108 review (Codex P1): the offensive proof ledger carries run ids,
+    # target URLs, safe-oracle canaries, and capture hashes. Read-guard it like
+    # its write-guarded sibling repo-command-runs.jsonl so agents cannot bypass
+    # the MCP readers to harvest target/canary material directly.
+    "offensive-runs.jsonl",
 }
 
 ALLOWED_EXACT = {
