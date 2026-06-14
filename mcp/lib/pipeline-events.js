@@ -2,6 +2,9 @@
 
 const fs = require("fs");
 const {
+  SEVERITY_VALUES,
+} = require("./constants.js");
+const {
   assertNonEmptyString,
 } = require("./validation.js");
 const {
@@ -105,7 +108,10 @@ function normalizeCounts(counts) {
 // Each entry is {finding_id, from, to}; capped and value-bounded so the event
 // stays small and free of free-text. Used by the "severity_clamped" event so a
 // runtime clamp is distinguishable from a verifier's choice in a persisted
-// artifact, not just the ephemeral tool response.
+// artifact, not just the ephemeral tool response. `from`/`to` MUST be valid
+// round severities — enforced on both write and read so a hand-crafted/tampered
+// events log cannot inject bogus severity-transition records into operator audit
+// views.
 function normalizeClampList(clamps) {
   if (!Array.isArray(clamps)) return null;
   const normalized = [];
@@ -115,6 +121,7 @@ function normalizeClampList(clamps) {
     const from = capString(clamp.from, 40);
     const to = capString(clamp.to, 40);
     if (!findingId || !from || !to) continue;
+    if (!SEVERITY_VALUES.includes(from) || !SEVERITY_VALUES.includes(to)) continue;
     normalized.push({ finding_id: findingId, from, to });
   }
   return normalized.length ? normalized : null;

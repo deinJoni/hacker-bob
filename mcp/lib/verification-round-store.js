@@ -126,9 +126,12 @@ function claimIsSmartContractFinding(claim, scSurfaceIds) {
   return surfaceIds.some((surfaceId) => scSurfaceIds.has(surfaceId));
 }
 
-// Returns the list of clamps applied: [{ finding_id, from, to }]. Empty when
-// nothing was clamped (non-web session, no rise, all proven, or all SC).
-function clampUnprovenSeverityRises(domain, results) {
+// MUTATES `results` in place: lowers `result.severity` for each unproven web
+// severity rise. Returns the list of clamps applied: [{ finding_id, from, to }],
+// empty when nothing was clamped (non-web session, no rise, all proven, or all
+// SC). The in-place mutation is load-bearing — the same array is serialized into
+// the persisted round document by the caller.
+function applyUnprovenSeverityClamps(domain, results) {
   let nucleus;
   try {
     nucleus = readSessionNucleus(domain);
@@ -207,6 +210,16 @@ function clampUnprovenSeverityRises(domain, results) {
     if (base.isSmartContract) continue;
     if (verifySeverityRank(result.severity) <= base.maxRank) continue;
 
+    // The exploit-backed allow-path is a FLOOR, not proof of the asserted
+    // severity: it confirms the finding has SOME real, MAC-signed exploit row in
+    // the ledger, raising the bar from "zero proof" to "a genuine exploit +
+    // verifier assertion". It does NOT yet prove the replay demonstrated THIS
+    // higher severity (the row carries no impact/severity binding). Closing that
+    // gap is a HARD REQUIREMENT of the future offensive-runner PR: it must bind
+    // each row to the demonstrated impact and anchor it to the current
+    // verification window (e.g. a verification_exploit_run ref kind), and this
+    // check must then verify that binding. Until the runner exists this branch
+    // is dormant (readOffensiveRunRecords returns []), so every web rise clamps.
     const hasExploitReplaySignal = Array.isArray(result.confidence_reasons)
       && result.confidence_reasons.includes("exploit_replay_confirmed");
     let proven = false;
@@ -527,7 +540,7 @@ function writeVerificationRound(args) {
     }
   }
 
-  const severityClamps = clampUnprovenSeverityRises(domain, results);
+  const severityClamps = applyUnprovenSeverityClamps(domain, results);
 
   const document = {
     version: schemaVersion,

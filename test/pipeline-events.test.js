@@ -121,6 +121,7 @@ test("severity_clamped clamps survive the write and read normalizers, bounded an
       { finding_id: "F-1", from: "critical", to: "low" },
       { finding_id: "F-2", from: "high", to: "medium", extra: "dropped" },
       { finding_id: "", from: "high", to: "low" },
+      { finding_id: "F-9", from: "critical", to: "supersafe" },
     ],
   });
   assert.equal(written.type, "severity_clamped");
@@ -129,13 +130,18 @@ test("severity_clamped clamps survive the write and read normalizers, bounded an
     { finding_id: "F-2", from: "high", to: "medium" },
   ]);
 
+  // Read path enforces the same severity-enum integrity: a tampered events log
+  // with a bogus from/to severity is dropped, not surfaced to operators.
   const readEvent = normalizePipelineEventForRead({
     version: 1,
     bob_version: "test",
     ts: "2026-01-01T00:00:00.000Z",
     target_domain: "example.com",
     type: "severity_clamped",
-    clamps: written.clamps,
+    clamps: [
+      ...written.clamps,
+      { finding_id: "F-9", from: "DROPPED", to: "low" },
+    ],
   }, "example.com");
   assert.deepEqual(readEvent.clamps, written.clamps);
 });
