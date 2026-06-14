@@ -23,6 +23,12 @@ const {
   offensiveRunsJsonlPath,
   repoCommandRunsJsonlPath,
 } = require("../mcp/lib/paths.js");
+const {
+  ensureHandoffSigningKey,
+} = require("../mcp/lib/handoff-signing-key.js");
+const {
+  signOffensiveRunRow,
+} = require("../mcp/lib/offensive-row-mac.js");
 
 function withTempHome(fn) {
   const previousHome = process.env.HOME;
@@ -73,7 +79,7 @@ function exploitedClaim(domain, overrides = {}) {
   };
 }
 
-function appendOffensiveRunRow(domain, overrides = {}) {
+function buildOffensiveRunRow(domain, overrides = {}) {
   const ref = exploitRef(domain);
   const row = {
     version: 1,
@@ -93,9 +99,19 @@ function appendOffensiveRunRow(domain, overrides = {}) {
   // The runner records the same canonical (redacted) target the claim ref carries
   // so the row and ref stay byte-identical for the proof binding.
   row.target = canonicalizeExploitTarget(row.target);
+  return row;
+}
+
+function writeOffensiveRunRow(domain, row) {
   fs.mkdirSync(path.dirname(offensiveRunsJsonlPath(domain)), { recursive: true });
   fs.appendFileSync(offensiveRunsJsonlPath(domain), `${JSON.stringify(row)}\n`);
   return row;
+}
+
+function appendOffensiveRunRow(domain, overrides = {}) {
+  const row = buildOffensiveRunRow(domain, overrides);
+  signOffensiveRunRow(row, ensureHandoffSigningKey(domain));
+  return writeOffensiveRunRow(domain, row);
 }
 
 function mustThrow(fn) {
@@ -431,4 +447,76 @@ test("offensive-runs.jsonl is audit-graded while repo-command-runs.jsonl stays n
   const domain = "offensive-audit-graded.example";
   assert.equal(isAuditGradedPath(offensiveRunsJsonlPath(domain), domain), true);
   assert.equal(isAuditGradedPath(repoCommandRunsJsonlPath(domain), domain), false);
+}));
+
+test("exploited_safely rejects an unsigned offensive-runs row", () => withTempHome(() => {
+  const domain = "offensive-unsigned-row.example";
+  ensureHandoffSigningKey(domain);
+  writeOffensiveRunRow(domain, buildOffensiveRunRow(domain));
+
+  const error = mustThrow(() => appendCandidateClaim(exploitedClaim(domain)));
+  assertInvalidArgumentsCode(error, "exploit_proof_unbacked_exploit_run_evidence");
+  assert.equal(fs.existsSync(claimsJsonlPath(domain)), false);
+}));
+
+test("exploited_safely rejects a post-signing tampered offensive-runs row", () => withTempHome(() => {
+  const domain = "offensive-tampered-row.example";
+  const key = ensureHandoffSigningKey(domain);
+  const row = buildOffensiveRunRow(domain, { offensive_outcome: "blocked_by_defense" });
+  signOffensiveRunRow(row, key);
+  row.offensive_outcome = "exploited_safely";
+  writeOffensiveRunRow(domain, row);
+
+  const error = mustThrow(() => appendCandidateClaim(exploitedClaim(domain)));
+  assertInvalidArgumentsCode(error, "exploit_proof_unbacked_exploit_run_evidence");
+  assert.equal(fs.existsSync(claimsJsonlPath(domain)), false);
+}));
+
+test("exploited_safely rejects an offensive-runs row signed with a foreign session key", () => withTempHome(() => {
+  const domain = "offensive-wrong-key.example";
+  ensureHandoffSigningKey(domain);
+  const foreignKey = ensureHandoffSigningKey("foreign-session.example");
+  const row = buildOffensiveRunRow(domain);
+  signOffensiveRunRow(row, foreignKey);
+  writeOffensiveRunRow(domain, row);
+
+  const error = mustThrow(() => appendCandidateClaim(exploitedClaim(domain)));
+  assertInvalidArgumentsCode(error, "exploit_proof_unbacked_exploit_run_evidence");
+  assert.equal(fs.existsSync(claimsJsonlPath(domain)), false);
+}));
+
+test("exploited_safely rejects a malformed offensive-runs row_mac envelope", () => withTempHome(() => {
+  const domain = "offensive-malformed-mac.example";
+  ensureHandoffSigningKey(domain);
+  const row = buildOffensiveRunRow(domain);
+  row.row_mac = { version: 1, algorithm: "hmac-sha256", digest: "not-hex" };
+  writeOffensiveRunRow(domain, row);
+
+  const error = mustThrow(() => appendCandidateClaim(exploitedClaim(domain)));
+  assertInvalidArgumentsCode(error, "exploit_proof_unbacked_exploit_run_evidence");
+  assert.equal(fs.existsSync(claimsJsonlPath(domain)), false);
+}));
+
+test("exploited_safely fails closed when offensive-runs.jsonl is a symlink", () => withTempHome((home) => {
+  const domain = "offensive-symlink-ledger.example";
+  ensureHandoffSigningKey(domain);
+  const source = path.join(home, "outside-offensive-runs.jsonl");
+  fs.writeFileSync(source, "");
+  fs.symlinkSync(source, offensiveRunsJsonlPath(domain));
+
+  const error = mustThrow(() => appendCandidateClaim(exploitedClaim(domain)));
+  assert.equal(error.code, "STATE_CONFLICT");
+  assert.equal(fs.existsSync(claimsJsonlPath(domain)), false);
+}));
+
+test("exploited_safely fails closed when offensive-runs.jsonl is hard-linked", () => withTempHome((home) => {
+  const domain = "offensive-hardlink-ledger.example";
+  ensureHandoffSigningKey(domain);
+  const source = path.join(home, "hardlinked-offensive-runs.jsonl");
+  fs.writeFileSync(source, "");
+  fs.linkSync(source, offensiveRunsJsonlPath(domain));
+
+  const error = mustThrow(() => appendCandidateClaim(exploitedClaim(domain)));
+  assert.equal(error.code, "STATE_CONFLICT");
+  assert.equal(fs.existsSync(claimsJsonlPath(domain)), false);
 }));

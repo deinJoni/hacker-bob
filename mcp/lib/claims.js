@@ -1,6 +1,7 @@
 "use strict";
 
 const fs = require("fs");
+const path = require("path");
 const {
   assertEnumValue,
   normalizeOptionalText,
@@ -10,6 +11,7 @@ const {
   claimsJsonlPath,
   offensiveRunsJsonlPath,
   repoCommandRunsJsonlPath,
+  sessionsRoot,
 } = require("./paths.js");
 const {
   appendJsonlLine,
@@ -36,6 +38,12 @@ const {
   ERROR_CODES,
   ToolError,
 } = require("./envelope.js");
+const {
+  readHandoffSigningKey,
+} = require("./handoff-signing-key.js");
+const {
+  verifyOffensiveRunRowMac,
+} = require("./offensive-row-mac.js");
 const {
   OFFENSIVE_OUTCOME_VALUES,
   SAFE_ORACLE_KINDS,
@@ -651,18 +659,71 @@ function readRepoCommandRunRecords(domain) {
   return rows;
 }
 
-function readOffensiveRunRecords(domain) {
-  const filePath = offensiveRunsJsonlPath(domain);
-  if (!fs.existsSync(filePath)) return [];
-  const stats = fs.statSync(filePath);
-  if (DEFAULT_ARTIFACT_READ_MAX_BYTES != null && stats.size > DEFAULT_ARTIFACT_READ_MAX_BYTES) {
+// PR #108: realpath-containment for the proof ledger. Defends a symlinked SESSION
+// DIRECTORY (O_NOFOLLOW on the leaf file alone does not catch a symlinked parent dir).
+// Returns null when the session dir does not exist yet (caller maps null -> []).
+function resolveOffensiveRunsFilePathSecure(filePath) {
+  const nominalDir = path.dirname(filePath);
+  if (!fs.existsSync(nominalDir)) return null;
+  const realRoot = fs.realpathSync(sessionsRoot());
+  const realDir = fs.realpathSync(nominalDir);
+  const expectedDir = path.join(realRoot, path.basename(nominalDir));
+  if (realDir !== expectedDir) {
     throw new ToolError(
       ERROR_CODES.STATE_CONFLICT,
-      `offensive-runs.jsonl exceeds read cap of ${DEFAULT_ARTIFACT_READ_MAX_BYTES} bytes: ${filePath}`,
+      `offensive-runs.jsonl directory must stay inside its session root without domain-directory symlinks: ${nominalDir}`,
     );
   }
+  return path.join(realDir, path.basename(filePath));
+}
+
+function readOffensiveRunRecords(domain) {
+  const filePath = offensiveRunsJsonlPath(domain);
+  const realFilePath = resolveOffensiveRunsFilePathSecure(filePath);
+  if (realFilePath === null) return [];
+  const noFollow = fs.constants.O_NOFOLLOW || 0;
+  // On platforms without O_NOFOLLOW, pre-check the leaf for a symlink.
+  if (!noFollow) {
+    let entry;
+    try {
+      entry = fs.lstatSync(realFilePath);
+    } catch (e) {
+      if (e && e.code === "ENOENT") return [];
+      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Could not stat offensive-runs.jsonl: ${realFilePath} (${e.message || String(e)})`);
+    }
+    if (entry.isSymbolicLink()) {
+      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `offensive-runs.jsonl must be a regular file, not a symlink: ${realFilePath}`);
+    }
+  }
+  let fd = null;
+  let raw;
+  try {
+    fd = fs.openSync(realFilePath, fs.constants.O_RDONLY | noFollow);
+    const stats = fs.fstatSync(fd);
+    if (!stats.isFile()) {
+      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `offensive-runs.jsonl must be a regular file: ${realFilePath}`);
+    }
+    if (stats.nlink !== 1) {
+      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `offensive-runs.jsonl must not be hard-linked: ${realFilePath}`);
+    }
+    if (DEFAULT_ARTIFACT_READ_MAX_BYTES != null && stats.size > DEFAULT_ARTIFACT_READ_MAX_BYTES) {
+      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `offensive-runs.jsonl exceeds read cap of ${DEFAULT_ARTIFACT_READ_MAX_BYTES} bytes: ${realFilePath}`);
+    }
+    raw = fs.readFileSync(fd, "utf8");
+  } catch (error) {
+    if (error instanceof ToolError) throw error;
+    if (error && error.code === "ENOENT") return [];
+    if (error && error.code === "ELOOP") {
+      throw new ToolError(ERROR_CODES.STATE_CONFLICT, `offensive-runs.jsonl must be a regular file, not a symlink: ${realFilePath}`);
+    }
+    throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Could not read offensive-runs.jsonl: ${realFilePath} (${error.message || String(error)})`);
+  } finally {
+    if (fd != null) {
+      try { fs.closeSync(fd); } catch {}
+    }
+  }
   const rows = [];
-  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+  const lines = raw.split(/\r?\n/);
   for (const line of lines) {
     if (!line.trim()) continue;
     try {
@@ -677,7 +738,7 @@ function readOffensiveRunRecords(domain) {
       // claims (the only path that reads this ledger).
       throw new ToolError(
         ERROR_CODES.STATE_CONFLICT,
-        `offensive-runs.jsonl contains a malformed row; refusing to evaluate exploit proof against a corrupt proof ledger: ${filePath}`,
+        `offensive-runs.jsonl contains a malformed row; refusing to evaluate exploit proof against a corrupt proof ledger: ${realFilePath}`,
       );
     }
   }
@@ -720,8 +781,14 @@ function exploitTargetHostInScope(targetUrl, domain) {
   return host === scope || host.endsWith(`.${scope}`);
 }
 
-function offensiveRunRowSatisfiesEvidence(row, ref, domain) {
+function offensiveRunRowSatisfiesEvidence(row, ref, domain, signingKey) {
   if (!row || typeof row !== "object") return false;
+  // PR #108: the row must be HMAC-signed by the trusted producer (offensive runner) with
+  // the per-session key. This is the un-fakeable anchor: an agent-authored / symlinked /
+  // tampered / wrong-key row has no valid MAC and fails here before any field check. (It
+  // does NOT defend a local actor with direct read access to the 0600 signing key — cf.
+  // wave-handoff-contracts.js validateHandoffProvenance.)
+  if (!verifyOffensiveRunRowMac(row, signingKey)) return false;
   // PR #108 review (Codex P1): require the row to AFFIRMATIVELY assert a
   // completed, non-dry-run execution. Accepting an omitted/non-boolean dry_run
   // or timed_out would let a hand-authored/incomplete row stand as proof.
@@ -809,6 +876,11 @@ function assertExploitedClaimHasProof(claim) {
     );
   }
   const runRows = readOffensiveRunRecords(claim.target_domain);
+  // Read the signing key only when there are rows to verify. If we read it
+  // unconditionally, the legitimate "no ledger yet" case would throw STATE_CONFLICT
+  // ("Missing handoff signing key") instead of the intended INVALID_ARGUMENTS
+  // exploit_proof_unbacked_exploit_run_evidence.
+  const signingKey = runRows.length > 0 ? readHandoffSigningKey(claim.target_domain) : null;
   // PR #108 review (Codex P2): require EVERY exploit_run ref to be backed by an
   // in-scope, non-dry-run ledger row — not just one. `some()` would let an extra
   // unbacked or out-of-scope exploit_run ref ride along into claims.jsonl/the
@@ -816,7 +888,7 @@ function assertExploitedClaimHasProof(claim) {
   // evidence. (Stricter than the O-P4 repo_command_run gate by design: offensive
   // target URLs are scope-sensitive in a way native-code run ids are not.)
   const allBacked = exploitRunRefs.every((ref) => (
-    runRows.some((row) => offensiveRunRowSatisfiesEvidence(row, ref, claim.target_domain))
+    runRows.some((row) => offensiveRunRowSatisfiesEvidence(row, ref, claim.target_domain, signingKey))
   ));
   if (!allBacked) {
     throw new ToolError(
