@@ -174,46 +174,39 @@ function assertRepoCommandRunEvidenceShape(ref, fieldName) {
   }
 }
 
-// Secret-shaped parameter names. PR #108 review (Codex P2 ×2): the hash-bound
-// `target` is persisted verbatim into claims.jsonl, so a credential embedded in
-// the URL would leak a live secret on every claim read. Full value-redaction is
-// the offensive runner's job (it must redact the SAME canonical string it writes
-// to both the offensive-runs.jsonl row and this ref so the two stay byte-identical
-// for the proof binding); this validator is the fail-closed backstop that rejects
-// a secret-bearing target — in the query, the fragment (OAuth implicit flow puts
-// access_token in the #fragment), or the userinfo — before it is ever stored,
-// forcing the runner to redact first.
-const EXPLOIT_TARGET_SECRET_QUERY_RE = /^(?:access[_-]?token|id[_-]?token|refresh[_-]?token|token|session(?:[_-]?id)?|sid|auth(?:orization)?|api[_-]?key|apikey|secret|password|passwd|pwd|jwt|bearer|x[_-]?api[_-]?key|signature|sig)$/i;
-
-function assertExploitTargetCarriesNoEmbeddedSecret(targetUrl, fieldName) {
+// Value-blind canonicalization of an exploit_run target. PR #108 review
+// (Codex P1/P2, four rounds): the hash-bound `target` is persisted verbatim into
+// claims.jsonl, so any credential embedded in the URL leaks on every claim read.
+// A secret-NAME denylist is whack-a-mole — it kept missing userinfo, OAuth
+// implicit `#access_token`, compound names (`client_secret`, `X-Amz-Signature`),
+// and routed fragments (`#/cb?token=`). Instead we redact value-blind and
+// structurally: strip userinfo entirely, replace EVERY query value with a
+// placeholder (param NAMES are kept for triage — values are where secrets live),
+// and redact the fragment wholesale (covers `#token=`, `#/route?token=`, bare
+// `#secret`). The exact request (incl. canary) stays bound by command_hash and
+// recoverable from the read-guarded capture, so nothing reportable is lost.
+//
+// This is the single canonical form the offensive runner MUST also write to the
+// offensive-runs.jsonl row so the row and this ref stay byte-identical for the
+// proof binding (the runner imports canonicalizeExploitTarget for exactly this).
+function canonicalizeExploitTarget(targetUrl) {
   let parsed;
   try {
     parsed = new URL(targetUrl);
   } catch {
     // Opaque / relative targets carry no parseable URL secrets; the proof gate
     // additionally requires an in-scope absolute URL before a row can back them.
-    return;
+    return targetUrl;
   }
-  // Credentials embedded in userinfo (https://user:pass@host/...) are always
-  // sensitive regardless of name.
-  if (parsed.username || parsed.password) {
-    throw new Error(
-      `${fieldName}.target must not embed userinfo credentials for kind="exploit_run"; the offensive runner must redact them before recording`,
-    );
+  parsed.username = "";
+  parsed.password = "";
+  for (const key of [...parsed.searchParams.keys()]) {
+    parsed.searchParams.set(key, "REDACTED");
   }
-  // Secret-shaped params can appear in the query OR the #fragment (OAuth
-  // implicit responses return access_token in the fragment).
-  const paramKeys = [
-    ...parsed.searchParams.keys(),
-    ...new URLSearchParams(parsed.hash.replace(/^#/, "")).keys(),
-  ];
-  for (const key of paramKeys) {
-    if (EXPLOIT_TARGET_SECRET_QUERY_RE.test(key)) {
-      throw new Error(
-        `${fieldName}.target must not carry a secret-shaped parameter ("${key}") in its query or fragment for kind="exploit_run"; the offensive runner must redact it before recording`,
-      );
-    }
+  if (parsed.hash) {
+    parsed.hash = "REDACTED";
   }
+  return parsed.toString();
 }
 
 function assertExploitRunEvidenceShape(ref, fieldName) {
@@ -231,7 +224,6 @@ function assertExploitRunEvidenceShape(ref, fieldName) {
   if (typeof ref.target !== "string" || !ref.target.trim()) {
     throw new Error(`${fieldName}.target must be a non-empty string for kind="exploit_run"`);
   }
-  assertExploitTargetCarriesNoEmbeddedSecret(ref.target, fieldName);
   assertEnumValue(ref.offensive_outcome, OFFENSIVE_OUTCOME_VALUES, `${fieldName}.offensive_outcome`);
   if (!isHex64(ref.command_hash)) {
     throw new Error(`${fieldName}.command_hash must be a 64-hex content digest for kind="exploit_run"`);
@@ -276,6 +268,9 @@ function normalizeEvidenceReferenceShape(ref, fieldName = "evidence_refs[]") {
     assertRepoCommandRunEvidenceShape(ref, fieldName);
   } else if (kind === "exploit_run") {
     assertExploitRunEvidenceShape(ref, fieldName);
+    // Value-blind redaction before the target is hash-bound into the claim, so
+    // no embedded secret is ever persisted (see canonicalizeExploitTarget).
+    ref.target = canonicalizeExploitTarget(ref.target);
   }
   return ref;
 }
@@ -847,6 +842,7 @@ module.exports = {
   SAFE_ORACLE_KINDS,
   appendCandidateClaim,
   assertExploitedClaimHasProof,
+  canonicalizeExploitTarget,
   assertNotStaticOnlyNativeHighSeverity,
   claimSurfaceLanguageMap,
   evidenceReferenceLookupKey,

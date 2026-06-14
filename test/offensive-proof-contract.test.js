@@ -11,6 +11,7 @@ const {
   OFFENSIVE_OUTCOME_VALUES,
   SAFE_ORACLE_KINDS,
   appendCandidateClaim,
+  canonicalizeExploitTarget,
   evidenceReferenceLookupKey,
   normalizeCandidateClaim,
   normalizeEvidenceReferenceShape,
@@ -89,6 +90,9 @@ function appendOffensiveRunRow(domain, overrides = {}) {
     stderr_hash: ref.stderr_hash,
     ...overrides,
   };
+  // The runner records the same canonical (redacted) target the claim ref carries
+  // so the row and ref stay byte-identical for the proof binding.
+  row.target = canonicalizeExploitTarget(row.target);
   fs.mkdirSync(path.dirname(offensiveRunsJsonlPath(domain)), { recursive: true });
   fs.appendFileSync(offensiveRunsJsonlPath(domain), `${JSON.stringify(row)}\n`);
   return row;
@@ -305,38 +309,32 @@ test("exploit proof gate is severity-agnostic", () => {
   });
 });
 
-test("exploit_run rejects targets carrying embedded secrets (query, fragment, userinfo)", () => {
-  for (const target of [
-    "https://example.com/cb?token=abc123",
-    "https://example.com/login?session=deadbeef",
-    "https://example.com/api?api_key=k",
-    "https://example.com/x?access_token=t",
-    "https://example.com/y?Authorization=Bearer%20z",
-    "https://example.com/cb#access_token=tok&token_type=bearer", // OAuth implicit fragment
-    "https://example.com/p#session=zzz",
-  ]) {
-    assert.throws(
-      () => normalizeEvidenceReferenceShape(exploitRef("example.com", { target })),
-      /must not carry a secret-shaped parameter/,
-      `${target} should be rejected`,
-    );
+test("exploit_run canonicalizes targets to strip embedded secrets value-blind", () => {
+  const cases = [
+    ["https://example.com/cb?token=abc123secret", ["abc123secret"]],
+    ["https://example.com/x?access_token=t0ksecret", ["t0ksecret"]],
+    // compound / prefixed names that an exact-name denylist would miss
+    ["https://example.com/login?client_secret=xyzsecret&X-Amz-Signature=sigsecret", ["xyzsecret", "sigsecret"]],
+    // OAuth implicit-flow fragment
+    ["https://example.com/cb#access_token=tokfragsecret&token_type=bearer", ["tokfragsecret"]],
+    // SPA routed fragment (URLSearchParams would never see `token` here)
+    ["https://example.com/#/callback?token=routedsecret", ["routedsecret"]],
+    // userinfo credentials
+    ["https://user:passsecret@example.com/poc", ["passsecret"]],
+  ];
+  for (const [target, secrets] of cases) {
+    const ref = normalizeEvidenceReferenceShape(exploitRef("example.com", { target }));
+    for (const secret of secrets) {
+      assert.ok(!ref.target.includes(secret), `${target} -> ${ref.target} still leaks "${secret}"`);
+    }
+    assert.ok(!/\/\/[^/]*@/.test(ref.target), `${ref.target} still embeds userinfo`);
   }
-  // Userinfo credentials are rejected regardless of parameter name.
-  for (const target of [
-    "https://user:pass@example.com/poc",
-    "https://admin@example.com/poc",
-  ]) {
-    assert.throws(
-      () => normalizeEvidenceReferenceShape(exploitRef("example.com", { target })),
-      /must not embed userinfo credentials/,
-      `${target} should be rejected`,
-    );
-  }
-  // Benign query/fragment params (canaries, pagination, anchors) are still accepted.
-  const ok = normalizeEvidenceReferenceShape(
-    exploitRef("example.com", { target: "https://example.com/s?q=BOB_CANARY_1&page=2#section" }),
+  // Benign param NAMES survive (values redacted) for triage clarity.
+  const ref = normalizeEvidenceReferenceShape(
+    exploitRef("example.com", { target: "https://example.com/s?q=BOB_CANARY_1&page=2" }),
   );
-  assert.equal(ok.kind, "exploit_run");
+  assert.ok(ref.target.includes("q=") && ref.target.includes("page="), `param names dropped: ${ref.target}`);
+  assert.ok(!ref.target.includes("BOB_CANARY_1"), `query value not redacted: ${ref.target}`);
 });
 
 test("exploited_safely rejects a claim carrying an extra out-of-scope exploit_run ref", () => withTempHome(() => {
@@ -397,7 +395,8 @@ test("exploited_safely accepts an in-scope subdomain target", () => withTempHome
     evidence_refs: [exploitRef(domain, { target: subTarget })],
   }));
   assert.equal(claim.exploit_outcome.outcome, "exploited_safely");
-  assert.equal(claim.evidence_refs[0].target, subTarget);
+  // The stored ref carries the canonical (value-redacted) target, not the raw URL.
+  assert.equal(claim.evidence_refs[0].target, canonicalizeExploitTarget(subTarget));
 }));
 
 test("offensive-runs.jsonl is audit-graded while repo-command-runs.jsonl stays non-audit-graded", () => withTempHome(() => {
