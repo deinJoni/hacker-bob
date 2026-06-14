@@ -174,29 +174,43 @@ function assertRepoCommandRunEvidenceShape(ref, fieldName) {
   }
 }
 
-// Secret-shaped query parameter names. PR #108 review (Codex P2): the
-// hash-bound `target` is persisted verbatim into claims.jsonl, so a raw
-// `?token=...`/`?session=...` URL would leak a live secret on every claim read.
-// Full value-redaction is the offensive runner's job (it must redact the SAME
-// canonical string it writes to both the offensive-runs.jsonl row and this ref
-// so the two stay byte-identical for the proof binding); this validator is the
-// fail-closed backstop that rejects a secret-bearing target before it is ever
-// stored, forcing the runner to redact first.
+// Secret-shaped parameter names. PR #108 review (Codex P2 ×2): the hash-bound
+// `target` is persisted verbatim into claims.jsonl, so a credential embedded in
+// the URL would leak a live secret on every claim read. Full value-redaction is
+// the offensive runner's job (it must redact the SAME canonical string it writes
+// to both the offensive-runs.jsonl row and this ref so the two stay byte-identical
+// for the proof binding); this validator is the fail-closed backstop that rejects
+// a secret-bearing target — in the query, the fragment (OAuth implicit flow puts
+// access_token in the #fragment), or the userinfo — before it is ever stored,
+// forcing the runner to redact first.
 const EXPLOIT_TARGET_SECRET_QUERY_RE = /^(?:access[_-]?token|id[_-]?token|refresh[_-]?token|token|session(?:[_-]?id)?|sid|auth(?:orization)?|api[_-]?key|apikey|secret|password|passwd|pwd|jwt|bearer|x[_-]?api[_-]?key|signature|sig)$/i;
 
-function assertExploitTargetCarriesNoSecretQuery(targetUrl, fieldName) {
+function assertExploitTargetCarriesNoEmbeddedSecret(targetUrl, fieldName) {
   let parsed;
   try {
     parsed = new URL(targetUrl);
   } catch {
-    // Opaque / relative targets carry no parseable query string; the proof gate
+    // Opaque / relative targets carry no parseable URL secrets; the proof gate
     // additionally requires an in-scope absolute URL before a row can back them.
     return;
   }
-  for (const key of parsed.searchParams.keys()) {
+  // Credentials embedded in userinfo (https://user:pass@host/...) are always
+  // sensitive regardless of name.
+  if (parsed.username || parsed.password) {
+    throw new Error(
+      `${fieldName}.target must not embed userinfo credentials for kind="exploit_run"; the offensive runner must redact them before recording`,
+    );
+  }
+  // Secret-shaped params can appear in the query OR the #fragment (OAuth
+  // implicit responses return access_token in the fragment).
+  const paramKeys = [
+    ...parsed.searchParams.keys(),
+    ...new URLSearchParams(parsed.hash.replace(/^#/, "")).keys(),
+  ];
+  for (const key of paramKeys) {
     if (EXPLOIT_TARGET_SECRET_QUERY_RE.test(key)) {
       throw new Error(
-        `${fieldName}.target must not carry a secret-shaped query parameter ("${key}") for kind="exploit_run"; the offensive runner must redact it before recording`,
+        `${fieldName}.target must not carry a secret-shaped parameter ("${key}") in its query or fragment for kind="exploit_run"; the offensive runner must redact it before recording`,
       );
     }
   }
@@ -217,7 +231,7 @@ function assertExploitRunEvidenceShape(ref, fieldName) {
   if (typeof ref.target !== "string" || !ref.target.trim()) {
     throw new Error(`${fieldName}.target must be a non-empty string for kind="exploit_run"`);
   }
-  assertExploitTargetCarriesNoSecretQuery(ref.target, fieldName);
+  assertExploitTargetCarriesNoEmbeddedSecret(ref.target, fieldName);
   assertEnumValue(ref.offensive_outcome, OFFENSIVE_OUTCOME_VALUES, `${fieldName}.offensive_outcome`);
   if (!isHex64(ref.command_hash)) {
     throw new Error(`${fieldName}.command_hash must be a 64-hex content digest for kind="exploit_run"`);
@@ -636,7 +650,17 @@ function readOffensiveRunRecords(domain) {
     try {
       rows.push(JSON.parse(line));
     } catch {
-      // Malformed proof-ledger rows simply cannot back an exploit_run ref.
+      // PR #108 review (Codex P2): unlike repo-command-runs.jsonl (convenience
+      // telemetry that tolerates a corrupt line), the offensive ledger is
+      // audit-graded proof material. A malformed line means an interrupted
+      // append or tampering, so fail closed rather than silently skipping it and
+      // letting a later row satisfy the exploit-proof gate against an
+      // incomplete/corrupt ledger. Blast radius is limited to exploited_safely
+      // claims (the only path that reads this ledger).
+      throw new ToolError(
+        ERROR_CODES.STATE_CONFLICT,
+        `offensive-runs.jsonl contains a malformed row; refusing to evaluate exploit proof against a corrupt proof ledger: ${filePath}`,
+      );
     }
   }
   return rows;
@@ -764,13 +788,19 @@ function assertExploitedClaimHasProof(claim) {
     );
   }
   const runRows = readOffensiveRunRecords(claim.target_domain);
-  const backedRef = exploitRunRefs.some((ref) => (
+  // PR #108 review (Codex P2): require EVERY exploit_run ref to be backed by an
+  // in-scope, non-dry-run ledger row — not just one. `some()` would let an extra
+  // unbacked or out-of-scope exploit_run ref ride along into claims.jsonl/the
+  // freeze on the coattails of one valid ref, smuggling off-scope offensive
+  // evidence. (Stricter than the O-P4 repo_command_run gate by design: offensive
+  // target URLs are scope-sensitive in a way native-code run ids are not.)
+  const allBacked = exploitRunRefs.every((ref) => (
     runRows.some((row) => offensiveRunRowSatisfiesEvidence(row, ref, claim.target_domain))
   ));
-  if (!backedRef) {
+  if (!allBacked) {
     throw new ToolError(
       ERROR_CODES.INVALID_ARGUMENTS,
-      "exploited_safely claims require at least one exploit_run evidence_ref backed by a matching non-dry-run offensive-runs.jsonl row.",
+      "exploited_safely claims require every exploit_run evidence_ref to be backed by a matching in-scope, non-dry-run offensive-runs.jsonl row.",
       {
         code: "exploit_proof_unbacked_exploit_run_evidence",
         outcome: claim.exploit_outcome.outcome,

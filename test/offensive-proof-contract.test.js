@@ -305,26 +305,64 @@ test("exploit proof gate is severity-agnostic", () => {
   });
 });
 
-test("exploit_run rejects targets carrying secret-shaped query parameters", () => {
+test("exploit_run rejects targets carrying embedded secrets (query, fragment, userinfo)", () => {
   for (const target of [
     "https://example.com/cb?token=abc123",
     "https://example.com/login?session=deadbeef",
     "https://example.com/api?api_key=k",
     "https://example.com/x?access_token=t",
     "https://example.com/y?Authorization=Bearer%20z",
+    "https://example.com/cb#access_token=tok&token_type=bearer", // OAuth implicit fragment
+    "https://example.com/p#session=zzz",
   ]) {
     assert.throws(
       () => normalizeEvidenceReferenceShape(exploitRef("example.com", { target })),
-      /must not carry a secret-shaped query parameter/,
+      /must not carry a secret-shaped parameter/,
       `${target} should be rejected`,
     );
   }
-  // Benign query params (canaries, pagination) are still accepted.
+  // Userinfo credentials are rejected regardless of parameter name.
+  for (const target of [
+    "https://user:pass@example.com/poc",
+    "https://admin@example.com/poc",
+  ]) {
+    assert.throws(
+      () => normalizeEvidenceReferenceShape(exploitRef("example.com", { target })),
+      /must not embed userinfo credentials/,
+      `${target} should be rejected`,
+    );
+  }
+  // Benign query/fragment params (canaries, pagination, anchors) are still accepted.
   const ok = normalizeEvidenceReferenceShape(
-    exploitRef("example.com", { target: "https://example.com/s?q=BOB_CANARY_1&page=2" }),
+    exploitRef("example.com", { target: "https://example.com/s?q=BOB_CANARY_1&page=2#section" }),
   );
   assert.equal(ok.kind, "exploit_run");
 });
+
+test("exploited_safely rejects a claim carrying an extra out-of-scope exploit_run ref", () => withTempHome(() => {
+  const domain = "example.com";
+  appendOffensiveRunRow(domain); // backs the valid in-scope ref
+  const validRef = exploitRef(domain);
+  const offHostRef = exploitRef(domain, {
+    run_id: "run-exploit-2",
+    target: "https://attacker.example/steal?q=BOB_CANARY_1",
+  });
+  const error = mustThrow(() => appendCandidateClaim(exploitedClaim(domain, {
+    evidence_refs: [validRef, offHostRef],
+  })));
+  // every() binding: one valid ref cannot carry an unbacked, out-of-scope sibling.
+  assertInvalidArgumentsCode(error, "exploit_proof_unbacked_exploit_run_evidence");
+  assert.equal(fs.existsSync(claimsJsonlPath(domain)), false);
+}));
+
+test("exploited_safely fails closed when the proof ledger has a malformed row", () => withTempHome(() => {
+  const domain = "example.com";
+  appendOffensiveRunRow(domain); // a valid row that would otherwise back the claim
+  fs.appendFileSync(offensiveRunsJsonlPath(domain), "{not valid json\n");
+  const error = mustThrow(() => appendCandidateClaim(exploitedClaim(domain)));
+  assert.equal(error.code, "STATE_CONFLICT");
+  assert.equal(fs.existsSync(claimsJsonlPath(domain)), false);
+}));
 
 test("exploited_safely proof is bound to the claim target_domain", () => {
   // (a) A row planted in this session's ledger but recorded for another domain
