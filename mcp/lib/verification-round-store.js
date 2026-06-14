@@ -18,7 +18,7 @@ const {
   parseFindingId,
 } = require("./validation.js");
 const {
-  sessionNucleusPath,
+  surfaceRoutesPath,
   verificationRoundPaths,
 } = require("./paths.js");
 const {
@@ -54,8 +54,11 @@ const {
   readHandoffSigningKey,
 } = require("./handoff-signing-key.js");
 const {
-  readSessionNucleus,
-} = require("./governance-store.js");
+  sessionNucleusFromState,
+} = require("./governance-contracts.js");
+const {
+  readSessionStateStrict,
+} = require("./session-state-store.js");
 const {
   readSurfaceRoutesStrict,
 } = require("./surface-router.js");
@@ -100,8 +103,19 @@ function smartContractSurfaceIdsFromRoutes(domain) {
   let document;
   try {
     document = readSurfaceRoutesStrict(domain).document;
-  } catch {
-    return null;
+  } catch (error) {
+    // ABSENT routes = a pure-web (or pre-routing) session with no SC surfaces:
+    // no exemption needed. But a routes file that EXISTS yet fails to parse
+    // means we cannot identify SC findings; silently treating them as web would
+    // clamp a smart-contract finding's legitimate on-chain re-judge — the exact
+    // thing the invariant forbids — so fail CLOSED instead.
+    if (fs.existsSync(surfaceRoutesPath(domain))) {
+      throw new ToolError(
+        ERROR_CODES.STATE_CONFLICT,
+        `severity-rise guard could not read surface routes: ${error.message || String(error)}`,
+      );
+    }
+    return new Set();
   }
   const scSurfaceIds = new Set();
   for (const route of document.routes) {
@@ -134,21 +148,16 @@ function claimIsSmartContractFinding(claim, scSurfaceIds) {
 function applyUnprovenSeverityClamps(domain, results) {
   let nucleus;
   try {
-    nucleus = readSessionNucleus(domain);
-  } catch (error) {
-    // Security boundary vs. availability: a session-nucleus.json that EXISTS but
-    // fails to parse is a corrupt scope record on an established session — fail
-    // closed so the guard cannot be silently disabled by tampering the nucleus.
-    // If the nucleus is simply ABSENT and the state isn't readable either, scope
-    // is indeterminate (e.g. a partially-seeded session), so pass through rather
-    // than block verification. A real web session at VERIFY always derives a
-    // target_url nucleus from its readable state, so it never lands here.
-    if (fs.existsSync(sessionNucleusPath(domain))) {
-      throw new ToolError(
-        ERROR_CODES.STATE_CONFLICT,
-        `severity-rise guard could not read session nucleus: ${error.message || String(error)}`,
-      );
-    }
+    // Derive web-scope from the VALIDATED session state (the write tool authority
+    // validates state.json before this handler), NOT from session-nucleus.json.
+    // The nucleus file is not write-guarded, so reading it would let a corrupt
+    // or semantically-drifted nucleus (target_url removed / swapped for
+    // target_repo) silently disable the guard on a session whose state still
+    // authorizes a web target. State is the trustworthy scope authority here.
+    nucleus = sessionNucleusFromState(readSessionStateStrict(domain).state);
+  } catch {
+    // No readable/validated state: scope is indeterminate (e.g. a partially
+    // seeded session) — pass through rather than block verification.
     return [];
   }
   if (!nucleus || nucleus.scope_policy == null || nucleus.scope_policy.target_url == null) return [];
@@ -210,25 +219,30 @@ function applyUnprovenSeverityClamps(domain, results) {
     if (base.isSmartContract) continue;
     if (verifySeverityRank(result.severity) <= base.maxRank) continue;
 
-    // The exploit-backed allow-path is a FLOOR, not proof of the asserted
-    // severity: it confirms the finding has SOME real, MAC-signed exploit row in
-    // the ledger, raising the bar from "zero proof" to "a genuine exploit +
-    // verifier assertion". It does NOT yet prove the replay demonstrated THIS
-    // higher severity (the row carries no impact/severity binding). Closing that
-    // gap is a HARD REQUIREMENT of the future offensive-runner PR: it must bind
-    // each row to the demonstrated impact and anchor it to the current
-    // verification window (e.g. a verification_exploit_run ref kind), and this
-    // check must then verify that binding. Until the runner exists this branch
-    // is dormant (readOffensiveRunRecords returns []), so every web rise clamps.
+    // The exploit-backed allow-path requires proof bound to the ASSERTED
+    // severity, not merely that some exploit row exists. A matching, MAC-signed
+    // row must carry a `demonstrated_severity` (the impact tier the safe exploit
+    // actually demonstrated, MAC-covered so it can't be forged) that meets or
+    // exceeds `result.severity`. This closes the gap both reviewers flagged: a
+    // low-severity row (e.g. a reflected canary) can no longer unlock a critical
+    // rise. Because no producer writes `demonstrated_severity` yet (the offensive
+    // runner is a future PR), `verifySeverityRank(undefined)` is 0 and this never
+    // passes today — the branch is dormant and every unproven web rise clamps.
+    // The runner PR must set `demonstrated_severity` AND anchor each row to the
+    // current verification window (replay freshness) before relying on it.
     const hasExploitReplaySignal = Array.isArray(result.confidence_reasons)
       && result.confidence_reasons.includes("exploit_replay_confirmed");
+    const assertedRank = verifySeverityRank(result.severity);
     let proven = false;
     if (hasExploitReplaySignal && base.exploitRunRefs.length > 0) {
       if (runRows === null) runRows = readOffensiveRunRecords(domain);
       if (runRows.length > 0) {
         if (signingKey === null) signingKey = readHandoffSigningKey(domain);
         proven = base.exploitRunRefs.some((ref) => (
-          runRows.some((row) => offensiveRunRowSatisfiesEvidence(row, ref, domain, signingKey))
+          runRows.some((row) => (
+            offensiveRunRowSatisfiesEvidence(row, ref, domain, signingKey)
+            && verifySeverityRank(row.demonstrated_severity) >= assertedRank
+          ))
         ));
       }
     }

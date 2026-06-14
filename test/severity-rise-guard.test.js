@@ -127,6 +127,9 @@ function offensiveRunRow(domain, ref = exploitRef(domain), overrides = {}) {
     exit_code: ref.exit_code,
     stdout_hash: ref.stdout_hash,
     stderr_hash: ref.stderr_hash,
+    // The impact tier the safe exploit demonstrated (MAC-covered). The guard
+    // requires this to meet/exceed the asserted severity before allowing a rise.
+    demonstrated_severity: "critical",
     ...overrides,
   };
 }
@@ -420,16 +423,48 @@ test("payload-injected sc_evidence cannot spoof the carve-out without a trusted 
   );
 }));
 
-test("corrupt session nucleus fails the severity-rise guard closed", () => withTempHome(() => {
-  const domain = "severity-rise-bad-nucleus.example";
+test("scope is derived from validated state, so a drifted nucleus file cannot disable the guard", () => withTempHome(() => {
+  const domain = "severity-rise-nucleus-drift.example";
   initWebSession(domain);
   appendFrozenFindingClaim(domain, { findingId: "F-1", severity: "low" });
   freezeClaims(domain);
-  fs.writeFileSync(sessionNucleusPath(domain), "{not-json\n", "utf8");
+  // Tamper the (non-write-guarded) nucleus file to look non-web. The guard reads
+  // scope from the validated state, so the web clamp still fires.
+  fs.writeFileSync(sessionNucleusPath(domain), `${JSON.stringify({ scope_policy: { target_repo: "x/y" } })}\n`, "utf8");
+
+  assert.equal(writeV1Round(domain, verificationResult("F-1", { severity: "critical" })), "low");
+}));
+
+test("an exploit row that demonstrates a lower severity does not unlock a higher rise", () => withTempHome(() => {
+  const domain = "severity-rise-impact-binding.example";
+  initWebSession(domain);
+  const ref = exploitRef(domain);
+  // A valid, signed row — but it only demonstrated "low" impact.
+  seedSignedOffensiveRow(domain, ref, { demonstrated_severity: "low" });
+  appendFrozenFindingClaim(domain, {
+    severity: "low",
+    evidenceRefs: [findingRef("F-1"), ref],
+    exploitOutcome: { outcome: "exploited_safely", safe_oracle: { kind: "reflected_canary" } },
+  });
+  freezeClaims(domain);
+  const context = enterVerifyV2(domain);
+
+  writeV2Round(domain, context, "brutalist", [
+    v2VerificationResult("F-1", { severity: "critical", confidence_reasons: ["exploit_replay_confirmed"] }),
+  ]);
+  assert.equal(persistedSeverity(domain), "low", "low-impact row cannot prove a critical rise");
+}));
+
+test("malformed surface routes fails the guard closed on a web session", () => withTempHome(() => {
+  const domain = "severity-rise-bad-routes.example";
+  initWebSession(domain);
+  appendFrozenFindingClaim(domain, { findingId: "F-1", severity: "low", surfaceIds: ["surface-1"] });
+  freezeClaims(domain);
+  fs.writeFileSync(surfaceRoutesPath(domain), "{not-json\n", "utf8");
 
   assert.throws(
     () => writeV1Round(domain, verificationResult("F-1", { severity: "critical" })),
-    (error) => error && error.code === "STATE_CONFLICT" && /session nucleus/.test(error.message),
+    (error) => error && error.code === "STATE_CONFLICT" && /surface routes/.test(error.message),
   );
 }));
 
