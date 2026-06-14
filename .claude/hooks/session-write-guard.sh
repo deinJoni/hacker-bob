@@ -141,9 +141,12 @@ def extract_cd_targets(command):
     against the shell's working directory, closing that bypass for every
     MCP-owned file (not just offensive-runs.jsonl)."""
     bases = []
-    for match in re.finditer(r"\b(?:cd|pushd)\s+(?!-)(?:[\"']?)([^\"'\s;|&]+)", command):
-        raw = match.group(1)
-        if raw in {"-", "~-", "&&", "||"}:
+    # Consume any cd flags (`-L`/`-P`) and the `--` option terminator before the
+    # directory token (PR #108 review, Codex P1: `cd -- <dir>` must not slip the
+    # guard). Then drop `cd -` (previous-dir) cases.
+    for match in re.finditer(r"\b(?:cd|pushd)\s+(?:-[A-Za-z]+\s+|--\s+)*([\"']?)([^\"'\s;|&]+)\1", command):
+        raw = match.group(2)
+        if raw.startswith("-") or raw in {"-", "~-", "&&", "||"}:
             continue
         bases.append(resolve_path(raw))
     return bases

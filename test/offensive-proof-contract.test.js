@@ -309,32 +309,60 @@ test("exploit proof gate is severity-agnostic", () => {
   });
 });
 
-test("exploit_run canonicalizes targets to strip embedded secrets value-blind", () => {
+test("exploit_run canonicalizes targets to origin+path (strips secrets value-blind)", () => {
   const cases = [
-    ["https://example.com/cb?token=abc123secret", ["abc123secret"]],
-    ["https://example.com/x?access_token=t0ksecret", ["t0ksecret"]],
+    ["https://example.com/cb?token=abc123secret", "https://example.com/cb"],
+    ["https://example.com/x?access_token=t0ksecret", "https://example.com/x"],
     // compound / prefixed names that an exact-name denylist would miss
-    ["https://example.com/login?client_secret=xyzsecret&X-Amz-Signature=sigsecret", ["xyzsecret", "sigsecret"]],
+    ["https://example.com/login?client_secret=xyzsecret&X-Amz-Signature=sigsecret", "https://example.com/login"],
     // OAuth implicit-flow fragment
-    ["https://example.com/cb#access_token=tokfragsecret&token_type=bearer", ["tokfragsecret"]],
+    ["https://example.com/cb#access_token=tokfragsecret&token_type=bearer", "https://example.com/cb"],
     // SPA routed fragment (URLSearchParams would never see `token` here)
-    ["https://example.com/#/callback?token=routedsecret", ["routedsecret"]],
+    ["https://example.com/#/callback?token=routedsecret", "https://example.com/"],
     // userinfo credentials
-    ["https://user:passsecret@example.com/poc", ["passsecret"]],
+    ["https://user:passsecret@example.com/poc", "https://example.com/poc"],
   ];
-  for (const [target, secrets] of cases) {
+  for (const [target, expected] of cases) {
     const ref = normalizeEvidenceReferenceShape(exploitRef("example.com", { target }));
-    for (const secret of secrets) {
-      assert.ok(!ref.target.includes(secret), `${target} -> ${ref.target} still leaks "${secret}"`);
-    }
-    assert.ok(!/\/\/[^/]*@/.test(ref.target), `${ref.target} still embeds userinfo`);
+    assert.equal(ref.target, expected, `${target} -> ${ref.target}`);
   }
-  // Benign param NAMES survive (values redacted) for triage clarity.
-  const ref = normalizeEvidenceReferenceShape(
-    exploitRef("example.com", { target: "https://example.com/s?q=BOB_CANARY_1&page=2" }),
-  );
-  assert.ok(ref.target.includes("q=") && ref.target.includes("page="), `param names dropped: ${ref.target}`);
-  assert.ok(!ref.target.includes("BOB_CANARY_1"), `query value not redacted: ${ref.target}`);
+});
+
+test("exploit_run rejects non-absolute / non-http(s) targets", () => {
+  for (const target of ["/cb?token=x", "callback#access_token=y", "ftp://example.com/x", "javascript:alert(1)"]) {
+    assert.throws(
+      () => normalizeEvidenceReferenceShape(exploitRef("example.com", { target })),
+      /absolute http\(s\) URL|http\(s\) scheme/,
+      `${target} should be rejected`,
+    );
+  }
+});
+
+test("exploited_safely records a credential-bearing callback target with the secret redacted", () => withTempHome(() => {
+  const domain = "example.com";
+  // A JWT-shaped access_token in the callback URL would be rejected by the
+  // generic sensitive-material scan if it reached claims.jsonl raw; pre-redaction
+  // must strip it BEFORE the scan so the legitimate proof can still be recorded.
+  const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJoYWNrZXIxIn0.s3cr3tSignatureValueAAAAAAAAAAAAAAAAAA";
+  const secretTarget = `https://example.com/oauth/callback?access_token=${jwt}&state=BOB_CANARY_1`;
+  appendOffensiveRunRow(domain, { target: secretTarget });
+  const claim = appendCandidateClaim(exploitedClaim(domain, {
+    evidence_refs: [exploitRef(domain, { target: secretTarget })],
+  }));
+  assert.equal(claim.exploit_outcome.outcome, "exploited_safely");
+  assert.ok(!claim.evidence_refs[0].target.includes(jwt), `leaked token: ${claim.evidence_refs[0].target}`);
+  assert.equal(claim.evidence_refs[0].target, "https://example.com/oauth/callback");
+}));
+
+test("exploited_safely rejects a proof row missing/non-boolean live-run flags", () => {
+  for (const rowOverride of [{ dry_run: undefined }, { timed_out: undefined }, { dry_run: "false" }]) {
+    withTempHome(() => {
+      const domain = "example.com";
+      appendOffensiveRunRow(domain, rowOverride);
+      const error = mustThrow(() => appendCandidateClaim(exploitedClaim(domain)));
+      assertInvalidArgumentsCode(error, "exploit_proof_unbacked_exploit_run_evidence");
+    });
+  }
 });
 
 test("exploited_safely rejects a claim carrying an extra out-of-scope exploit_run ref", () => withTempHome(() => {

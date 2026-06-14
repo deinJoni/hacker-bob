@@ -179,12 +179,13 @@ function assertRepoCommandRunEvidenceShape(ref, fieldName) {
 // claims.jsonl, so any credential embedded in the URL leaks on every claim read.
 // A secret-NAME denylist is whack-a-mole — it kept missing userinfo, OAuth
 // implicit `#access_token`, compound names (`client_secret`, `X-Amz-Signature`),
-// and routed fragments (`#/cb?token=`). Instead we redact value-blind and
-// structurally: strip userinfo entirely, replace EVERY query value with a
-// placeholder (param NAMES are kept for triage — values are where secrets live),
-// and redact the fragment wholesale (covers `#token=`, `#/route?token=`, bare
-// `#secret`). The exact request (incl. canary) stays bound by command_hash and
-// recoverable from the read-guarded capture, so nothing reportable is lost.
+// and routed fragments (`#/cb?token=`). So we reduce structurally to
+// origin + pathname: drop userinfo, the entire query, and the fragment. This is
+// the only value-blind form that BOTH avoids leaking secrets AND survives the
+// generic sensitive-material scan (which flags `access_token=<placeholder>` even
+// with a redacted value). The exact request — query, canary, payload — stays
+// bound by command_hash and recoverable from the read-guarded capture, so the
+// reportable PoC is not lost; only the proof-binding identifier is reduced.
 //
 // This is the single canonical form the offensive runner MUST also write to the
 // offensive-runs.jsonl row so the row and this ref stay byte-identical for the
@@ -194,19 +195,14 @@ function canonicalizeExploitTarget(targetUrl) {
   try {
     parsed = new URL(targetUrl);
   } catch {
-    // Opaque / relative targets carry no parseable URL secrets; the proof gate
-    // additionally requires an in-scope absolute URL before a row can back them.
+    // Opaque / relative targets are rejected by the shape validator; leave them
+    // unchanged here rather than fabricating an origin.
     return targetUrl;
   }
-  parsed.username = "";
-  parsed.password = "";
-  for (const key of [...parsed.searchParams.keys()]) {
-    parsed.searchParams.set(key, "REDACTED");
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return targetUrl;
   }
-  if (parsed.hash) {
-    parsed.hash = "REDACTED";
-  }
-  return parsed.toString();
+  return `${parsed.origin}${parsed.pathname}`;
 }
 
 function assertExploitRunEvidenceShape(ref, fieldName) {
@@ -223,6 +219,19 @@ function assertExploitRunEvidenceShape(ref, fieldName) {
   }
   if (typeof ref.target !== "string" || !ref.target.trim()) {
     throw new Error(`${fieldName}.target must be a non-empty string for kind="exploit_run"`);
+  }
+  // PR #108 review (Codex P1): require an absolute http(s) URL. Relative/opaque
+  // targets cannot be value-blind redacted (canonicalizeExploitTarget can only
+  // parse absolute URLs) and cannot be scope-checked, so they are rejected
+  // rather than persisted raw.
+  let parsedTarget;
+  try {
+    parsedTarget = new URL(ref.target);
+  } catch {
+    throw new Error(`${fieldName}.target must be an absolute http(s) URL for kind="exploit_run"`);
+  }
+  if (parsedTarget.protocol !== "http:" && parsedTarget.protocol !== "https:") {
+    throw new Error(`${fieldName}.target must use the http(s) scheme for kind="exploit_run"`);
   }
   assertEnumValue(ref.offensive_outcome, OFFENSIVE_OUTCOME_VALUES, `${fieldName}.offensive_outcome`);
   if (!isHex64(ref.command_hash)) {
@@ -471,7 +480,21 @@ function normalizeCandidateClaim(input, { targetDomain = null, now = new Date(),
   // carry a kind; artifact_path and content_hash are validated when present so
   // a CandidateClaim whose refs cannot be content-hash-matched at GRADE time
   // is rejected up front.
-  const evidenceRefs = normalizeReferenceArray(input.evidence_refs, "evidence_refs")
+  // PR #108 review (Codex P2): normalizeReferenceArray runs the generic
+  // sensitive-material scan (validateNoSensitiveMaterial) BEFORE
+  // normalizeEvidenceReferenceShape. Without pre-redaction a genuinely
+  // token-bearing exploit target would be REJECTED by the scan rather than
+  // redacted, so a legitimate safe-exploit proof with a credential-bearing
+  // callback URL could not be recorded. Canonicalize exploit_run targets first
+  // so the scan only ever sees the value-redacted form.
+  const preRedactedRefs = Array.isArray(input.evidence_refs)
+    ? input.evidence_refs.map((ref) => (
+      ref && typeof ref === "object" && ref.kind === "exploit_run" && typeof ref.target === "string"
+        ? { ...ref, target: canonicalizeExploitTarget(ref.target) }
+        : ref
+    ))
+    : input.evidence_refs;
+  const evidenceRefs = normalizeReferenceArray(preRedactedRefs, "evidence_refs")
     .map((ref, index) => normalizeEvidenceReferenceShape(ref, `evidence_refs[${index}]`));
   const controlExpectation = normalizeOptionalObject(input.control_expectation, "control_expectation");
   const impact = normalizeOptionalText(input.impact, "impact");
@@ -699,8 +722,11 @@ function exploitTargetHostInScope(targetUrl, domain) {
 
 function offensiveRunRowSatisfiesEvidence(row, ref, domain) {
   if (!row || typeof row !== "object") return false;
-  if (row.dry_run === true) return false;
-  if (row.timed_out === true) return false;
+  // PR #108 review (Codex P1): require the row to AFFIRMATIVELY assert a
+  // completed, non-dry-run execution. Accepting an omitted/non-boolean dry_run
+  // or timed_out would let a hand-authored/incomplete row stand as proof.
+  if (row.dry_run !== false) return false;
+  if (row.timed_out !== false) return false;
   // Domain binding (Codex P1): the ledger is read from the claim's session, but
   // the row must also be *recorded for* this domain and the cited URL must be in
   // its scope, so a cross-domain row in the same session cannot stand as proof.

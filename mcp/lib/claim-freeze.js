@@ -269,6 +269,20 @@ function assertCompletenessAgainstFreeze(freeze, suppliedRefs) {
     }
     const expectedHash = evidenceReferenceIdentityHash(entry.ref);
     const observedHash = observed.get(entry.ref_key);
+    // PR #108 review (Codex P1): exploit_run is hash-bound proof material. An
+    // observed ref that omits the capture hash must NOT silently satisfy the
+    // freeze (key-presence alone), so a missing observed hash counts as a
+    // mismatch for this kind rather than passing through.
+    if (entry.ref && entry.ref.kind === "exploit_run" && expectedHash != null && observedHash == null) {
+      mismatched.push({
+        claim_id: entry.claim_id,
+        kind: entry.ref.kind,
+        ref_key: entry.ref_key,
+        expected_hash: expectedHash,
+        observed_hash: null,
+      });
+      continue;
+    }
     if (expectedHash != null && observedHash != null && expectedHash !== observedHash) {
       mismatched.push({
         claim_id: entry.claim_id,
