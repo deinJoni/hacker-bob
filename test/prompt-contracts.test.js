@@ -1335,6 +1335,10 @@ test("evaluator agents stay under their MCP tool budget", () => {
   // I10 adds bob_read_static_analysis_index to evaluator-shared. It is a
   // bounded read-only query over scrubbed static-analysis-index.jsonl rows;
   // budgets bump by +1 (SC 42→43, web 44→45).
+  // PR3 adds bob_http_confirm to evaluator-web only. It is the trusted
+  // read-only NEGATIVE-ONLY differential confirmer: it appends http-audit.jsonl
+  // records for its probes (never writes signed offensive-runs rows); web budget
+  // bumps by +1 (web 45→46), while SC remains unchanged.
   const EVALUATOR_MCP_TOOL_BUDGET = 43;
   const agentNameToRoleId = {};
   for (const [roleId, spec] of Object.entries(CLAUDE_ROLE_SPECS)) {
@@ -1344,7 +1348,7 @@ test("evaluator agents stay under their MCP tool budget", () => {
   }
   for (const pack of Object.values(CAPABILITY_PACKS)) {
     const roleId = agentNameToRoleId[pack.evaluator_agent];
-    const budget = pack.spawn.profile === "web" ? 45 : EVALUATOR_MCP_TOOL_BUDGET;
+    const budget = pack.spawn.profile === "web" ? 46 : EVALUATOR_MCP_TOOL_BUDGET;
     assert.ok(
       mcpToolNamesForRole(roleId).length <= budget,
       `pack ${pack.id} evaluator over budget (got ${mcpToolNamesForRole(roleId).length}, budget ${budget})`,
@@ -1365,10 +1369,14 @@ test("verifier role bundle exposes the documented mutating set and no orchestrat
   // Cycle O.5 (Plane O) adds bob_repo_check so verifiers can do bounded,
   // read-only file probes (file_exists / file_contains / regex_match)
   // against the bound repo without taking the docker path.
+  // PR3 adds bob_http_confirm: read-only against the target and negative-only
+  // (never writes signed offensive-runs rows), but it appends http-audit.jsonl
+  // records for its probes, so it is a session-artifact writer (mutating).
   assert.deepEqual(
     mutating.sort(),
     [
       "bob_evm_fetch_source",
+      "bob_http_confirm",
       "bob_http_scan",
       "bob_repo_check",
       "bob_repo_docker_run",
